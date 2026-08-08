@@ -5,8 +5,8 @@ set -euo pipefail
 
 # An unmatched glob expands to itself, which turns "there are no rules files"
 # into a loop over one path that does not exist — a section that reports success
-# because it checked nothing. With this, no match is an empty list, and each
-# section below says outright how many files it expected to find.
+# because it checked nothing. With this, no match is an empty list, and every
+# section below that walks a set says outright when it found none.
 shopt -s nullglob
 
 cd "$(dirname "$0")/.."
@@ -27,18 +27,29 @@ echo "==> tests"
 cargo test --workspace
 
 echo "==> file length (<= ${MAX_FILE_LINES} lines)"
+# `find` printing nothing would walk this loop zero times and pass. The error
+# stream is not discarded either: a renamed source directory is exactly the way
+# this check would go quiet, and quiet is the failure it cannot afford.
+counted=0
 while IFS= read -r file; do
+    counted=$((counted + 1))
     lines=$(wc -l <"$file")
     if ((lines > MAX_FILE_LINES)); then
         printf '    FAIL %s: %d lines > %d\n' "$file" "$lines" "$MAX_FILE_LINES"
         failed=1
     fi
-done < <(find crates src -type f -name '*.rs' 2>/dev/null)
+done < <(find crates src -type f -name '*.rs')
+if ((counted == 0)); then
+    printf '    FAIL no .rs files under crates/ or src/; this check measured nothing\n'
+    failed=1
+fi
 
 echo "==> agent rules files"
 # One set of rules, one file. CLAUDE.md is the original everywhere in this
 # repo; AGENTS.md is a symlink beside it, so no tool reads a stale copy.
+linked=0
 while IFS= read -r link; do
+    linked=$((linked + 1))
     if [[ ! -L "$link" ]]; then
         printf '    FAIL %s: must be a symlink to CLAUDE.md, not a file\n' "$link"
         failed=1
@@ -47,6 +58,10 @@ while IFS= read -r link; do
         failed=1
     fi
 done < <(find . -path ./target -prune -o -name AGENTS.md -print)
+if ((linked == 0)); then
+    printf '    FAIL no AGENTS.md anywhere; Codex reads that name and nothing else\n'
+    failed=1
+fi
 
 echo "==> agent rules scope"
 # A rule under .claude/rules/ is read only when a file it claims is opened, so
@@ -60,15 +75,11 @@ if ((${#rules[@]} == 0)); then
     failed=1
 fi
 
-# One per crate. A crate nothing claims is a corner of the tree where the
-# obligations that bind there are written down nowhere.
-for crate in crates/*/; do
-    name=$(basename "$crate")
-    if ! grep -qs -- "crates/$name/" "${rules[@]}"; then
-        printf '    FAIL crates/%s: no rules file under .claude/rules/ claims it\n' "$name"
-        failed=1
-    fi
-done
+# Every glob every rule claims, gathered as the loop below validates them. The
+# per-crate check reads this rather than the files themselves: searching a whole
+# rules file would let a crate named once in a sentence satisfy the requirement
+# while no frontmatter aims anything at it.
+claimed=""
 
 for rule in "${rules[@]}"; do
     globs=$(awk '
@@ -109,6 +120,8 @@ for rule in "${rules[@]}"; do
     fi
 
     while IFS= read -r glob; do
+        claimed+="$glob"$'\n'
+
         # Only the literal prefix before the first wildcard can be checked
         # without walking the tree, so the message says that rather than
         # claiming the whole glob was tried and matched nothing.
@@ -122,6 +135,18 @@ for rule in "${rules[@]}"; do
             failed=1
         fi
     done <<<"$globs"
+done
+
+# One per crate. A crate nothing claims is a corner of the tree where the
+# obligations that bind there are written down nowhere. Asked of `claimed`
+# rather than of the files: a `grep` over an empty rules array reads standard
+# input instead, which turns the no-rules case into a wait rather than a report.
+for crate in crates/*/; do
+    name=$(basename "$crate")
+    if ! printf '%s' "$claimed" | grep -qF -- "crates/$name/"; then
+        printf '    FAIL crates/%s: no paths: frontmatter under .claude/rules/ claims it\n' "$name"
+        failed=1
+    fi
 done
 
 echo "==> agent skills"
@@ -181,11 +206,27 @@ unpinned=$(awk '
     table == 0 { next }
 
     # `[workspace.dependencies.foo]` puts the crate in the header, so a bare
-    # `version =` line beneath one is that crate pinning itself.
-    named != "" && /^[[:space:]]*version[[:space:]]*=/ {
-        if ($0 !~ /=[[:space:]]*"=/) print "        " named ": " $0
+    # `version =` line beneath one is that crate pinning itself. Every other key
+    # in that table — `features`, `default-features` — is an option of the one
+    # crate rather than a dependency of its own, and has no version to pin.
+    named != "" {
+        if ($0 ~ /^[[:space:]]*version[[:space:]]*=/ && $0 !~ /=[[:space:]]*"=/) {
+            print "        " named ": " $0
+        }
         next
     }
+
+    # `serde.version = "1.0.151"` is the third spelling: a dotted key, the same
+    # declaration as the inline table and accepted by Cargo alike. It is neither
+    # a bare name nor a `{`, so it went through the rule below untouched.
+    /^[a-zA-Z0-9_-]+\.version[[:space:]]*=/ {
+        if ($0 !~ /=[[:space:]]*"=/) print "        " $0
+        next
+    }
+
+    # Any other dotted key sets an option on that dependency. The `.version`
+    # line above is the one that pins it.
+    /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+[[:space:]]*=/ { next }
 
     /^[a-zA-Z0-9_-]+[[:space:]]*=/ {
         if ($0 ~ /\{/) {
@@ -215,7 +256,7 @@ echo "==> dependency justification"
 # reason for the first crate beneath it, so a dependency added there needed no
 # comment of its own.
 unjustified=$(awk '
-    /^\[workspace\.dependencies\]/ { table = 1; justified = 0; next }
+    /^\[workspace\.dependencies\]/ { table = 1; named = ""; justified = 0; next }
     /^\[workspace\.dependencies\./ {
         table = 1
         named = $0
@@ -224,12 +265,21 @@ unjustified=$(awk '
         justified = 0
         next
     }
-    /^\[/      { table = 0; next }
+    /^\[/      { table = 0; named = ""; next }
     table == 0 { justified = ($0 ~ /^[[:space:]]*#/); next }
 
     /^[[:space:]]*#/ { justified = 1; next }
     /^[[:space:]]*$/ { justified = 0; next }
-    justified == 0 && /^[a-zA-Z0-9_-]+[[:space:]]*=/ { print "        " $0 }
+
+    # Inside `[workspace.dependencies.foo]` the header is the dependency and the
+    # comment above it is the reason. The keys beneath belong to that one crate,
+    # so asking each of them to carry a justification names lines that never
+    # could.
+    named != "" { next }
+
+    # A dotted key declares a dependency too, and one comment covers the group
+    # beneath it exactly as it does for the bare spelling.
+    justified == 0 && /^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*[[:space:]]*=/ { print "        " $0 }
 ' Cargo.toml)
 if [[ -n "$unjustified" ]]; then
     printf '    FAIL no comment saying why it is needed:\n%s\n' "$unjustified"
