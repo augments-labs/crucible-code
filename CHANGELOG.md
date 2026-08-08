@@ -31,6 +31,17 @@ Notable changes to crucible. Format follows
   than assumed, ignoring weak symbols, which is the difference between a floor
   and a version number that retires distributions this runs on perfectly well.
 
+### Internal
+
+- The report that a session has stopped being recorded is now gated from the
+  binary's own tests. A log that fails every write cannot be built from outside
+  the runner — every public way in ends at a real file — so the case where the
+  last turn is still queued when input ends had no test, and deleting the code
+  that reports it would have gone unnoticed. `crucible-runner` gains a `proof`
+  feature that only the binary's `[dev-dependencies]` turns on, so the seam is
+  absent from a release build; a `compile_error!` behind the feature is what
+  proved that rather than cargo's documented behaviour being taken on trust.
+
 ## [0.0.1] - 2026-08-08
 
 The first release: a coding agent you can hold a session with, and the gates

@@ -247,6 +247,17 @@ impl Session {
             .ok_or(SessionError::Homeless)
     }
 
+    /// A session that records onto `sink` instead of a file.
+    ///
+    /// For proving what happens when a log stops working, from code that lives
+    /// outside this crate — the wiring in the binary that tells the user is the
+    /// one part of that path a test here cannot reach. Behind a feature no
+    /// dependency turns on, so it is absent from a release build.
+    #[cfg(feature = "proof")]
+    pub fn onto<W: io::Write + Send + 'static>(path: PathBuf, sink: W) -> Self {
+        Self::writing(path, sink)
+    }
+
     /// Starts the thread that owns `sink` from here on.
     ///
     /// `sink` is a type parameter rather than a [`File`] so that a test can

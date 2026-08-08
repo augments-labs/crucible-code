@@ -158,6 +158,12 @@ crucible-tools.workspace = true
 crucible-tui.workspace = true
 thiserror.workspace = true
 
+# The same runner, with the seam that lets a test hand it a log which fails on
+# every write. Cargo does not resolve dev-dependencies for a build, so this
+# turns the feature on for `cargo test` and for nothing that ships.
+[dev-dependencies]
+crucible-runner = { workspace = true, features = ["proof"] }
+
 [lints]
 workspace = true
 

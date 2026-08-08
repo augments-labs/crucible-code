@@ -256,6 +256,60 @@ fn a_provider_that_fails_says_so_instead_of_ending_the_session() {
     assert_eq!(asked, 2, "a failed turn does not end the session");
 }
 
+/// A log that fails every write, the way a full disk does.
+struct Failing;
+
+impl std::io::Write for Failing {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "no space left on device",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prompt_goes_away() {
+    // The writer thread runs behind the loop, so the poll after a turn sees
+    // only what has already reached the disk. Whatever is still queued when
+    // input ends is nobody's news until the queue is drained — and the turn
+    // most likely to be in it is the last one, which is the one worth knowing
+    // about.
+    //
+    // Nothing is typed here on purpose. The loop breaks before it takes a
+    // turn, so the in-loop poll never runs at all, and the only path that can
+    // still say anything is the drain after it. A test that let the poll run
+    // would pass with the report after the loop deleted.
+    let session = Session::onto("/nowhere".into(), Failing);
+    session.append(&crucible_core::Message::User("queued".into()));
+
+    let runner = Runner::new(
+        Box::new(Script::new(vec![])),
+        Tools::new(),
+        Model {
+            name: "script".into(),
+            max_tokens: 64,
+            system: None,
+        },
+        session,
+    );
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(Vec::new());
+
+    converse(runner, &mut renderer, &Cancel::new(), &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(
+        written.contains("stopped being recorded"),
+        "the drained failure never reached the terminal: {written}"
+    );
+}
+
 #[test]
 fn yes_allows_this_call_only() {
     assert_eq!(verdict(Some("y\n")), Verdict::AllowOnce);
