@@ -5,7 +5,7 @@ Reading never asks. Changing a file or starting a process always does.
 When the model wants to do either, the turn stops and the question appears:
 
 ```
-? write wants to change a file: {"path":"src/main.rs","text":"fn main() {\n    println!(…
+? write wants to change a file: {"path":"src/main.rs","content":"fn main() {\n    println!(…
   [y]es  [a]lways  [n]o › 
 ```
 

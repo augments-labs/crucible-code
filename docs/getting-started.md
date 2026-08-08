@@ -82,7 +82,7 @@ nothing. Without the line, both look exactly like an answer that finished.
 
 A turn that ended normally says nothing at all. There is a third line,
 `! stopped`, for a turn that was cancelled — but nothing in 0.0.1 can cancel
-one, so you will not see it yet. See <kbd>Ctrl-C</kbd> above.
+one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
 
 <kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.1 input is left
 in the terminal's cooked mode and no signal is caught, so there is no way to stop

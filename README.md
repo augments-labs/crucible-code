@@ -42,8 +42,9 @@ and the release procedure blocks on them:
 | `grep` tool vs the `rg` binary | ≤ 1.25× |
 | Render commits under token burst | ≥ 30/s |
 
-Memory stays flat as a transcript grows because rendering is inline: scrollback
-belongs to the terminal, not to this process.
+Rendering costs nothing as a transcript grows, because it is inline: scrollback
+belongs to the terminal, not to this process. The transcript itself is held in
+memory for the life of the session, and is what the peak-RSS figure bounds.
 
 ## Building
 

@@ -87,8 +87,9 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
-   path. Anything that grows with transcript length is virtualized, and a
-   `.clone()` on such a value needs a comment saying why.
+   path. The transcript is held whole and is what that RSS figure bounds;
+   nothing *else* may grow with it, and a `.clone()` of a transcript-sized
+   value needs a comment saying why.
 7. **No process memory in shipped artifacts.** Comments explain the code.
    No requirement IDs, no design-doc citations, no references to planning
    directories. Traceability lives in commit messages and test names.
@@ -133,10 +134,10 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   adding one must not edit `core`. Events, verdicts and errors are core-owned
   enums *because* a new variant should break every `match`.
 - **Rendering is inline today, and that is a mechanism rather than a law.**
-  Scrollback belongs to the terminal, which is what keeps memory flat as a
+  Scrollback belongs to the terminal, which is what keeps rendering free as a
   transcript grows. A full-screen renderer would move that job into this
   process; what it may not move is the budget, so it would owe a virtualized
-  viewport in exchange. Flat memory is the rule; inline is how 0.0.x keeps it.
+  viewport in exchange. The budget is the rule; inline is how 0.0.x meets it.
 
 ## Conventions
 

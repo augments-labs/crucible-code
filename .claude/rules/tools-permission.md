@@ -21,24 +21,31 @@ Implement `Tool`, and answer three questions in code rather than in a comment:
    user would. The prompt shows this string and a session-wide allow remembers
    it, so a vague answer buys a vague question and a wider grant than anyone
    agreed to.
-3. **What does it reach?** Every path is resolved against the workspace and
-   rejected if it escapes — after symlinks are followed, not before.
+3. **What does it reach?** Every path goes through `Workspace` and is rejected
+   if it escapes — after symbolic links are resolved, not before, and including
+   the last component of a path being created. `bash` is the standing exception
+   and the only one: a shell reaches whatever the user can, so what bounds it is
+   question 2 rather than the workspace.
 
 ## Grants
 
-Every tool takes a `Grant`, read-only ones included. A read mints its own
-without a prompt, but it still leaves through `Permission::decide`, so there is
-one route to running a tool rather than a guarded route and an unguarded one.
+A read mints its own grant without a prompt, but it still leaves through
+`Permission::decide`, so there is one route to running a tool rather than a
+guarded route and an unguarded one.
 
 Never take a `Verdict` as the argument instead. Nothing stops a caller passing
 `Deny` and carrying on — that is the whole reason the token exists.
 
-## Output is bounded, always
+## Output is bounded, and says when it was cut
 
 A tool's output goes into the next request, so an unbounded one is an unbounded
 bill and a context window spent on a log file somebody cat'd by accident.
-Truncate at a limit the tool owns, and say in the output that it was truncated —
-a silently cut result reads to the model as a complete one.
+Truncate at a limit the tool owns, and say *in the output* that it was
+truncated — a silently cut result reads to the model as a complete one.
+
+This binds a result that is short for any reason, not only a long one that was
+trimmed: output still arriving when a read gave up is a prefix too, and it needs
+saying just as much.
 
 ## Failure is a result, not an error
 
