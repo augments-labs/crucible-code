@@ -87,7 +87,7 @@ its body.
 
 | Target | Artifact |
 | --- | --- |
-| `x86_64-unknown-linux-gnu` | `crucible-v0.0.1-x86_64-unknown-linux-gnu.tar.gz` |
+| `x86_64-unknown-linux-gnu` | `crucible-v<version>-x86_64-unknown-linux-gnu.tar.gz` |
 
 Each archive ships beside a `.sha256` file. Builds are release profile — fat
 LTO, one codegen unit, symbols stripped — the same settings every published

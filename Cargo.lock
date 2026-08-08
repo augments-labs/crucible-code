@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "crucible-core",
@@ -228,14 +228,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "crucible-provider"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "crucible-core",
  "globset",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "crossterm",
  "crucible-core",
