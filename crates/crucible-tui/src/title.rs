@@ -124,8 +124,9 @@ mod tests {
     fn a_run_whose_output_is_not_a_terminal_sets_no_title() {
         // The test harness captures standard output, so this is the redirected
         // case: a pipe, a file, `crucible | tee`. Nothing there displays a tab
-        // name, so the sequence is not a title but eight bytes in the middle of
-        // somebody's data — followed by five more when the guard is dropped.
+        // name, so the sequence is not a title but seventeen bytes in the
+        // middle of somebody's data — followed by five more when the guard is
+        // dropped.
         //
         // Holding nothing is the whole assertion. There is no title to hand
         // back either, which is what `None` says.
