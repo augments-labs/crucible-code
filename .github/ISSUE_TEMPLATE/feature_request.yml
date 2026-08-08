@@ -1,0 +1,39 @@
+name: Feature request
+description: Something crucible should be able to do and cannot.
+labels: [feature]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `v0.0.1` is deliberately small. A good idea that is out of scope for it
+        is still a good idea — it goes on the list rather than into the release.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The problem, not the feature. What are you doing today instead?
+      placeholder: |
+        I work across two machines and lose the transcript when I switch, so I
+        re-explain the same context every morning.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: How it would work from the outside — the command, the flag, the screen.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What else would solve it
+      description: |
+        Including doing nothing. If another tool already solves this well, say
+        which — the answer may be that crucible should not.
+    validations:
+      required: false

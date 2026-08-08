@@ -1,0 +1,57 @@
+name: Bug report
+description: Something behaves differently from what it says it does.
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not for security issues — those go through
+        [SECURITY.md](https://github.com/augments-labs/crucible-code/blob/main/SECURITY.md),
+        never a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what crucible did instead of what you expected.
+      placeholder: |
+        Ran `crucible` in a repo with a symlinked vendor/ directory. The grep
+        tool never returned; I had to press Ctrl-C.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The smallest sequence that shows the bug. A repo we can clone beats a description.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `crucible --version`. If you built from source, the commit.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Terminal and OS
+      description: Which terminal, which multiplexer if any, and which OS.
+      placeholder: Ghostty 1.2 inside tmux 3.5, Fedora 42
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: |
+        Logs or a transcript excerpt if you have one. **Read it first** — redact
+        anything that looks like a key before you paste it.
+    validations:
+      required: false

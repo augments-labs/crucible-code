@@ -1,0 +1,21 @@
+version: 2
+
+updates:
+  # Every crate is =-pinned, so an upgrade cannot arrive silently — it arrives
+  # as a pull request that CI has to pass.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+
+  # Actions are pinned to a commit sha. Dependabot moves the sha and rewrites
+  # the version comment beside it, which is the only sane way to keep both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(ci)

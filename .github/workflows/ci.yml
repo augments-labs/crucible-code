@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer stale, so
+# stop paying for it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: scripts/check.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No toolchain action. rustup ships on the runner and reads
+      # rust-toolchain.toml, so the first cargo call installs exactly the
+      # version and components a contributor has — one pin, not two.
+      - run: scripts/check.sh
+
+  budgets:
+    name: scripts/bench.sh
+    runs-on: ubuntu-latest
+    # A shared runner is noisy, so the number here is a trend and an artifact,
+    # not the release measurement — RELEASING.md still requires a quiet
+    # machine. What this job defends is that the budgets stay measured at all.
+    #
+    # continue-on-error is here only because every probe is still unwritten,
+    # which makes bench.sh exit 1 by design; without it no pull request could
+    # merge. `scripts/check.sh` fails the moment a probe appears and this line
+    # is still present, so it cannot outlive its reason.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: scripts/bench.sh > budgets.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # `always()`, because a run that went over budget is the one worth
+        # keeping.
+        if: always()
+        with:
+          name: budgets
+          path: budgets.json

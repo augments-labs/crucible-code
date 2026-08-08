@@ -1,0 +1,66 @@
+name: release
+
+# Pushing the tag is the trigger, as RELEASING.md says. Nothing publishes on a
+# branch push, so a release is always a deliberate act.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # creates the GitHub Release and uploads the archive
+
+jobs:
+  linux-x86_64:
+    name: x86_64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A tag that disagrees with the manifest ships a binary whose --version
+      # lies. Catch it before anything is built.
+      - name: The tag and the manifest agree
+        run: |
+          manifest=$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "crucible-code") | .version')
+          if [[ "v$manifest" != "$GITHUB_REF_NAME" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml $manifest"
+            exit 1
+          fi
+
+      # The same gate CI runs. The tag names a commit CI already proved green,
+      # but a published artifact is not the place to trust that.
+      - run: scripts/check.sh
+
+      - name: Release notes from the changelog
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/         { exit }
+            on                     { print }
+          ' CHANGELOG.md >NOTES.md
+          if [[ ! -s NOTES.md ]]; then
+            echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"
+            exit 1
+          fi
+
+      # --locked: the lockfile in the tag is the lockfile that gets built, so
+      # the artifact is reproducible from the tag alone.
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          name="crucible-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          install -Dm755 target/release/crucible "$name/crucible"
+          install -Dm644 README.md LICENSE -t "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" >"$name.tar.gz.sha256"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "crucible ${GITHUB_REF_NAME#v}" \
+            --notes-file NOTES.md \
+            ./*.tar.gz ./*.tar.gz.sha256
