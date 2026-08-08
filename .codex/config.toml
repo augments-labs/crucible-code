@@ -1,0 +1,33 @@
+# Codex settings for working in this repository.
+#
+# The rules themselves are not here — Codex reads AGENTS.md, which is a symlink
+# to CLAUDE.md, and the skills under .agents/skills/ are symlinks to the
+# originals in .claude/skills/. This file only says how Codex should run.
+
+# Ask before anything outside the sandbox. `scripts/check.sh` runs cargo, which
+# spawns rustc and writes to target/ — both inside the workspace, so the gate
+# runs without a prompt.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+approvals_reviewer = "auto_review"
+
+# The rules in CLAUDE.md are stated once and enforced across every crate; a
+# change that respects them usually has to be reasoned about, not pattern
+# matched.
+model_reasoning_effort = "high"
+
+# Rust answers age badly — a crate's API moves between minor versions and the
+# search result outlives it.
+web_search = "cached"
+
+[features]
+memories = true
+
+[sandbox_workspace_write]
+# cargo resolves and downloads from crates.io. Without this the first build in
+# a clean checkout fails, and so does the gate.
+#
+# cargo also writes outside the workspace, to $CARGO_HOME (~/.cargo by default)
+# for the registry cache. If a build fails on a read-only path rather than on
+# the network, add that directory to `writable_roots` here.
+network_access = true
