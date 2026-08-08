@@ -1,6 +1,8 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
+mod reported;
+
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use crucible_core::{ProviderError, Sensitivity, ToolId, Verdict};
@@ -57,6 +59,28 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::Delta { text } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Which turn each start announced, in order.
+    fn started(&self) -> Vec<u32> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TurnStarted { turn } => Some(turn.get()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Why each turn ended, in order.
+    fn finished(&self) -> Vec<StopReason> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TurnFinished { stop, .. } => Some(stop),
                 _ => None,
             })
             .collect()
@@ -246,26 +270,6 @@ fn a_provider_that_fails_ends_the_turn() {
 }
 
 #[test]
-fn turns_are_numbered_from_one() {
-    let script = Script::new(vec![saying("first"), saying("second")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
-
-    scripted.turn("one").unwrap();
-    scripted.turn("two").unwrap();
-
-    let started: Vec<u32> = scripted
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::TurnStarted { turn } => Some(turn.get()),
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(started, [1, 2]);
-}
-
-#[test]
 fn the_tools_a_runner_offers_are_advertised_on_every_request() {
     let script = Script::new(vec![saying("done")]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
@@ -273,27 +277,6 @@ fn the_tools_a_runner_offers_are_advertised_on_every_request() {
     scripted.turn("go").unwrap();
 
     assert_eq!(scripted.advertised(), ["read"]);
-}
-
-#[test]
-fn a_call_is_announced_before_it_runs() {
-    // The renderer draws the line for a running tool from this.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
-
-    scripted.turn("go").unwrap();
-
-    let requested: Vec<ToolCall> = scripted
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::ToolRequested { call } => Some(call),
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(requested.len(), 1);
-    assert_eq!(requested.first().map(|call| &*call.name), Some("read"));
 }
 
 #[test]
@@ -333,38 +316,4 @@ fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
 
     assert_eq!(replayed.messages(), held.as_slice());
-}
-
-#[test]
-fn a_continued_conversation_goes_on_counting_where_it_stopped() {
-    // Numbering the first continued turn 1 would tell the user this is a new
-    // conversation, which is exactly what they asked it not to be.
-    let script = Script::new(vec![saying("still here")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
-
-    let mut earlier = Transcript::new();
-    earlier.push(Message::User("one".into()));
-    earlier.push(Message::Agent {
-        text: "first".into(),
-        calls: Vec::new(),
-    });
-    earlier.push(Message::User("two".into()));
-    earlier.push(Message::Agent {
-        text: "second".into(),
-        calls: Vec::new(),
-    });
-    scripted.runner = scripted.runner.resuming(earlier);
-
-    scripted.turn("three").unwrap();
-
-    let started: Vec<u32> = scripted
-        .seen
-        .try_iter()
-        .filter_map(|event| match event {
-            Event::TurnStarted { turn } => Some(turn.get()),
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(started, [3]);
 }

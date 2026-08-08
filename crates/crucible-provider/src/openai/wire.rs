@@ -42,7 +42,10 @@ pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
     let mut out = Vec::new();
 
     // One choice, because one is what a request without `n` asks for. A chunk
-    // with none is the usage report that some accounts get after the last one.
+    // with none carries a usage report, which this build never asks for and
+    // which the endpoint sends only to a request that opted in. Other servers
+    // speaking this protocol send one anyway, so it is skipped rather than
+    // refused.
     let Some(choice) = payload
         .get("choices")
         .and_then(Value::as_array)
@@ -52,11 +55,12 @@ pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
     };
 
     if let Some(delta) = choice.get("delta") {
-        said(delta, &mut out);
+        said(delta, &mut out)?;
     }
 
-    // Last, and in the same chunk as whatever came with it: the reason arrives
-    // alongside the final word about half the time.
+    // Last, and in the same chunk as whatever came with it: a reason shares a
+    // chunk with the final word or arrives in one of its own, and both shapes
+    // are ordinary. Pushing it after the content is what makes either safe.
     if let Some(reason) = text(choice, "finish_reason") {
         out.push(Delta::Stopped(stop(reason)));
     }
@@ -65,12 +69,23 @@ pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
 }
 
 /// What the model produced in one chunk.
-fn said(delta: &Value, out: &mut Vec<Delta>) {
+fn said(delta: &Value, out: &mut Vec<Delta>) -> Result<(), ProviderError> {
     // Empty is what the opening chunk carries, the one that only announces the
     // role. Emitting it would put a blank line in front of every answer.
     if let Some(content) = text(delta, "content").filter(|content| !content.is_empty()) {
         out.push(Delta::Text(content.into()));
     }
+
+    // A model that declines says so here, and leaves `content` null for the
+    // whole response. Unread, a refusal is a turn that shows nothing at all
+    // and then reports that it finished normally.
+    if let Some(refusal) = text(delta, "refusal").filter(|refusal| !refusal.is_empty()) {
+        out.push(Delta::Text(refusal.into()));
+    }
+
+    // Which call this chunk opened, if it opened one. Arguments in the same
+    // chunk have to belong to it; see `calling`.
+    let mut opened = None;
 
     for call in delta
         .get("tool_calls")
@@ -78,8 +93,10 @@ fn said(delta: &Value, out: &mut Vec<Delta>) {
         .into_iter()
         .flatten()
     {
-        calling(call, out);
+        calling(call, out, &mut opened)?;
     }
+
+    Ok(())
 }
 
 /// One entry of a chunk's tool calls: an opening, a fragment, or both.
@@ -87,26 +104,66 @@ fn said(delta: &Value, out: &mut Vec<Delta>) {
 /// Both is why this appends rather than returns. Nothing on this wire promises
 /// that the chunk carrying a call's name carries no arguments with it, and
 /// dropping that first fragment leaves the model's arguments unparsable.
-fn calling(call: &Value, out: &mut Vec<Delta>) {
+///
+/// Fragments carry no identity, so the runner appends them to whichever call it
+/// opened last. That works because a provider sends each call's fragments
+/// before opening the next one — an assumption, and the one this parser rests
+/// on. What it will not do is assemble a fragment onto a call that is visibly
+/// the wrong one, which is what the two guards below are for.
+fn calling(
+    call: &Value,
+    out: &mut Vec<Delta>,
+    opened: &mut Option<i64>,
+) -> Result<(), ProviderError> {
     let function = call.get("function");
+    let index = call.get("index").and_then(Value::as_i64);
 
-    // An identifier means a call is opening. Only the first chunk of each one
-    // carries it; the fragments after it are identified by position alone,
-    // which the runner handles by assembling whatever call is open.
-    let name = function.and_then(|function| text(function, "name"));
-    if let (Some(id), Some(name)) = (text(call, "id"), name) {
-        out.push(Delta::ToolStarted {
-            id: ToolId::new(id),
-            name: name.into(),
-        });
+    let id = text(call, "id").filter(|id| !id.is_empty());
+    let name = function
+        .and_then(|function| text(function, "name"))
+        .filter(|name| !name.is_empty());
+
+    match (id, name) {
+        (Some(id), Some(name)) => {
+            *opened = index;
+            out.push(Delta::ToolStarted {
+                id: ToolId::new(id),
+                name: name.into(),
+            });
+        }
+
+        // Half an identity. Letting it through would send the arguments below
+        // to whichever call was open before it, which is one tool running on
+        // another tool's arguments rather than a failure anyone can see.
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ProviderError::Protocol {
+                provider: NAME,
+                problem: "a tool call arrived with an id or a name but not both".into(),
+            });
+        }
+
+        // Neither: a fragment of a call already open.
+        (None, None) => {}
     }
 
     let args = function
         .and_then(|function| text(function, "arguments"))
         .filter(|args| !args.is_empty());
-    if let Some(args) = args {
-        out.push(Delta::ToolArgs(args.into()));
+    let Some(args) = args else { return Ok(()) };
+
+    // A chunk that opens one call and then carries arguments for a different
+    // one would have those arguments assembled onto the call just opened.
+    if let (Some(opened), Some(index)) = (*opened, index)
+        && opened != index
+    {
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a chunk carried arguments for a tool call it did not open".into(),
+        });
     }
+
+    out.push(Delta::ToolArgs(args.into()));
+    Ok(())
 }
 
 /// The model saying why it stopped.
@@ -114,8 +171,13 @@ fn stop(reason: &str) -> StopReason {
     match reason {
         "tool_calls" | "function_call" => StopReason::WantsTools,
         "length" => StopReason::OutOfTokens,
-        // `stop`, `content_filter`, and anything added later. Every one of them
-        // means the model is finished and it is the user's move.
+        // Content was withheld, so the answer on screen is not the whole one.
+        // Reporting it as a finish would show a cut-off answer as a complete
+        // one, which is the same mistake `length` is spelled out to avoid.
+        "content_filter" => StopReason::Filtered,
+        // `stop`, and anything added later. A reason this build has not heard
+        // of is treated as a finish, which is the only safe guess: it hands the
+        // turn back rather than asking the provider for more.
         _ => StopReason::Yielded,
     }
 }

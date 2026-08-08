@@ -4,11 +4,12 @@
 //! other way through [`super::wire`], and keeping the two apart is what stops a
 //! change to one shape from quietly altering the other.
 //!
-//! Three things differ from the other protocol here, and all three are in this
-//! file rather than spread through the crate: standing instructions are a
-//! message rather than a field, tool arguments travel as JSON *text* rather
-//! than as an object, and a turn's tool results are one message each rather
-//! than one message together.
+//! What differs from the other protocol is here rather than spread through the
+//! crate: standing instructions are a message rather than a field, tool
+//! arguments travel as JSON *text* rather than as an object, a turn's tool
+//! results are one message each rather than one message together, the token
+//! ceiling has another name, and a failed result is marked by a prefix on the
+//! text because there is no field for it.
 
 use crucible_core::{Message, Request, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
@@ -21,9 +22,10 @@ pub(super) fn build(request: &Request) -> Value {
     put(&mut body, "model", json!(&*request.model));
     put(&mut body, "stream", json!(true));
 
-    // `max_tokens` means the same thing and is the older name for it. The
-    // models that reason before answering refuse it outright, and this one is
-    // taken by all of them.
+    // `max_tokens` is the older name, now deprecated, and the models that
+    // reason before answering refuse it outright. Not quite a rename: this one
+    // bounds the reasoning as well as the visible answer, so the same number
+    // buys a shorter reply from a model that thinks first.
     put(
         &mut body,
         "max_completion_tokens",
@@ -44,8 +46,9 @@ pub(super) fn build(request: &Request) -> Value {
 /// Every message, in order, behind the standing instructions.
 ///
 /// The system prompt is a message here rather than a field of its own. There is
-/// no field for it on this wire, and one sent anyway is ignored — which leaves
-/// a model working without the instructions it was given.
+/// no field for it on this wire, and one sent anyway is refused outright: this
+/// endpoint rejects a top-level field it does not know rather than skipping it,
+/// so the mistake would cost every turn rather than the instructions alone.
 fn messages(request: &Request) -> Vec<Value> {
     let mut messages = Vec::new();
 
@@ -78,13 +81,17 @@ fn agent(text: &str, calls: &[ToolCall]) -> Value {
     let mut message = Map::new();
     put(&mut message, "role", json!("assistant"));
 
-    // A model that goes straight to a tool says nothing first. Null is how this
-    // wire spells that; an empty string is a message with nothing in it.
-    if text.is_empty() {
-        put(&mut message, "content", Value::Null);
+    // A model that goes straight to a tool says nothing first, and null is how
+    // this wire spells that. Null with no calls to carry it is a different
+    // thing — a message with neither content nor purpose, which this wire
+    // requires one of — so an answer that came back empty stays an empty
+    // string. A cancelled turn and a filtered one both reach here.
+    let content = if text.is_empty() && !calls.is_empty() {
+        Value::Null
     } else {
-        put(&mut message, "content", json!(text));
-    }
+        json!(text)
+    };
+    put(&mut message, "content", content);
 
     if !calls.is_empty() {
         let calls = calls.iter().map(call).collect();

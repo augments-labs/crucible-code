@@ -275,6 +275,33 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_that_was_cut_short_does_not_come_back_looking_complete() {
+        // The partial answer stays in the transcript and the prompt returns, so
+        // with nothing said the user reads a sentence that stops mid-thought as
+        // the whole of it — and the model reads its own truncation as a
+        // finished thought on the next turn.
+        let written = conversing(
+            vec![vec![
+                Delta::Text("as I was say".into()),
+                Delta::Stopped(StopReason::OutOfTokens),
+            ]],
+            Tools::new(),
+            "go\n",
+        );
+
+        assert!(written.contains("as I was say"), "{written}");
+        assert!(written.contains("unfinished"), "{written}");
+    }
+
+    #[test]
+    fn a_turn_that_finished_properly_leaves_nothing_extra_behind() {
+        let written = conversing(vec![saying("all done")], Tools::new(), "go\n");
+
+        assert!(written.contains("all done"), "{written}");
+        assert!(!written.contains("unfinished"), "{written}");
+    }
+
+    #[test]
     fn a_provider_that_fails_says_so_instead_of_ending_the_session() {
         // Nothing else posts the turn's own failure, so if the wiring drops it
         // the user gets a prompt back with no explanation and retypes the

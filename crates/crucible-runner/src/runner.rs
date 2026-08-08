@@ -124,6 +124,29 @@ impl Runner {
         events.post(Event::TurnStarted { turn: self.turn });
         self.record(Message::User(prompt.into()));
 
+        // Posted from here rather than from either place the exchange ends, so
+        // that a turn cannot acquire a second way to finish without one. The
+        // reason is what tells a truncated answer from a complete one, and it
+        // has to reach the thread that draws — a return value never does.
+        let stop = self.exchange(ask, events, cancel)?;
+        events.post(Event::TurnFinished {
+            turn: self.turn,
+            stop,
+        });
+
+        Ok(stop)
+    }
+
+    /// Rounds of asking and running, until something ends the turn.
+    ///
+    /// A failure returns instead, and the caller posts nothing: the failure is
+    /// its own event, and a turn with two endings on screen has one too many.
+    fn exchange(
+        &mut self,
+        ask: &mut dyn Ask,
+        events: &dyn Post,
+        cancel: &Cancel,
+    ) -> Result<StopReason, TurnError> {
         loop {
             let answer = self.listen(events, cancel)?;
             let said = answer.stop();

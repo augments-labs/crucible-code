@@ -200,12 +200,33 @@ fn output_that_fits_comes_back_untouched() {
 }
 
 #[test]
-fn the_question_names_the_program_rather_than_the_path_or_the_environment() {
-    // `/usr/bin/cargo` and `cargo` are the same answer to "what is about to
-    // run", and a session-wide allow that told them apart would ask twice.
+fn the_question_names_the_program_as_the_command_wrote_it() {
     assert_eq!(program("cargo test"), "cargo");
-    assert_eq!(program("/usr/bin/cargo test"), "cargo");
-    assert_eq!(program("  RUST_LOG=debug cargo test  "), "cargo");
+    assert_eq!(program("  cargo test  "), "cargo");
+}
+
+#[test]
+fn a_path_is_a_different_program_from_a_bare_name() {
+    // Collapsing these to `cargo` would let one remembered `always` run any
+    // file of that name: the model can write `./cargo` itself and then ask for
+    // it, and a scope that could not tell them apart would not ask again.
+    assert_ne!(program("./cargo test"), program("cargo test"));
+    assert_eq!(program("/usr/bin/cargo test"), "/usr/bin/cargo");
+    assert_eq!(program("./cargo test"), "./cargo");
+}
+
+#[test]
+fn a_leading_assignment_makes_the_whole_command_the_scope() {
+    // The assignment decides which binary the next word resolves to, so that
+    // word alone no longer says what will run.
+    assert_eq!(
+        program("PATH=/tmp/evil cargo test"),
+        "PATH=/tmp/evil cargo test"
+    );
+    assert_eq!(
+        program("  RUST_LOG=debug cargo test  "),
+        "RUST_LOG=debug cargo test"
+    );
 }
 
 #[test]
@@ -222,13 +243,15 @@ fn a_command_that_chains_is_reported_whole() {
 
 #[test]
 fn the_sensitivity_carries_the_program_the_call_asked_for() {
+    // The path as written, not its last component: what the user is consenting
+    // to is the file that will run, and two files can share a name.
     let sample = Sample::new("bash-sensitivity");
     let tool = Bash::new(sample.workspace(), Cancel::new());
 
     assert_eq!(
         tool.sensitivity(&ToolArgs::new(r#"{"command":"/usr/bin/git status"}"#)),
         Sensitivity::SpawnsProcess {
-            program: "git".into()
+            program: "/usr/bin/git".into()
         }
     );
 }

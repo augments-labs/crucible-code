@@ -50,6 +50,13 @@ pub enum StopReason {
     WantsTools,
     /// It hit the token limit for the response.
     OutOfTokens,
+    /// The provider's filter cut the answer short.
+    ///
+    /// Truncation, like [`Self::OutOfTokens`], and separate from it because the
+    /// remedy is different: no smaller request will help. Its own variant
+    /// rather than folding into a finish, because an answer that stops here is
+    /// incomplete and saying otherwise is the thing this enum exists to stop.
+    Filtered,
     /// The user cancelled.
     Cancelled,
 }

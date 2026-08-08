@@ -1,6 +1,6 @@
 //! The OpenAI provider.
 //!
-//! Three parts, and the split is the direction data travels: [`body`] builds a
+//! Four parts, and the split is the direction data travels: [`body`] builds a
 //! request, [`wire`] reads one chunk of a response, [`stream`] delivers a whole
 //! one, and this file is the request itself — the headers and the status.
 //!

