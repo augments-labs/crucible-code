@@ -62,11 +62,18 @@ pub(crate) fn converse<T: Terminal>(
         }
     }
 
-    // The writer thread is still holding the last turn when the loop ends, so
-    // the poll above cannot have seen a failure recorded during it. Draining
-    // here is what stops the one turn most likely to matter from being the one
-    // nobody is told about.
-    if let Some(problem) = runner.into_session().finish()
+    // The writer thread is usually still holding the last turn when the loop
+    // ends, so the poll above cannot be relied on to have seen a failure
+    // recorded during it. Draining here is what stops the one turn most likely
+    // to matter from being the one nobody is told about.
+    //
+    // Its own statement, and not the first half of the condition below, because
+    // the drain is what puts the last turn on the disk: it has to happen
+    // whether or not anything has already been said, and a condition is
+    // something a later edit can reorder into not happening at all.
+    let problem = runner.into_session().finish();
+
+    if let Some(problem) = problem
         && !told
     {
         draw::trouble(renderer, &problem)?;

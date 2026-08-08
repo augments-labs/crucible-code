@@ -87,7 +87,8 @@ pub struct Session {
     path: PathBuf,
     /// `None` in a session that records nothing.
     to: Option<SyncSender<Box<str>>>,
-    /// Taken by `drop`, which is where the queue is waited for.
+    /// Taken by whichever of [`Session::finish`] and `drop` comes first, both
+    /// of which wait for the queue.
     writer: Option<JoinHandle<()>>,
     trouble: Trouble,
 }
@@ -99,8 +100,8 @@ impl Session {
     ///
     /// [`SessionError`] when the directory or the file cannot be made.
     pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
-        // 0700 because the listing itself is worth keeping: one entry per
-        // session says how often crucible ran and when. And a group-writable
+        // 0700 because the listing itself is worth keeping private: one entry
+        // per session says how often crucible ran and when. And a group-writable
         // directory would let another account drop a log in for `--continue` to
         // find, which is the injection the mode on the logs guards against from
         // the other side.
@@ -142,10 +143,30 @@ impl Session {
         directory: &Path,
         workspace: &Workspace,
     ) -> Result<(Self, Transcript), SessionError> {
-        let path = newest(directory, workspace)?;
-        let transcript = replay(&path)?;
+        // Narrowed here as well as in `start`, because this is the path that
+        // reads what is in the directory rather than only adding to it. A
+        // group-writable directory lets another account drop in a log with this
+        // workspace in its header and a name that sorts late, and `--continue`
+        // replays whatever it finds as though the user had typed it.
+        narrow(directory, 0o700).map_err(|source| SessionError::Directory {
+            at: directory.display().to_string().into(),
+            source,
+        })?;
 
-        Ok((Self::writing(path.clone(), open(&path)?), transcript))
+        let path = newest(directory, workspace)?;
+        let (transcript, settled_at) = replay(&path)?;
+
+        let file = open(&path)?;
+        // Before a single byte is appended: the log is opened for append, so
+        // whatever `replay` stopped at would otherwise have the next turn
+        // written straight onto the end of it. See [`replay`].
+        file.set_len(settled_at)
+            .map_err(|source| SessionError::Log {
+                at: path.display().to_string().into(),
+                source,
+            })?;
+
+        Ok((Self::writing(path.clone(), file), transcript))
     }
 
     /// A session that records nothing, for a run that asked not to be kept.
@@ -307,22 +328,26 @@ fn open(path: &Path) -> Result<File, SessionError> {
     Ok(file)
 }
 
-/// Takes `path` down to `mode`, and only when it is not already at least that
-/// tight.
+/// Puts `path` at exactly `mode`, and only when it is not already there.
 ///
 /// `DirBuilderExt::mode` and `OpenOptionsExt::mode` apply only when the call
 /// creates the thing, so a sessions directory or a log left by an earlier build
-/// keeps whatever it was made with until something narrows it.
+/// keeps whatever it was made with until something sets it.
 ///
 /// Reading the mode first is what keeps the ordinary case — a directory already
 /// at 0700, every run after the first — from calling `chmod` at all. That call
 /// fails on a filesystem carrying no Unix modes, and a startup that dies over a
-/// permission which is already correct helps nobody. Where the mode really is
-/// too open and cannot be narrowed, the error stands: the log would otherwise
-/// be readable by every account on the machine and nothing would have said so.
+/// permission which is already correct helps nobody. It is compared exactly and
+/// not as "at least this tight", because the two ways to be wrong both need
+/// fixing and only one of them is about secrecy: too open hands the transcript
+/// to every account on the machine, and too tight is a session that cannot
+/// start, reported against the log rather than the directory that refused.
+/// Where the mode really cannot be set, the error stands.
+///
+/// Setting it also clears any set-user, set-group or sticky bit, which is why
+/// the ones already correct are left alone rather than rewritten.
 fn narrow(path: &Path, mode: u32) -> Result<(), io::Error> {
-    let current = std::fs::metadata(path)?.permissions().mode();
-    if current & 0o777 & !mode == 0 {
+    if std::fs::metadata(path)?.permissions().mode() & 0o777 == mode {
         return Ok(());
     }
 

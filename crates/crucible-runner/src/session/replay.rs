@@ -8,9 +8,9 @@
 //! line that cannot be read all live here together.
 
 use std::fs::File;
-use std::io::{BufRead as _, BufReader};
+use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
+use std::str::{self, FromStr as _};
 
 use crucible_core::{Message, SessionId, Transcript, Workspace};
 
@@ -84,72 +84,95 @@ fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
     }
 }
 
-/// Everything a log holds, as the transcript it recorded.
+/// Everything a log holds, as the transcript it recorded and the offset the
+/// next write has to start at.
 ///
-/// Reading stops at the first line that cannot be read *as a message*. A
-/// session that ended when the process did leaves a half-written last line, and
-/// a prefix of the transcript is a transcript; one with a hole in it is not.
+/// Reading stops at the first line that is not a whole message. A session that
+/// ended when the process did leaves a half-written last line, and a prefix of
+/// the transcript is a transcript; one with a hole in it is not.
 ///
-/// A line that cannot be read at all fails outright — but only once something
-/// follows it. Bytes that are not text stop the read wherever they sit, so
-/// treating a damaged line in the middle as the end of the log would drop every
-/// turn after it and hand back a transcript missing its middle with nothing to
-/// say so. At the end of the file there is nothing to drop: a process killed
-/// between the bytes of one character leaves exactly that, and it is the
-/// half-written last line this already forgives.
-pub(super) fn replay(path: &Path) -> Result<Transcript, SessionError> {
+/// A line the process finished writing and this build still cannot read is a
+/// different thing, and fails outright: treating damage in the middle as the
+/// end of the log would drop every turn after it and hand back a transcript
+/// missing its middle with nothing to say so. The two are told apart by the
+/// newline, which is the one thing a process killed mid-write cannot have got
+/// round to.
+///
+/// The offset is what the caller must cut the file to before appending, and it
+/// is the reason this returns one at all: everything from there on is a
+/// fragment or a line no replay will read again, so a log continued without the
+/// cut welds the next turn onto the wreckage. That costs either the continued
+/// turn, silently, or — once the weld is no longer the last line — the whole
+/// session. Cutting touches nothing that was replayed, so what is on disk
+/// afterwards reads back as exactly the transcript returned here.
+pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
     };
 
-    let file = File::open(path).map_err(trouble)?;
+    let mut log = BufReader::new(File::open(path).map_err(trouble)?);
+    let mut raw = Vec::new();
+
+    // The header is not a message, but its bytes are where the messages start.
+    let mut through = log.read_until(b'\n', &mut raw).map_err(trouble)? as u64;
+    // The same, one message back, for when the last one turns out to be a
+    // question the log never answers.
+    let mut before = through;
 
     let mut transcript = Transcript::new();
-    // Held rather than returned, because whether it is fatal is decided by
-    // whether the iterator yields again. Reading one line further is the only
-    // way to tell a torn tail from damage in the middle.
-    let mut damaged = None;
 
-    for line in BufReader::new(file).lines().skip(1) {
-        if let Some(source) = damaged.take() {
-            return Err(trouble(source));
+    loop {
+        raw.clear();
+        let read = log.read_until(b'\n', &mut raw).map_err(trouble)?;
+
+        if read == 0 || !raw.ends_with(b"\n") {
+            break;
         }
 
-        match line {
-            Err(source) => damaged = Some(source),
-            Ok(text) => {
-                let Some(message) = wire::message(&text) else {
-                    break;
-                };
-                transcript.push(message);
-            }
-        }
+        let Ok(text) = str::from_utf8(&raw) else {
+            return Err(trouble(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a line that is not text, with the log continuing past it",
+            )));
+        };
+
+        let Some(message) = wire::message(text.trim_end()) else {
+            break;
+        };
+
+        transcript.push(message);
+        before = through;
+        through += read as u64;
     }
 
-    Ok(settled(transcript))
+    if outstanding(&transcript) {
+        return Ok((without_last(&transcript), before));
+    }
+
+    Ok((transcript, through))
 }
 
-/// The transcript without a last message that is still waiting on tools.
+/// Whether the last message is still waiting on tools.
 ///
 /// A process that died between asking for a tool and recording its result
 /// leaves calls nothing ever answered. Sending that on is not a cosmetic
 /// problem: a provider is entitled to reject a transcript whose last word is
 /// an unanswered question.
-fn settled(transcript: Transcript) -> Transcript {
-    let outstanding = matches!(
+fn outstanding(transcript: &Transcript) -> bool {
+    matches!(
         transcript.messages().last(),
         Some(Message::Agent { calls, .. }) if !calls.is_empty()
-    );
+    )
+}
 
-    if !outstanding {
-        return transcript;
-    }
-
-    // A transcript-sized copy, once per `--continue` and never again: this runs
-    // before the first turn, on a transcript already read whole from the disk,
-    // and the alternative is a `Transcript` that can have its last message taken
-    // off — a method the running loop would then also be able to reach for.
+/// A copy without the final message.
+///
+/// A transcript-sized copy, once per `--continue` and never again: this runs
+/// before the first turn, on a transcript already read whole from the disk, and
+/// the alternative is a `Transcript` that can have its last message taken off —
+/// a method the running loop would then also be able to reach for.
+fn without_last(transcript: &Transcript) -> Transcript {
     let mut settled = Transcript::new();
     for message in transcript.messages().iter().rev().skip(1).rev() {
         settled.push(message.clone());

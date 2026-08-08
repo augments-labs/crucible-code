@@ -19,6 +19,11 @@
 //! first and then judged by where they landed, which is why one that stays
 //! inside is allowed and one that leaves is not.
 //!
+//! With one thing it cannot judge: a link whose target does not exist has no
+//! landing place to be judged by, so creating through it is refused whichever
+//! way it points. That is its own answer and not an escape, because a dangling
+//! link may well point back inside.
+//!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. What bounds that tool is the permission engine, which is

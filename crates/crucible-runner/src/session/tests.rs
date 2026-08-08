@@ -79,6 +79,60 @@ fn a_sessions_directory_left_open_is_narrowed_before_anything_is_written_to_it()
 }
 
 #[test]
+fn a_sessions_directory_left_open_is_narrowed_when_a_session_is_continued() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // `start` is not the only way in. A run that goes straight to `--continue`
+    // never reaches it, so a directory widened since the last session stays
+    // widened for the whole of this one — and this is the path that goes
+    // looking in it, so another account's log is what `--continue` might find.
+    let sample = Sample::new("session-widened-directory-continued");
+    record(&sample, &[said("hello")]);
+    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o755)).expect("a temporary dir");
+
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    drop(session);
+
+    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "directory is {:o}", mode & 0o777);
+}
+
+#[test]
+fn a_sessions_directory_too_tight_to_use_is_repaired_rather_than_left_broken() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // Nothing is exposed by a directory the owner cannot write to, so it is not
+    // a security problem — it is a session that cannot start, reported against
+    // the log rather than against the directory that actually refused.
+    let sample = Sample::new("session-tight-directory");
+    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o500)).expect("a temporary dir");
+
+    record(&sample, &[said("hello")]);
+
+    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700, "directory is {:o}", mode & 0o777);
+}
+
+#[test]
+fn a_mode_that_is_already_right_is_not_written_again() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // The whole point of reading the mode first is the `chmod` that then does
+    // not happen — on a filesystem carrying no Unix modes that call fails, and
+    // a startup dying over a permission which is already correct helps nobody.
+    // A `chmod` leaves no trace a test can read, so the sticky bit stands in for
+    // it: writing 0700 over this directory would take it off.
+    let sample = Sample::new("session-untouched-directory");
+    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o1700))
+        .expect("a temporary dir");
+
+    record(&sample, &[said("hello")]);
+
+    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
+    assert_eq!(mode & 0o7777, 0o1700, "directory is {:o}", mode & 0o7777);
+}
+
+#[test]
 fn a_log_left_open_is_narrowed_when_it_is_continued() {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -254,41 +308,6 @@ fn nothing_to_continue_says_so_rather_than_starting_over() {
 }
 
 #[test]
-fn a_log_from_a_different_version_is_refused_rather_than_half_read() {
-    let sample = Sample::new("session-foreign");
-    let workspace = sample.workspace().root().display().to_string();
-
-    sample.plant(
-        "0000000000002-000002",
-        &[
-            format!(r#"{{"format":99,"session":"future","workspace":"{workspace}"}}"#),
-            r#"{"utterance":"something this build has never heard of"}"#.to_owned(),
-        ],
-    );
-
-    let problem = Session::resume(&sample.logs(), &sample.workspace()).expect_err("not ours");
-
-    assert!(matches!(problem, SessionError::Foreign { .. }));
-}
-
-#[test]
-fn a_half_written_last_line_costs_only_that_line() {
-    // What a process killed mid-write leaves behind. Everything before it is
-    // still a transcript.
-    let sample = Sample::new("session-torn");
-    let path = record(&sample, &[said("kept"), said("also kept")]);
-
-    let whole = fs::read_to_string(&path).expect("the log");
-    let torn = format!("{whole}{{\"user\":\"cut off mid");
-    fs::write(&path, torn).expect("a writable temporary directory");
-
-    let (_session, transcript) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
-    assert_eq!(transcript.messages(), &[said("kept"), said("also kept")]);
-}
-
-#[test]
 fn calls_nothing_ever_answered_do_not_come_back() {
     // The process died between asking for a tool and recording its result. A
     // provider is entitled to reject a transcript whose last word is a question
@@ -315,80 +334,4 @@ fn a_session_that_records_nothing_is_still_a_session() {
     assert_eq!(session.path(), std::path::Path::new(""));
 }
 
-#[test]
-fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session() {
-    // Bytes that are not text stop the read wherever they sit. Taken for the
-    // end of the log, one damaged line in the middle silently drops every turn
-    // after it, and `--continue` hands back a transcript missing its middle
-    // with nothing anywhere to say so.
-    let sample = Sample::new("session-unreadable");
-    let workspace = sample.workspace().root().display().to_string();
-    let path = sample.plant(
-        "0000000000004-000004",
-        &[
-            format!(r#"{{"format":1,"session":"damaged","workspace":"{workspace}"}}"#),
-            r#"{"user":"before"}"#.to_owned(),
-        ],
-    );
-
-    let mut damaged = fs::read(&path).expect("the log");
-    damaged.extend_from_slice(b"{\"user\":\"\xff\xfe\"}\n");
-    damaged.extend_from_slice(br#"{"user":"after"}"#);
-    damaged.push(b'\n');
-    fs::write(&path, damaged).expect("a writable temporary directory");
-
-    let problem = Session::resume(&sample.logs(), &sample.workspace()).expect_err("unreadable");
-
-    assert!(matches!(problem, SessionError::Log { .. }), "{problem}");
-}
-
-#[test]
-fn a_line_that_is_not_a_message_stops_the_replay() {
-    // Recognising some lines and skipping others would hand the model a
-    // transcript with a hole in it, which reads as the user contradicting
-    // themselves.
-    let sample = Sample::new("session-hole");
-    let workspace = sample.workspace().root().display().to_string();
-
-    sample.plant(
-        "0000000000003-000003",
-        &[
-            format!(r#"{{"format":1,"session":"holed","workspace":"{workspace}"}}"#),
-            r#"{"user":"kept"}"#.to_owned(),
-            r#"{"whatever":"not a message"}"#.to_owned(),
-            r#"{"user":"never reached"}"#.to_owned(),
-        ],
-    );
-
-    let (_session, transcript) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
-    assert_eq!(transcript.messages(), &[said("kept")]);
-}
-
-#[test]
-fn a_last_line_torn_mid_character_ends_the_log_rather_than_failing_it() {
-    // A process that dies while writing stops wherever it stops, including
-    // between the bytes of one character. That is the same half-written last
-    // line the replay already forgives; refusing to continue over it costs the
-    // user every turn in the log, and the file says nothing followed.
-    let sample = Sample::new("session-torn-character");
-    let workspace = sample.workspace().root().display().to_string();
-    let path = sample.plant(
-        "0000000000005-000005",
-        &[
-            format!(r#"{{"format":1,"session":"torn","workspace":"{workspace}"}}"#),
-            r#"{"user":"kept"}"#.to_owned(),
-        ],
-    );
-
-    // The first two bytes of a three-byte character, and then the power cut.
-    let mut torn = fs::read(&path).expect("the log");
-    torn.extend_from_slice(b"{\"user\":\"\xe2\x82");
-    fs::write(&path, torn).expect("a writable temporary directory");
-
-    let (_session, transcript) =
-        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
-    assert_eq!(transcript.messages(), &[said("kept")]);
-}
+mod recovery;

@@ -184,14 +184,41 @@ fn an_ordinary_turn_adds_no_line_of_its_own() {
 fn every_notice_is_a_single_line() {
     // Committed lines are counted as rows by the tail. These are this
     // program's own words, but the rule is the rule.
-    for stop in [
+    //
+    // Listed by an exhaustive `match` rather than an array, so a reason added
+    // to `StopReason` stops the build here instead of being the one whose
+    // wording nobody checked.
+    let every = [
+        StopReason::Yielded,
+        StopReason::WantsTools,
         StopReason::OutOfTokens,
         StopReason::Filtered,
+        StopReason::Paused,
         StopReason::Cancelled,
-    ] {
+    ];
+
+    for stop in every {
+        match stop {
+            StopReason::Yielded
+            | StopReason::WantsTools
+            | StopReason::OutOfTokens
+            | StopReason::Filtered
+            | StopReason::Paused
+            | StopReason::Cancelled => {}
+        }
+
         let said = notice(stop).unwrap_or_default();
         assert!(!said.contains('\n'), "{stop:?}: {said}");
     }
+}
+
+#[test]
+fn a_paused_turn_says_it_is_unfinished_rather_than_ending_quietly() {
+    // The provider is waiting to be asked to carry on and 0.0.x does not, so
+    // with nothing said the user reads a half-answer as the whole of it.
+    let paused = notice(StopReason::Paused).expect("an incomplete answer");
+
+    assert!(paused.contains("paused"), "{paused}");
 }
 
 #[test]

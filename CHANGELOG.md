@@ -43,12 +43,13 @@ that say what it is allowed to become.
 - Session log: one JSON object per line, one file per session, under
   `$XDG_DATA_HOME/crucible/sessions`. A log from a build with a different format
   is refused rather than half-understood. The log is `0600` and its directory
-  `0700`, narrowed on every start rather than only at creation, because a
-  transcript holds what was typed, what files were read and what commands
-  printed — and a group-writable directory would let another account drop a log
-  in for `--continue` to replay. A log torn mid-line by a crash costs that line;
-  one damaged in the middle is refused outright rather than silently returning a
-  session with a hole in it.
+  `0700`, set on every start and every `--continue` rather than only at
+  creation, because a transcript holds what was typed, what files were read and
+  what commands printed — and a group-writable directory would let another
+  account drop a log in for `--continue` to replay. A log torn mid-line by a
+  crash costs that line, and the torn bytes are dropped from the file before the
+  continued session appends to it; one damaged in the middle is refused outright
+  rather than silently returning a session with a hole in it.
 - `docs/` — getting started, providers and models, permission, and sessions.
 - Cargo workspace: `crucible-core`, `crucible-provider`, `crucible-tools`,
   `crucible-runner`, `crucible-tui`, and the `crucible` binary. Dependencies
@@ -109,10 +110,11 @@ that say what it is allowed to become.
 - A provider that pauses a turn is reported and left there. Sending the
   transcript back to carry on is a decision for the user, not something 0.0.x
   does by itself.
-- A sessions directory or log left more open than `0700`/`0600` is narrowed on
-  start, and a filesystem that refuses to narrow it fails the start rather than
-  writing a transcript somewhere the whole machine can read. One already at the
-  right mode is not touched, so this costs nothing on the ordinary path.
+- A sessions directory or log left at anything other than `0700`/`0600` is set
+  to it on start and on `--continue`, and a filesystem that refuses fails the
+  run rather than writing a transcript somewhere the whole machine can read. One
+  already at the right mode is not touched, so this costs nothing on the
+  ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
 [0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1

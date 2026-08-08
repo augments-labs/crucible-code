@@ -23,9 +23,14 @@ rather than silently starting a new session.
 
 A log the process was killed part-way through writing costs the line it was on
 and nothing more — the turns before it are still a transcript, and `--continue`
-hands them back. A log damaged somewhere in the *middle* is refused instead:
-continuing from a transcript with a hole in it would read to the model as you
-contradicting yourself, and nothing would say why.
+hands them back. The half-written line is dropped from the file as the session
+is continued, before anything new is appended: the next turn would otherwise be
+written onto the end of it, which turns a lost line into a log that cannot be
+read at all. Nothing that was handed back is touched.
+
+A log damaged somewhere in the *middle* is refused instead: continuing from a
+transcript with a hole in it would read to the model as you contradicting
+yourself, and nothing would say why.
 
 ## Where they are kept
 
@@ -56,11 +61,12 @@ matching reason from the other side: somewhere another account can write is
 somewhere a log can be *planted* for `--continue` to replay back to the model as
 though you had typed it.
 
-Both are narrowed on every start, not only when they are created, because a
-directory made by an earlier build or by hand keeps whatever your umask gave it.
-One already at the right mode is left alone. A path that is too open and cannot
-be narrowed stops the start and says so, rather than carrying on and writing a
-transcript somewhere the whole machine can read.
+Both are set on every start and every `--continue`, not only when they are
+created, because a directory made by an earlier build or by hand keeps whatever
+your umask gave it — and `--continue` is the run that goes looking in it. One
+already at the right mode is left alone, so this costs nothing on the ordinary
+path. A path that cannot be set stops the run and says so, rather than carrying
+on and writing a transcript somewhere the whole machine can read.
 
 ## What is in a file
 
