@@ -227,6 +227,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-config"
+version = "0.0.2"
+dependencies = [
+ "crucible-core",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-core"
 version = "0.0.2"
 dependencies = [

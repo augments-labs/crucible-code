@@ -1,0 +1,24 @@
+[package]
+name = "crucible-config"
+description = "The configuration document, its layers, and the schema generated from them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `Verdict` and the newtypes a resolved setting turns into, so the wiring above
+# receives domain types rather than strings it has to interpret again.
+crucible-core.workspace = true
+# The document is JSON. Read without `derive`, the same way every other boundary
+# in this workspace reads one: the shape is walked against `shape::DOCUMENT`, so
+# a mirror struct per block would be a second declaration of the same keys and
+# the schema could no longer be generated from one of them.
+serde_json.workspace = true
+# `ConfigError`, which the wiring turns into something the user reads.
+thiserror.workspace = true
+
+[lints]
+workspace = true

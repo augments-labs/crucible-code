@@ -15,15 +15,21 @@ authors = ["Peguy Njoyim"]
 # not reviewed:
 #
 #   core       -> (nothing)
+#   config     -> core            the document, its layers, and its schema
 #   provider   -> core
 #   tools      -> core
 #   runner     -> core            drives turns through traits only
 #   tui        -> core
-#   crucible-code (this package) -> all five, and is the only place concrete
+#   crucible-code (this package) -> all six, and is the only place concrete
 #                                   types are wired together
+#
+# `config` sits beside the others rather than above them: it reads files into
+# settings and hands them to the wiring, which is what applies them. Nothing
+# below reaches up to ask what the user configured.
 [workspace.dependencies]
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }

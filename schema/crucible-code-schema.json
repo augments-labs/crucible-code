@@ -1,0 +1,99 @@
+{
+  "$id": "https://json.schemastore.org/crucible-code-schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Settings for the crucible coding agent. Formats are unstable while the version is 0.0.x: any key here may be renamed or removed in any release, with no deprecation period.",
+  "properties": {
+    "$comment": {
+      "type": "string"
+    },
+    "$schema": {
+      "type": "string"
+    },
+    "env": {
+      "additionalProperties": false,
+      "description": "Environment variables to set, crucible's own CRUCIBLE_CODE_ settings among them. A checked-in file may set only those",
+      "patternProperties": {
+        "^[^$]": {
+          "type": "string"
+        }
+      },
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "output": {
+      "additionalProperties": false,
+      "description": "What the terminal shows",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "color": {
+          "description": "Whether to dim the prompt: auto follows the terminal and NO_COLOR, always and never override it",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "type": "string"
+        },
+        "toolDetail": {
+          "description": "How much of a tool call and its result one line shows",
+          "enum": [
+            "compact",
+            "full"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "providers": {
+      "additionalProperties": false,
+      "description": "Per-provider defaults, keyed by provider name",
+      "patternProperties": {
+        "^[^$]": {
+          "additionalProperties": false,
+          "properties": {
+            "$comment": {
+              "type": "string"
+            },
+            "$schema": {
+              "type": "string"
+            },
+            "apiKeyEnv": {
+              "description": "Name of the environment variable holding this provider's API key — the name, never the key",
+              "type": "string"
+            },
+            "model": {
+              "description": "The model to ask when --model does not name one",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "crucible configuration",
+  "type": "object"
+}
