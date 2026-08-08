@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 > command-line surface may change in any `0.0.x` release with no deprecation
 > period. Nothing in this line carries a compatibility guarantee.
 
+## [Unreleased]
+
+Nothing yet.
+
 ## [0.0.1] - 2026-08-08
 
 The first release: a coding agent you can hold a session with, and the gates
@@ -117,4 +121,5 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.1...HEAD
 [0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1
