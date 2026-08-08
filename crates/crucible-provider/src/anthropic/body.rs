@@ -36,15 +36,20 @@ pub(super) fn build(request: &Request) -> Value {
     Value::Object(body)
 }
 
-/// Every message, in order.
+/// Every message that has something in it, in order.
 fn messages(transcript: &Transcript) -> Vec<Value> {
-    transcript.messages().iter().map(message).collect()
+    transcript.messages().iter().filter_map(message).collect()
 }
 
-/// One message.
-fn message(message: &Message) -> Value {
+/// One message, or nothing if it would carry no content.
+///
+/// Empty is refused at both levels this wire has: an empty text block, and a
+/// message whose blocks all turned out to be empty ones. The second is why this
+/// returns an option — dropping the block but keeping the message that held it
+/// only moves the refusal up a level.
+fn message(message: &Message) -> Option<Value> {
     match message {
-        Message::User(text) => json!({ "role": "user", "content": &**text }),
+        Message::User(text) => Some(json!({ "role": "user", "content": &**text })),
         Message::Agent { text, calls } => {
             let mut content = Vec::with_capacity(calls.len() + 1);
 
@@ -63,14 +68,22 @@ fn message(message: &Message) -> Value {
                 }));
             }
 
-            json!({ "role": "assistant", "content": content })
+            // Nothing said and nothing asked for: a turn cancelled or filtered
+            // before the model's first word. It is recorded, so the message is
+            // in the session file and would be sent on every turn after it —
+            // one bad turn making the session refuse to continue at all.
+            if content.is_empty() {
+                return None;
+            }
+
+            Some(json!({ "role": "assistant", "content": content }))
         }
         // Results are the user's turn as far as the API is concerned: the model
         // asked, and this is the answer coming back to it.
-        Message::ToolResults(results) => json!({
+        Message::ToolResults(results) => Some(json!({
             "role": "user",
             "content": results.iter().map(result).collect::<Vec<_>>(),
-        }),
+        })),
     }
 }
 
@@ -223,6 +236,29 @@ mod tests {
 
         assert_eq!(content.as_array().map(Vec::len), Some(1));
         assert_eq!(at(&body, "/messages/1/content/0/type"), &json!("tool_use"));
+    }
+
+    #[test]
+    fn a_turn_that_produced_nothing_at_all_does_not_send_an_empty_message() {
+        // A turn cancelled or filtered before the model's first word records an
+        // agent message with no text and no calls. An empty content array is a
+        // 400 — and because the message is in the session file, `--continue`
+        // would send it again on every turn from then on. The session would be
+        // permanently unusable, and nothing about the failure would say why.
+        let mut transcript = said("go");
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: Vec::new(),
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages").as_array().map(Vec::len),
+            Some(1),
+            "a message with no blocks in it is refused: {body}"
+        );
+        assert_eq!(at(&body, "/messages/0/content"), &json!("go"));
     }
 
     #[test]
