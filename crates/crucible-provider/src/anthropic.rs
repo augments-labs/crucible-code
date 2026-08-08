@@ -101,7 +101,7 @@ impl Provider for Anthropic {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ApiKey, Delta, HeaderKey, Message, StopReason, Transcript};
+    use crucible_core::{ApiKey, Delta, Header, HeaderKey, Message, StopReason, Transcript};
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
@@ -112,7 +112,7 @@ mod tests {
 
     fn provider(status: u16, body: &str) -> (Anthropic, std::sync::Arc<Replay>) {
         let replay = std::sync::Arc::new(Replay::new(status, body));
-        let credential = HeaderKey::new(ApiKey::new(SECRET), "x-api-key", "");
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bare("x-api-key"));
 
         (
             Anthropic::new(

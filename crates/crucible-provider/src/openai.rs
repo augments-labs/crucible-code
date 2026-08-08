@@ -103,7 +103,7 @@ impl Provider for OpenAi {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ApiKey, Delta, HeaderKey, Message, StopReason, Transcript};
+    use crucible_core::{ApiKey, Delta, Header, HeaderKey, Message, StopReason, Transcript};
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
@@ -114,7 +114,7 @@ mod tests {
 
     fn provider(status: u16, body: &str) -> (OpenAi, std::sync::Arc<Replay>) {
         let replay = std::sync::Arc::new(Replay::new(status, body));
-        let credential = HeaderKey::new(ApiKey::new(SECRET), "authorization", "Bearer ");
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
 
         (
             OpenAi::new(

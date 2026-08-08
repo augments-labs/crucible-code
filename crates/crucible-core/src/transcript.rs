@@ -11,7 +11,7 @@
 use crate::ids::ToolId;
 use crate::tool::{ToolCall, ToolOutput};
 
-/// One entry in the transcript.
+/// One message in the transcript.
 ///
 /// A closed set. A provider translates each variant into its own wire shape,
 /// so a new variant must break every provider that has not handled it.
@@ -105,33 +105,11 @@ impl Transcript {
             .filter(|message| matches!(message, Message::User(_)))
             .count()
     }
-
-    /// The tool calls awaiting results, if the last thing the model did was
-    /// ask for tools.
-    ///
-    /// Empty when the model yielded, which is how the runner knows the turn is
-    /// over without tracking a separate flag.
-    #[must_use]
-    pub fn pending_calls(&self) -> &[ToolCall] {
-        match self.messages.last() {
-            Some(Message::Agent { calls, .. }) => calls,
-            _ => &[],
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolArgs;
-
-    fn call(id: &str) -> ToolCall {
-        ToolCall {
-            id: ToolId::new(id),
-            name: "read".into(),
-            args: ToolArgs::new("{}"),
-        }
-    }
 
     #[test]
     fn a_new_transcript_is_empty() {
@@ -153,47 +131,5 @@ mod tests {
 
         assert_eq!(transcript.turns(), 2);
         assert_eq!(transcript.len(), 3);
-    }
-
-    #[test]
-    fn a_model_that_asked_for_tools_has_pending_calls() {
-        let mut transcript = Transcript::new();
-        transcript.push(Message::User("go".into()));
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![call("a"), call("b")],
-        });
-
-        assert_eq!(transcript.pending_calls().len(), 2);
-    }
-
-    #[test]
-    fn a_model_that_yielded_has_no_pending_calls() {
-        let mut transcript = Transcript::new();
-        transcript.push(Message::User("go".into()));
-        transcript.push(Message::Agent {
-            text: "done".into(),
-            calls: Vec::new(),
-        });
-
-        assert!(transcript.pending_calls().is_empty());
-    }
-
-    #[test]
-    fn results_clear_the_pending_calls() {
-        let mut transcript = Transcript::new();
-        transcript.push(Message::Agent {
-            text: String::new().into(),
-            calls: vec![call("a")],
-        });
-        transcript.push(Message::ToolResults(vec![ToolResult {
-            id: ToolId::new("a"),
-            output: ToolOutput::ok("contents"),
-        }]));
-
-        assert!(
-            transcript.pending_calls().is_empty(),
-            "results are in, so nothing is pending"
-        );
     }
 }

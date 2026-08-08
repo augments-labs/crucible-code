@@ -45,6 +45,23 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
 }
 
 #[test]
+fn a_log_is_readable_only_by_the_user_who_started_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // A transcript carries what was typed, the contents of files that were
+    // read and everything a command printed. On a shared machine the default
+    // 0644 hands all of it to anyone with an account.
+    let sample = Sample::new("session-mode");
+    let path = record(&sample, &[said("hello")]);
+
+    let mode = fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "log is {:o}", mode & 0o777);
+
+    let directory = fs::metadata(sample.logs()).unwrap().permissions().mode();
+    assert_eq!(directory & 0o077, 0, "directory is {:o}", directory & 0o777);
+}
+
+#[test]
 fn every_message_reaches_the_file_in_the_order_it_happened() {
     let sample = Sample::new("session-order");
 
@@ -219,6 +236,33 @@ fn a_session_that_records_nothing_is_still_a_session() {
 
     assert!(session.trouble().is_none());
     assert_eq!(session.path(), std::path::Path::new(""));
+}
+
+#[test]
+fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session() {
+    // Bytes that are not text stop the read wherever they sit. Taken for the
+    // end of the log, one damaged line in the middle silently drops every turn
+    // after it, and `--continue` hands back a conversation missing its middle
+    // with nothing anywhere to say so.
+    let sample = Sample::new("session-unreadable");
+    let workspace = sample.workspace().root().display().to_string();
+    let path = sample.plant(
+        "0000000000004-000004",
+        &[
+            format!(r#"{{"format":1,"session":"damaged","workspace":"{workspace}"}}"#),
+            r#"{"user":"before"}"#.to_owned(),
+        ],
+    );
+
+    let mut damaged = fs::read(&path).expect("the log");
+    damaged.extend_from_slice(b"{\"user\":\"\xff\xfe\"}\n");
+    damaged.extend_from_slice(br#"{"user":"after"}"#);
+    damaged.push(b'\n');
+    fs::write(&path, damaged).expect("a writable temporary directory");
+
+    let problem = Session::resume(&sample.logs(), &sample.workspace()).expect_err("unreadable");
+
+    assert!(matches!(problem, SessionError::Log { .. }), "{problem}");
 }
 
 #[test]

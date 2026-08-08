@@ -281,6 +281,40 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn what_a_chunk_already_yielded_survives_the_cancel_that_follows_it() {
+        // The deltas are off the socket and in the queue by the time the user
+        // asks to stop, so dropping them loses part of an answer that had
+        // already arrived — and a tool call lost this way leaves the transcript
+        // holding arguments for a call it never opened.
+        let body = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"one moment\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let cancel = Cancel::new();
+        let mut stream = reading(body, &cancel);
+
+        assert_eq!(
+            stream.next().unwrap().unwrap(),
+            Delta::Text("one moment".into())
+        );
+        cancel.request();
+
+        assert_eq!(
+            stream.next().unwrap().unwrap(),
+            Delta::ToolStarted {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+            },
+            "the queue was thrown away instead of drained"
+        );
+        assert_eq!(
+            stream.next().unwrap().unwrap(),
+            Delta::Stopped(StopReason::Cancelled)
+        );
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
     fn a_stream_shows_no_response_content_in_its_debug() {
         // It is held by the runner for the length of a turn, so it appears in
         // whatever that prints.

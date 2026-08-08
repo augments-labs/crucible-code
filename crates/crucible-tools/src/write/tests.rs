@@ -102,6 +102,38 @@ fn climbing_out_through_a_directory_it_makes_itself_is_refused() {
 }
 
 #[test]
+fn writing_through_a_symlink_that_leaves_the_workspace_is_refused() {
+    // A cloned repository can ship a symlink, and git preserves it. The name
+    // the model asks for is inside the tree and the question the user answers
+    // says nothing about where it goes, so the containment check is the only
+    // thing standing between the two.
+    let sample = Sample::new("write-symlink");
+    let outside = sample.outside("secret.txt", "original\n");
+    std::os::unix::fs::symlink(&outside, sample.root().join("notes.txt")).unwrap();
+
+    let output = write(&sample, r#"{"path":"notes.txt","content":"stolen\n"}"#);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "original\n");
+}
+
+#[test]
+fn creating_through_a_dangling_symlink_that_leaves_the_workspace_is_refused() {
+    // The variant that creates rather than replaces: the target does not exist
+    // yet, so the write would put a brand new file outside the tree — a shell
+    // profile, a config file, anything that runs later.
+    let sample = Sample::new("write-dangling");
+    let outside = sample.outside("absent.txt", "");
+    fs::remove_file(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, sample.root().join("fresh.txt")).unwrap();
+
+    let output = write(&sample, r#"{"path":"fresh.txt","content":"stolen\n"}"#);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(!std::path::Path::new(&outside).exists());
+}
+
+#[test]
 fn a_directory_is_not_a_file_to_write_over() {
     let sample = Sample::new("write-dir");
     sample.write("sub/one.txt", "a\n");

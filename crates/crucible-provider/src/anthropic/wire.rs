@@ -85,9 +85,18 @@ fn stopped(payload: &Value) -> Option<Delta> {
 
     Some(Delta::Stopped(match reason {
         "tool_use" => StopReason::WantsTools,
-        "max_tokens" => StopReason::OutOfTokens,
-        // `end_turn`, `stop_sequence`, and anything added later. Every one of
-        // them means the model is finished and it is the user's move.
+
+        // Two different ceilings, one remedy: ask for less and the answer
+        // arrives whole.
+        "max_tokens" | "model_context_window_exceeded" => StopReason::OutOfTokens,
+
+        // Stopped by a classifier rather than by the model. No shorter request
+        // helps, which is why it is not folded in with the ceilings above.
+        "refusal" => StopReason::Filtered,
+
+        // `end_turn` and `stop_sequence`. A reason added later lands here too
+        // and will read as a finish — so a new one in the vendor's list is a
+        // change to make here, not something this arm can be trusted to cover.
         _ => StopReason::Yielded,
     }))
 }
@@ -209,6 +218,30 @@ mod tests {
         // be told about.
         assert_eq!(
             of("message_delta", r#"{"delta":{"stop_reason":"max_tokens"}}"#),
+            Some(Delta::Stopped(StopReason::OutOfTokens))
+        );
+    }
+
+    #[test]
+    fn an_answer_the_provider_withheld_is_not_reported_as_a_finished_one() {
+        // A classifier stopping the response mid-sentence is the case the
+        // reason exists for: no shorter request helps, so saying "finished"
+        // would be telling the user the opposite of what happened.
+        assert_eq!(
+            of("message_delta", r#"{"delta":{"stop_reason":"refusal"}}"#),
+            Some(Delta::Stopped(StopReason::Filtered))
+        );
+    }
+
+    #[test]
+    fn running_past_the_context_window_is_a_ceiling_like_any_other() {
+        // Different ceiling from `max_tokens`, same remedy — a shorter request
+        // is what gets a whole answer — so it reports the same reason.
+        assert_eq!(
+            of(
+                "message_delta",
+                r#"{"delta":{"stop_reason":"model_context_window_exceeded"}}"#
+            ),
             Some(Delta::Stopped(StopReason::OutOfTokens))
         );
     }

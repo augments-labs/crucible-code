@@ -14,16 +14,19 @@
 //! the trade a coding session wants.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write as _};
+use std::io::{self, Write as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crucible_core::{Message, SessionId, Transcript, Workspace};
 
+mod replay;
 mod wire;
+
+use replay::{newest, replay};
 
 /// How many lines may be waiting to be written.
 ///
@@ -96,9 +99,26 @@ impl Session {
     ///
     /// [`SessionError`] when the directory or the file cannot be made.
     pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
-        std::fs::create_dir_all(directory).map_err(|source| SessionError::Directory {
-            at: directory.display().to_string().into(),
-            source,
+        // 0700 for the same reason the logs themselves are 0600: the names
+        // alone say which directories were worked in and when.
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(directory)
+            .map_err(|source| SessionError::Directory {
+                at: directory.display().to_string().into(),
+                source,
+            })?;
+
+        // As with the logs, the mode above applies only to a directory this
+        // call creates — a sessions directory left by an earlier build keeps
+        // whatever it was made with until something narrows it.
+        let permissions = std::fs::Permissions::from_mode(0o700);
+        std::fs::set_permissions(directory, permissions).map_err(|source| {
+            SessionError::Directory {
+                at: directory.display().to_string().into(),
+                source,
+            }
         })?;
 
         let id = SessionId::new();
@@ -241,129 +261,33 @@ fn write(mut file: File, lines: &Receiver<Box<str>>, trouble: &Trouble) {
 }
 
 /// Opens a log for appending, making it if it is not there.
+///
+/// The mode is the user's alone. A log holds what was typed, what the model
+/// said, the contents of files that were read and everything a command printed
+/// — so the default 0644 would put a session on a shared machine within reach
+/// of anybody with an account on it, and a group-writable umask would let them
+/// append lines that `--continue` later replays as though the user had typed
+/// them.
 fn open(path: &Path) -> Result<File, SessionError> {
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
         .open(path)
         .map_err(|source| SessionError::Log {
             at: path.display().to_string().into(),
             source,
-        })
-}
+        })?;
 
-/// The newest log recorded for `workspace`.
-///
-/// Session identifiers sort by start time as text, so the newest is found by
-/// name and only the first line of each candidate is read.
-fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf, SessionError> {
-    let mut logs = Vec::new();
-
-    let entries = std::fs::read_dir(directory).map_err(|source| SessionError::Directory {
-        at: directory.display().to_string().into(),
-        source,
-    })?;
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let named = path.file_stem().and_then(|stem| stem.to_str());
-
-        if path.extension().is_some_and(|end| end == SUFFIX)
-            && named.is_some_and(|stem| SessionId::from_str(stem).is_ok())
-        {
-            logs.push(path);
-        }
-    }
-
-    logs.sort_unstable();
-
-    for path in logs.into_iter().rev() {
-        if belongs(&path, workspace)? {
-            return Ok(path);
-        }
-    }
-
-    Err(SessionError::Nothing {
-        at: workspace.root().display().to_string().into(),
-    })
-}
-
-/// Whether `path` is a log of a session in `workspace`.
-///
-/// A log this build does not understand is refused rather than skipped: the
-/// answer to "continue my last session" must never be a different one.
-fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
-    let trouble = |source| SessionError::Log {
-        at: path.display().to_string().into(),
-        source,
-    };
-
-    let mut first = String::new();
-    BufReader::new(File::open(path).map_err(trouble)?)
-        .read_line(&mut first)
-        .map_err(trouble)?;
-
-    let Some(opening) = wire::opening(first.trim_end()) else {
-        return Ok(false);
-    };
-
-    if Path::new(&opening.workspace) != workspace.root() {
-        return Ok(false);
-    }
-
-    if opening.format == wire::FORMAT {
-        Ok(true)
-    } else {
-        Err(SessionError::Foreign {
-            at: path.display().to_string().into(),
-        })
-    }
-}
-
-/// Everything a log holds, as the transcript it recorded.
-///
-/// Reading stops at the first line that cannot be read as a message. A session
-/// that ended when the process did leaves a half-written last line, and a
-/// prefix of the conversation is a conversation; one with a hole in it is not.
-fn replay(path: &Path) -> Result<Transcript, SessionError> {
-    let file = File::open(path).map_err(|source| SessionError::Log {
+    // `mode` applies only when the call creates the file, so a log written
+    // before this rule existed keeps its old permissions until it is resumed.
+    let permissions = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(path, permissions).map_err(|source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
     })?;
 
-    let mut transcript = Transcript::new();
-    for line in BufReader::new(file).lines().skip(1).map_while(Result::ok) {
-        let Some(message) = wire::message(&line) else {
-            break;
-        };
-        transcript.push(message);
-    }
-
-    Ok(settled(transcript))
-}
-
-/// The transcript without a last message that is still waiting on tools.
-///
-/// A process that died between asking for a tool and recording its result
-/// leaves calls nothing ever answered. Sending that on is not a cosmetic
-/// problem: a provider is entitled to reject a transcript whose last word is
-/// an unanswered question.
-fn settled(transcript: Transcript) -> Transcript {
-    let outstanding = matches!(
-        transcript.messages().last(),
-        Some(Message::Agent { calls, .. }) if !calls.is_empty()
-    );
-
-    if !outstanding {
-        return transcript;
-    }
-
-    let mut settled = Transcript::new();
-    for message in transcript.messages().iter().rev().skip(1).rev() {
-        settled.push(message.clone());
-    }
-
-    settled
+    Ok(file)
 }
 
 #[cfg(test)]

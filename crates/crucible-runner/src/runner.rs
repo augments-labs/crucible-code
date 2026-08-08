@@ -66,11 +66,7 @@ impl Runner {
     /// they asked it not to be.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
-        let said = transcript
-            .messages()
-            .iter()
-            .filter(|message| matches!(message, Message::User(_)))
-            .count();
+        let said = transcript.turns();
 
         self.turn = (1..said).fold(TurnId::FIRST, |turn, _| turn.next());
         self.transcript = transcript;

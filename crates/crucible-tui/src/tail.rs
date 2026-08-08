@@ -3,9 +3,9 @@
 //! Streamed output is wrapped into display rows as it arrives and held here.
 //! Once there are more rows than the bound, the oldest ones *overflow*: they are
 //! handed back to be written once and then forgotten. Everything above the tail
-//! belongs to the terminal's scrollback, which is what keeps memory flat as a
-//! transcript grows — nothing in this process is proportional to how long the
-//! session has run.
+//! belongs to the terminal's scrollback, so what this file holds is bounded by
+//! the tail's own size rather than by how long the session has run. The
+//! transcript itself is held whole, and is the one thing here that is not.
 //!
 //! Wrapping happens here rather than being left to the terminal because the
 //! renderer has to know how many rows it drew in order to move back over them.

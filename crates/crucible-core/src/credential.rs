@@ -10,7 +10,6 @@
 //! outgoing request and writes into it, so no caller ever holds the value and
 //! there is no accessor to forget to keep out of a log line.
 
-use std::env;
 use std::fmt;
 
 /// Why a credential could not be resolved or applied.
@@ -32,18 +31,6 @@ pub enum CredentialError {
 pub struct ApiKey(String);
 
 impl ApiKey {
-    /// Reads a key from the named environment variable.
-    ///
-    /// Configuration stores the variable *name*, never the value, so this is
-    /// how a key enters the process.
-    ///
-    /// # Errors
-    ///
-    /// [`CredentialError::NotInEnvironment`] if the variable is unset or empty.
-    pub fn from_env(variable: &str) -> Result<Self, CredentialError> {
-        Self::from_lookup(variable, |name| env::var(name).ok())
-    }
-
     /// Takes a key that is already in memory. Used by wiring that resolved the
     /// value some other way.
     #[must_use]
@@ -51,23 +38,21 @@ impl ApiKey {
         Self(value.into())
     }
 
-    /// Writes the key into a request under a header the caller names.
+    /// Writes the key into a request the way `header` says to.
     ///
-    /// The provider chooses the header and any prefix, because Anthropic sends
-    /// `x-api-key: <key>` and OpenAI sends `authorization: Bearer <key>`. The
-    /// value is formatted here and never returned, so this stays the only
+    /// The value is formatted here and never returned, so this stays the only
     /// place the secret is read.
-    pub fn apply(&self, request: &mut Outgoing, header: &str, prefix: &str) {
-        request.set_header(header, format!("{prefix}{}", self.0));
+    pub fn apply(&self, request: &mut Outgoing, header: &Header) {
+        request.set_header(&*header.name, format!("{}{}", header.scheme, self.0));
     }
 
-    /// The environment read, with the lookup passed in.
+    /// A key from the environment, with the lookup passed in.
     ///
-    /// Separated so the "unset" and "blank" rules can be tested without
-    /// mutating the process environment — which in edition 2024 is `unsafe`,
-    /// and this crate forbids that outright. Public for the same reason one
-    /// level up: the wiring that decides which variable a provider reads is
-    /// worth a test, and a swap there sends one vendor's key to another.
+    /// The lookup is a parameter so the "unset" and "blank" rules can be tested
+    /// without mutating the process environment — which in edition 2024 is
+    /// `unsafe`, and this crate forbids that outright. Configuration stores the
+    /// variable *name*, never the value, so this is how a key enters the
+    /// process.
     ///
     /// # Errors
     ///
@@ -84,33 +69,65 @@ impl ApiKey {
     }
 }
 
+/// Where a key goes in a request, and what has to sit in front of it there.
+///
+/// One value rather than two strings side by side. Anthropic sends
+/// `x-api-key: <key>` and OpenAI sends `authorization: Bearer <key>`, so both
+/// halves would otherwise be `&str` arguments in a row — and a call site that
+/// puts them the wrong way round compiles, then sends `Bearer : x-api-key<key>`
+/// and gets back an authentication failure that names neither.
+#[derive(Debug, Clone)]
+pub struct Header {
+    name: Box<str>,
+    /// Written in front of the key inside the header value.
+    scheme: &'static str,
+}
+
+impl Header {
+    /// `<name>: <key>` — the header value is the key and nothing else.
+    #[must_use]
+    pub fn bare(name: impl Into<Box<str>>) -> Self {
+        Self {
+            name: name.into(),
+            scheme: "",
+        }
+    }
+
+    /// `authorization: Bearer <key>`, the scheme RFC 6750 defines.
+    ///
+    /// The header name is not a parameter because the scheme is only defined
+    /// for that one, and a bearer token sent anywhere else is a mistake rather
+    /// than a variation.
+    #[must_use]
+    pub fn bearer() -> Self {
+        Self {
+            name: "authorization".into(),
+            scheme: "Bearer ",
+        }
+    }
+}
+
 /// An API key sent as a header.
 ///
-/// One type serves both wire protocols: the provider supplies the header name
-/// and the prefix when it builds this, and the key itself never leaves
-/// [`ApiKey`].
+/// One type serves both wire protocols: the provider supplies the [`Header`]
+/// when it builds this, and the key itself never leaves [`ApiKey`].
 #[derive(Debug, Clone)]
 pub struct HeaderKey {
     key: ApiKey,
-    header: Box<str>,
-    prefix: Box<str>,
+    header: Header,
 }
 
 impl HeaderKey {
-    /// Builds a credential that sends `<header>: <prefix><key>`.
+    /// Builds a credential that sends `key` the way `header` says to.
     #[must_use]
-    pub fn new(key: ApiKey, header: impl Into<Box<str>>, prefix: impl Into<Box<str>>) -> Self {
-        Self {
-            key,
-            header: header.into(),
-            prefix: prefix.into(),
-        }
+    pub fn new(key: ApiKey, header: Header) -> Self {
+        Self { key, header }
     }
 }
 
 impl Credential for HeaderKey {
     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
-        self.key.apply(request, &self.header, &self.prefix);
+        self.key.apply(request, &self.header);
         Ok(())
     }
 }
@@ -273,34 +290,19 @@ mod tests {
     }
 
     #[test]
-    fn the_real_environment_read_reaches_from_lookup() {
-        // `from_env` is a one-liner over `from_lookup`, and the tests above
-        // exercise `from_lookup`. This is what proves the wiring between them,
-        // using a variable no environment sets.
-        let variable = "CRUCIBLE_VARIABLE_THAT_IS_NEVER_SET";
-        assert!(env::var(variable).is_err(), "the premise of this test");
-
-        let err = ApiKey::from_env(variable).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "CRUCIBLE_VARIABLE_THAT_IS_NEVER_SET is not set"
-        );
-    }
-
-    #[test]
     fn anthropic_and_openai_send_the_same_key_differently() {
-        // One credential type, two wire conventions — this is why `apply` takes
-        // the header and the prefix instead of hard-coding either.
+        // One credential type, two wire conventions — this is why a credential
+        // is handed a `Header` instead of hard-coding either.
         let key = ApiKey::new(SECRET);
 
         let mut anthropic = Outgoing::new();
-        HeaderKey::new(key.clone(), "x-api-key", "")
+        HeaderKey::new(key.clone(), Header::bare("x-api-key"))
             .authorize(&mut anthropic)
             .unwrap();
         assert_eq!(header(&anthropic, "x-api-key"), SECRET);
 
         let mut openai = Outgoing::new();
-        HeaderKey::new(key, "authorization", "Bearer ")
+        HeaderKey::new(key, Header::bearer())
             .authorize(&mut openai)
             .unwrap();
         assert_eq!(header(&openai, "authorization"), format!("Bearer {SECRET}"));
@@ -310,7 +312,7 @@ mod tests {
     fn a_credential_does_not_leak_the_key_through_its_own_debug() {
         // `Credential` requires `Debug`, so every credential is a print away
         // from a log line. This one holds the key directly.
-        let credential = HeaderKey::new(ApiKey::new(SECRET), "x-api-key", "");
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bare("x-api-key"));
         let shown = format!("{credential:?}");
         assert!(!shown.contains(SECRET), "the key leaked: {shown}");
     }

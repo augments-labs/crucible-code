@@ -157,7 +157,7 @@ struct Burst {
 
 fn measure() -> Result<Burst, ProbeError> {
     let deltas = burst();
-    let mut render = Renderer::new(Discard::open()?)?;
+    let mut render = Renderer::new(Discard::open()?);
 
     let stream = |render: &mut Renderer<Discard>, index: usize| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);

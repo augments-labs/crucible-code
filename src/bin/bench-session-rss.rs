@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crucible_core::{
-    ApiKey, Ask, Cancel, Event, HeaderKey, Post, Sensitivity, ToolCall, Verdict, Workspace,
+    ApiKey, Ask, Cancel, Event, Header, HeaderKey, Post, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Response, Transport, TransportError};
 use crucible_runner::{Model, Runner, Session, Tools};
@@ -257,8 +257,7 @@ fn measure() -> Result<f64, ProbeError> {
         Box::new(Anthropic::new(
             Box::new(HeaderKey::new(
                 ApiKey::new("bench-not-a-key"),
-                "x-api-key",
-                "",
+                Header::bare("x-api-key"),
             )),
             Box::new(Canned::new()),
         )),
@@ -271,7 +270,7 @@ fn measure() -> Result<f64, ProbeError> {
         Session::start(&scratch.logs(), &workspace)?,
     );
 
-    let events = Drawing(RefCell::new(Renderer::new(Discard::open()?)?));
+    let events = Drawing(RefCell::new(Renderer::new(Discard::open()?)));
     let mut ask = Allowing;
 
     for turn in 0..TURNS {

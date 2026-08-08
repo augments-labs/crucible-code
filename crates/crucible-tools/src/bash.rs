@@ -108,11 +108,12 @@ impl Bash {
             thread::sleep(TICK);
         };
 
-        settle(&out, &err);
+        let ended = settle(&out, &err);
 
         Ok(Finished {
             code: status.and_then(|status| status.code()),
             out: joined(out.take(), err.take()),
+            arriving: !ended,
             expired,
         })
     }
@@ -183,6 +184,9 @@ struct Finished {
     /// `None` when a signal ended it, which is what a kill looks like.
     code: Option<i32>,
     out: String,
+    /// Whether the readers were still short of the end of a pipe when the wait
+    /// for them ran out, which makes `out` a prefix of the output.
+    arriving: bool,
     expired: bool,
 }
 
@@ -192,11 +196,20 @@ impl Finished {
     /// A non-zero exit is a failed output rather than an error: a failing test
     /// run is exactly the thing the model asked for and needs to see.
     fn report(self) -> ToolOutput {
-        let body = if self.out.is_empty() {
+        let mut body = if self.out.is_empty() {
             String::from("(no output)")
         } else {
             self.out
         };
+
+        // Said whatever the exit status was: the command can succeed and still
+        // have more to print. Unsaid, the model reads a prefix as the whole and
+        // concludes the command printed nothing else.
+        if self.arriving {
+            body.push_str(
+                "\n\n[output was still arriving: something the command left running holds it open]",
+            );
+        }
 
         if self.expired {
             return ToolOutput::failed(format!("{body}\n\n[stopped: the command ran too long]"));
@@ -260,17 +273,24 @@ impl Pipe {
     }
 }
 
-/// Gives the readers a moment to reach the end once the command is over.
+/// Gives the readers a moment to reach the end once the command is over, and
+/// says whether they got there.
 ///
 /// Almost always they are already there: the bytes were read as they arrived,
 /// and the last of them land when the process ends. The wait is bounded because
-/// the case where they are not there is the case that never resolves.
-fn settle(out: &Pipe, err: &Pipe) {
+/// the case where they are not there is the case that never resolves — and
+/// `false` is how what was collected gets reported as the prefix it is.
+fn settle(out: &Pipe, err: &Pipe) -> bool {
     let deadline = Instant::now() + SETTLE;
 
-    while !(out.ended() && err.ended()) && Instant::now() < deadline {
+    while !(out.ended() && err.ended()) {
+        if Instant::now() >= deadline {
+            return false;
+        }
         thread::sleep(TICK);
     }
+
+    true
 }
 
 /// Both streams as the terminal would have shown them, cut to size.
@@ -323,13 +343,25 @@ fn boundary(text: &str, at: usize) -> usize {
 /// `./cargo` are different programs, and a remembered grant that could not tell
 /// them apart would run any file of that name the model had just written.
 fn program(command: &str) -> &str {
-    let command = command.trim();
+    // The shell's separators, which are not Rust's: `char::is_whitespace`
+    // follows Unicode and would treat a no-break space as one of these.
+    const IFS: [char; 3] = [' ', '\t', '\n'];
+
+    let command = command.trim_matches(IFS);
 
     if command.contains([';', '|', '&', '`', '\n', '(', '>', '<']) {
         return command;
     }
 
-    match command.split_whitespace().next() {
+    // Any other whitespace stays inside the word as far as `sh` is concerned,
+    // so the text before it is a prefix of what runs rather than the name of
+    // it. `./build\u{a0}x` would otherwise be announced — and remembered by an
+    // `always` — as `./build`, while a second binary is what executes.
+    if command.contains(|c: char| c.is_whitespace() && !IFS.contains(&c)) {
+        return command;
+    }
+
+    match command.split(IFS).find(|word| !word.is_empty()) {
         // A leading `VAR=value` decides which binary the word after it
         // resolves to, so that word on its own no longer says what will run.
         Some(word) if !word.contains('=') => word,

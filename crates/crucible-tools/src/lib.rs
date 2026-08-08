@@ -12,10 +12,15 @@
 //! signature that skips the token, because a tool that reported the wrong
 //! sensitivity would otherwise be one that had never been asked about at all.
 //!
-//! Every tool holds a `Workspace` and asks it for each path it touches. The
-//! containment check therefore happens in one place rather than once per tool,
-//! and a tool cannot reach outside the tree the agent was pointed at even if
-//! the model asks it to.
+//! Every tool that takes a path asks its `Workspace` to resolve one before
+//! touching it, so the containment check lives in one place rather than in six
+//! copies of the same `if` — and `..`, an absolute path and a symbolic link
+//! are all refused there.
+//!
+//! `bash` is the exception, and deliberately. It runs a shell, and a shell
+//! reaches anything the user can; the workspace gives it a directory to start
+//! in, not a fence. What bounds that tool is the permission engine, which is
+//! why the question it asks names the program the command is about to run.
 
 mod args;
 mod bash;

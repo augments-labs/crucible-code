@@ -100,10 +100,28 @@ fn a_command_that_leaves_something_running_still_comes_back() {
     let started = Instant::now();
     let output = ran(&sample, r#"{"command":"(sleep 30 &) ; echo started"}"#);
 
-    assert_eq!(output.text(), "started");
+    assert!(output.text().contains("started"), "{}", output.text());
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "it waited for the background process"
+    );
+}
+
+#[test]
+fn output_that_was_still_arriving_does_not_come_back_looking_complete() {
+    // The read gives up after a bounded wait, so what came back is a prefix of
+    // the output rather than the whole of it. Unmarked, that is the truncation
+    // problem in another place: the model reads a partial result as the
+    // complete one and concludes the command printed nothing more.
+    let sample = Sample::new("bash-arriving");
+
+    let output = ran(&sample, r#"{"command":"(sleep 30 &) ; echo started"}"#);
+
+    assert!(output.text().contains("started"), "{}", output.text());
+    assert!(
+        output.text().contains("still arriving"),
+        "{}",
+        output.text()
     );
 }
 
@@ -227,6 +245,20 @@ fn a_leading_assignment_makes_the_whole_command_the_scope() {
         program("  RUST_LOG=debug cargo test  "),
         "RUST_LOG=debug cargo test"
     );
+}
+
+#[test]
+fn a_word_the_shell_would_not_split_is_reported_whole() {
+    // `sh` splits on space, tab and newline. Every other whitespace character
+    // is an ordinary character to it and stays part of the word, so naming the
+    // text before one would name a program that is not the one that runs —
+    // `./build` when `./build\u{a0}x` is what the shell resolves and executes.
+    assert_eq!(program("./build\u{a0}x"), "./build\u{a0}x");
+    assert_eq!(program("cargo\u{2028}test"), "cargo\u{2028}test");
+    assert_eq!(program("ls\u{b}rm"), "ls\u{b}rm");
+
+    // A tab is a separator to the shell, so it names a program like a space.
+    assert_eq!(program("cargo\ttest"), "cargo");
 }
 
 #[test]

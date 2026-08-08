@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use crucible_core::{
-    ApiKey, Cancel, Credential, CredentialError, HeaderKey, PathError, Provider, Workspace,
+    ApiKey, Cancel, Credential, CredentialError, Header, HeaderKey, PathError, Provider, Workspace,
 };
 use crucible_provider::{Anthropic, Https, OpenAi};
 use crucible_runner::{Model, Runner, Session, SessionError, Tools};
@@ -163,8 +163,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     let directory = Session::directory()?;
 
-    // The terminal is prepared before the session rather than after it, because
-    // both of these can fail and starting a session writes a file. The title is
+    // The title is set before the session rather than after it: it is the one
+    // step here that can fail, and starting a session writes a file. It is
     // restored on the way out of this function however it is left, so a failure
     // between here and the loop does not leave one behind either.
     //
@@ -172,7 +172,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // renderer holds the lock for its whole life, and the title borrows the
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set(io::stdout())?;
-    let mut renderer = Renderer::new(SystemTerminal::stdout())?;
+    let mut renderer = Renderer::new(SystemTerminal::stdout());
     draw::opening(&mut renderer, &cli.model, &workspace)?;
 
     let runner = assemble(cli, &directory, &workspace, &cancel, &|name| {
@@ -242,12 +242,12 @@ fn provider(
         // Two protocols, one credential kind pointed at different headers.
         // Authentication is a separate axis, and this is what that buys.
         "anthropic" => Ok(Box::new(Anthropic::new(
-            key(ANTHROPIC_KEY, "x-api-key", "", from)?,
+            key(ANTHROPIC_KEY, Header::bare("x-api-key"), from)?,
             Box::new(Https::new()),
         ))),
 
         "openai" => Ok(Box::new(OpenAi::new(
-            key(OPENAI_KEY, "authorization", "Bearer ", from)?,
+            key(OPENAI_KEY, Header::bearer(), from)?,
             Box::new(Https::new()),
         ))),
 
@@ -263,13 +263,12 @@ fn provider(
 /// goes no further than the header it is applied to.
 fn key(
     variable: &str,
-    header: &str,
-    prefix: &str,
+    header: Header,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Credential>, Fatal> {
     let key = ApiKey::from_lookup(variable, from)?;
 
-    Ok(Box::new(HeaderKey::new(key, header, prefix)))
+    Ok(Box::new(HeaderKey::new(key, header)))
 }
 
 /// Everything the model may call.

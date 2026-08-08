@@ -103,6 +103,19 @@ fn two_calls_opened_in_one_chunk_are_two_calls() {
 }
 
 #[test]
+fn an_identity_that_is_present_but_empty_does_not_open_a_second_call() {
+    // Sending `"id": ""` rather than leaving the field out is how some of this
+    // wire's speakers spell "a fragment of the call already open". Reading the
+    // empty string as an identity opens a nameless second call, and every
+    // argument after it is assembled onto that one instead of the real one.
+    let out = of(
+        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"","arguments":"th\":\"a.rs\"}"}}]}}]}"#,
+    );
+
+    assert_eq!(out, vec![Delta::ToolArgs("th\":\"a.rs\"}".into())]);
+}
+
+#[test]
 fn a_call_carrying_half_an_identity_is_refused_rather_than_guessed() {
     // Either half alone leaves the fragments that follow with nowhere they
     // provably belong, and the parser would append them to whichever call was

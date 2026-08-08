@@ -94,13 +94,16 @@ impl Workspace {
     ///
     /// The parent directory must exist and must itself be inside the
     /// workspace, which is what stops `subdir/../../outside.txt` from being
-    /// created through a directory that was never checked.
+    /// created through a directory that was never checked. A symbolic link at
+    /// the final component is resolved too, so a link inside the tree cannot
+    /// be used to write through to a file outside it.
     ///
     /// # Errors
     ///
     /// [`PathError::NoParent`] if the path names no directory,
     /// [`PathError::Missing`] if that directory does not exist, and
-    /// [`PathError::Escapes`] if the result lands outside the workspace.
+    /// [`PathError::Escapes`] if the result lands outside the workspace or is
+    /// a symbolic link whose target cannot be resolved.
     pub fn creatable(&self, requested: &str) -> Result<WorkspacePath, PathError> {
         let joined = self.join(requested);
 
@@ -117,7 +120,22 @@ impl Workspace {
             source,
         })?;
 
-        self.contain(requested, parent.join(name))
+        let leaf = parent.join(name);
+
+        // The parent is resolved but the last component is not, and a symbolic
+        // link there points wherever it likes: `notes.txt -> ~/.ssh/authorized_keys`
+        // is lexically inside the workspace and writes outside it. So a leaf
+        // that is a link is resolved as well, and one whose target cannot be
+        // resolved is refused rather than guessed at — writing through a
+        // dangling link creates the file at the far end.
+        if leaf.is_symlink() {
+            let resolved = leaf.canonicalize().map_err(|_| PathError::Escapes {
+                requested: requested.into(),
+            })?;
+            return self.contain(requested, resolved);
+        }
+
+        self.contain(requested, leaf)
     }
 
     /// A relative path is relative to the root; an absolute one is taken as
@@ -273,6 +291,42 @@ mod tests {
             .creatable("sub/../../outside/new.txt")
             .unwrap_err();
         assert!(matches!(err, PathError::Escapes { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_symlinked_leaf_pointing_out_is_not_creatable() {
+        let f = Fixture::new("createlink");
+        let link = f.workspace.root().join("notes.txt");
+        std::os::unix::fs::symlink(f.outside.join("secret.txt"), &link).unwrap();
+
+        // The parent is inside and the name is inside, so the lexical path is
+        // inside — and writing to it still lands outside. Only resolving the
+        // last component says so.
+        let err = f.workspace.creatable("notes.txt").unwrap_err();
+        assert!(matches!(err, PathError::Escapes { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_dangling_symlinked_leaf_pointing_out_is_not_creatable() {
+        let f = Fixture::new("createdangling");
+        let link = f.workspace.root().join("fresh.txt");
+        std::os::unix::fs::symlink(f.outside.join("absent.txt"), &link).unwrap();
+
+        // Nothing exists at either end, so canonicalising the target is not
+        // what decides this. A symlink at the leaf is refused on sight, which
+        // is also what stops a file being *created* outside the tree.
+        let err = f.workspace.creatable("fresh.txt").unwrap_err();
+        assert!(matches!(err, PathError::Escapes { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_symlinked_leaf_pointing_back_inside_is_creatable() {
+        let f = Fixture::new("createinside");
+        let link = f.workspace.root().join("alias.txt");
+        std::os::unix::fs::symlink(f.workspace.root().join("kept.txt"), &link).unwrap();
+
+        let path = f.workspace.creatable("alias.txt").unwrap();
+        assert!(path.as_path().starts_with(f.workspace.root()));
     }
 
     #[test]
