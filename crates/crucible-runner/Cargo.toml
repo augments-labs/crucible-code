@@ -8,11 +8,17 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# Core only, and deliberately so. The runner drives `dyn Provider` and
-# `dyn Tool`; naming a concrete provider or tool here is the design failure this
-# crate exists to prevent.
+# No provider and no tool, deliberately. The runner drives `dyn Provider` and
+# `dyn Tool`; naming a concrete one here is the design failure this crate exists
+# to prevent.
 [dependencies]
 crucible-core.workspace = true
+# The session log is JSON, one object per line, read back by a build that may
+# not be the one that wrote it. Hand-rolling that parser would be a second
+# place for a malformed line to become a panic.
+serde_json.workspace = true
+# `SessionError`, which the wiring turns into something the user reads.
+thiserror.workspace = true
 
 [lints]
 workspace = true

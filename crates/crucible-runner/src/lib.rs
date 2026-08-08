@@ -18,6 +18,9 @@ mod answer;
 #[cfg(test)]
 mod fake;
 mod runner;
+#[cfg(test)]
+mod sample;
+mod session;
 mod tools;
 mod work;
 
@@ -26,6 +29,7 @@ use std::sync::mpsc::Sender;
 use crucible_core::Event;
 
 pub use runner::{Model, Runner};
+pub use session::{Session, SessionError};
 pub use tools::Tools;
 
 /// Reports something that happened.

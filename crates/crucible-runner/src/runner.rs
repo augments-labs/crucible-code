@@ -16,6 +16,7 @@ use crucible_core::{
 
 use crate::answer::Answer;
 use crate::post;
+use crate::session::Session;
 use crate::tools::Tools;
 use crate::work::{Went, Work};
 
@@ -33,7 +34,7 @@ pub struct Model {
 /// Drives turns to completion.
 ///
 /// Holds what outlives a turn: the provider, the tools, the session's
-/// permission memory, and the transcript itself.
+/// permission memory, the transcript, and the log it is written to.
 #[derive(Debug)]
 pub struct Runner {
     provider: Box<dyn Provider>,
@@ -41,27 +42,64 @@ pub struct Runner {
     model: Model,
     permission: Permission,
     transcript: Transcript,
+    session: Session,
     turn: TurnId,
 }
 
 impl Runner {
     /// A session that has not said anything yet.
     #[must_use]
-    pub fn new(provider: Box<dyn Provider>, tools: Tools, model: Model) -> Self {
+    pub fn new(provider: Box<dyn Provider>, tools: Tools, model: Model, session: Session) -> Self {
         Self {
             provider,
             tools,
             model,
             permission: Permission::new(),
             transcript: Transcript::new(),
+            session,
             turn: TurnId::FIRST,
         }
+    }
+
+    /// Picks up a conversation that already happened — what `--continue`
+    /// replays.
+    ///
+    /// The turn count comes with it. Numbering the first continued turn `1`
+    /// would tell the user this is a new conversation, which is exactly what
+    /// they asked it not to be.
+    #[must_use]
+    pub fn resuming(mut self, transcript: Transcript) -> Self {
+        let said = transcript
+            .messages()
+            .iter()
+            .filter(|message| matches!(message, Message::User(_)))
+            .count();
+
+        self.turn = (1..said).fold(TurnId::FIRST, |turn, _| turn.next());
+        self.transcript = transcript;
+        self
     }
 
     /// The conversation so far.
     #[must_use]
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
+    }
+
+    /// Where the session is being recorded.
+    #[must_use]
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Appends a message to the conversation.
+    ///
+    /// The only way either the transcript or the log is written. Two calls
+    /// that could be made separately would eventually be made separately, and
+    /// a log that is missing one message is a session that cannot be continued.
+    fn record(&mut self, message: Message) {
+        self.session.append(&message);
+        self.transcript.push(message);
     }
 
     /// Takes one turn: the prompt, and the exchange until the model yields.
@@ -87,7 +125,7 @@ impl Runner {
             self.turn = self.turn.next();
         }
         post(events, Event::TurnStarted { turn: self.turn });
-        self.transcript.push(Message::User(prompt.into()));
+        self.record(Message::User(prompt.into()));
 
         loop {
             let answer = self.listen(events, cancel)?;
@@ -98,7 +136,7 @@ impl Runner {
                 // Calls the model did not finish asking for go no further. A
                 // call is written to the transcript only once it has a result,
                 // and these will never get one.
-                self.transcript.push(Message::Agent {
+                self.record(Message::Agent {
                     text,
                     calls: Vec::new(),
                 });
@@ -118,8 +156,8 @@ impl Runner {
             }
             .round(&calls);
 
-            self.transcript.push(Message::Agent { text, calls });
-            self.transcript.push(Message::ToolResults(results));
+            self.record(Message::Agent { text, calls });
+            self.record(Message::ToolResults(results));
 
             match went {
                 Went::On => {}

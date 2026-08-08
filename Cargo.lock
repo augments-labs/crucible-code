@@ -246,6 +246,8 @@ name = "crucible-runner"
 version = "0.0.1"
 dependencies = [
  "crucible-core",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
