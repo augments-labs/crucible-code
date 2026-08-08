@@ -8,9 +8,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# Intentionally empty: core is the bottom of the graph. A dependency added here
-# is a dependency every layer above inherits.
+# Core is the bottom of the graph, so a dependency added here is one every layer
+# above inherits. `thiserror` earns it: rule 1 requires a module-owned error
+# enum on every fallible function, and it is derive-only — the macro writes the
+# `Display` and `source` impls at compile time and nothing of the crate survives
+# into the binary.
 [dependencies]
+thiserror.workspace = true
 
 [lints]
 workspace = true

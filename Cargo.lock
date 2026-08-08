@@ -108,6 +108,9 @@ dependencies = [
 [[package]]
 name = "crucible-core"
 version = "0.0.1"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "crucible-provider"

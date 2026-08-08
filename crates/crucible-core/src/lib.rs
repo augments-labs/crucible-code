@@ -15,3 +15,23 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns whether it came
 //! from an API key or a subscription login.
+
+mod cancel;
+mod credential;
+mod event;
+mod grant;
+mod ids;
+mod provider;
+mod tool;
+mod transcript;
+mod workspace;
+
+pub use cancel::Cancel;
+pub use credential::{ApiKey, Credential, CredentialError, HeaderKey, Outgoing};
+pub use event::{Event, TurnError};
+pub use grant::{Ask, Grant, Permission, Sensitivity, Verdict};
+pub use ids::{IdError, SessionId, ToolId, TurnId};
+pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};
+pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
+pub use transcript::{Message, StopReason, ToolResult, Transcript};
+pub use workspace::{PathError, Workspace, WorkspacePath};
