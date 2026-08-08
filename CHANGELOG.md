@@ -8,16 +8,21 @@ Notable changes to crucible. Format follows
 > command-line surface may change in any `0.0.x` release with no deprecation
 > period. Nothing in this line carries a compatibility guarantee.
 
-## [Unreleased]
+## [0.0.1] - 2026-08-08
+
+The first release: a coding agent you can hold a session with, and the gates
+that say what it is allowed to become.
 
 ### Added
 
 - A session that runs. `crucible` reads a prompt, streams the model's answer
   inline, runs tools, and asks before anything that changes a file or starts a
   process. `--continue` carries on the most recent session started in the
-  current directory. An answer the provider cut short — a token ceiling or a
-  content filter — says so under the turn, so a truncated answer cannot be
-  mistaken for a complete one.
+  current directory. An answer the provider cut short says so under the turn,
+  with the token ceiling and the content filter named apart because the remedy
+  differs. The bound on that: a stop reason this build has not heard of reads as
+  an ordinary finish, so a vendor adding one is the case where a cut-short
+  answer can still arrive looking complete.
 - A startup that fails leaves no session behind. Everything that can fail on the
   way in runs before the session is started, so a wrong `--model` or an unset
   key writes nothing: an empty session would otherwise be the newest one for the
@@ -30,7 +35,10 @@ Notable changes to crucible. Format follows
   takes a permission token that only a verdict can mint, so code that has not
   obtained one cannot call the operation; a read mints its own, and a file
   change or a command asks first. `always` remembers the tool for a file change
-  and the tool *and program* for a command, and is never written to disk.
+  and the tool *and program* for a command, and is never written to disk. What a
+  tool returns is bounded, and a result that is short says why in the result
+  itself: cut from the middle, stopped at a match limit, or still arriving
+  because something the command left running holds the pipe open.
 - Session log: one JSON object per line, one file per session, under
   `$XDG_DATA_HOME/crucible/sessions`. A log from a build with a different format
   is refused rather than half-understood.
@@ -80,4 +88,13 @@ Notable changes to crucible. Format follows
 - `crucible_tui::Title` — sets the terminal tab title to `▽ crucible` and
   restores the terminal when dropped.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/commits/main
+### Known limits
+
+- A window resized mid-turn is noticed at the next prompt, not as it happens.
+  Catching the signal a resize sends needs `unsafe`, which this workspace
+  forbids, so what a resize costs is the turn it lands in.
+- <kbd>Ctrl-C</kbd> ends the process rather than the turn, for the same reason.
+  The session log is written as the turn goes, so `--continue` picks it up.
+- Linux x86-64 only. The release builds one artifact.
+
+[0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1
