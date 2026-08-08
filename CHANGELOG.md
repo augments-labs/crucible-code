@@ -10,7 +10,26 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `scripts/smoke.sh` — the release gate that could not run before there was a
+  release. It takes the published tarball, checks it against the published
+  checksum, and runs it in a sandbox holding the binary, the dynamic loader and
+  the libraries the binary itself names: no shell, no toolchain, no certificate
+  bundle, no source tree, and a home directory a moment old. What that proves is
+  not that the libraries it needs are there, which binding them guarantees, but
+  the half no other gate can see — that nothing else on the build machine was
+  holding it up. It reports the glibc floor, refuses a run whose `--version`
+  disagrees with `Cargo.toml`, and requires that a machine with no key be told
+  which variable it wants rather than left with a blank screen. Wired into
+  `RELEASING.md` on both sides of the tag.
+
+### Documented
+
+- The released binary needs **glibc 2.34 or newer** and nothing else from the
+  system — no certificate store, no runtime. Measured from the binary rather
+  than assumed, ignoring weak symbols, which is the difference between a floor
+  and a version number that retires distributions this runs on perfectly well.
 
 ## [0.0.1] - 2026-08-08
 

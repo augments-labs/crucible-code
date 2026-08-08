@@ -1,5 +1,14 @@
 # Getting started
 
+## What it runs on
+
+Linux x86-64. The released binary is dynamically linked against glibc and needs
+**2.34 or newer** — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine;
+older than that has to build from source. It asks the system for nothing else:
+no certificate bundle, no shell, no runtime to install. `scripts/smoke.sh` is
+what keeps that true, by running each release in a sandbox holding the binary
+and its two libraries and nothing besides.
+
 ## Build it
 
 Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain

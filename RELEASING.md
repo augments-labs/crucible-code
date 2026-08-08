@@ -36,8 +36,32 @@ the workspace ships as one unit and there is no per-crate version to drift.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.
-5. **The install path works from scratch.** In a clean container or a fresh
-   user, install the built artifact and run one real session end to end.
+5. **The install path works from scratch.** Every gate above builds from this
+   tree with this machine's toolchain, so none of them can see what a shipped
+   binary needs from the machine it lands on. Package the artifact the way the
+   release workflow does and put it somewhere that holds nothing else:
+
+   ```bash
+   name=crucible-v$VERSION-x86_64-unknown-linux-gnu
+   install -Dm755 target/release/crucible "$name/crucible"
+   install -Dm644 README.md LICENSE -t "$name/"
+   tar czf "$name.tar.gz" "$name"
+
+   scripts/smoke.sh "$name.tar.gz"
+   ```
+
+   The sandbox carries the binary, the loader and the libraries the binary
+   itself names — no shell, no toolchain, no certificate bundle, no source tree,
+   and a home directory that did not exist a moment ago. It reports the glibc
+   floor, which is the number that decides which distributions this release
+   leaves behind; when it moves, `docs/getting-started.md` says so.
+
+   The run stops short of a completed turn unless `CRUCIBLE_SMOKE_KEY` is set,
+   because a turn costs tokens. Set it for the release you actually cut:
+
+   ```bash
+   CRUCIBLE_SMOKE_KEY=$ANTHROPIC_API_KEY scripts/smoke.sh "$name.tar.gz"
+   ```
 
 ## Cutting it
 
@@ -75,8 +99,17 @@ promise nobody keeps.
 
 ## After the tag
 
-1. Download the published artifact — not your local build — verify the checksum,
-   and run `crucible --version`.
+1. Run the same gate against what was actually published, which is the one
+   artifact no earlier step was allowed to trust:
+
+   ```bash
+   scripts/smoke.sh v0.0.1
+   ```
+
+   Given a tag rather than a file it downloads the release, checks the tarball
+   against the published `.sha256`, and runs everything from step 5 on that copy
+   — so a build that was fine locally and an upload that went wrong are told
+   apart rather than averaged.
 2. Open a fresh `Unreleased` section in the changelog.
 3. If the release is broken, do not delete or move the tag. Fix forward with a
    patch release. A tag that changes meaning breaks every checksum anyone
