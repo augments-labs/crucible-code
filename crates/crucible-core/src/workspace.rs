@@ -32,6 +32,16 @@ pub enum PathError {
         source: std::io::Error,
     },
 
+    /// The path is a symbolic link whose target could not be resolved, so
+    /// there is nothing to decide containment about.
+    #[error("{requested} is a link that leads nowhere this can resolve: {source}")]
+    Dangling {
+        /// The path as the caller wrote it.
+        requested: Box<str>,
+        /// What the operating system reported about the target.
+        source: std::io::Error,
+    },
+
     /// The path has no parent directory, so nothing could be created there.
     #[error("{requested} has no parent directory")]
     NoParent {
@@ -101,9 +111,10 @@ impl Workspace {
     /// # Errors
     ///
     /// [`PathError::NoParent`] if the path names no directory,
-    /// [`PathError::Missing`] if that directory does not exist, and
-    /// [`PathError::Escapes`] if the result lands outside the workspace or is
-    /// a symbolic link whose target cannot be resolved.
+    /// [`PathError::Missing`] if that directory does not exist,
+    /// [`PathError::Dangling`] if the last component is a symbolic link whose
+    /// target cannot be resolved, and [`PathError::Escapes`] if the result
+    /// lands outside the workspace.
     pub fn creatable(&self, requested: &str) -> Result<WorkspacePath, PathError> {
         let joined = self.join(requested);
 
@@ -128,9 +139,14 @@ impl Workspace {
         // that is a link is resolved as well, and one whose target cannot be
         // resolved is refused rather than guessed at — writing through a
         // dangling link creates the file at the far end.
+        //
+        // Refused under its own name, though. A link that leads nowhere may
+        // well point back inside the tree, and calling that an escape tells the
+        // model to stop trying to reach a path it is perfectly entitled to.
         if leaf.is_symlink() {
-            let resolved = leaf.canonicalize().map_err(|_| PathError::Escapes {
+            let resolved = leaf.canonicalize().map_err(|source| PathError::Dangling {
                 requested: requested.into(),
+                source,
             })?;
             return self.contain(requested, resolved);
         }
@@ -312,11 +328,28 @@ mod tests {
         let link = f.workspace.root().join("fresh.txt");
         std::os::unix::fs::symlink(f.outside.join("absent.txt"), &link).unwrap();
 
-        // Nothing exists at either end, so canonicalising the target is not
-        // what decides this. A symlink at the leaf is refused on sight, which
-        // is also what stops a file being *created* outside the tree.
+        // Nothing exists at the far end, so there is no resolved path to decide
+        // containment on and the write is refused. Which is also what stops a
+        // file being *created* outside the tree through a link.
         let err = f.workspace.creatable("fresh.txt").unwrap_err();
-        assert!(matches!(err, PathError::Escapes { .. }), "got {err:?}");
+        assert!(matches!(err, PathError::Dangling { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_dangling_leaf_is_refused_for_the_reason_it_is_actually_refused_for() {
+        let f = Fixture::new("createdanglingin");
+        let link = f.workspace.root().join("fresh.txt");
+        std::os::unix::fs::symlink(f.workspace.root().join("absent.txt"), &link).unwrap();
+
+        // The target is inside the workspace, so "resolves outside" is a
+        // sentence about this path that is not true — and the model is handed
+        // this text to decide what to try next. It is still refused, because
+        // nothing here can prove where a link with no target ends up; the reason
+        // given has to be the reason.
+        let err = f.workspace.creatable("fresh.txt").unwrap_err();
+        let said = err.to_string();
+        assert!(!said.contains("outside"), "got {said}");
+        assert!(matches!(err, PathError::Dangling { .. }), "got {err:?}");
     }
 
     #[test]

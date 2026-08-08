@@ -202,6 +202,24 @@ impl Finished {
             self.out
         };
 
+        // One marker, whatever happened. A command killed for running too long
+        // has usually left something holding the pipe as well, and saying both
+        // in two notes reads as two problems — the second of which names a
+        // cause that is not why this stopped. So the timeout takes the marker
+        // and carries the other fact inside it, because a prefix still has to
+        // say that it is one.
+        if self.expired {
+            let held = if self.arriving {
+                ", and something it left running still holds the output open"
+            } else {
+                ""
+            };
+
+            return ToolOutput::failed(format!(
+                "{body}\n\n[stopped: the command ran too long{held}]"
+            ));
+        }
+
         // Said whatever the exit status was: the command can succeed and still
         // have more to print. Unsaid, the model reads a prefix as the whole and
         // concludes the command printed nothing else.
@@ -209,10 +227,6 @@ impl Finished {
             body.push_str(
                 "\n\n[output was still arriving: something the command left running holds it open]",
             );
-        }
-
-        if self.expired {
-            return ToolOutput::failed(format!("{body}\n\n[stopped: the command ran too long]"));
         }
 
         match self.code {

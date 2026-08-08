@@ -91,6 +91,29 @@ fn a_command_that_runs_too_long_is_stopped() {
 }
 
 #[test]
+fn a_command_stopped_for_running_too_long_says_so_once() {
+    // Both facts hold here: the command was killed for taking too long, and the
+    // thing it left running still holds the pipe open. Reported as two notes
+    // they read as two separate problems, and the second one names a cause that
+    // is not why this stopped.
+    let sample = Sample::new("bash-timeout-background");
+
+    let output = ran(
+        &sample,
+        r#"{"command":"(sleep 30 &) ; sleep 30","timeout":1}"#,
+    );
+
+    assert!(output.is_failed());
+    assert!(output.text().contains("ran too long"), "{}", output.text());
+    assert_eq!(
+        output.text().matches("\n\n[").count(),
+        1,
+        "one marker, not two: {}",
+        output.text()
+    );
+}
+
+#[test]
 fn a_command_that_leaves_something_running_still_comes_back() {
     // Starting a server in the background is a thing a model does, and the
     // thing it starts inherits the pipe. Waiting for the end of the output

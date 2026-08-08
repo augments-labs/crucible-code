@@ -5,8 +5,12 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crucible_core::Workspace;
+
+/// Tells apart two samples that were given the same name.
+static NTH: AtomicU32 = AtomicU32::new(0);
 
 /// Somewhere for a test to keep sessions, and something for them to be about.
 pub(crate) struct Sample {
@@ -15,8 +19,14 @@ pub(crate) struct Sample {
 
 impl Sample {
     /// Makes the directories, discarding whatever an earlier run left.
+    ///
+    /// The counter is what stops two tests that happened to pick the same name
+    /// from sharing a path: the tests run at once, this constructor deletes what
+    /// it finds, and the loser sees its fixtures vanish mid-test.
     pub(crate) fn new(name: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("crucible-{name}-{}", std::process::id()));
+        let nth = NTH.fetch_add(1, Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("crucible-{name}-{}-{nth}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
 
         for under in ["logs", "work", "elsewhere"] {

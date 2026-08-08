@@ -1,4 +1,4 @@
-//! The session log: what makes a conversation survive the process.
+//! The session log: what makes a session survive the process.
 //!
 //! One file per session, one line per message, appended in order and never
 //! rewritten. Append-only is what makes a crash cost the last line rather than
@@ -99,8 +99,11 @@ impl Session {
     ///
     /// [`SessionError`] when the directory or the file cannot be made.
     pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
-        // 0700 for the same reason the logs themselves are 0600: the names
-        // alone say which directories were worked in and when.
+        // 0700 because the listing itself is worth keeping: one entry per
+        // session says how often crucible ran and when. And a group-writable
+        // directory would let another account drop a log in for `--continue` to
+        // find, which is the injection the mode on the logs guards against from
+        // the other side.
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -110,15 +113,9 @@ impl Session {
                 source,
             })?;
 
-        // As with the logs, the mode above applies only to a directory this
-        // call creates — a sessions directory left by an earlier build keeps
-        // whatever it was made with until something narrows it.
-        let permissions = std::fs::Permissions::from_mode(0o700);
-        std::fs::set_permissions(directory, permissions).map_err(|source| {
-            SessionError::Directory {
-                at: directory.display().to_string().into(),
-                source,
-            }
+        narrow(directory, 0o700).map_err(|source| SessionError::Directory {
+            at: directory.display().to_string().into(),
+            source,
         })?;
 
         let id = SessionId::new();
@@ -189,6 +186,24 @@ impl Session {
             .and_then(|held| held.as_ref().cloned())
     }
 
+    /// Ends the session and hands back the first write that failed, if one did.
+    ///
+    /// [`Session::trouble`] can only report what the writer thread has already
+    /// reached. When a loop ends, the last turn is usually still in the queue —
+    /// so the failure worth reporting most is the one nothing has had a chance
+    /// to see. Dropping the sender and joining here is what turns that into an
+    /// answer, and [`Drop`] alone would do the same draining with nobody left
+    /// to tell.
+    #[must_use]
+    pub fn finish(mut self) -> Option<Box<str>> {
+        self.to = None;
+        if let Some(writer) = self.writer.take() {
+            drop(writer.join());
+        }
+
+        self.trouble()
+    }
+
     /// Where sessions are kept, from the environment.
     ///
     /// Read here rather than deeper down: this is the boundary, and everything
@@ -211,13 +226,18 @@ impl Session {
             .ok_or(SessionError::Homeless)
     }
 
-    /// Starts the thread that owns `file` from here on.
-    fn writing(path: PathBuf, file: File) -> Self {
+    /// Starts the thread that owns `sink` from here on.
+    ///
+    /// `sink` is a type parameter rather than a [`File`] so that a test can
+    /// drive a log which has stopped working: what this module has to get right
+    /// is what happens *after* a write fails, and a real file on a real disk
+    /// will not fail on request.
+    fn writing<W: io::Write + Send + 'static>(path: PathBuf, sink: W) -> Self {
         let (to, lines) = sync_channel(QUEUE);
         let trouble = Trouble::default();
         let mine = Arc::clone(&trouble);
 
-        let writer = thread::spawn(move || write(file, &lines, &mine));
+        let writer = thread::spawn(move || write(sink, &lines, &mine));
 
         Self {
             path,
@@ -248,9 +268,9 @@ impl Drop for Session {
 /// A failure is recorded once and the loop goes on, because the senders are
 /// not waiting for an answer: stopping here would fill the queue and block the
 /// turn instead of losing a log nobody can write anyway.
-fn write(mut file: File, lines: &Receiver<Box<str>>, trouble: &Trouble) {
+fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, trouble: &Trouble) {
     for line in lines {
-        let Err(problem) = writeln!(file, "{line}") else {
+        let Err(problem) = writeln!(sink, "{line}") else {
             continue;
         };
 
@@ -279,15 +299,34 @@ fn open(path: &Path) -> Result<File, SessionError> {
             source,
         })?;
 
-    // `mode` applies only when the call creates the file, so a log written
-    // before this rule existed keeps its old permissions until it is resumed.
-    let permissions = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, permissions).map_err(|source| SessionError::Log {
+    narrow(path, 0o600).map_err(|source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
     })?;
 
     Ok(file)
+}
+
+/// Takes `path` down to `mode`, and only when it is not already at least that
+/// tight.
+///
+/// `DirBuilderExt::mode` and `OpenOptionsExt::mode` apply only when the call
+/// creates the thing, so a sessions directory or a log left by an earlier build
+/// keeps whatever it was made with until something narrows it.
+///
+/// Reading the mode first is what keeps the ordinary case — a directory already
+/// at 0700, every run after the first — from calling `chmod` at all. That call
+/// fails on a filesystem carrying no Unix modes, and a startup that dies over a
+/// permission which is already correct helps nobody. Where the mode really is
+/// too open and cannot be narrowed, the error stands: the log would otherwise
+/// be readable by every account on the machine and nothing would have said so.
+fn narrow(path: &Path, mode: u32) -> Result<(), io::Error> {
+    let current = std::fs::metadata(path)?.permissions().mode();
+    if current & 0o777 & !mode == 0 {
+        return Ok(());
+    }
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
 }
 
 #[cfg(test)]

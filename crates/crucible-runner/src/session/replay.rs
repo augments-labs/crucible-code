@@ -88,12 +88,15 @@ fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
 ///
 /// Reading stops at the first line that cannot be read *as a message*. A
 /// session that ended when the process did leaves a half-written last line, and
-/// a prefix of the conversation is a conversation; one with a hole in it is not.
+/// a prefix of the transcript is a transcript; one with a hole in it is not.
 ///
-/// A line that cannot be read at all is the other case and fails outright.
-/// Bytes that are not text stop the read wherever they sit, so treating that as
-/// the end of the log would drop every turn after a damaged one and hand back a
-/// conversation missing its middle with nothing to say so.
+/// A line that cannot be read at all fails outright — but only once something
+/// follows it. Bytes that are not text stop the read wherever they sit, so
+/// treating a damaged line in the middle as the end of the log would drop every
+/// turn after it and hand back a transcript missing its middle with nothing to
+/// say so. At the end of the file there is nothing to drop: a process killed
+/// between the bytes of one character leaves exactly that, and it is the
+/// half-written last line this already forgives.
 pub(super) fn replay(path: &Path) -> Result<Transcript, SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
@@ -103,11 +106,25 @@ pub(super) fn replay(path: &Path) -> Result<Transcript, SessionError> {
     let file = File::open(path).map_err(trouble)?;
 
     let mut transcript = Transcript::new();
+    // Held rather than returned, because whether it is fatal is decided by
+    // whether the iterator yields again. Reading one line further is the only
+    // way to tell a torn tail from damage in the middle.
+    let mut damaged = None;
+
     for line in BufReader::new(file).lines().skip(1) {
-        let Some(message) = wire::message(&line.map_err(trouble)?) else {
-            break;
-        };
-        transcript.push(message);
+        if let Some(source) = damaged.take() {
+            return Err(trouble(source));
+        }
+
+        match line {
+            Err(source) => damaged = Some(source),
+            Ok(text) => {
+                let Some(message) = wire::message(&text) else {
+                    break;
+                };
+                transcript.push(message);
+            }
+        }
     }
 
     Ok(settled(transcript))

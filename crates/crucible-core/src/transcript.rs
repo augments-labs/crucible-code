@@ -57,6 +57,14 @@ pub enum StopReason {
     /// rather than folding into a finish, because an answer that stops here is
     /// incomplete and saying otherwise is the thing this enum exists to stop.
     Filtered,
+    /// The provider paused a turn it expects to be asked to carry on.
+    ///
+    /// Not an ending at all, which is what separates it from every other
+    /// variant here: the answer is unfinished and the provider is waiting to be
+    /// sent the same transcript again. 0.0.x does not carry on by itself, so
+    /// what this buys is the user being told rather than handed a paused answer
+    /// that reads as a complete one.
+    Paused,
     /// The user cancelled.
     Cancelled,
 }

@@ -94,6 +94,11 @@ fn stopped(payload: &Value) -> Option<Delta> {
         // helps, which is why it is not folded in with the ceilings above.
         "refusal" => StopReason::Filtered,
 
+        // A long turn the model expects to be asked to carry on. Left to the
+        // arm below it would read as a finish, which is the one way an
+        // unfinished answer reaches the user looking whole.
+        "pause_turn" => StopReason::Paused,
+
         // `end_turn` and `stop_sequence`. A reason added later lands here too
         // and will read as a finish — so a new one in the vendor's list is a
         // change to make here, not something this arm can be trusted to cover.
@@ -243,6 +248,17 @@ mod tests {
                 r#"{"delta":{"stop_reason":"model_context_window_exceeded"}}"#
             ),
             Some(Delta::Stopped(StopReason::OutOfTokens))
+        );
+    }
+
+    #[test]
+    fn a_paused_turn_is_not_a_finished_one() {
+        // The provider is waiting to be asked to carry on. Reported as a finish
+        // it becomes an answer that stops mid-thought and says nothing about
+        // why, which is the failure the user cannot diagnose for themselves.
+        assert_eq!(
+            of("message_delta", r#"{"delta":{"stop_reason":"pause_turn"}}"#),
+            Some(Delta::Stopped(StopReason::Paused))
         );
     }
 

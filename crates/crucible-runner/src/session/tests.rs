@@ -62,6 +62,83 @@ fn a_log_is_readable_only_by_the_user_who_started_it() {
 }
 
 #[test]
+fn a_sessions_directory_left_open_is_narrowed_before_anything_is_written_to_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // `DirBuilderExt::mode` applies only when the call creates the directory, so
+    // one made by an earlier build — or by a hand running `mkdir -p` — keeps
+    // whatever the umask gave it, and every log written into it afterwards sits
+    // somewhere the whole machine can list.
+    let sample = Sample::new("session-widened-directory");
+    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o755)).expect("a temporary dir");
+
+    record(&sample, &[said("hello")]);
+
+    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "directory is {:o}", mode & 0o777);
+}
+
+#[test]
+fn a_log_left_open_is_narrowed_when_it_is_continued() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // Same for the log: `OpenOptionsExt::mode` says nothing about a file that
+    // already exists, and `--continue` is exactly the path that opens one.
+    let sample = Sample::new("session-widened-log");
+    let path = record(&sample, &[said("hello")]);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("a temporary file");
+
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    drop(session);
+
+    let mode = fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "log is {:o}", mode & 0o777);
+}
+
+#[test]
+fn finishing_reports_a_failure_the_loop_could_not_have_seen() {
+    // `trouble` answers for what the writer thread has already reached. When a
+    // session ends the last turn is still queued, so the write worth reporting
+    // most is the one nothing has had a chance to look at yet. Holding the sink
+    // is what makes that ordering a fact here rather than a race.
+    let (release, held) = std::sync::mpsc::channel();
+    let session = Session::writing(PathBuf::from("held.jsonl"), Blocked { held });
+
+    session.append(&said("the last thing anyone said"));
+    assert!(
+        session.trouble().is_none(),
+        "the writer is still blocked, so nothing can have been recorded yet"
+    );
+
+    release.send(()).expect("the writer is waiting");
+    assert!(
+        session.finish().is_some(),
+        "the failure happened while the queue was draining"
+    );
+}
+
+/// A log that fails, once the test lets it get that far.
+struct Blocked {
+    held: std::sync::mpsc::Receiver<()>,
+}
+
+impl std::io::Write for Blocked {
+    fn write(&mut self, _line: &[u8]) -> std::io::Result<usize> {
+        // Ends immediately once the sender is gone, which is how a session that
+        // never releases it still finishes.
+        let _ = self.held.recv();
+        Err(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "no space left on device",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
 fn every_message_reaches_the_file_in_the_order_it_happened() {
     let sample = Sample::new("session-order");
 
@@ -114,7 +191,7 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 #[test]
 fn continuing_a_session_appends_to_the_same_log() {
     // A continued session is the same session. Starting a second file would
-    // split one conversation across two, and the next `--continue` would find
+    // split one transcript across two, and the next `--continue` would find
     // only the half.
     let sample = Sample::new("session-append");
     let path = record(&sample, &[said("first")]);
@@ -152,7 +229,7 @@ fn the_newest_session_for_this_workspace_is_the_one_continued() {
 #[test]
 fn a_session_from_another_workspace_is_not_offered() {
     // Sessions share one directory, so the workspace in the header is the only
-    // thing keeping one project's conversation out of another's.
+    // thing keeping one project's session out of another's.
     let sample = Sample::new("session-elsewhere");
     Session::start(&sample.logs(), &sample.elsewhere()).expect("a new session");
 
@@ -197,7 +274,7 @@ fn a_log_from_a_different_version_is_refused_rather_than_half_read() {
 #[test]
 fn a_half_written_last_line_costs_only_that_line() {
     // What a process killed mid-write leaves behind. Everything before it is
-    // still a conversation.
+    // still a transcript.
     let sample = Sample::new("session-torn");
     let path = record(&sample, &[said("kept"), said("also kept")]);
 
@@ -242,7 +319,7 @@ fn a_session_that_records_nothing_is_still_a_session() {
 fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session() {
     // Bytes that are not text stop the read wherever they sit. Taken for the
     // end of the log, one damaged line in the middle silently drops every turn
-    // after it, and `--continue` hands back a conversation missing its middle
+    // after it, and `--continue` hands back a transcript missing its middle
     // with nothing anywhere to say so.
     let sample = Sample::new("session-unreadable");
     let workspace = sample.workspace().root().display().to_string();
@@ -268,7 +345,7 @@ fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session(
 #[test]
 fn a_line_that_is_not_a_message_stops_the_replay() {
     // Recognising some lines and skipping others would hand the model a
-    // conversation with a hole in it, which reads as the user contradicting
+    // transcript with a hole in it, which reads as the user contradicting
     // themselves.
     let sample = Sample::new("session-hole");
     let workspace = sample.workspace().root().display().to_string();
@@ -282,6 +359,33 @@ fn a_line_that_is_not_a_message_stops_the_replay() {
             r#"{"user":"never reached"}"#.to_owned(),
         ],
     );
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages(), &[said("kept")]);
+}
+
+#[test]
+fn a_last_line_torn_mid_character_ends_the_log_rather_than_failing_it() {
+    // A process that dies while writing stops wherever it stops, including
+    // between the bytes of one character. That is the same half-written last
+    // line the replay already forgives; refusing to continue over it costs the
+    // user every turn in the log, and the file says nothing followed.
+    let sample = Sample::new("session-torn-character");
+    let workspace = sample.workspace().root().display().to_string();
+    let path = sample.plant(
+        "0000000000005-000005",
+        &[
+            format!(r#"{{"format":1,"session":"torn","workspace":"{workspace}"}}"#),
+            r#"{"user":"kept"}"#.to_owned(),
+        ],
+    );
+
+    // The first two bytes of a three-byte character, and then the power cut.
+    let mut torn = fs::read(&path).expect("the log");
+    torn.extend_from_slice(b"{\"user\":\"\xe2\x82");
+    fs::write(&path, torn).expect("a writable temporary directory");
 
     let (_session, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
