@@ -19,14 +19,14 @@ that say what it is allowed to become.
   inline, runs tools, and asks before anything that changes a file or starts a
   process. `--continue` carries on the most recent session started in the
   current directory. An answer the provider cut short says so under the turn,
-  with the token ceiling and the content filter named apart because the remedy
-  differs. The bound on that: a stop reason this build has not heard of reads as
-  an ordinary finish, so a vendor adding one is the case where a cut-short
-  answer can still arrive looking complete.
+  with the token ceiling, the content filter and a paused turn named apart
+  because the remedy differs for each. The bound on that: a stop reason this
+  build has not heard of reads as an ordinary finish, so a vendor adding one is
+  the case where a cut-short answer can still arrive looking complete.
 - A startup that fails leaves no session behind. Everything that can fail on the
   way in runs before the session is started, so a wrong `--model` or an unset
   key writes nothing: an empty session would otherwise be the newest one for the
-  directory, and `--continue` would offer it instead of the last conversation.
+  directory, and `--continue` would offer it instead of the last real session.
 - Two providers, chosen by `--model [provider/]model`: `anthropic` (the default
   for an unqualified name, keyed by `ANTHROPIC_API_KEY`) and `openai` (keyed by
   `OPENAI_API_KEY`). Authentication is a separate axis from the wire protocol —
@@ -36,12 +36,19 @@ that say what it is allowed to become.
   obtained one cannot call the operation; a read mints its own, and a file
   change or a command asks first. `always` remembers the tool for a file change
   and the tool *and program* for a command, and is never written to disk. What a
-  tool returns is bounded, and a result that is short says why in the result
-  itself: cut from the middle, stopped at a match limit, or still arriving
-  because something the command left running holds the pipe open.
+  tool returns is bounded, and a result that is short says so in the result
+  itself — more lines follow, a line was cut at a width, a listing stopped at
+  its limit, output was still arriving, the command was stopped for running too
+  long — because a silently trimmed result reads to the model as a complete one.
 - Session log: one JSON object per line, one file per session, under
   `$XDG_DATA_HOME/crucible/sessions`. A log from a build with a different format
-  is refused rather than half-understood.
+  is refused rather than half-understood. The log is `0600` and its directory
+  `0700`, narrowed on every start rather than only at creation, because a
+  transcript holds what was typed, what files were read and what commands
+  printed — and a group-writable directory would let another account drop a log
+  in for `--continue` to replay. A log torn mid-line by a crash costs that line;
+  one damaged in the middle is refused outright rather than silently returning a
+  session with a hole in it.
 - `docs/` — getting started, providers and models, permission, and sessions.
 - Cargo workspace: `crucible-core`, `crucible-provider`, `crucible-tools`,
   `crucible-runner`, `crucible-tui`, and the `crucible` binary. Dependencies
@@ -95,6 +102,17 @@ that say what it is allowed to become.
   forbids, so what a resize costs is the turn it lands in.
 - <kbd>Ctrl-C</kbd> ends the process rather than the turn, for the same reason.
   The session log is written as the turn goes, so `--continue` picks it up.
+- Path containment resolves a path and the tool then acts on it, which is two
+  steps rather than one. A path swapped for a symbolic link in between would be
+  followed, so the check bounds a model working in the tree and not an attacker
+  who can already write to it concurrently.
+- A provider that pauses a turn is reported and left there. Sending the
+  transcript back to carry on is a decision for the user, not something 0.0.x
+  does by itself.
+- A sessions directory or log left more open than `0700`/`0600` is narrowed on
+  start, and a filesystem that refuses to narrow it fails the start rather than
+  writing a transcript somewhere the whole machine can read. One already at the
+  right mode is not touched, so this costs nothing on the ordinary path.
 - Linux x86-64 only. The release builds one artifact.
 
 [0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1

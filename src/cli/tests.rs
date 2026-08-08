@@ -96,7 +96,7 @@ fn a_provider_this_build_does_not_serve_reads_no_key_at_all() {
 fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
     // An empty session written for a run that never happened is then the
     // newest one for this directory, so --continue would offer it instead
-    // of the last real conversation.
+    // of the last real session.
     let sample = Sample::new("no-provider");
 
     let Err(problem) = assemble(

@@ -13,9 +13,11 @@
 //! sensitivity would otherwise be one that had never been asked about at all.
 //!
 //! Every tool that takes a path asks its `Workspace` to resolve one before
-//! touching it, so the containment check lives in one place rather than in six
-//! copies of the same `if` — and `..`, an absolute path and a symbolic link
-//! are all refused there.
+//! touching it, so the containment check lives in one place rather than in five
+//! copies of the same `if`. What that check refuses is a path that *resolves*
+//! outside the tree: `..`, an absolute path and a symbolic link are followed
+//! first and then judged by where they landed, which is why one that stays
+//! inside is allowed and one that leaves is not.
 //!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start

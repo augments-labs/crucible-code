@@ -7,16 +7,17 @@
 
 **The harness where agents are forged.**
 
-A terminal coding agent in Rust — fast to start, flat in memory, and yours to run.
+A terminal coding agent in Rust — fast to start, light on memory, and yours to run.
 
 </div>
 
 ---
 
-> **Status: early development.** `v0.0.1` is not released, but it runs: a
+> **Status: early development.** `0.0.x` is a walking skeleton, and it runs: a
 > session streams, six tools work, permission is asked for, and the transcript
 > is kept. Flags, session files and config are unstable for the whole 0.0.x
-> line. Watch the repository if you want the first tag.
+> line. See [Releases](https://github.com/augments-labs/crucible-code/releases)
+> for what is tagged today.
 
 ## What it is
 

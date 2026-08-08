@@ -34,7 +34,7 @@ input ending. There are two ways to say yes and both are explicit; everything
 that is not one of them leaves the tool unrun.
 
 Saying no ends the turn. The refusal is written into the transcript as that
-call's result, so the conversation stays one a provider will accept and the
+call's result, so the transcript stays one a provider will accept and the
 model sees the refusal on your next prompt — but it does not carry on and try
 something else within the turn you stopped. That is deliberate: a model that
 can keep going after a no gets to ask the same question in a different shape
@@ -68,7 +68,7 @@ because in each of them the first word does not say what will run:
 `always` on one of these stops asking only about that exact command.
 
 A grant lives as long as the process that made it and is never written to disk,
-so `--continue` starts with none — resuming a conversation does not resume its
+so `--continue` starts with none — resuming a session does not resume its
 permissions.
 
 ## The guarantee underneath

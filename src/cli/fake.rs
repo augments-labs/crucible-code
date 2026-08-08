@@ -22,7 +22,7 @@ pub(crate) struct Script {
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Asked,
     /// Refuses every request, for the path where the provider itself fails
-    /// rather than the conversation going wrong inside a response.
+    /// rather than the transcript going wrong inside a response.
     refusing: bool,
 }
 

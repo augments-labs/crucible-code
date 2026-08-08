@@ -13,10 +13,11 @@ to appear.
 
 A new provider is a new module here, plus four edits in `src/cli.rs`: the
 `const <NAME>_KEY` naming its environment variable, a match arm in `provider`,
-the name in `PROVIDERS`, and the `--model` help text. It is never an edit to
-`crucible-core`. If adding one seems to need a new core enum variant or a new
-trait method, the abstraction is wrong — say so rather than widening core to
-fit.
+the name in `PROVIDERS`, and the `long_about` on `Cli`, which is where the
+provider names and their environment variables are spelled out for the user.
+It is never an edit to `crucible-core`. If adding one seems to need a new core
+enum variant or a new trait method, the abstraction is wrong — say so rather
+than widening core to fit.
 
 Those four are deliberately together in one file. A provider the parser accepts
 and the help text never mentions is the failure worth designing against.

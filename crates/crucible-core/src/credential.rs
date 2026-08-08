@@ -74,8 +74,9 @@ impl ApiKey {
 /// One value rather than two strings side by side. Anthropic sends
 /// `x-api-key: <key>` and OpenAI sends `authorization: Bearer <key>`, so both
 /// halves would otherwise be `&str` arguments in a row — and a call site that
-/// puts them the wrong way round compiles, then sends `Bearer : x-api-key<key>`
-/// and gets back an authentication failure that names neither.
+/// puts them the wrong way round compiles, then sends
+/// `Bearer : authorization<key>` and gets back an authentication failure that
+/// names neither argument.
 #[derive(Debug, Clone)]
 pub struct Header {
     name: Box<str>,

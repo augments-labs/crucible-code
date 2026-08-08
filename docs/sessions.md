@@ -1,8 +1,7 @@
 # Sessions
 
 A session is a conversation bound to a working directory. Every session is
-written to a file as it happens, so a conversation survives the terminal it was
-held in.
+written to a file as it happens, so it survives the terminal it was held in.
 
 ## Continuing
 
@@ -12,7 +11,7 @@ crucible --continue
 
 This picks up the most recent session **started in the current directory**. Run
 it somewhere else and you get that directory's most recent session instead —
-which is the point. Two projects open in two terminals are two conversations.
+which is the point. Two projects open in two terminals are two sessions.
 
 `--continue` replays the transcript so the model has the earlier turns, and
 appends to the same file. It does not restore permissions: a grant lives as long
@@ -20,7 +19,13 @@ as the process that made it, so a continued session asks again the first time it
 wants to change a file or run something. See [Permission](permission.md).
 
 If nothing was ever recorded for this directory, crucible says so and stops
-rather than silently starting a new conversation.
+rather than silently starting a new session.
+
+A log the process was killed part-way through writing costs the line it was on
+and nothing more — the turns before it are still a transcript, and `--continue`
+hands them back. A log damaged somewhere in the *middle* is refused instead:
+continuing from a transcript with a hole in it would read to the model as you
+contradicting yourself, and nothing would say why.
 
 ## Where they are kept
 
@@ -39,7 +44,23 @@ guessing.
 
 Each file is named for its session and ends in `.jsonl`. They are yours: reading
 one with `cat`, `jq` or a text editor is a supported thing to do, and deleting
-one is how you forget a conversation.
+one is how you forget a session.
+
+## Who can read them
+
+Logs are written `0600` and their directory `0700` — yours alone. A transcript
+holds what you typed, what the model said, the contents of every file that was
+read and everything a command printed, so on a shared machine the usual `0644`
+would hand all of it to anyone with an account. The directory is closed for the
+matching reason from the other side: somewhere another account can write is
+somewhere a log can be *planted* for `--continue` to replay back to the model as
+though you had typed it.
+
+Both are narrowed on every start, not only when they are created, because a
+directory made by an earlier build or by hand keeps whatever your umask gave it.
+One already at the right mode is left alone. A path that is too open and cannot
+be narrowed stops the start and says so, rather than carrying on and writing a
+transcript somewhere the whole machine can read.
 
 ## What is in a file
 

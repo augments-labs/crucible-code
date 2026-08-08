@@ -2,9 +2,11 @@
 //!
 //! Thirty-five megabytes is the budget. What it really guards is shape rather
 //! than size: a harness that keeps the whole transcript on screen, or holds
-//! every tool result to re-render it, or clones the conversation into each
-//! request, grows with the session instead of staying flat. Twenty turns is
-//! enough for that difference to show and short enough to run in a gate.
+//! every tool result to re-render it, grows with the session rather than with
+//! the turn. The transcript itself is held whole and copied into each request,
+//! and that copy is what this number is set to cover; what must not appear
+//! beside it is a second thing that grows the same way. Twenty turns is enough
+//! for that difference to show and short enough to run in a gate.
 //!
 //! Everything here is the real thing except the socket. The provider is the
 //! real Anthropic adapter parsing real server-sent events; the tool is the real

@@ -18,9 +18,9 @@ fn turns_are_numbered_from_one() {
 }
 
 #[test]
-fn a_continued_conversation_goes_on_counting_where_it_stopped() {
+fn a_continued_session_goes_on_counting_where_it_stopped() {
     // Numbering the first continued turn 1 would tell the user this is a new
-    // conversation, which is exactly what they asked it not to be.
+    // session, which is exactly what they asked it not to be.
     let script = Script::new(vec![saying("still here")]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
 

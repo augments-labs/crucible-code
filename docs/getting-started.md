@@ -87,7 +87,7 @@ one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
 <kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.1 input is left
 in the terminal's cooked mode and no signal is caught, so there is no way to stop
 a single answer and keep the session. The session log is written as the turn
-goes, so `crucible --continue` picks the conversation up from wherever it
+goes, so `crucible --continue` picks the session up from wherever it
 stopped — see [Sessions](sessions.md).
 
 ## What it can do

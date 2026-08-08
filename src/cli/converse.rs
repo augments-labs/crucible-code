@@ -9,7 +9,7 @@
 //! knowing: Ctrl-C during a turn ends the process, because catching a signal
 //! would need `unsafe`, which this workspace forbids. The session log is
 //! append-only and written as the turn goes, so `--continue` picks the
-//! conversation up from wherever it stopped.
+//! session up from wherever it stopped.
 
 use std::io::BufRead;
 use std::sync::mpsc::channel;
@@ -60,6 +60,16 @@ pub(crate) fn converse<T: Terminal>(
             draw::trouble(renderer, &problem)?;
             told = true;
         }
+    }
+
+    // The writer thread is still holding the last turn when the loop ends, so
+    // the poll above cannot have seen a failure recorded during it. Draining
+    // here is what stops the one turn most likely to matter from being the one
+    // nobody is told about.
+    if let Some(problem) = runner.into_session().finish()
+        && !told
+    {
+        draw::trouble(renderer, &problem)?;
     }
 
     renderer.settle()?;

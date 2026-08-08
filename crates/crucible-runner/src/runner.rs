@@ -58,11 +58,11 @@ impl Runner {
         }
     }
 
-    /// Picks up a conversation that already happened — what `--continue`
+    /// Picks up a transcript that already happened — what `--continue`
     /// replays.
     ///
     /// The turn count comes with it. Numbering the first continued turn `1`
-    /// would tell the user this is a new conversation, which is exactly what
+    /// would tell the user this is a new session, which is exactly what
     /// they asked it not to be.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
@@ -73,7 +73,7 @@ impl Runner {
         self
     }
 
-    /// The conversation so far.
+    /// The transcript so far.
     #[must_use]
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
@@ -85,7 +85,16 @@ impl Runner {
         &self.session
     }
 
-    /// Appends a message to the conversation.
+    /// Hands the session out, for the caller that is finished driving turns.
+    ///
+    /// The loop ends owning the runner, and closing a session properly means
+    /// consuming it — see [`Session::finish`].
+    #[must_use]
+    pub fn into_session(self) -> Session {
+        self.session
+    }
+
+    /// Appends a message to the transcript.
     ///
     /// The only way either the transcript or the log is written. Two calls
     /// that could be made separately would eventually be made separately, and

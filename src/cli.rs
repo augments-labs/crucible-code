@@ -163,10 +163,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     let directory = Session::directory()?;
 
-    // The title is set before the session rather than after it: it is the one
-    // step here that can fail, and starting a session writes a file. It is
-    // restored on the way out of this function however it is left, so a failure
-    // between here and the loop does not leave one behind either.
+    // Set before the session is started, because a session writes a file and
+    // this does not: a failure here leaves the disk as it found it. The guard
+    // restores the title on the way out of this function however it is left, so
+    // a failure between here and the loop does not leave a tab named after a
+    // process that is gone.
     //
     // Reentrant on this thread, which is the only one that writes here: the
     // renderer holds the lock for its whole life, and the title borrows the
@@ -202,7 +203,7 @@ fn assemble(
     // caller has already prepared the terminal for the same reason. Starting a
     // session writes a file, and one written for a run that never happened is
     // then the newest for this directory — which is what `--continue` would
-    // offer instead of the last real conversation.
+    // offer instead of the last real session.
     let provider = provider(&choice, from)?;
 
     let (session, earlier) = if cli.r#continue {

@@ -5,7 +5,8 @@
 //! handed back to be written once and then forgotten. Everything above the tail
 //! belongs to the terminal's scrollback, so what this file holds is bounded by
 //! the tail's own size rather than by how long the session has run. The
-//! transcript itself is held whole, and is the one thing here that is not.
+//! transcript is held whole by the runner, and is the one thing anywhere in
+//! this program that grows with the session.
 //!
 //! Wrapping happens here rather than being left to the terminal because the
 //! renderer has to know how many rows it drew in order to move back over them.

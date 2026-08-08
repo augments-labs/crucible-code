@@ -1,7 +1,7 @@
 //! Running what the model asked for.
 //!
 //! One rule shapes this file: **every call the transcript records has a result
-//! recorded with it.** A provider refuses a conversation containing a request
+//! recorded with it.** A provider refuses a transcript containing a request
 //! with no answer, so a turn that stops half way through a round — because the
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.

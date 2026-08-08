@@ -85,7 +85,7 @@ pub enum ProviderError {
 pub struct Request {
     /// Which model to ask.
     pub model: Box<str>,
-    /// The conversation so far.
+    /// The transcript so far.
     pub transcript: Transcript,
     /// The tools the model may call, as JSON Schema.
     pub tools: Vec<ToolSchema>,
