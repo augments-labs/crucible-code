@@ -65,8 +65,15 @@ impl ApiKey {
     ///
     /// Separated so the "unset" and "blank" rules can be tested without
     /// mutating the process environment — which in edition 2024 is `unsafe`,
-    /// and this crate forbids that outright.
-    fn from_lookup(
+    /// and this crate forbids that outright. Public for the same reason one
+    /// level up: the wiring that decides which variable a provider reads is
+    /// worth a test, and a swap there sends one vendor's key to another.
+    ///
+    /// # Errors
+    ///
+    /// [`CredentialError::NotInEnvironment`] if `lookup` finds nothing or finds
+    /// only whitespace.
+    pub fn from_lookup(
         variable: &str,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, CredentialError> {

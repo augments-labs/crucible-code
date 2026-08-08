@@ -161,15 +161,23 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
 
-    let runner = assemble(cli, &Session::directory()?, &workspace, &cancel)?;
+    let directory = Session::directory()?;
 
+    // The terminal is prepared before the session rather than after it, because
+    // both of these can fail and starting a session writes a file. The title is
+    // restored on the way out of this function however it is left, so a failure
+    // between here and the loop does not leave one behind either.
+    //
     // Reentrant on this thread, which is the only one that writes here: the
     // renderer holds the lock for its whole life, and the title borrows the
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set(io::stdout())?;
     let mut renderer = Renderer::new(SystemTerminal::stdout())?;
-
     draw::opening(&mut renderer, &cli.model, &workspace)?;
+
+    let runner = assemble(cli, &directory, &workspace, &cancel, &|name| {
+        std::env::var(name).ok()
+    })?;
     let outcome = converse::converse(runner, &mut renderer, &cancel, &mut io::stdin().lock());
 
     drop(held);
@@ -178,21 +186,24 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
 /// The runner the loop drives, built from what the command line asked for.
 ///
-/// `directory` is a parameter rather than read here so that a test can point a
-/// startup at somewhere disposable and look at what it left behind.
+/// `directory` and `from` are parameters rather than read here so that a test
+/// can point a startup at somewhere disposable, fail it either way it can fail,
+/// and look at what it left behind.
 fn assemble(
     cli: &Cli,
     directory: &Path,
     workspace: &Workspace,
     cancel: &Cancel,
+    from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Runner, Fatal> {
     let choice = Choice::parse(&cli.model).ok_or(Fatal::Nameless)?;
 
-    // Before the session, because this is the last thing that can fail on the
-    // way in and starting a session writes a file. A session written for a run
-    // that never happened is then the newest one for this directory, which is
-    // what `--continue` would offer instead of the last real conversation.
-    let provider = provider(&choice)?;
+    // Before the session, and the last thing on the way in that can fail: the
+    // caller has already prepared the terminal for the same reason. Starting a
+    // session writes a file, and one written for a run that never happened is
+    // then the newest for this directory — which is what `--continue` would
+    // offer instead of the last real conversation.
+    let provider = provider(&choice, from)?;
 
     let (session, earlier) = if cli.r#continue {
         let (session, transcript) = Session::resume(directory, workspace)?;
@@ -219,17 +230,24 @@ fn assemble(
 /// The one place in the program where a provider's name becomes a type. Adding
 /// another is an arm here and a `Credential` beside it — nothing in any crate
 /// below has to learn that it exists.
-fn provider(choice: &Choice) -> Result<Box<dyn Provider>, Fatal> {
+///
+/// `from` reads the environment. It is a parameter because the pairing below is
+/// worth a test and the real environment cannot be set from one: writing to it
+/// is `unsafe` in edition 2024, which this workspace forbids.
+fn provider(
+    choice: &Choice,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Provider>, Fatal> {
     match &*choice.provider {
         // Two protocols, one credential kind pointed at different headers.
         // Authentication is a separate axis, and this is what that buys.
         "anthropic" => Ok(Box::new(Anthropic::new(
-            key(ANTHROPIC_KEY, "x-api-key", "")?,
+            key(ANTHROPIC_KEY, "x-api-key", "", from)?,
             Box::new(Https::new()),
         ))),
 
         "openai" => Ok(Box::new(OpenAi::new(
-            key(OPENAI_KEY, "authorization", "Bearer ")?,
+            key(OPENAI_KEY, "authorization", "Bearer ", from)?,
             Box::new(Https::new()),
         ))),
 
@@ -243,8 +261,13 @@ fn provider(choice: &Choice) -> Result<Box<dyn Provider>, Fatal> {
 ///
 /// The variable's name is what is configured; the value is read once, here, and
 /// goes no further than the header it is applied to.
-fn key(variable: &str, header: &str, prefix: &str) -> Result<Box<dyn Credential>, Fatal> {
-    let key = ApiKey::from_env(variable)?;
+fn key(
+    variable: &str,
+    header: &str,
+    prefix: &str,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Credential>, Fatal> {
+    let key = ApiKey::from_lookup(variable, from)?;
 
     Ok(Box::new(HeaderKey::new(key, header, prefix)))
 }
@@ -299,71 +322,4 @@ fn fail(problem: &Fatal) -> ExitCode {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use super::*;
-
-    /// A sessions directory and a workspace, both real, both temporary.
-    struct Sample {
-        base: PathBuf,
-    }
-
-    impl Sample {
-        fn new(name: &str) -> Self {
-            let base =
-                std::env::temp_dir().join(format!("crucible-cli-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&base);
-            fs::create_dir_all(base.join("work")).expect("a temporary directory");
-
-            Self { base }
-        }
-
-        /// Where sessions would go. Deliberately not created: whether a startup
-        /// makes it is the thing being watched.
-        fn logs(&self) -> PathBuf {
-            self.base.join("logs")
-        }
-
-        fn workspace(&self) -> Workspace {
-            Workspace::open(self.base.join("work")).expect("the directory exists")
-        }
-    }
-
-    impl Drop for Sample {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.base);
-        }
-    }
-
-    fn asking(model: &str) -> Cli {
-        Cli {
-            r#continue: false,
-            model: model.to_owned(),
-        }
-    }
-
-    #[test]
-    fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
-        // An empty session written for a run that never happened is then the
-        // newest one for this directory, so --continue would offer it instead
-        // of the last real conversation.
-        let sample = Sample::new("no-provider");
-
-        let Err(problem) = assemble(
-            &asking("nowhere/gpt-5.2"),
-            &sample.logs(),
-            &sample.workspace(),
-            &Cancel::new(),
-        ) else {
-            panic!("a provider this build does not have was accepted");
-        };
-
-        assert!(matches!(problem, Fatal::Provider { .. }), "{problem:?}");
-        assert!(
-            !sample.logs().exists(),
-            "a session was written for a startup that failed"
-        );
-    }
-}
+mod tests;
