@@ -2,8 +2,8 @@
 
 ## Build it
 
-There are no published binaries yet. Rust is pinned in `rust-toolchain.toml`, so
-rustup fetches the right toolchain on the first build.
+Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain
+on the first build.
 
 ```bash
 git clone https://github.com/augments-labs/crucible-code

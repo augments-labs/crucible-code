@@ -12,25 +12,25 @@
 use crucible_core::{Message, Request, ToolResult, ToolSchema, Transcript};
 use serde_json::{Map, Value, json};
 
-use crate::json::{described, object, put};
+use crate::json::{described, object};
 
 /// The whole request body.
 pub(super) fn build(request: &Request) -> Value {
     let mut body = Map::new();
-    put(&mut body, "model", json!(&*request.model));
-    put(&mut body, "max_tokens", json!(request.max_tokens));
-    put(&mut body, "stream", json!(true));
-    put(&mut body, "messages", json!(messages(&request.transcript)));
+    body.insert("model".to_owned(), json!(&*request.model));
+    body.insert("max_tokens".to_owned(), json!(request.max_tokens));
+    body.insert("stream".to_owned(), json!(true));
+    body.insert("messages".to_owned(), json!(messages(&request.transcript)));
 
     // Absent rather than null: the API rejects a null system prompt, and a
     // session without one is the ordinary case.
     if let Some(system) = &request.system {
-        put(&mut body, "system", json!(&**system));
+        body.insert("system".to_owned(), json!(&**system));
     }
 
     if !request.tools.is_empty() {
         let tools = request.tools.iter().map(tool).collect();
-        put(&mut body, "tools", Value::Array(tools));
+        body.insert("tools".to_owned(), Value::Array(tools));
     }
 
     Value::Object(body)
@@ -90,15 +90,15 @@ fn message(message: &Message) -> Option<Value> {
 /// One tool result.
 fn result(result: &ToolResult) -> Value {
     let mut block = Map::new();
-    put(&mut block, "type", json!("tool_result"));
-    put(&mut block, "tool_use_id", json!(result.id.as_str()));
-    put(&mut block, "content", json!(result.output.text()));
+    block.insert("type".to_owned(), json!("tool_result"));
+    block.insert("tool_use_id".to_owned(), json!(result.id.as_str()));
+    block.insert("content".to_owned(), json!(result.output.text()));
 
     // Only when true. The field means "the model should treat this as having
     // gone wrong", and sending it as false on every success is noise in a
     // payload that is resent on every turn.
     if result.output.is_failed() {
-        put(&mut block, "is_error", json!(true));
+        block.insert("is_error".to_owned(), json!(true));
     }
 
     Value::Object(block)

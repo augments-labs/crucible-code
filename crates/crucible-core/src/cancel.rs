@@ -2,7 +2,7 @@
 //!
 //! One flag, shared with whichever threads are working. Esc on the input
 //! thread sets it; the provider checks it between socket reads and a tool
-//! checks it between chunks of work.
+//! checks it between the steps of whatever it is doing.
 //!
 //! Nothing is killed. Each thread notices and returns, which is why a
 //! half-written file cannot happen: the write either did not start or ran to

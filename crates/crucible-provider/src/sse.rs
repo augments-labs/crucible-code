@@ -6,7 +6,7 @@
 //! payload still text. Parsing that text is the provider's job, because only it
 //! knows what its vendor puts in there.
 //!
-//! Bytes throughout, converted to text once per event. A chunk from the socket
+//! Bytes throughout, converted to text once per event. One read from the socket
 //! can split a character in half, so accumulating into a `String` would have to
 //! either lose it or refuse it -- and the payload is JSON, where a lost byte is
 //! a silently wrong answer.

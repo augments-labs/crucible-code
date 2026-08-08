@@ -57,8 +57,12 @@ cargo build --release
 ./target/release/crucible --version
 ```
 
-There are no published binaries yet. When there are, they will be attached to
-the GitHub Release for the tag.
+There are no published binaries yet; when there are, they will be attached to
+the GitHub Release for the tag. Anything past this point —
+[getting started](docs/getting-started.md),
+[providers](docs/providers.md), [permission](docs/permission.md),
+[sessions](docs/sessions.md) — lives in `docs/` rather than here, so there is
+one copy of it to keep true.
 
 ## Running it
 

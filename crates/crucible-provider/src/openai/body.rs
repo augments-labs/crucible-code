@@ -14,30 +14,29 @@
 use crucible_core::{Message, Request, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
 
-use crate::json::{described, put};
+use crate::json::described;
 
 /// The whole request body.
 pub(super) fn build(request: &Request) -> Value {
     let mut body = Map::new();
-    put(&mut body, "model", json!(&*request.model));
-    put(&mut body, "stream", json!(true));
+    body.insert("model".to_owned(), json!(&*request.model));
+    body.insert("stream".to_owned(), json!(true));
 
     // `max_tokens` is the older name, now deprecated, and the models that
     // reason before answering refuse it outright. Not quite a rename: this one
     // bounds the reasoning as well as the visible answer, so the same number
     // buys a shorter reply from a model that thinks first.
-    put(
-        &mut body,
-        "max_completion_tokens",
+    body.insert(
+        "max_completion_tokens".to_owned(),
         json!(request.max_tokens),
     );
-    put(&mut body, "messages", Value::Array(messages(request)));
+    body.insert("messages".to_owned(), Value::Array(messages(request)));
 
     // Absent rather than empty: an empty array is refused rather than read as
     // a session with no tools.
     if !request.tools.is_empty() {
         let tools = request.tools.iter().map(tool).collect();
-        put(&mut body, "tools", Value::Array(tools));
+        body.insert("tools".to_owned(), Value::Array(tools));
     }
 
     Value::Object(body)
@@ -79,7 +78,7 @@ fn append(messages: &mut Vec<Value>, message: &Message) {
 /// What the model said, and what it asked to run.
 fn agent(text: &str, calls: &[ToolCall]) -> Value {
     let mut message = Map::new();
-    put(&mut message, "role", json!("assistant"));
+    message.insert("role".to_owned(), json!("assistant"));
 
     // A model that goes straight to a tool says nothing first, and null is how
     // this wire spells that. Null with no calls to carry it is a different
@@ -91,11 +90,11 @@ fn agent(text: &str, calls: &[ToolCall]) -> Value {
     } else {
         json!(text)
     };
-    put(&mut message, "content", content);
+    message.insert("content".to_owned(), content);
 
     if !calls.is_empty() {
         let calls = calls.iter().map(call).collect();
-        put(&mut message, "tool_calls", Value::Array(calls));
+        message.insert("tool_calls".to_owned(), Value::Array(calls));
     }
 
     Value::Object(message)

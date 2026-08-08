@@ -65,8 +65,9 @@ pub(crate) fn event<T: Terminal>(
         }
 
         // Clipped: a refusal carries up to 8 KiB of the provider's own words,
-        // and a mid-response failure carries whatever a chunk's `message` said.
-        // Neither is this program's text, and neither may become extra rows.
+        // and a response that failed part-way through carries whatever the
+        // provider said about why. Neither is this program's text, and neither
+        // may become extra rows.
         Event::Failed { error } => {
             renderer.settle()?;
             renderer.commit(&format!("! {}", clipped(&error.to_string(), OUTPUT)))

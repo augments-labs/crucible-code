@@ -107,6 +107,12 @@ column gets sent back in review.
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.
 
+The one exception: inside `crucible-provider`, **chunk** names the wire object a
+vendor sends — OpenAI's is literally typed `chat.completion.chunk`. It is not a
+synonym for a delta, it is a layer below one, and one chunk can yield several.
+Using a vendor's word for a vendor's object is what keeps that a distinction
+rather than a coincidence. Everywhere above the wire, a delta is a delta.
+
 ## Design notes worth knowing before you change something
 
 - **Auth is a separate axis from the wire protocol.** A `Provider` receives an

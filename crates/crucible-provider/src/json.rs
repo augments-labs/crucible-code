@@ -4,18 +4,8 @@
 //! point of having more than one of them; what they agree on is narrower —
 //! where a tool's description comes from, and that nothing here may panic on a
 //! payload it did not expect.
-//!
-//! Fields are inserted rather than assigned by index. Indexing a JSON value
-//! panics on anything that is not the container it expected, and nothing that
-//! builds a request may be one bad assumption away from taking the process
-//! down.
 
 use serde_json::{Map, Value};
-
-/// Adds a field.
-pub(crate) fn put(fields: &mut Map<String, Value>, name: &str, value: Value) {
-    fields.insert(name.to_owned(), value);
-}
 
 /// JSON text as an object, or an empty one.
 ///
