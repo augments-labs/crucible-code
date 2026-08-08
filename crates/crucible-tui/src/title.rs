@@ -6,7 +6,7 @@
 //! it is dropped.
 
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 /// The title crucible sets while it runs: the mark, then the name.
 ///
@@ -41,14 +41,31 @@ pub struct Title<W: Write> {
     out: W,
 }
 
-impl<W: Write> Title<W> {
-    /// Sets the terminal title to [`TITLE`].
+impl Title<io::Stdout> {
+    /// Sets the terminal title to [`TITLE`], and returns what holds it.
+    ///
+    /// `None` when standard output is not a terminal. A pipe or a file has no
+    /// tab to name, so the sequence would not be a title there — it would be
+    /// bytes in the middle of whatever read the output, twice over, because the
+    /// guard writes again on its way out. This is the only way to set the
+    /// title, so a redirected run cannot be given one by mistake.
     ///
     /// # Errors
     ///
     /// Returns [`TitleError::Write`] if the sequence cannot be written to the
     /// terminal.
-    pub fn set(out: W) -> Result<Self, TitleError> {
+    pub fn set() -> Result<Option<Self>, TitleError> {
+        if !io::stdout().is_terminal() {
+            return Ok(None);
+        }
+
+        Ok(Some(Self::onto(io::stdout())?))
+    }
+}
+
+impl<W: Write> Title<W> {
+    /// The same, onto a writer a test can read back.
+    fn onto(out: W) -> Result<Self, TitleError> {
         let mut held = Self { out };
         held.out.write_all(SET.as_bytes())?;
         held.out.flush()?;
@@ -80,7 +97,7 @@ mod tests {
     #[test]
     fn set_writes_the_mark_and_the_name_to_the_terminal() {
         let mut term = Vec::new();
-        let held = Title::set(&mut term).unwrap();
+        let held = Title::onto(&mut term).unwrap();
         drop(held);
 
         assert!(
@@ -93,7 +110,7 @@ mod tests {
     #[test]
     fn dropping_restores_the_terminal() {
         let mut term = Vec::new();
-        let held = Title::set(&mut term).unwrap();
+        let held = Title::onto(&mut term).unwrap();
         drop(held);
 
         assert!(
@@ -101,6 +118,20 @@ mod tests {
             "expected the title to be cleared, wrote {:?}",
             String::from_utf8_lossy(&term),
         );
+    }
+
+    #[test]
+    fn a_run_whose_output_is_not_a_terminal_sets_no_title() {
+        // The test harness captures standard output, so this is the redirected
+        // case: a pipe, a file, `crucible | tee`. Nothing there displays a tab
+        // name, so the sequence is not a title but eight bytes in the middle of
+        // somebody's data — followed by five more when the guard is dropped.
+        //
+        // Holding nothing is the whole assertion. There is no title to hand
+        // back either, which is what `None` says.
+        let held = Title::set().expect("no title to be set");
+
+        assert!(held.is_none(), "a pipe was sent a title sequence");
     }
 
     /// The sequence spells its title out because `concat!` takes literals only.

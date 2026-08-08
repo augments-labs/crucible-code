@@ -170,6 +170,21 @@ else
     failed=1
 fi
 
+echo "==> a run nobody is watching"
+# Read back from the run above, whose output was a pipe rather than a terminal.
+# A redirected run must write no escape sequence at all: those bytes are not
+# formatting once something other than a terminal has them, they are corruption
+# in a log, a diff or whatever read the output. This is the failure that looks
+# fine on screen and is only ever seen by the next program along, which is why
+# the gate is here rather than in a rendering test -- the source can be right
+# and the shipped binary still write one on a path no test takes.
+if [[ $said == *$'\e'* ]]; then
+    printf '    FAIL a redirected run wrote an escape sequence: %q\n' "$said"
+    failed=1
+else
+    echo '    wrote nothing a terminal would have had to interpret'
+fi
+
 echo "==> a session, end to end"
 if ((offline)); then
     echo '    SKIP --offline'
