@@ -40,8 +40,9 @@ Notable changes to crucible. Format follows
   point down only, enforced by cargo.
 - `scripts/check.sh` — formatting, clippy with `-D warnings`, tests, a
   400-line-per-file cap, pinning checks for dependencies, GitHub Actions and the
-  agent instruction files, and a check that CI stops excusing a failing budget
-  once the first bench probe exists. CI runs the same script.
+  agent instruction files, a comment above every dependency saying why it is
+  needed, and a check that CI stops excusing a failing budget once the first
+  bench probe exists. CI runs the same script.
 - `scripts/bench.sh` — one probe per performance budget, selectable by mode
   (`startup`, `mem`, `grep`, `stream`, or all of them). Writes a JSON document
   to stdout and a readable summary to stderr, so one run serves a pipeline and a
@@ -61,6 +62,12 @@ Notable changes to crucible. Format follows
   — the second uploading its JSON as a build artifact, so a budget trend exists
   from the first pull request — plus a tag-triggered release workflow,
   Dependabot for cargo and actions, and issue and pull request templates.
+- `deny.toml` and a weekly `audit` workflow — the other half of pinning. Nothing
+  here moves on its own, so an advisory published against a version already
+  pinned would never surface; a scan on a clock finds it, and the same scan
+  refuses a licence that would make the MIT on the binary untrue or a dependency
+  from anywhere but crates.io. It runs apart from `scripts/check.sh` because its
+  answer changes when somebody else publishes rather than when you edit.
 - Contributor Covenant 3.0 code of conduct, contribution guide, and a documented
   release procedure.
 - `crucible_tui::Title` — sets the terminal tab title to `▽ crucible` and

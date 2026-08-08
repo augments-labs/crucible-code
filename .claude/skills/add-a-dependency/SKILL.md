@@ -73,12 +73,27 @@ belongs to `crucible-provider`, not to `core`.
   that writes to the terminal itself will corrupt the transcript.
 - **Weight is a feature decision.** Compile time, binary size and startup cost
   all count against the budgets in `CONTRIBUTING.md`.
+- **Its licence has to be on the list, and so does everything it drags in.** The
+  binary is distributed under MIT, and that promise is only as true as what it
+  statically links. `deny.toml` names the permissive licences this tree uses; a
+  licence not on it is a decision to argue in the pull request, not a line to
+  add quietly.
+- **crates.io only.** A git dependency has no version field, so the pinning gate
+  has nothing to look at and passes it in silence — while the revision it names
+  can be force-pushed underneath you.
 
 ## After
 
 ```bash
 cargo build          # refresh Cargo.lock
 scripts/check.sh
+cargo deny check     # advisories, licences, sources
 ```
+
+`scripts/check.sh` covers the pin and the comment. `cargo deny check` covers
+what the source cannot show: whether anyone has published an advisory against
+the version you just pinned. CI runs it on any change to `Cargo.toml`,
+`Cargo.lock` or `deny.toml`, and weekly regardless — because pinning is exactly
+what stops that answer from changing on its own.
 
 Commit the lockfile with the change. `chore(deps): add <crate> for <reason>`.

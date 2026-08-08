@@ -85,7 +85,10 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    No requirement IDs, no design-doc citations, no references to planning
    directories. Traceability lives in commit messages and test names.
 8. **Dependencies are `=`-pinned and justified.** A new one needs a comment in
-   `Cargo.toml` saying why it is needed. Checked by `scripts/check.sh`.
+   `Cargo.toml` saying why it is needed; `scripts/check.sh` fails without both.
+   Pinning is also what hides an advisory published afterwards, so `deny.toml`
+   is scanned on a clock instead — that check cannot live in a script whose
+   whole promise is the same answer for the same tree.
 
 ## Vocabulary
 

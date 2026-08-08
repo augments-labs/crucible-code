@@ -12,10 +12,14 @@ description: >-
 scripts/check.sh
 ```
 
-One command, nine sections, no arguments. CI runs this exact script, so a green
+One command, ten sections, no arguments. CI runs this exact script, so a green
 run here is a green run there. It is also the whole standard: a rule that cannot
 be expressed here, in `Cargo.toml [workspace.lints]`, or in `clippy.toml` is not
 enforceable and does not exist.
+
+Every section is a property of the source, which is what lets that promise hold:
+the same tree gives the same answer on any machine on any day. A check whose
+answer moves on its own does not belong here — see below.
 
 ## Reading a failure
 
@@ -28,6 +32,7 @@ enforceable and does not exist.
 | `agent rules files` | `AGENTS.md` stopped being a symlink to `CLAUDE.md`. Restore it; never let two copies exist. |
 | `agent skills` | A skill under `.claude/skills/` lost its `.agents/skills/` symlink, or one of those became a real directory. |
 | `dependency pinning` | A crate in `[workspace.dependencies]` is not `=`-pinned. See the `add-a-dependency` skill. |
+| `dependency justification` | A crate has no comment above it saying why it is needed. One comment covers the group beneath it; a blank line starts a new group. |
 | `github actions pinning` | An action is referenced by tag. Pin the commit sha, keep the version in a trailing `# vX.Y.Z` comment. |
 | `benchmark gate` | You wrote the first bench probe, so `scripts/bench.sh` can now fail for a real reason. Delete `continue-on-error` from the budgets job in `.github/workflows/ci.yml` and let the budget block the merge. |
 
@@ -55,6 +60,12 @@ that last branch is what turned a `grep` for a word into a `grep` for the key.
 - **The performance budgets.** Those are `scripts/bench.sh`, and `RELEASING.md`
   blocks a tag on them. All this gate checks is that CI has stopped excusing
   them once there is something to measure.
+- **Advisories, licences and sources.** Those are `cargo deny check` against
+  `deny.toml`, run by `.github/workflows/audit.yml` weekly and on any change to
+  the dependency set. Deliberately not here: an advisory appears when somebody
+  else publishes one, so the same tree would pass today and fail tomorrow —
+  which is precisely the promise this script makes and must not break. Run it
+  by hand when you touch a dependency.
 - **Markdown, YAML and the README.** Nothing checks them; read them.
 - **Whether the change is right.** Green means it did not break the rules the
   project can express mechanically. It says nothing about whether the behaviour

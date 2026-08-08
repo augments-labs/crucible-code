@@ -27,7 +27,13 @@ scripts/check.sh
 
 That is the whole gate, and CI runs exactly the same script — a green run here
 is a green run there. It covers formatting, clippy with `-D warnings`, tests,
-the 400-line-per-file cap, and dependency pinning.
+the 400-line-per-file cap, and dependency pinning and justification.
+
+One check deliberately sits outside it. The advisory scan runs on a schedule in
+CI rather than here, because its answer changes when somebody publishes an
+advisory rather than when you edit — putting it in this script would break the
+sentence above, and turn your pull request red for something you never touched.
+See [New dependencies](#new-dependencies).
 
 If the file-length check fails, split the file by responsibility rather than by
 line count. Two halves that must always change together are still one file.
@@ -75,9 +81,26 @@ trade. A budget change is a decision, not a side effect.
 ## New dependencies
 
 Every dependency is `=`-pinned and carries a comment in `Cargo.toml` saying why
-it is needed. Prefer the standard library, then a few lines of your own, then a
+it is needed; `scripts/check.sh` fails without both. One comment covers the
+group beneath it, since the four ripgrep crates are one decision rather than
+four. Prefer the standard library, then a few lines of your own, then a
 dependency. A crate added for one function is a permanent cost for a temporary
 convenience.
+
+Adding one also has to pass `deny.toml`: no open advisory, a licence on the
+permissive list, and crates.io as the source. Run it before you open the pull
+request, or let the `audit` workflow tell you — it fires on any change to
+`Cargo.toml`, `Cargo.lock` or `deny.toml`, and weekly regardless.
+
+```bash
+cargo install cargo-deny --locked   # once
+cargo deny check
+```
+
+A licence that is not on the list is a decision, not an oversight — say why it
+belongs in the pull request rather than adding the line quietly. The same goes
+for an advisory you believe cannot be reached through crucible: it gets an entry
+in `deny.toml` with the reasoning, so the next person knows it was considered.
 
 ## Reporting things
 

@@ -1,0 +1,61 @@
+# What the pinning gate cannot see.
+#
+# `scripts/check.sh` proves every dependency is `=`-pinned and says why it is
+# there. Both are properties of the source, so both are decided by reading the
+# file — which is why they belong to a gate that runs before a commit and always
+# gives the same answer for the same tree.
+#
+# Nothing here is. A crate is not vulnerable because of how it was written down;
+# it becomes vulnerable when somebody publishes an advisory against a version
+# that was already pinned, and it stops being vulnerable without the source
+# changing either. That answer moves on a clock, so the scan that reads this
+# runs on one — see `.github/workflows/audit.yml`.
+
+[advisories]
+# No ignores. An advisory that genuinely does not reach us through crucible
+# still gets an entry here with the reasoning, rather than a silent pass: the
+# next person needs to know it was considered, not merely that the run is green.
+ignore = []
+
+[licenses]
+# The binary is distributed under MIT, and that promise is only as true as what
+# it statically links. A copyleft crate arriving three levels down would make
+# LICENSE a false statement about the artifact, which no amount of care in this
+# repository's own code would fix.
+#
+# Permissive only, and named rather than inferred from a category — a list you
+# have to edit is a decision, and "whatever the tool calls permissive today" is
+# not. Every entry is one this tree actually needs; an entry that stops being
+# needed fails the run below rather than silently pre-approving something
+# nobody chose.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+
+    # The odd one out, and worth knowing why it is here. `webpki-roots` carries
+    # Mozilla's root certificate store, which is data rather than code, so it
+    # is under the Linux Foundation's licence for datasets instead of a
+    # software one. Permissive in the same sense as the rest: use, change and
+    # redistribute it, keep the disclaimer, and nothing it touches inherits
+    # terms. Without those roots there is nobody to trust at the other end of a
+    # TLS handshake.
+    "CDLA-Permissive-2.0",
+]
+
+# A licence nobody in the tree uses is an approval granted in advance to a
+# dependency that has not been chosen yet. Removing the last crate that needed
+# one is exactly when this list should be edited, and this is what makes that
+# happen then rather than never.
+unused-allowed-license = "deny"
+
+[sources]
+# The one hole `=`-pinning leaves open. A git dependency carries no version
+# field at all, so the pinning gate has nothing to look at and passes it in
+# silence — while the revision it names can be force-pushed under you. Every
+# crate here comes from crates.io, where a published version is immutable.
+unknown-registry = "deny"
+unknown-git = "deny"

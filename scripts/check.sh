@@ -86,6 +86,25 @@ if [[ -n "$unpinned" ]]; then
     failed=1
 fi
 
+echo "==> dependency justification"
+# And a comment above it saying why it is there. A dependency is a permanent
+# cost paid for what is usually a temporary convenience, so the reason has to
+# outlive the pull request that added it — whoever later asks whether it can go
+# is never the person who knew. One comment covers the group beneath it, since
+# the four ripgrep crates are one decision rather than four.
+unjustified=$(awk '
+    /^\[workspace\.dependencies\]/ { table = 1; justified = comment; next }
+    table == 0 { comment = ($0 ~ /^[[:space:]]*#/); next }
+    /^\[/                         { table = 0; next }
+    /^[[:space:]]*#/              { justified = 1; next }
+    /^[[:space:]]*$/              { justified = 0; next }
+    justified == 0 && /^[a-zA-Z0-9_-]+[[:space:]]*=/ { print "        " $0 }
+' Cargo.toml)
+if [[ -n "$unjustified" ]]; then
+    printf '    FAIL no comment saying why it is needed:\n%s\n' "$unjustified"
+    failed=1
+fi
+
 echo "==> github actions pinning"
 # Same rule as the crates, for the same reason. An action referenced by tag is
 # a moving dependency, and a release workflow runs it with write access to the
