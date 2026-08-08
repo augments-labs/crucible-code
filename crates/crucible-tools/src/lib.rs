@@ -9,3 +9,20 @@
 //! permission engine, so permission is impossible to forget and equally
 //! impossible to fake: code that has not obtained one cannot call the
 //! operation.
+//!
+//! Every tool holds a `Workspace` and asks it for each path it touches. The
+//! containment check therefore happens in one place rather than once per tool,
+//! and a tool cannot reach outside the tree the agent was pointed at even if
+//! the model asks it to.
+
+mod args;
+mod glob;
+mod grep;
+mod read;
+#[cfg(test)]
+mod sample;
+mod tree;
+
+pub use glob::Glob;
+pub use grep::Grep;
+pub use read::Read;

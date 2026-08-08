@@ -52,6 +52,18 @@ crossterm = "=0.29.0"
 # as it arrives, and compressing one buys nothing for the `flate2` it costs.
 ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
 
+# Search, and the directory walk that feeds it. These are ripgrep's own crates.
+# The budget is "grep within 1.25x of the rg binary", and the way to hold it is
+# to do what rg does rather than to re-derive it: `ignore` reads .gitignore the
+# way git does, `globset` compiles many patterns into one automaton instead of
+# testing each in turn, and `grep-searcher` owns the buffering, the binary
+# sniffing and the line-terminator handling that read-to-string-and-split gets
+# wrong on exactly the large files where the budget is decided.
+ignore = "=0.4.33"
+globset = "=0.4.20"
+grep-searcher = "=0.1.17"
+grep-regex = "=0.1.14"
+
 # JSON. Every wire protocol here speaks it, and hand-rolling the parser would
 # mean hand-rolling string escapes and surrogate pairs — where a mistake is a
 # silently wrong answer rather than a crash. Used without `derive`: the vendor
@@ -133,6 +145,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+crucible-core.workspace = true
+crucible-tools.workspace = true
 crucible-tui.workspace = true
 thiserror.workspace = true
 
