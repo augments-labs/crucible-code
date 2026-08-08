@@ -3,6 +3,12 @@
 # green run here means a green run there.
 set -euo pipefail
 
+# An unmatched glob expands to itself, which turns "there are no rules files"
+# into a loop over one path that does not exist — a section that reports success
+# because it checked nothing. With this, no match is an empty list, and each
+# section below says outright how many files it expected to find.
+shopt -s nullglob
+
 cd "$(dirname "$0")/.."
 
 # A file longer than this is doing more than one thing. The compiler cannot see
@@ -48,13 +54,45 @@ echo "==> agent rules scope"
 # staying quiet, which is the same silent shape the symlink check above exists
 # to catch. The globs are checked too: a rule aimed at a crate that has since
 # been renamed stops applying without anyone noticing.
-for rule in .claude/rules/*.md; do
-    [[ -f "$rule" ]] || continue
+rules=(.claude/rules/*.md)
+if ((${#rules[@]} == 0)); then
+    printf '    FAIL .claude/rules/ holds no rules file; every per-crate rule has stopped loading\n'
+    failed=1
+fi
 
+# One per crate. A crate nothing claims is a corner of the tree where the
+# obligations that bind there are written down nowhere.
+for crate in crates/*/; do
+    name=$(basename "$crate")
+    if ! grep -qs -- "crates/$name/" "${rules[@]}"; then
+        printf '    FAIL crates/%s: no rules file under .claude/rules/ claims it\n' "$name"
+        failed=1
+    fi
+done
+
+for rule in "${rules[@]}"; do
     globs=$(awk '
         NR == 1 && $0 != "---" { exit }
         NR > 1 && $0 == "---"  { exit }
-        /^paths:/              { paths = 1; next }
+
+        # Both spellings YAML allows, because reporting "no paths:" for a rule
+        # that has one would send the reader looking for the wrong thing.
+        /^paths:/ {
+            if ($0 ~ /\[/) {
+                line = $0
+                sub(/^paths:[[:space:]]*\[/, "", line)
+                sub(/\].*$/, "", line)
+                n = split(line, items, ",")
+                for (i = 1; i <= n; i++) {
+                    gsub(/^[[:space:]]+|[[:space:]]+$|["\x27]/, "", items[i])
+                    if (items[i] != "") print items[i]
+                }
+                next
+            }
+            paths = 1
+            next
+        }
+
         paths && /^[[:space:]]*-[[:space:]]*/ {
             sub(/^[[:space:]]*-[[:space:]]*/, "")
             gsub(/["\x27]/, "")
@@ -71,11 +109,16 @@ for rule in .claude/rules/*.md; do
     fi
 
     while IFS= read -r glob; do
-        # Everything before the first wildcard has to exist as written.
+        # Only the literal prefix before the first wildcard can be checked
+        # without walking the tree, so the message says that rather than
+        # claiming the whole glob was tried and matched nothing.
         base=${glob%%[*?]*}
         base=${base%/}
-        if [[ -n "$base" && ! -e "$base" ]]; then
-            printf '    FAIL %s: paths: %s matches nothing in the tree\n' "$rule" "$glob"
+        if [[ -z "$base" ]]; then
+            printf '    FAIL %s: paths: %s begins with a wildcard, so it scopes the rule to nothing in particular\n' "$rule" "$glob"
+            failed=1
+        elif [[ ! -e "$base" ]]; then
+            printf '    FAIL %s: paths: %s — %s does not exist, so nothing loads it\n' "$rule" "$glob" "$base"
             failed=1
         fi
     done <<<"$globs"
@@ -85,8 +128,13 @@ echo "==> agent skills"
 # A skill is written once under .claude/skills/ and reaches Codex through a
 # symlink, exactly as CLAUDE.md reaches it through AGENTS.md. A copy drifts; a
 # missing link means Codex users silently lose the skill.
-for skill in .claude/skills/*/; do
-    [[ -d "$skill" ]] || continue
+skills=(.claude/skills/*/)
+if ((${#skills[@]} == 0)); then
+    printf '    FAIL .claude/skills/ holds no skill; the procedures it carries reach neither harness\n'
+    failed=1
+fi
+
+for skill in "${skills[@]}"; do
     name=$(basename "$skill")
 
     if [[ ! -f "$skill/SKILL.md" ]]; then
@@ -118,8 +166,39 @@ done
 echo "==> dependency pinning"
 # Exact pins keep a release reproducible and make a version bump a reviewed
 # change rather than a side effect of somebody else's publish.
-unpinned=$(awk '/^\[workspace\.dependencies\]/{f=1;next} /^\[/{f=0} f' Cargo.toml |
-    grep -n 'version *= *"[^=]' || true)
+# Cargo accepts three spellings and this has to read all of them: a grep for a
+# literal `version =` key sees only the inline-table form and waves the bare one
+# straight through, which is most of them.
+unpinned=$(awk '
+    /^\[workspace\.dependencies\]/ { table = 1; named = ""; next }
+    /^\[workspace\.dependencies\./ {
+        table = 1
+        named = $0
+        gsub(/^\[workspace\.dependencies\.|\]/, "", named)
+        next
+    }
+    /^\[/      { table = 0; named = ""; next }
+    table == 0 { next }
+
+    # `[workspace.dependencies.foo]` puts the crate in the header, so a bare
+    # `version =` line beneath one is that crate pinning itself.
+    named != "" && /^[[:space:]]*version[[:space:]]*=/ {
+        if ($0 !~ /=[[:space:]]*"=/) print "        " named ": " $0
+        next
+    }
+
+    /^[a-zA-Z0-9_-]+[[:space:]]*=/ {
+        if ($0 ~ /\{/) {
+            # A path dependency inside this workspace carries no version and
+            # needs none; anything naming one has to pin it.
+            if ($0 ~ /version[[:space:]]*=/ && $0 !~ /version[[:space:]]*=[[:space:]]*"=/) {
+                print "        " $0
+            }
+        } else if ($0 !~ /=[[:space:]]*"=/) {
+            print "        " $0
+        }
+    }
+' Cargo.toml)
 if [[ -n "$unpinned" ]]; then
     printf '    FAIL not =-pinned:\n%s\n' "$unpinned"
     failed=1
@@ -131,12 +210,25 @@ echo "==> dependency justification"
 # outlive the pull request that added it — whoever later asks whether it can go
 # is never the person who knew. One comment covers the group beneath it, since
 # the four ripgrep crates are one decision rather than four.
+# The table starts unjustified. Seeding it from whatever line preceded the
+# header meant the comment block explaining the crate layering counted as a
+# reason for the first crate beneath it, so a dependency added there needed no
+# comment of its own.
 unjustified=$(awk '
-    /^\[workspace\.dependencies\]/ { table = 1; justified = comment; next }
-    table == 0 { comment = ($0 ~ /^[[:space:]]*#/); next }
-    /^\[/                         { table = 0; next }
-    /^[[:space:]]*#/              { justified = 1; next }
-    /^[[:space:]]*$/              { justified = 0; next }
+    /^\[workspace\.dependencies\]/ { table = 1; justified = 0; next }
+    /^\[workspace\.dependencies\./ {
+        table = 1
+        named = $0
+        gsub(/^\[workspace\.dependencies\.|\]/, "", named)
+        if (justified == 0) print "        " named
+        justified = 0
+        next
+    }
+    /^\[/      { table = 0; next }
+    table == 0 { justified = ($0 ~ /^[[:space:]]*#/); next }
+
+    /^[[:space:]]*#/ { justified = 1; next }
+    /^[[:space:]]*$/ { justified = 0; next }
     justified == 0 && /^[a-zA-Z0-9_-]+[[:space:]]*=/ { print "        " $0 }
 ' Cargo.toml)
 if [[ -n "$unjustified" ]]; then

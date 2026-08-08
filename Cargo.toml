@@ -22,6 +22,8 @@ authors = ["Peguy Njoyim"]
 #   crucible-code (this package) -> all five, and is the only place concrete
 #                                   types are wired together
 [workspace.dependencies]
+# This workspace's own crates. Path dependencies, released together, so there is
+# no version to pin and no third party whose publish could move them.
 crucible-core = { path = "crates/crucible-core" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }
@@ -37,11 +39,12 @@ clap = { version = "=4.6.5", features = ["derive"] }
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.19"
 
-# The terminal itself. Two things genuinely need it: the ioctl that reports the
-# window size, and raw mode -- both of which are `unsafe` libc calls this
-# workspace forbids writing by hand. The escape sequences the renderer emits are
-# plain ANSI, so `crossterm` stays confined to one file behind the `Terminal`
-# trait and swapping it out is a day, not a rewrite.
+# The terminal itself. One thing genuinely needs it: the ioctl that reports the
+# window size, which is an `unsafe` libc call this workspace forbids writing by
+# hand. The escape sequences the renderer emits are plain ANSI, so `crossterm`
+# stays confined to one file behind the `Terminal` trait and swapping it out is
+# a day, not a rewrite. A full-screen renderer would also want its raw mode,
+# which is the other reason it is this crate rather than a bare `ioctl` binding.
 crossterm = "=0.29.0"
 
 # HTTP. Blocking by design: this workspace runs threads rather than an async
