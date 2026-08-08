@@ -12,7 +12,7 @@ description: >-
 scripts/check.sh
 ```
 
-One command, ten sections, no arguments. CI runs this exact script, so a green
+One command, eleven sections, no arguments. CI runs this exact script, so a green
 run here is a green run there. It is also the whole standard: a rule that cannot
 be expressed here, in `Cargo.toml [workspace.lints]`, or in `clippy.toml` is not
 enforceable and does not exist.
@@ -30,6 +30,7 @@ answer moves on its own does not belong here — see below.
 | `tests` | Read the assertion, not the count. |
 | `file length` | Split by responsibility, not by line count. Two halves that must always change together are still one file. |
 | `agent rules files` | `AGENTS.md` stopped being a symlink to `CLAUDE.md`. Restore it; never let two copies exist. |
+| `agent rules scope` | A file in `.claude/rules/` has no `paths:` frontmatter, or aims at a directory that no longer exists. Either way nothing loads it. |
 | `agent skills` | A skill under `.claude/skills/` lost its `.agents/skills/` symlink, or one of those became a real directory. |
 | `dependency pinning` | A crate in `[workspace.dependencies]` is not `=`-pinned. See the `add-a-dependency` skill. |
 | `dependency justification` | A crate has no comment above it saying why it is needed. One comment covers the group beneath it; a blank line starts a new group. |

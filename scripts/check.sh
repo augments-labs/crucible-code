@@ -42,6 +42,45 @@ while IFS= read -r link; do
     fi
 done < <(find . -path ./target -prune -o -name AGENTS.md -print)
 
+echo "==> agent rules scope"
+# A rule under .claude/rules/ is read only when a file it claims is opened, so
+# one without `paths:` is dead text that nothing ever loads — and it fails by
+# staying quiet, which is the same silent shape the symlink check above exists
+# to catch. The globs are checked too: a rule aimed at a crate that has since
+# been renamed stops applying without anyone noticing.
+for rule in .claude/rules/*.md; do
+    [[ -f "$rule" ]] || continue
+
+    globs=$(awk '
+        NR == 1 && $0 != "---" { exit }
+        NR > 1 && $0 == "---"  { exit }
+        /^paths:/              { paths = 1; next }
+        paths && /^[[:space:]]*-[[:space:]]*/ {
+            sub(/^[[:space:]]*-[[:space:]]*/, "")
+            gsub(/["\x27]/, "")
+            print
+            next
+        }
+        paths && /^[^[:space:]]/ { paths = 0 }
+    ' "$rule")
+
+    if [[ -z "$globs" ]]; then
+        printf '    FAIL %s: no paths: frontmatter, so nothing ever loads it\n' "$rule"
+        failed=1
+        continue
+    fi
+
+    while IFS= read -r glob; do
+        # Everything before the first wildcard has to exist as written.
+        base=${glob%%[*?]*}
+        base=${base%/}
+        if [[ -n "$base" && ! -e "$base" ]]; then
+            printf '    FAIL %s: paths: %s matches nothing in the tree\n' "$rule" "$glob"
+            failed=1
+        fi
+    done <<<"$globs"
+done
+
 echo "==> agent skills"
 # A skill is written once under .claude/skills/ and reaches Codex through a
 # symlink, exactly as CLAUDE.md reaches it through AGENTS.md. A copy drifts; a

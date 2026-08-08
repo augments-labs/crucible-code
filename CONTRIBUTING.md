@@ -5,6 +5,12 @@ code itself live in [`CLAUDE.md`](CLAUDE.md) — read that before your first
 change; it is short, and it is what review checks against. (`AGENTS.md` is a
 symlink to it, so whichever name your tools look for, there is one source.)
 
+Each crate also has a rules file under `.claude/rules/` naming the obligations
+that only apply inside it — what a new provider has to touch, what a new tool
+has to declare. Read the one for the crate you are changing. Agent tooling loads
+them automatically; a human should skim them, since they are shorter than the
+crate and say what review will ask about.
+
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Setup

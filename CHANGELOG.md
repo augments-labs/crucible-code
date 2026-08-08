@@ -52,6 +52,13 @@ Notable changes to crucible. Format follows
   terminal output, `forbid(unsafe_code)`, function-length and complexity limits.
 - `CLAUDE.md` — the rules a gate cannot check, with `AGENTS.md` symlinked to it
   so every agent tool reads one file.
+- `.claude/rules/` — one file per crate carrying the obligations that bind only
+  inside it, scoped by `paths:` frontmatter so each is read when a file it
+  claims is opened. They state what a change must do rather than restating what
+  the module documentation already explains, which is what keeps them from
+  becoming a second copy. `scripts/check.sh` fails a rule with no frontmatter or
+  one aimed at a directory that no longer exists — either way nothing loads it,
+  and it fails by staying silent.
 - Agent skills for the procedures a rules file cannot carry: running and
   extending the gate, adding a dependency, and staying clean-room. Written once
   under `.claude/skills/` and symlinked from `.agents/skills/`, so Claude Code

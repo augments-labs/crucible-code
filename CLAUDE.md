@@ -26,6 +26,14 @@ corner of the tree and may never be something a contributor has to know to be
 correct; that belongs here, where the symlink carries it to both. Keep this file
 under 200 lines — a longer one is followed less.
 
+There is one rules file per crate, carrying the obligations that only bind when
+you are inside it: what a new provider has to touch, what a new tool has to
+declare, which word is allowed where. They say what to *do*, not what the code
+already says about itself — a rule that restates a module doc is a second copy
+waiting to drift. `scripts/check.sh` checks each one still has `paths:`
+frontmatter aimed at something that exists, because a rule that loads for
+nothing fails by staying silent.
+
 ## Gate
 
 ```bash
@@ -124,8 +132,11 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
 - **Open sets are traits, closed sets are enums.** Providers and tools are open —
   adding one must not edit `core`. Events, verdicts and errors are core-owned
   enums *because* a new variant should break every `match`.
-- **Rendering is inline, not full-screen.** Scrollback belongs to the terminal,
-  not to this process. That is what keeps memory flat as a transcript grows.
+- **Rendering is inline today, and that is a mechanism rather than a law.**
+  Scrollback belongs to the terminal, which is what keeps memory flat as a
+  transcript grows. A full-screen renderer would move that job into this
+  process; what it may not move is the budget, so it would owe a virtualized
+  viewport in exchange. Flat memory is the rule; inline is how 0.0.x keeps it.
 
 ## Conventions
 
