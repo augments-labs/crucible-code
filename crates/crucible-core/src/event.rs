@@ -32,6 +32,28 @@ pub enum TurnError {
     Refused(Box<str>),
 }
 
+/// Where a worker reports what happened.
+///
+/// A trait for the same reason [`crate::Ask`] is one: the runner drives it and
+/// must not name what is on the other end. The wiring decides that — a channel
+/// in the binary, a vector in a test — and a channel of something wider than
+/// [`Event`] is then a wrapper rather than a change to the runner.
+pub trait Post {
+    /// Reports one event.
+    ///
+    /// Cannot fail. Nothing a worker does depends on anyone still listening,
+    /// and a worker that stopped to handle a closed channel would be stopping
+    /// for the one condition that already means the process is leaving.
+    fn post(&self, event: Event);
+}
+
+/// The ordinary case: events go to the thread that draws.
+impl Post for std::sync::mpsc::Sender<Event> {
+    fn post(&self, event: Event) {
+        drop(self.send(event));
+    }
+}
+
 /// One record of something that happened.
 #[derive(Debug)]
 pub enum Event {
@@ -114,5 +136,29 @@ mod tests {
         .unwrap();
 
         assert!(matches!(rx.recv().unwrap(), Event::TurnStarted { .. }));
+    }
+
+    #[test]
+    fn posting_where_nobody_is_listening_is_not_a_failure() {
+        // The receiver is gone only when the process is on its way out, and a
+        // worker that stopped to handle that would be stopping for the one
+        // condition that is already handled.
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(rx);
+
+        tx.post(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        });
+    }
+
+    #[test]
+    fn what_is_posted_is_what_arrives() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        tx.post(Event::Delta {
+            text: "streamed".into(),
+        });
+
+        assert!(matches!(rx.recv().unwrap(), Event::Delta { text } if &*text == "streamed"));
     }
 }

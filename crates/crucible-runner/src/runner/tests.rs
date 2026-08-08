@@ -1,7 +1,7 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use crucible_core::{ProviderError, Sensitivity, ToolId, Verdict};
 

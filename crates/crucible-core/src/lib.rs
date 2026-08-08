@@ -28,7 +28,7 @@ mod workspace;
 
 pub use cancel::Cancel;
 pub use credential::{ApiKey, Credential, CredentialError, HeaderKey, Outgoing};
-pub use event::{Event, TurnError};
+pub use event::{Event, Post, TurnError};
 pub use grant::{Ask, Grant, Permission, Sensitivity, Verdict};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
 pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};

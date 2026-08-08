@@ -143,9 +143,14 @@ authors.workspace = true
 name = "crucible"
 path = "src/main.rs"
 
+# All five, and only here. Every crate below reaches core and nothing else; the
+# arrows that make an Anthropic provider and a bash tool meet a runner are drawn
+# in this package or they are not drawn at all.
 [dependencies]
 clap.workspace = true
 crucible-core.workspace = true
+crucible-provider.workspace = true
+crucible-runner.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
 thiserror.workspace = true

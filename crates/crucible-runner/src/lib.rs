@@ -24,19 +24,6 @@ mod session;
 mod tools;
 mod work;
 
-use std::sync::mpsc::Sender;
-
-use crucible_core::Event;
-
 pub use runner::{Model, Runner};
 pub use session::{Session, SessionError};
 pub use tools::Tools;
-
-/// Reports something that happened.
-///
-/// A closed channel means the terminal is gone, which happens only while the
-/// process is shutting down — and that path raises [`crucible_core::Cancel`],
-/// which is what actually stops the work. There is nothing useful to do here.
-fn post(events: &Sender<Event>, event: Event) {
-    drop(events.send(event));
-}

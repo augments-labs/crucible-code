@@ -7,15 +7,12 @@
 //! one. The outcome leaves through the return value, because the caller is
 //! what decides whether the session continues.
 
-use std::sync::mpsc::Sender;
-
 use crucible_core::{
-    Ask, Cancel, Delta, Event, Message, Permission, Provider, Request, StopReason, ToolCall,
+    Ask, Cancel, Delta, Event, Message, Permission, Post, Provider, Request, StopReason, ToolCall,
     Transcript, TurnError, TurnId,
 };
 
 use crate::answer::Answer;
-use crate::post;
 use crate::session::Session;
 use crate::tools::Tools;
 use crate::work::{Went, Work};
@@ -113,7 +110,7 @@ impl Runner {
         &mut self,
         prompt: &str,
         ask: &mut dyn Ask,
-        events: &Sender<Event>,
+        events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<StopReason, TurnError> {
         // Whatever stopped the last turn is spent. Clearing it here, on the one
@@ -124,7 +121,7 @@ impl Runner {
         if !self.transcript.is_empty() {
             self.turn = self.turn.next();
         }
-        post(events, Event::TurnStarted { turn: self.turn });
+        events.post(Event::TurnStarted { turn: self.turn });
         self.record(Message::User(prompt.into()));
 
         loop {
@@ -144,7 +141,7 @@ impl Runner {
             }
 
             for call in &calls {
-                post(events, Event::ToolRequested { call: call.clone() });
+                events.post(Event::ToolRequested { call: call.clone() });
             }
 
             let (results, went) = Work {
@@ -180,7 +177,7 @@ impl Runner {
     }
 
     /// One request, read to the end.
-    fn listen(&self, events: &Sender<Event>, cancel: &Cancel) -> Result<Answer, TurnError> {
+    fn listen(&self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
         let mut answer = Answer::new(self.provider.name());
 
@@ -188,7 +185,7 @@ impl Runner {
             match delta? {
                 Delta::Text(text) => {
                     answer.say(&text);
-                    post(events, Event::Delta { text });
+                    events.post(Event::Delta { text });
                 }
                 Delta::ToolStarted { id, name } => answer.calling(id, name),
                 Delta::ToolArgs(fragment) => answer.arguments(&fragment)?,

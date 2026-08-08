@@ -6,13 +6,10 @@
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.
 
-use std::sync::mpsc::Sender;
-
 use crucible_core::{
-    Ask, Cancel, Event, Permission, StopReason, ToolCall, ToolError, ToolOutput, ToolResult,
+    Ask, Cancel, Event, Permission, Post, StopReason, ToolCall, ToolError, ToolOutput, ToolResult,
 };
 
-use crate::post;
 use crate::tools::Tools;
 
 /// What a call is answered with when the turn ended before it could run.
@@ -50,7 +47,7 @@ pub(crate) struct Work<'a> {
     /// How to put a call to the user.
     pub(crate) ask: &'a mut dyn Ask,
     /// Where progress is reported.
-    pub(crate) events: &'a Sender<Event>,
+    pub(crate) events: &'a dyn Post,
     /// Whether the user has asked everything to stop.
     pub(crate) cancel: &'a Cancel,
 }
@@ -82,13 +79,10 @@ impl Work<'_> {
             // Cloned because both halves need it: the renderer shows what the
             // tool produced, and the transcript sends it to the model. It is
             // one tool's output, so it does not grow with the transcript.
-            post(
-                self.events,
-                Event::ToolFinished {
-                    call: call.id.clone(),
-                    output: output.clone(),
-                },
-            );
+            self.events.post(Event::ToolFinished {
+                call: call.id.clone(),
+                output: output.clone(),
+            });
 
             results.push(ToolResult {
                 id: call.id.clone(),
@@ -133,7 +127,7 @@ fn failure(problem: &ToolError) -> ToolOutput {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::{Receiver, channel};
+    use std::sync::mpsc::{Receiver, Sender, channel};
 
     use crucible_core::{Sensitivity, ToolArgs, ToolId, Verdict};
 

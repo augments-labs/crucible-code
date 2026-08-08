@@ -219,6 +219,8 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "crucible-core",
+ "crucible-provider",
+ "crucible-runner",
  "crucible-tools",
  "crucible-tui",
  "thiserror",
