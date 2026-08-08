@@ -10,6 +10,17 @@
 //! Depends on `crucible-core` alone. It renders domain types and never calls a
 //! tool or a provider.
 
+mod frame;
+mod plain;
+mod render;
+mod screen;
+mod system;
+mod tail;
+mod terminal;
 mod title;
 
+pub use render::Renderer;
+pub use system::SystemTerminal;
+pub use tail::Tail;
+pub use terminal::{Recording, Size, Terminal, TerminalError};
 pub use title::{TITLE, Title, TitleError};

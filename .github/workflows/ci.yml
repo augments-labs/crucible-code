@@ -31,13 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     # A shared runner is noisy, so the number here is a trend and an artifact,
     # not the release measurement — RELEASING.md still requires a quiet
-    # machine. What this job defends is that the budgets stay measured at all.
-    #
-    # continue-on-error is here only because every probe is still unwritten,
-    # which makes bench.sh exit 1 by design; without it no pull request could
-    # merge. `scripts/check.sh` fails the moment a probe appears and this line
-    # is still present, so it cannot outlive its reason.
-    continue-on-error: true
+    # machine. What this job defends is that the budgets stay measured at all,
+    # which is why it blocks: `scripts/bench.sh` treats a budget with no probe
+    # as a failure rather than a skip, so this job goes red both when the code
+    # got slower and when a budget quietly stopped being checked.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

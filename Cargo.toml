@@ -37,6 +37,19 @@ clap = { version = "=4.6.5", features = ["derive"] }
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.19"
 
+# The terminal itself. Two things genuinely need it: the ioctl that reports the
+# window size, and raw mode -- both of which are `unsafe` libc calls this
+# workspace forbids writing by hand. The escape sequences the renderer emits are
+# plain ANSI, so `crossterm` stays confined to one file behind the `Terminal`
+# trait and swapping it out is a day, not a rewrite.
+crossterm = "=0.29.0"
+
+# Display width. A terminal wraps by columns, not by characters: CJK takes two
+# and a combining mark takes none, so counting `char`s puts the cursor somewhere
+# the renderer did not predict and the next frame erases the wrong lines. This
+# is the Unicode Annex #11 table as data, with no dependencies of its own.
+unicode-width = "=0.2.2"
+
 # --- Encoded standards -------------------------------------------------------
 # These lint tables are the standard. A rule that cannot be expressed here, in
 # `clippy.toml`, or in `scripts/check.sh` is not enforceable and does not exist.
@@ -105,6 +118,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+crucible-tui.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -10,7 +10,9 @@ authors.workspace = true
 
 [dependencies]
 crucible-core.workspace = true
+crossterm.workspace = true
 thiserror.workspace = true
+unicode-width.workspace = true
 
 [lints]
 workspace = true
