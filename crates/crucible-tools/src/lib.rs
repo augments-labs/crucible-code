@@ -16,13 +16,19 @@
 //! the model asks it to.
 
 mod args;
+mod bash;
+mod edit;
 mod glob;
 mod grep;
 mod read;
 #[cfg(test)]
 mod sample;
 mod tree;
+mod write;
 
+pub use bash::Bash;
+pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;
 pub use read::Read;
+pub use write::Write;

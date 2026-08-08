@@ -146,7 +146,7 @@ impl Tool for Fixed {
     }
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        self.sensitivity
+        self.sensitivity.clone()
     }
 
     fn run(&self, _args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
@@ -178,7 +178,7 @@ impl Says {
 }
 
 impl Ask for Says {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: Sensitivity) -> Verdict {
+    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
         self.asked += 1;
         self.verdict
     }

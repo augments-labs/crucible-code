@@ -134,7 +134,7 @@ fn granted() -> Result<Grant, Problem> {
     struct Nobody;
 
     impl Ask for Nobody {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: Sensitivity) -> Verdict {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
             Verdict::Deny
         }
     }
@@ -146,7 +146,7 @@ fn granted() -> Result<Grant, Problem> {
     };
 
     Permission::new()
-        .decide(&call, Sensitivity::ReadOnly, &mut Nobody)
+        .decide(&call, &Sensitivity::ReadOnly, &mut Nobody)
         .ok_or(Problem::NoGrant)
 }
 

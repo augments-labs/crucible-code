@@ -86,16 +86,20 @@ mod tests {
         // would reach whichever the search happened to meet first.
         let mut tools = Tools::new();
         tools.add(Box::new(Fixed::new("read")));
-        tools.add(Box::new(
-            Fixed::new("read").risking(Sensitivity::SpawnsProcess),
-        ));
+        tools.add(Box::new(Fixed::new("read").risking(
+            Sensitivity::SpawnsProcess {
+                program: "sh".into(),
+            },
+        )));
 
         assert_eq!(tools.schemas().len(), 1);
         assert_eq!(
             tools
                 .find("read")
                 .map(|tool| tool.sensitivity(&ToolArgs::new("{}"))),
-            Some(Sensitivity::SpawnsProcess)
+            Some(Sensitivity::SpawnsProcess {
+                program: "sh".into()
+            })
         );
     }
 

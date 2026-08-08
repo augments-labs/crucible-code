@@ -54,6 +54,21 @@ impl Args {
         }
     }
 
+    /// A field that must be there but may be empty.
+    ///
+    /// [`Args::text`] treats blank as missing, which is right for a path and
+    /// wrong for content: writing an empty file and replacing text with
+    /// nothing are both things a model asks for on purpose.
+    pub(crate) fn exact(&self, field: &str) -> Result<&str, ToolError> {
+        let Some(found) = self.value.get(field) else {
+            return Err(Self::wrong(self.tool, format!("{field} is required")));
+        };
+
+        found
+            .as_str()
+            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be a string")))
+    }
+
     /// A field that may be absent. Present-but-blank counts as absent, because
     /// an empty path and no path mean the same thing to every caller here.
     pub(crate) fn optional_text(&self, field: &str) -> Result<Option<&str>, ToolError> {
@@ -150,6 +165,24 @@ mod tests {
         assert_eq!(
             args.text("path").unwrap_err().to_string(),
             "test: path must be a string"
+        );
+    }
+
+    #[test]
+    fn content_that_is_deliberately_empty_is_still_content() {
+        // Writing an empty file is a thing a model asks for; forgetting the
+        // field is not the same event and must not look like one.
+        assert_eq!(
+            args(r#"{"content":""}"#).unwrap().exact("content").unwrap(),
+            ""
+        );
+        assert_eq!(
+            args("{}")
+                .unwrap()
+                .exact("content")
+                .unwrap_err()
+                .to_string(),
+            "test: content is required"
         );
     }
 

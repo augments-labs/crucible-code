@@ -112,7 +112,7 @@ impl Work<'_> {
         };
 
         let sensitivity = tool.sensitivity(&call.args);
-        let Some(grant) = self.permission.decide(call, sensitivity, self.ask) else {
+        let Some(grant) = self.permission.decide(call, &sensitivity, self.ask) else {
             return Ran::Refused;
         };
 

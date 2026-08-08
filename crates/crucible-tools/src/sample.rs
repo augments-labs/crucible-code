@@ -83,7 +83,7 @@ pub(crate) fn allowed() -> Grant {
     struct Yes;
 
     impl Ask for Yes {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: Sensitivity) -> Verdict {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
             Verdict::AllowOnce
         }
     }
@@ -95,6 +95,28 @@ pub(crate) fn allowed() -> Grant {
     };
 
     Permission::new()
-        .decide(&call, Sensitivity::ReadOnly, &mut Yes)
+        .decide(&call, &Sensitivity::ReadOnly, &mut Yes)
         .expect("a read-only call is always granted")
+}
+
+/// A grant for a tool that changes something, minted the same way: through a
+/// verdict, because there is no other way.
+pub(crate) fn permitted(sensitivity: &Sensitivity) -> Grant {
+    struct Yes;
+
+    impl Ask for Yes {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
+            Verdict::AllowOnce
+        }
+    }
+
+    let call = ToolCall {
+        id: ToolId::new("sample"),
+        name: "sample".into(),
+        args: ToolArgs::new("{}"),
+    };
+
+    Permission::new()
+        .decide(&call, sensitivity, &mut Yes)
+        .expect("the answer above is yes")
 }
