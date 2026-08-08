@@ -1,0 +1,388 @@
+//! A request, in OpenAI's shape.
+//!
+//! One direction only: domain types in, JSON out. The response travels the
+//! other way through [`super::wire`], and keeping the two apart is what stops a
+//! change to one shape from quietly altering the other.
+//!
+//! Three things differ from the other protocol here, and all three are in this
+//! file rather than spread through the crate: standing instructions are a
+//! message rather than a field, tool arguments travel as JSON *text* rather
+//! than as an object, and a turn's tool results are one message each rather
+//! than one message together.
+
+use crucible_core::{Message, Request, ToolCall, ToolResult, ToolSchema};
+use serde_json::{Map, Value, json};
+
+use crate::json::{described, put};
+
+/// The whole request body.
+pub(super) fn build(request: &Request) -> Value {
+    let mut body = Map::new();
+    put(&mut body, "model", json!(&*request.model));
+    put(&mut body, "stream", json!(true));
+
+    // `max_tokens` means the same thing and is the older name for it. The
+    // models that reason before answering refuse it outright, and this one is
+    // taken by all of them.
+    put(
+        &mut body,
+        "max_completion_tokens",
+        json!(request.max_tokens),
+    );
+    put(&mut body, "messages", Value::Array(messages(request)));
+
+    // Absent rather than empty: an empty array is refused rather than read as
+    // a session with no tools.
+    if !request.tools.is_empty() {
+        let tools = request.tools.iter().map(tool).collect();
+        put(&mut body, "tools", Value::Array(tools));
+    }
+
+    Value::Object(body)
+}
+
+/// Every message, in order, behind the standing instructions.
+///
+/// The system prompt is a message here rather than a field of its own. There is
+/// no field for it on this wire, and one sent anyway is ignored — which leaves
+/// a model working without the instructions it was given.
+fn messages(request: &Request) -> Vec<Value> {
+    let mut messages = Vec::new();
+
+    if let Some(system) = &request.system {
+        messages.push(json!({ "role": "system", "content": &**system }));
+    }
+
+    for message in request.transcript.messages() {
+        append(&mut messages, message);
+    }
+
+    messages
+}
+
+/// One message, as however many this wire needs for it.
+///
+/// Appends rather than maps because the counts differ: a turn that called three
+/// tools holds one message of results, and this protocol answers each call in a
+/// message that names it.
+fn append(messages: &mut Vec<Value>, message: &Message) {
+    match message {
+        Message::User(text) => messages.push(json!({ "role": "user", "content": &**text })),
+        Message::Agent { text, calls } => messages.push(agent(text, calls)),
+        Message::ToolResults(results) => messages.extend(results.iter().map(result)),
+    }
+}
+
+/// What the model said, and what it asked to run.
+fn agent(text: &str, calls: &[ToolCall]) -> Value {
+    let mut message = Map::new();
+    put(&mut message, "role", json!("assistant"));
+
+    // A model that goes straight to a tool says nothing first. Null is how this
+    // wire spells that; an empty string is a message with nothing in it.
+    if text.is_empty() {
+        put(&mut message, "content", Value::Null);
+    } else {
+        put(&mut message, "content", json!(text));
+    }
+
+    if !calls.is_empty() {
+        let calls = calls.iter().map(call).collect();
+        put(&mut message, "tool_calls", Value::Array(calls));
+    }
+
+    Value::Object(message)
+}
+
+/// One call the model made.
+fn call(call: &ToolCall) -> Value {
+    json!({
+        "id": call.id.as_str(),
+        "type": "function",
+        "function": {
+            "name": &*call.name,
+            "arguments": arguments(call.args.as_str()),
+        },
+    })
+}
+
+/// Argument text, as the model wrote it.
+///
+/// A string rather than an object, which is this field's type. Parsing and
+/// re-encoding would hand the model back something it did not write, and the
+/// arguments it sees would stop matching the ones it produced.
+///
+/// A tool that takes no arguments is called with no argument text at all, and
+/// an empty string is not JSON on the other side.
+fn arguments(args: &str) -> &str {
+    if args.trim().is_empty() { "{}" } else { args }
+}
+
+/// One tool result, as its own message.
+fn result(result: &ToolResult) -> Value {
+    let text = result.output.text();
+
+    // There is no field for a failure on this wire. Unmarked, "no such file:
+    // x" reads as the contents of a file that was read successfully.
+    let content = if result.output.is_failed() {
+        format!("error: {text}")
+    } else {
+        text.to_owned()
+    };
+
+    json!({
+        "role": "tool",
+        "tool_call_id": result.id.as_str(),
+        "content": content,
+    })
+}
+
+/// One tool, as advertised.
+fn tool(schema: &ToolSchema) -> Value {
+    let (parameters, description) = described(schema.schema);
+
+    json!({
+        "type": "function",
+        "function": {
+            "name": schema.name,
+            "description": description,
+            "parameters": Value::Object(parameters),
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_core::{ToolArgs, ToolId, ToolOutput, Transcript};
+
+    use super::*;
+
+    /// What a pointer finds when there is nothing there.
+    const NOTHING: Value = Value::Null;
+
+    fn request(transcript: Transcript) -> Request {
+        Request {
+            model: "gpt-test".into(),
+            transcript,
+            tools: Vec::new(),
+            max_tokens: 1024,
+            system: None,
+        }
+    }
+
+    fn said(text: &str) -> Transcript {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::User(text.into()));
+        transcript
+    }
+
+    /// One value by JSON pointer.
+    ///
+    /// Indexing a `Value` panics on a shape that is not what it expected, which
+    /// turns a wrong assertion into a stack trace instead of a diff.
+    fn at<'a>(body: &'a Value, path: &str) -> &'a Value {
+        body.pointer(path).unwrap_or(&NOTHING)
+    }
+
+    #[test]
+    fn a_request_streams_and_names_its_model() {
+        // Not streaming would mean the answer appears all at once at the end,
+        // which is the whole experience this harness is built around.
+        let body = build(&request(said("hello")));
+
+        assert_eq!(at(&body, "/model"), &json!("gpt-test"));
+        assert_eq!(at(&body, "/stream"), &json!(true));
+    }
+
+    #[test]
+    fn the_token_ceiling_is_sent_under_the_name_every_model_accepts() {
+        // `max_tokens` means the same thing and is refused outright by the
+        // models that reason before answering. This one is taken by all of them.
+        let body = build(&request(said("hello")));
+
+        assert_eq!(at(&body, "/max_completion_tokens"), &json!(1024));
+        assert!(
+            body.get("max_tokens").is_none(),
+            "the older name went out too: {body}"
+        );
+    }
+
+    #[test]
+    fn a_system_prompt_is_the_first_message_rather_than_a_field() {
+        // There is no field for it in this protocol. Sending one would be
+        // ignored, and the model would work without its instructions.
+        let mut request = request(said("hello"));
+        request.system = Some("be brief".into());
+
+        let body = build(&request);
+
+        assert_eq!(at(&body, "/messages/0/role"), &json!("system"));
+        assert_eq!(at(&body, "/messages/0/content"), &json!("be brief"));
+        assert_eq!(at(&body, "/messages/1/role"), &json!("user"));
+        assert!(body.get("system").is_none(), "{body}");
+    }
+
+    #[test]
+    fn a_session_without_a_system_prompt_starts_at_what_was_typed() {
+        let body = build(&request(said("hello")));
+
+        assert_eq!(at(&body, "/messages/0/role"), &json!("user"));
+        assert_eq!(at(&body, "/messages/0/content"), &json!("hello"));
+    }
+
+    #[test]
+    fn a_tool_call_goes_back_with_its_arguments_as_the_text_the_model_wrote() {
+        // The field is a string on this wire. Handing back a re-encoded object
+        // would give the model something it did not write, and the arguments it
+        // sees would stop matching the ones it produced.
+        let mut transcript = said("read it");
+        transcript.push(Message::Agent {
+            text: "let me look".into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
+            }],
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(at(&body, "/messages/1/role"), &json!("assistant"));
+        assert_eq!(at(&body, "/messages/1/content"), &json!("let me look"));
+        assert_eq!(
+            at(&body, "/messages/1/tool_calls/0"),
+            &json!({
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "read", "arguments": r#"{"path":"src/main.rs"}"#},
+            })
+        );
+    }
+
+    #[test]
+    fn a_tool_call_with_no_words_before_it_sends_no_content() {
+        // A model that goes straight to a tool says nothing first, and an empty
+        // string is not the same as having said nothing.
+        let mut transcript = said("go");
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "read".into(),
+                args: ToolArgs::new("{}"),
+            }],
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(at(&body, "/messages/1/content"), &NOTHING);
+        assert_eq!(
+            at(&body, "/messages/1/tool_calls/0/function/name"),
+            &json!("read")
+        );
+    }
+
+    #[test]
+    fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
+        // No arguments means no argument text arrived at all, and an empty
+        // string is not JSON on the other side.
+        let mut transcript = said("go");
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("call_1"),
+                name: "pwd".into(),
+                args: ToolArgs::new(""),
+            }],
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/1/tool_calls/0/function/arguments"),
+            &json!("{}")
+        );
+    }
+
+    #[test]
+    fn every_result_of_a_turn_is_its_own_message() {
+        // The other protocol carries them together. Here each one names the
+        // call it answers, so two results are two messages or the second one
+        // has nowhere to say which call it belongs to.
+        let mut transcript = said("go");
+        transcript.push(Message::ToolResults(vec![
+            ToolResult {
+                id: ToolId::new("call_1"),
+                output: ToolOutput::ok("fn main() {}"),
+            },
+            ToolResult {
+                id: ToolId::new("call_2"),
+                output: ToolOutput::ok("src/main.rs"),
+            },
+        ]));
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/1"),
+            &json!({"role": "tool", "tool_call_id": "call_1", "content": "fn main() {}"})
+        );
+        assert_eq!(
+            at(&body, "/messages/2"),
+            &json!({"role": "tool", "tool_call_id": "call_2", "content": "src/main.rs"})
+        );
+    }
+
+    #[test]
+    fn a_failed_result_says_so_in_the_only_place_this_wire_has() {
+        // There is no field for it. Unmarked, "no such file: x" reads as the
+        // contents of a file that was read successfully.
+        let mut transcript = said("go");
+        transcript.push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call_1"),
+            output: ToolOutput::failed("no such file"),
+        }]));
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/1/content"),
+            &json!("error: no such file")
+        );
+    }
+
+    #[test]
+    fn a_tool_is_advertised_with_its_schema_and_its_description() {
+        let mut request = request(said("go"));
+        request.tools = vec![ToolSchema {
+            name: "read",
+            schema: r#"{"description":"Reads a file.","type":"object","properties":{"path":{"type":"string"}}}"#,
+        }];
+
+        let body = build(&request);
+
+        assert_eq!(at(&body, "/tools/0/type"), &json!("function"));
+        assert_eq!(at(&body, "/tools/0/function/name"), &json!("read"));
+        assert_eq!(
+            at(&body, "/tools/0/function/description"),
+            &json!("Reads a file.")
+        );
+        assert_eq!(
+            at(&body, "/tools/0/function/parameters/type"),
+            &json!("object")
+        );
+        assert_eq!(
+            at(&body, "/tools/0/function/parameters/description"),
+            &NOTHING,
+            "the description belongs to the tool, not to its arguments"
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_tools_sends_no_tools_field() {
+        // An empty array is refused rather than treated as none.
+        let body = build(&request(said("hello")));
+
+        assert!(body.get("tools").is_none(), "an empty tool list is not one");
+    }
+}

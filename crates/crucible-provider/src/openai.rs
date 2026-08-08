@@ -1,12 +1,16 @@
-//! The Anthropic provider.
+//! The OpenAI provider.
 //!
-//! Four parts, and the split is the direction data travels: [`body`] builds a
-//! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
+//! Three parts, and the split is the direction data travels: [`body`] builds a
+//! request, [`wire`] reads one chunk of a response, [`stream`] delivers a whole
 //! one, and this file is the request itself — the headers and the status.
 //!
 //! It names no HTTP client and no credential kind. A [`Transport`] is handed in
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.
+//!
+//! Chat Completions rather than the newer endpoint, because it is the shape the
+//! other vendors serving an OpenAI-compatible API implement, and one adapter
+//! reaching all of them is worth more here than the newest fields.
 
 mod body;
 mod stream;
@@ -14,28 +18,24 @@ mod wire;
 
 use crucible_core::{Cancel, Credential, DeltaStream, Outgoing, Provider, ProviderError, Request};
 
-use crate::anthropic::stream::Stream;
+use crate::openai::stream::Stream;
 use crate::refusal::refused;
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
-const NAME: &str = "anthropic";
+const NAME: &str = "openai";
 
 /// Where requests go.
-const URL: &str = "https://api.anthropic.com/v1/messages";
+const URL: &str = "https://api.openai.com/v1/chat/completions";
 
-/// The API version this speaks. Anthropic pins behaviour to it, so a new one is
-/// a deliberate change here rather than something that drifts.
-const VERSION: &str = "2023-06-01";
-
-/// Anthropic's Messages API.
+/// OpenAI's Chat Completions API.
 #[derive(Debug)]
-pub struct Anthropic {
+pub struct OpenAi {
     credential: Box<dyn Credential>,
     transport: Box<dyn Transport>,
 }
 
-impl Anthropic {
+impl OpenAi {
     /// A provider that authenticates with `credential` and sends over
     /// `transport`.
     #[must_use]
@@ -47,10 +47,12 @@ impl Anthropic {
     }
 
     /// The headers every request carries, including the secret.
+    ///
+    /// No version header: this API is versioned by its path, and behaviour
+    /// changes arrive under new model names rather than new dates.
     fn headers(&self) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("anthropic-version", VERSION);
         outgoing.set_header("accept", "text/event-stream");
 
         self.credential
@@ -64,7 +66,7 @@ impl Anthropic {
     }
 }
 
-impl Provider for Anthropic {
+impl Provider for OpenAi {
     fn name(&self) -> &'static str {
         NAME
     }
@@ -108,14 +110,14 @@ mod tests {
     use crate::transport::{Replay, Sent};
 
     /// The exact key that must never appear anywhere but a header value.
-    const SECRET: &str = "sk-ant-do-not-log-me";
+    const SECRET: &str = "sk-proj-do-not-log-me";
 
-    fn provider(status: u16, body: &str) -> (Anthropic, std::sync::Arc<Replay>) {
+    fn provider(status: u16, body: &str) -> (OpenAi, std::sync::Arc<Replay>) {
         let replay = std::sync::Arc::new(Replay::new(status, body));
-        let credential = HeaderKey::new(ApiKey::new(SECRET), "x-api-key", "");
+        let credential = HeaderKey::new(ApiKey::new(SECRET), "authorization", "Bearer ");
 
         (
-            Anthropic::new(
+            OpenAi::new(
                 Box::new(credential),
                 Box::new(std::sync::Arc::clone(&replay)),
             ),
@@ -128,7 +130,7 @@ mod tests {
         transcript.push(Message::User(text.into()));
 
         Request {
-            model: "claude-test".into(),
+            model: "gpt-test".into(),
             transcript,
             tools: Vec::new(),
             max_tokens: 1024,
@@ -144,14 +146,13 @@ mod tests {
     }
 
     #[test]
-    fn a_request_carries_the_version_and_asks_for_a_stream() {
-        let (anthropic, replay) = provider(200, ANSWER);
+    fn a_request_goes_to_chat_completions_and_asks_for_a_stream() {
+        let (openai, replay) = provider(200, ANSWER);
 
-        anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        openai.stream(asking("hello"), &Cancel::new()).unwrap();
 
         let sent = replay.sent();
         assert_eq!(sent.url, URL);
-        assert_eq!(header(&sent, "anthropic-version"), VERSION);
         assert_eq!(header(&sent, "accept"), "text/event-stream");
         assert_eq!(header(&sent, "content-type"), "application/json");
     }
@@ -159,20 +160,25 @@ mod tests {
     #[test]
     fn a_request_is_authorised_by_the_credential_it_was_given() {
         // The provider names the header and the prefix; it never sees the key.
-        let (anthropic, replay) = provider(200, ANSWER);
+        // Same credential kind as the other provider, a different header — the
+        // point of keeping authentication off the protocol axis.
+        let (openai, replay) = provider(200, ANSWER);
 
-        anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        openai.stream(asking("hello"), &Cancel::new()).unwrap();
 
-        assert_eq!(header(&replay.sent(), "x-api-key"), SECRET);
+        assert_eq!(
+            header(&replay.sent(), "authorization"),
+            format!("Bearer {SECRET}")
+        );
     }
 
     #[test]
     fn a_provider_does_not_show_its_credential_in_its_debug() {
         // `Provider` is held by the runner and appears in its `Debug`.
-        let (anthropic, _) = provider(200, ANSWER);
+        let (openai, _) = provider(200, ANSWER);
 
         assert!(
-            !format!("{anthropic:?}").contains(SECRET),
+            !format!("{openai:?}").contains(SECRET),
             "the key leaked through the provider"
         );
     }
@@ -181,9 +187,9 @@ mod tests {
     fn an_accepted_request_is_handed_back_as_the_answer_it_returned() {
         // The end of the round trip: a body that arrived over the transport
         // reaches the caller as deltas, with nothing in between to arrange it.
-        let (anthropic, _) = provider(200, ANSWER);
+        let (openai, _) = provider(200, ANSWER);
 
-        let mut stream = anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        let mut stream = openai.stream(asking("hello"), &Cancel::new()).unwrap();
 
         assert_eq!(
             deltas(stream.as_mut()),
@@ -197,43 +203,24 @@ mod tests {
 
     #[test]
     fn a_refusal_carries_the_status_and_the_sentence_that_explains_it() {
-        let said =
-            r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-nope"}}"#;
-        let (anthropic, _) = provider(404, said);
+        let said = r#"{"error":{"message":"The model `gpt-nope` does not exist","type":"invalid_request_error"}}"#;
+        let (openai, _) = provider(404, said);
 
-        let problem = anthropic
-            .stream(asking("hello"), &Cancel::new())
-            .unwrap_err();
+        let problem = openai.stream(asking("hello"), &Cancel::new()).unwrap_err();
 
         assert_eq!(
             problem.to_string(),
-            "anthropic: HTTP 404: model: claude-nope"
-        );
-    }
-
-    #[test]
-    fn a_refusal_that_is_not_the_api_still_says_what_it_said() {
-        // A gateway in front of the API refuses in its own shape, and that text
-        // is the only clue the user gets.
-        let (anthropic, _) = provider(502, "  upstream connect error  ");
-
-        let problem = anthropic
-            .stream(asking("hello"), &Cancel::new())
-            .unwrap_err();
-
-        assert_eq!(
-            problem.to_string(),
-            "anthropic: HTTP 502: upstream connect error"
+            "openai: HTTP 404: The model `gpt-nope` does not exist"
         );
     }
 
     #[test]
     fn a_cancelled_turn_is_never_sent() {
-        let (anthropic, replay) = provider(200, ANSWER);
+        let (openai, replay) = provider(200, ANSWER);
         let cancel = Cancel::new();
         cancel.request();
 
-        let problem = anthropic.stream(asking("hello"), &cancel).unwrap_err();
+        let problem = openai.stream(asking("hello"), &cancel).unwrap_err();
 
         assert!(matches!(problem, ProviderError::Cancelled(_)));
         assert!(

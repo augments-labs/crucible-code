@@ -7,6 +7,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod choice;
 mod converse;
 mod draw;
 #[cfg(test)]
@@ -14,21 +15,30 @@ mod fake;
 mod seen;
 
 use std::io::{self, Write as _};
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
-use crucible_core::{ApiKey, Cancel, CredentialError, HeaderKey, PathError, Workspace};
-use crucible_provider::{Anthropic, Https};
+use crucible_core::{
+    ApiKey, Cancel, Credential, CredentialError, HeaderKey, PathError, Provider, Workspace,
+};
+use crucible_provider::{Anthropic, Https, OpenAi};
 use crucible_runner::{Model, Runner, Session, SessionError, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError};
 
+use crate::cli::choice::Choice;
+
 /// The model asked when the command line does not name one.
 const MODEL: &str = "claude-sonnet-5";
 
-/// The variable the key is read from. The *name* is what is configured here;
-/// the value never appears in this repository or in a session file.
-const KEY: &str = "ANTHROPIC_API_KEY";
+/// The providers this is built with, for the sentence a wrong name gets back.
+const PROVIDERS: &str = "anthropic, openai";
+
+/// The variables each key is read from. The *names* are what is configured
+/// here; a value never appears in this repository or in a session file.
+const ANTHROPIC_KEY: &str = "ANTHROPIC_API_KEY";
+const OPENAI_KEY: &str = "OPENAI_API_KEY";
 
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
@@ -72,9 +82,13 @@ A coding agent that works in the terminal. Type a prompt; it reads, searches, \
 edits and runs things in the current directory, and asks before anything that \
 changes a file or starts a process.
 
-Authenticates with the key in ANTHROPIC_API_KEY. Sessions are written under \
-the data directory, one file per session, and --continue picks up the most \
-recent one for this directory.
+--model takes a model name, optionally qualified by the provider serving it: \
+claude-sonnet-5, or openai/gpt-5.2. Unqualified names go to Anthropic. The key \
+is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, whichever the chosen \
+provider needs.
+
+Sessions are written under the data directory, one file per session, and \
+--continue picks up the most recent one for this directory.
 
 Flags, session files and config are unstable for the whole 0.0.x line."
 )]
@@ -83,7 +97,7 @@ struct Cli {
     #[arg(short, long)]
     r#continue: bool,
 
-    /// The model to ask.
+    /// The model to ask, optionally as provider/model.
     #[arg(short, long, default_value = MODEL)]
     model: String,
 }
@@ -111,6 +125,17 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Title(#[from] TitleError),
 
+    /// The command line named a provider this is not built with.
+    #[error("no provider called {named}; this build has {PROVIDERS}")]
+    Provider {
+        /// What was asked for.
+        named: Box<str>,
+    },
+
+    /// The command line named no model.
+    #[error("--model needs a name, as in --model {MODEL}")]
+    Nameless,
+
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
     Input(io::Error),
@@ -136,28 +161,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
 
-    let directory = Session::directory()?;
-    let (session, earlier) = if cli.r#continue {
-        let (session, transcript) = Session::resume(&directory, &workspace)?;
-        (session, Some(transcript))
-    } else {
-        (Session::start(&directory, &workspace)?, None)
-    };
-
-    let provider = Anthropic::new(
-        Box::new(HeaderKey::new(ApiKey::from_env(KEY)?, "x-api-key", "")),
-        Box::new(Https::new()),
-    );
-
-    let mut runner = Runner::new(
-        Box::new(provider),
-        tools(&workspace, &cancel),
-        model(&cli.model, &workspace),
-        session,
-    );
-    if let Some(transcript) = earlier {
-        runner = runner.resuming(transcript);
-    }
+    let runner = assemble(cli, &Session::directory()?, &workspace, &cancel)?;
 
     // Reentrant on this thread, which is the only one that writes here: the
     // renderer holds the lock for its whole life, and the title borrows the
@@ -170,6 +174,79 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     drop(held);
     outcome
+}
+
+/// The runner the loop drives, built from what the command line asked for.
+///
+/// `directory` is a parameter rather than read here so that a test can point a
+/// startup at somewhere disposable and look at what it left behind.
+fn assemble(
+    cli: &Cli,
+    directory: &Path,
+    workspace: &Workspace,
+    cancel: &Cancel,
+) -> Result<Runner, Fatal> {
+    let choice = Choice::parse(&cli.model).ok_or(Fatal::Nameless)?;
+
+    // Before the session, because this is the last thing that can fail on the
+    // way in and starting a session writes a file. A session written for a run
+    // that never happened is then the newest one for this directory, which is
+    // what `--continue` would offer instead of the last real conversation.
+    let provider = provider(&choice)?;
+
+    let (session, earlier) = if cli.r#continue {
+        let (session, transcript) = Session::resume(directory, workspace)?;
+        (session, Some(transcript))
+    } else {
+        (Session::start(directory, workspace)?, None)
+    };
+
+    let mut runner = Runner::new(
+        provider,
+        tools(workspace, cancel),
+        model(&choice.model, workspace),
+        session,
+    );
+    if let Some(transcript) = earlier {
+        runner = runner.resuming(transcript);
+    }
+
+    Ok(runner)
+}
+
+/// The provider that serves the chosen model.
+///
+/// The one place in the program where a provider's name becomes a type. Adding
+/// another is an arm here and a `Credential` beside it — nothing in any crate
+/// below has to learn that it exists.
+fn provider(choice: &Choice) -> Result<Box<dyn Provider>, Fatal> {
+    match &*choice.provider {
+        // Two protocols, one credential kind pointed at different headers.
+        // Authentication is a separate axis, and this is what that buys.
+        "anthropic" => Ok(Box::new(Anthropic::new(
+            key(ANTHROPIC_KEY, "x-api-key", "")?,
+            Box::new(Https::new()),
+        ))),
+
+        "openai" => Ok(Box::new(OpenAi::new(
+            key(OPENAI_KEY, "authorization", "Bearer ")?,
+            Box::new(Https::new()),
+        ))),
+
+        named => Err(Fatal::Provider {
+            named: named.into(),
+        }),
+    }
+}
+
+/// A key from the environment, ready to sign a request with.
+///
+/// The variable's name is what is configured; the value is read once, here, and
+/// goes no further than the header it is applied to.
+fn key(variable: &str, header: &str, prefix: &str) -> Result<Box<dyn Credential>, Fatal> {
+    let key = ApiKey::from_env(variable)?;
+
+    Ok(Box::new(HeaderKey::new(key, header, prefix)))
 }
 
 /// Everything the model may call.
@@ -219,4 +296,74 @@ fn fail(problem: &Fatal) -> ExitCode {
 
     let _ = io::stderr().write_all(line.as_bytes());
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// A sessions directory and a workspace, both real, both temporary.
+    struct Sample {
+        base: PathBuf,
+    }
+
+    impl Sample {
+        fn new(name: &str) -> Self {
+            let base =
+                std::env::temp_dir().join(format!("crucible-cli-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&base);
+            fs::create_dir_all(base.join("work")).expect("a temporary directory");
+
+            Self { base }
+        }
+
+        /// Where sessions would go. Deliberately not created: whether a startup
+        /// makes it is the thing being watched.
+        fn logs(&self) -> PathBuf {
+            self.base.join("logs")
+        }
+
+        fn workspace(&self) -> Workspace {
+            Workspace::open(self.base.join("work")).expect("the directory exists")
+        }
+    }
+
+    impl Drop for Sample {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    fn asking(model: &str) -> Cli {
+        Cli {
+            r#continue: false,
+            model: model.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
+        // An empty session written for a run that never happened is then the
+        // newest one for this directory, so --continue would offer it instead
+        // of the last real conversation.
+        let sample = Sample::new("no-provider");
+
+        let Err(problem) = assemble(
+            &asking("nowhere/gpt-5.2"),
+            &sample.logs(),
+            &sample.workspace(),
+            &Cancel::new(),
+        ) else {
+            panic!("a provider this build does not have was accepted");
+        };
+
+        assert!(matches!(problem, Fatal::Provider { .. }), "{problem:?}");
+        assert!(
+            !sample.logs().exists(),
+            "a session was written for a startup that failed"
+        );
+    }
 }

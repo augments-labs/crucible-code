@@ -12,6 +12,30 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- A session that runs. `crucible` reads a prompt, streams the model's answer
+  inline, runs tools, and asks before anything that changes a file or starts a
+  process. `--continue` carries on the most recent session started in the
+  current directory.
+- Two providers, chosen by `--model [provider/]model`: `anthropic` (the default
+  for an unqualified name, keyed by `ANTHROPIC_API_KEY`) and `openai` (keyed by
+  `OPENAI_API_KEY`). Authentication is a separate axis from the wire protocol —
+  a provider is handed a resolved credential and never learns which kind it was.
+- Six tools: `read`, `grep`, `glob`, `edit`, `write`, `bash`. Reads run without
+  asking; the rest take a permission token that only a verdict can mint, so code
+  without one cannot call them. `always` remembers the tool for a file change
+  and the tool *and program* for a command, and is never written to disk.
+- Session log: one JSON object per line, one file per session, under
+  `$XDG_DATA_HOME/crucible/sessions`. A log from a build with a different format
+  is refused rather than half-understood.
+- `docs/` — getting started, providers and models, permission, and sessions.
+
+### Fixed
+
+- A startup that fails no longer leaves an empty session behind. The provider is
+  resolved before the session is started, so a wrong `--model` or an unset key
+  writes nothing — that empty session would otherwise have been the newest one
+  for the directory, and `--continue` would have offered it instead of the last
+  real conversation.
 - Cargo workspace: `crucible-core`, `crucible-provider`, `crucible-tools`,
   `crucible-runner`, `crucible-tui`, and the `crucible` binary. Dependencies
   point down only, enforced by cargo.
@@ -41,7 +65,6 @@ Notable changes to crucible. Format follows
 - Contributor Covenant 3.0 code of conduct, contribution guide, and a documented
   release procedure.
 - `crucible_tui::Title` — sets the terminal tab title to `▽ crucible` and
-  restores the terminal when dropped. Not yet emitted at runtime; there is no
-  session loop to emit it from.
+  restores the terminal when dropped.
 
 [Unreleased]: https://github.com/augments-labs/crucible-code/commits/main

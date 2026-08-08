@@ -12,6 +12,8 @@
 use crucible_core::{Message, Request, ToolResult, ToolSchema, Transcript};
 use serde_json::{Map, Value, json};
 
+use crate::json::{described, object, put};
+
 /// The whole request body.
 pub(super) fn build(request: &Request) -> Value {
     let mut body = Map::new();
@@ -91,40 +93,13 @@ fn result(result: &ToolResult) -> Value {
 
 /// One tool, as advertised.
 fn tool(schema: &ToolSchema) -> Value {
-    let mut input = object(schema.schema);
-
-    // A JSON Schema describes its subject at the root, and that sentence is
-    // what the API wants as the tool's description. Moved rather than copied:
-    // leaving it in would describe the argument object instead of the tool.
-    let description = match input.remove("description") {
-        Some(Value::String(text)) => text,
-        _ => String::new(),
-    };
+    let (input, description) = described(schema.schema);
 
     json!({
         "name": schema.name,
         "description": description,
         "input_schema": Value::Object(input),
     })
-}
-
-/// JSON text as an object, or an empty one.
-///
-/// A tool that takes no arguments is called with no argument text at all, so
-/// the empty case is ordinary rather than a failure. Text that is not an object
-/// cannot be repaired here either — the tool that owns the arguments is the
-/// only thing that knows what they mean, and it will say so in its own words
-/// when it is asked to run.
-fn object(json: &str) -> Map<String, Value> {
-    match serde_json::from_str(json) {
-        Ok(Value::Object(fields)) => fields,
-        _ => Map::new(),
-    }
-}
-
-/// Adds a field.
-fn put(fields: &mut Map<String, Value>, name: &str, value: Value) {
-    fields.insert(name.to_owned(), value);
 }
 
 #[cfg(test)]

@@ -13,10 +13,10 @@ A terminal coding agent in Rust — fast to start, flat in memory, and yours to 
 
 ---
 
-> **Status: early development.** `v0.0.1` is not released and crucible does not
-> run a session yet. What exists today is the workspace, the lint and gate
-> configuration, and the crate boundaries the agent loop will be built inside.
-> Watch the repository if you want the first tag.
+> **Status: early development.** `v0.0.1` is not released, but it runs: a
+> session streams, six tools work, permission is asked for, and the transcript
+> is kept. Flags, session files and config are unstable for the whole 0.0.x
+> line. Watch the repository if you want the first tag.
 
 ## What it is
 
@@ -59,6 +59,33 @@ cargo build --release
 
 There are no published binaries yet. When there are, they will be attached to
 the GitHub Release for the tag.
+
+## Running it
+
+Set a key, start it in the directory you want it to work in, and type.
+
+```bash
+export ANTHROPIC_API_KEY=...
+cd ~/code/my-project
+crucible
+```
+
+`--model` takes a model name, optionally qualified by the provider serving it.
+Unqualified names go to Anthropic.
+
+```bash
+crucible --model openai/gpt-5.2    # reads OPENAI_API_KEY
+crucible --continue                # carry on this directory's last session
+```
+
+Reading never asks. Anything that changes a file or starts a process does:
+
+```
+? bash wants to run: cargo
+  [y]es  [a]lways  [n]o › 
+```
+
+Full documentation is in [`docs/`](docs/README.md).
 
 ## Contributing
 
