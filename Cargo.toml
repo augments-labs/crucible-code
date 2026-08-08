@@ -44,6 +44,21 @@ thiserror = "=2.0.19"
 # trait and swapping it out is a day, not a rewrite.
 crossterm = "=0.29.0"
 
+# HTTP. Blocking by design: this workspace runs threads rather than an async
+# runtime, and the alternative client would pull `tokio` in to serve one socket
+# per turn. Brings `rustls` rather than linking a system OpenSSL, so a release
+# binary is the same on every machine. Confined to one file behind `Transport`.
+# Default features minus `gzip`: a response here is an event stream that is read
+# as it arrives, and compressing one buys nothing for the `flate2` it costs.
+ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
+
+# JSON. Every wire protocol here speaks it, and hand-rolling the parser would
+# mean hand-rolling string escapes and surrogate pairs — where a mistake is a
+# silently wrong answer rather than a crash. Used without `derive`: the vendor
+# shapes differ per provider and are read once at the boundary, so a set of
+# mirror structs per provider would be more code than the field lookups.
+serde_json = "=1.0.151"
+
 # Display width. A terminal wraps by columns, not by characters: CJK takes two
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
 # the renderer did not predict and the next frame erases the wrong lines. This

@@ -9,3 +9,12 @@
 //! `Credential`. Providers do not resolve credentials, read the environment or
 //! touch the keyring — that happens once, during wiring, so that adding a new
 //! way to authenticate does not edit a single provider.
+
+mod anthropic;
+mod http;
+mod sse;
+mod transport;
+
+pub use anthropic::Anthropic;
+pub use http::Https;
+pub use transport::{Response, Transport, TransportError};

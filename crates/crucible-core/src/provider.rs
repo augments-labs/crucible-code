@@ -41,6 +41,22 @@ pub enum ProviderError {
         message: Box<str>,
     },
 
+    /// The provider accepted the request and then reported a failure inside the
+    /// response it was already streaming.
+    ///
+    /// Distinct from [`Self::Refused`] because there is no status to report: the
+    /// response was a success and the failure arrived as content. Being
+    /// overloaded is the usual reason, and it is the one worth retrying.
+    #[error("{provider}: {kind}: {message}")]
+    Upstream {
+        /// Which provider.
+        provider: &'static str,
+        /// What the provider called the failure.
+        kind: Box<str>,
+        /// The provider's message.
+        message: Box<str>,
+    },
+
     /// The response did not match the shape this provider expects.
     #[error("{provider}: unexpected response: {problem}")]
     Protocol {
@@ -141,6 +157,14 @@ pub trait Provider: Send + Sync {
 impl fmt::Debug for dyn Provider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Provider({})", self.name())
+    }
+}
+
+impl fmt::Debug for dyn DeltaStream {
+    /// Nothing to show. A stream is a socket part-way through a response, and
+    /// the only way to describe its contents is to consume them.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DeltaStream")
     }
 }
 
