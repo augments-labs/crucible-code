@@ -1,0 +1,15 @@
+[package]
+name = "crucible-tools"
+description = "Filesystem, search and process tools the agent can call."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+crucible-core.workspace = true
+
+[lints]
+workspace = true

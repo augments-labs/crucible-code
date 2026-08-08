@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned so a contributor, CI, and the benchmark box all compile identically —
+# a toolchain bump would otherwise show up as an unexplained perf delta.
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

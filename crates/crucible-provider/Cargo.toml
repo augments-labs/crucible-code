@@ -1,0 +1,15 @@
+[package]
+name = "crucible-provider"
+description = "Provider implementations: wire protocols and streaming for each LLM backend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+crucible-core.workspace = true
+
+[lints]
+workspace = true

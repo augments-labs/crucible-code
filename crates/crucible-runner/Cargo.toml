@@ -1,0 +1,18 @@
+[package]
+name = "crucible-runner"
+description = "Drives turns to completion: streams from a provider, dispatches tool calls."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Core only, and deliberately so. The runner drives `dyn Provider` and
+# `dyn Tool`; naming a concrete provider or tool here is the design failure this
+# crate exists to prevent.
+[dependencies]
+crucible-core.workspace = true
+
+[lints]
+workspace = true

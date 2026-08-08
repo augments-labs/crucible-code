@@ -1,0 +1,17 @@
+//! Domain types and the traits every other crucible crate implements.
+//!
+//! This crate is the bottom of the dependency graph and depends on no other
+//! crucible crate. Providers, tools, the runner and the renderer all depend on
+//! this crate and never on each other; cargo enforces that, so the arrangement
+//! cannot rot.
+//!
+//! Two kinds of type live here, and the split is deliberate:
+//!
+//! - **Closed sets are enums.** Events, verdicts and errors are owned here, so
+//!   adding a variant breaks every `match` and forces each site to decide.
+//! - **Open sets are traits.** `Provider`, `Credential` and `Tool` are
+//!   implemented in the crates above, so adding one must never edit this crate.
+//!
+//! Authentication is a separate axis from the wire protocol: a `Provider`
+//! receives an already-resolved `Credential` and never learns whether it came
+//! from an API key or a subscription login.

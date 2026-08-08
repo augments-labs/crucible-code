@@ -1,0 +1,16 @@
+[package]
+name = "crucible-core"
+description = "Domain types and the traits every other crucible crate implements."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Intentionally empty: core is the bottom of the graph. A dependency added here
+# is a dependency every layer above inherits.
+[dependencies]
+
+[lints]
+workspace = true

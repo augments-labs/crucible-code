@@ -1,0 +1,20 @@
+# Thresholds for the lints denied in `Cargo.toml [lints.clippy]`.
+
+msrv = "1.97.1"
+
+# A function longer than this is doing more than one thing.
+too-many-lines-threshold = 100
+
+# More than five arguments means the parameters want to be a struct.
+too-many-arguments-threshold = 5
+
+cognitive-complexity-threshold = 15
+type-complexity-threshold = 250
+
+# Tests may panic freely: an assertion failure is the point, and threading
+# `Result` through every test obscures what is being asserted.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true

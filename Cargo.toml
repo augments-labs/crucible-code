@@ -1,0 +1,123 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+repository = "https://github.com/augments-labs/crucible-code"
+authors = ["Peguy Njoyim"]
+
+# Layering lives here. A crate can only reach what its own `[dependencies]`
+# names, and cargo rejects cycles outright — so the arrows below are compiled,
+# not reviewed:
+#
+#   core       -> (nothing)
+#   provider   -> core
+#   tools      -> core
+#   runner     -> core            drives turns through traits only
+#   tui        -> core
+#   crucible-code (this package) -> all five, and is the only place concrete
+#                                   types are wired together
+[workspace.dependencies]
+crucible-core = { path = "crates/crucible-core" }
+crucible-provider = { path = "crates/crucible-provider" }
+crucible-runner = { path = "crates/crucible-runner" }
+crucible-tools = { path = "crates/crucible-tools" }
+crucible-tui = { path = "crates/crucible-tui" }
+
+# Argument parsing. `derive` keeps the CLI surface declared next to the type it
+# produces rather than in a builder chain that drifts from it.
+clap = { version = "=4.6.5", features = ["derive"] }
+
+# Error enums. Every module owns its error type; `thiserror` writes the
+# `Display` and `source` impls for it without erasing the type the way a
+# boxed error does. Derive only — nothing of it survives into the binary.
+thiserror = "=2.0.19"
+
+# --- Encoded standards -------------------------------------------------------
+# These lint tables are the standard. A rule that cannot be expressed here, in
+# `clippy.toml`, or in `scripts/check.sh` is not enforceable and does not exist.
+# Every crate opts in with `[lints] workspace = true`.
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# No panicking paths in shipped code. Tests are exempt via `clippy.toml`.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+exit = "deny"
+
+# Terminal output goes through the renderer, never an ad-hoc macro, so the
+# render path stays measurable and a stray print cannot corrupt the transcript.
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+# Cheap correctness traps that pedantic leaves at allow.
+float_cmp = "deny"
+mem_forget = "deny"
+rc_buffer = "deny"
+
+# Function length. The per-file cap lives in `scripts/check.sh`; the compiler
+# cannot see file boundaries.
+too_many_lines = "deny"
+
+# Pedantic lints that fight the house style rather than serving it.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[package]
+name = "crucible-code"
+description = "The harness where agents are forged."
+readme = "README.md"
+keywords = ["agent", "cli", "tui", "llm", "coding-assistant"]
+categories = ["command-line-utilities", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# One shipped binary. The short `cru` name is a symlink created by the
+# installer, not a second target — a second `[[bin]]` would compile and ship
+# the same code twice. Auxiliary binaries under `src/bin/` are bench probes and
+# are not part of a release.
+[[bin]]
+name = "crucible"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+
+[lints]
+workspace = true
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# Panics are denied by lint, so unwinding machinery is dead weight in the
+# binary. A session survives an abort regardless: the transcript is an
+# append-only log already on disk, not state flushed at exit.
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
