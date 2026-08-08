@@ -24,6 +24,19 @@ Notable changes to crucible. Format follows
   which variable it wants rather than left with a blank screen. Wired into
   `RELEASING.md` on both sides of the tag.
 
+### Fixed
+
+- A run whose output is redirected no longer writes the terminal title.
+  `crucible > log` and `crucible | tee` were both getting the OSC sequence that
+  names a tab — once on the way in and once when the guard handed the title
+  back — and neither is a title once something other than a terminal has read
+  it; they are thirteen bytes in the middle of somebody's file. Setting one now
+  goes through the only constructor there is, and it asks standard output
+  whether it is a terminal before writing anything, so a caller cannot aim a
+  title at a pipe. `scripts/smoke.sh` fails a release whose redirected run
+  writes any escape sequence at all, which is how this was found: in the
+  published 0.0.1 artifact rather than in the source.
+
 ### Documented
 
 - The released binary needs **glibc 2.34 or newer** and nothing else from the

@@ -167,12 +167,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // this does not: a failure here leaves the disk as it found it. The guard
     // restores the title on the way out of this function however it is left, so
     // a failure between here and the loop does not leave a tab named after a
-    // process that is gone.
+    // process that is gone. A redirected run holds nothing, which is the guard
+    // saying there was no tab to name.
     //
     // Reentrant on this thread, which is the only one that writes here: the
     // renderer holds the lock for its whole life, and the title borrows the
     // same handle to set a tab name and hand it back on the way out.
-    let held = Title::set(io::stdout())?;
+    let held = Title::set()?;
     let mut renderer = Renderer::new(SystemTerminal::stdout());
     draw::opening(&mut renderer, &cli.model, &workspace)?;
 

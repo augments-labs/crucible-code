@@ -60,3 +60,10 @@ tab title for exactly as long as the value is alive.
 
 Restoring in a normal-exit branch is not enough. The panic, the `?` and the
 Ctrl-C all have to leave the terminal usable.
+
+A borrow also has to *have* something to borrow. Every guard checks
+`is_terminal()` before it changes any state and does nothing when output is
+redirected — the escape would not be state there, it would be bytes in the
+middle of somebody's file, and the restore on the way out would be more of them.
+`Title::set` is the pattern: the check is inside the only constructor, so a
+caller cannot aim one at a pipe.
