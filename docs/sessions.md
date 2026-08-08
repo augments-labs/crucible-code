@@ -28,8 +28,14 @@ One file per session, under the data directory:
 
 ```
 $XDG_DATA_HOME/crucible/sessions/
-~/.local/share/crucible/sessions/     # when XDG_DATA_HOME is unset
+$HOME/.local/share/crucible/sessions/     # when XDG_DATA_HOME is not usable
 ```
+
+`XDG_DATA_HOME` is used only when it is set to an absolute path; a relative one
+is ignored rather than resolved against wherever you happened to start crucible,
+which would scatter sessions across the directories you work in. `HOME` is read
+the same way, and if neither is absolute crucible says so and stops instead of
+guessing.
 
 Each file is named for its session and ends in `.jsonl`. They are yours: reading
 one with `cat`, `jq` or a text editor is a supported thing to do, and deleting

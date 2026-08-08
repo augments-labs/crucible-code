@@ -4,11 +4,13 @@
 //! neither may reach the other. Each tool implements `Tool` from core, so the
 //! runner dispatches to them without naming any of them.
 //!
-//! Every tool that mutates a file or spawns a process takes a `Grant` as an
-//! argument rather than asking for one. A `Grant` is minted only by the
-//! permission engine, so permission is impossible to forget and equally
-//! impossible to fake: code that has not obtained one cannot call the
-//! operation.
+//! Every tool takes a `Grant` as an argument rather than asking for one, and a
+//! `Grant` is minted only by the permission engine — so permission is
+//! impossible to forget and equally impossible to fake: code that has not
+//! obtained one cannot call the operation. A read-only tool is no exception.
+//! What its sensitivity buys it is a grant issued without a question, not a
+//! signature that skips the token, because a tool that reported the wrong
+//! sensitivity would otherwise be one that had never been asked about at all.
 //!
 //! Every tool holds a `Workspace` and asks it for each path it touches. The
 //! containment check therefore happens in one place rather than once per tool,

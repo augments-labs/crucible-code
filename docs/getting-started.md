@@ -48,7 +48,7 @@ calls appear as they run:
 › what does the runner do when a tool fails?
 
 · read {"path":"crates/crucible-runner/src/runner.rs"}
-  //! The turn loop. (+312 lines)
+       1	//! The turn loop. (+238 lines)
 
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
@@ -56,7 +56,33 @@ result of that call, and the model decides what to do about it.
 › 
 ```
 
+A tool's output is summarised to its first line and a count of the rest; `read`
+numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
+A call that failed is marked `✗`.
+
 Press <kbd>Ctrl-D</kbd> on an empty prompt to leave.
+
+## When an answer stops early
+
+An answer can end for a reason other than the model having finished. When it
+does, a line says so under the turn:
+
+```
+! unfinished: the answer reached the token ceiling
+```
+
+```
+! unfinished: the provider's filter cut the answer short
+```
+
+The two are named apart because the remedy is opposite. The first means the
+answer ran out of room, and a narrower question gets a complete one. The second
+means the provider stopped the answer on its own, and asking for less buys
+nothing. Without the line, both look exactly like an answer that finished.
+
+A turn that ended normally says nothing at all. There is a third line,
+`! stopped`, for a turn that was cancelled — but nothing in 0.0.1 can cancel
+one, so you will not see it yet. See <kbd>Ctrl-C</kbd> above.
 
 <kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.1 input is left
 in the terminal's cooked mode and no signal is caught, so there is no way to stop
