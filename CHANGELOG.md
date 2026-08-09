@@ -10,6 +10,85 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-08-09
+
+Configuration files. Everything crucible could only be told on the command line
+or through the environment can now be written down.
+
+### Added
+
+- **Configuration in JSON**, read from three files, nearest to the work last:
+
+  ```
+  ~/.crucible/config.json          yours, everywhere
+  .crucible/config.json            this project's, checked in
+  .crucible/config.local.json      this project's, yours alone
+  ```
+
+  A scalar takes the nearest layer that set it; an object is merged key by key,
+  so a project naming one provider leaves your other one alone. The command line
+  is nearer than all three. Every file is optional and a machine with none of
+  them behaves exactly as before.
+
+  Three blocks: `providers`, keyed by provider name, each taking a `model` and
+  an `apiKeyEnv`; `env`, the variables the commands crucible runs are given; and
+  `output`, holding `color` and `toolDetail`. See
+  [`docs/configuration.md`](docs/configuration.md).
+
+- **`apiKeyEnv`**, which points a provider at a different environment variable —
+  what a second key for the same vendor needs. It takes a variable *name*, and a
+  key still has no path into a file crucible reads or writes.
+
+- **A checked-in file may not set an arbitrary `env` variable.** Anything in
+  `.crucible/config.json` reaches everyone who clones the repository, so a name
+  that is not crucible's own is refused there and pointed at
+  `.crucible/config.local.json` instead. crucible's own names — the
+  `CRUCIBLE_CODE_` prefix — are allowed, because those are knobs this program
+  declares rather than somewhere a secret could hide. The refusal is structural
+  and there is no setting that turns it off.
+
+- **A JSON schema**, at
+  [`schema/crucible-code-schema.json`](schema/crucible-code-schema.json). Adding
+  `"$schema": "https://json.schemastore.org/crucible-code-schema.json"` to a
+  file gets completion, validation and a sentence about each key from your
+  editor. It is generated from the same declaration the parser walks and a gate
+  compares it against the checked-in copy, so an editor that accepts a document
+  and a crucible that refuses it would have to disagree with itself.
+
+- **Refusals written for somebody with the file open.** A rejected document
+  names the file, the dotted path, the line and column, and what was accepted
+  instead — and where a key appears more than once it gives no position rather
+  than a plausible wrong one:
+
+  ```
+  crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
+  crucible has at line 3, column 5 — accepted here: color, toolDetail
+  ```
+
+### Changed
+
+- **crucible keeps its own files in `~/.crucible/`** — the configuration file
+  and the session logs together. Sessions used to live under
+  `$XDG_DATA_HOME/crucible/sessions`, which means nothing on Windows and is the
+  wrong place on macOS.
+
+  **Nothing is moved for you.** A sessions directory already at the old path
+  keeps being used, so `--continue` still finds the work you were in the middle
+  of; the new location is taken only by a machine that has neither.
+  [`docs/sessions.md`](docs/sessions.md) says how to move it by hand if you want
+  it moved.
+
+  `CRUCIBLE_CODE_HOME` relocates the whole directory, as an absolute path, and
+  turns off looking at the old tree. Because it is read to *find* the
+  configuration file, it is the one setting of crucible's own that a
+  configuration file cannot carry — writing it in one is refused rather than
+  accepted and quietly ignored.
+
+- **`--model` is optional and takes a bare provider.** `crucible --model
+  openai/` names the provider and leaves the model to `providers.openai.model`;
+  `crucible` on its own does the same for Anthropic. With nothing configured
+  either way the model is still `claude-sonnet-5`.
+
 ## [0.0.2] - 2026-08-09
 
 The gate that runs against a published artifact rather than a build of this
@@ -169,6 +248,7 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/augments-labs/crucible-code/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1
