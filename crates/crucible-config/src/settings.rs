@@ -44,6 +44,20 @@ impl Settings {
             .as_str()
     }
 
+    /// The name of the variable this provider's key is read from.
+    ///
+    /// The name only. A key has no path into a configuration file: this is the
+    /// setting for somebody who keeps a work key and a personal key in two
+    /// variables, and the value still comes from the environment.
+    #[must_use]
+    pub fn api_key_env(&self, provider: &str) -> Option<&str> {
+        self.value
+            .get("providers")?
+            .get(provider)?
+            .get("apiKeyEnv")?
+            .as_str()
+    }
+
     /// Whether to write colour, when the command line does not say.
     #[must_use]
     pub fn color(&self) -> Option<Color> {
@@ -56,12 +70,14 @@ impl Settings {
         ToolDetail::read(self.output("toolDetail")?)
     }
 
-    /// The variables to set for processes the bash tool starts.
+    /// The variables the commands crucible runs are started with.
     ///
-    /// Names and values both, because these are the user's own variables rather
-    /// than crucible's — a name in crucible's namespace was refused when the
-    /// document was read, so nothing here is a secret crucible put in reach of
-    /// a child process on its own.
+    /// Crucible's own environment is not touched and cannot be: writing to it
+    /// is `unsafe` in edition 2024 and this workspace forbids that. So this
+    /// block says what `cargo test` or `git` sees, not what crucible sees —
+    /// crucible's own settings have keys of their own, and the one variable it
+    /// reads before opening a file is refused here outright rather than left to
+    /// look applied.
     pub fn env(&self) -> impl Iterator<Item = (&str, &str)> {
         self.value
             .get("env")
@@ -211,6 +227,24 @@ mod tests {
         // Only the scalar inside it is replaced, and a layer that said nothing
         // about `toolDetail` has not thereby unset it.
         assert_eq!(settings.tool_detail(), Some(ToolDetail::Full));
+    }
+
+    #[test]
+    fn a_provider_can_be_told_which_variable_holds_its_key() {
+        let user = document(
+            r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#,
+            Origin::User,
+        );
+
+        let settings = Settings::resolve(vec![user]);
+
+        // The name. Nothing in this crate ever reads the variable, and nothing
+        // in a document ever carries the value.
+        assert_eq!(
+            settings.api_key_env("anthropic"),
+            Some("WORK_ANTHROPIC_KEY")
+        );
+        assert_eq!(settings.api_key_env("openai"), None);
     }
 
     #[test]

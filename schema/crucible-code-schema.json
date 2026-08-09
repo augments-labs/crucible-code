@@ -12,7 +12,7 @@
     },
     "env": {
       "additionalProperties": false,
-      "description": "Environment variables to set, crucible's own CRUCIBLE_CODE_ settings among them. A checked-in file may set only those",
+      "description": "Environment variables for the commands crucible runs. A checked-in file may set only crucible's own CRUCIBLE_CODE_ names",
       "patternProperties": {
         "^[^$]": {
           "type": "string"

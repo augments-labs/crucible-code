@@ -98,7 +98,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "env",
-        about: "Environment variables to set, crucible's own CRUCIBLE_CODE_ settings among them. A checked-in file may set only those",
+        about: "Environment variables for the commands crucible runs. A checked-in file may set only crucible's own CRUCIBLE_CODE_ names",
         shape: Shape::Named(&VALUE),
     },
     Field {
