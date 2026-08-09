@@ -65,19 +65,36 @@ the workspace ships as one unit and there is no per-crate version to drift.
 
 ## Cutting it
 
+Nothing reaches `main` except through a pull request, and none merges until
+`scripts/check.sh` and `scripts/bench.sh` are green on it. That is a repository
+ruleset with no bypass, so it holds for the person cutting the release too — the
+tired push at the end of a long day is the one it exists to catch.
+
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.
+git switch -c release/v0.0.1
 $EDITOR Cargo.toml CHANGELOG.md
 cargo build                     # refresh Cargo.lock with the new version
 scripts/check.sh
 
 git commit -am "chore(release): 0.0.1"
-git push origin main
+git push -u origin release/v0.0.1
 
-# 2. Tag the commit CI just proved green.
+# 2. Open it, let CI answer, merge it.
+gh pr create --base main --title "release: 0.0.1"
+gh pr checks --watch
+gh pr merge --merge --delete-branch
+
+# 3. Tag the commit CI just proved green.
+git switch main && git pull
 git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
 ```
+
+`cargo deny` is not a required check, and must not become one. It runs only when
+the dependency set changes, so on a release that touches no dependency it never
+reports — and a required check that never reports leaves the pull request
+pending for ever rather than failing it.
 
 Pushing the tag is the trigger. The release workflow builds the binary, attaches
 it with its checksum, and opens the GitHub Release with the changelog section as
@@ -148,7 +165,9 @@ promise nobody keeps.
 3. Open a fresh `Unreleased` section in the changelog.
 4. If the release is broken, do not delete or move the tag. Fix forward with a
    patch release. A tag that changes meaning breaks every checksum anyone
-   recorded against it.
+   recorded against it — which is why a `v*` tag can no longer be deleted or
+   moved at all. The ruleset refuses it, so the remedy is the patch release
+   whether or not anybody remembered this paragraph.
 
 ## If a release must be pulled
 
