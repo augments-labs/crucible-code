@@ -72,10 +72,6 @@ pub enum SessionError {
         /// Which file.
         at: Box<str>,
     },
-
-    /// Somewhere to keep sessions could not be worked out.
-    #[error("no home directory: set XDG_DATA_HOME or HOME")]
-    Homeless,
 }
 
 /// Where the first write that failed is left for the main thread to find.
@@ -223,28 +219,6 @@ impl Session {
         }
 
         self.trouble()
-    }
-
-    /// Where sessions are kept, from the environment.
-    ///
-    /// Read here rather than deeper down: this is the boundary, and everything
-    /// below it is handed a path.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionError::Homeless`] when neither `XDG_DATA_HOME` nor `HOME` says
-    /// anywhere to put them.
-    pub fn directory() -> Result<PathBuf, SessionError> {
-        let under = |name: &str, rest: &str| {
-            std::env::var_os(name)
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
-                .map(|path| path.join(rest))
-        };
-
-        under("XDG_DATA_HOME", "crucible/sessions")
-            .or_else(|| under("HOME", ".local/share/crucible/sessions"))
-            .ok_or(SessionError::Homeless)
     }
 
     /// A session that records onto `sink` instead of a file.

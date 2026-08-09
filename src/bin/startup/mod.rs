@@ -75,7 +75,10 @@ fn once(binary: &Path, home: &Path, needle: &'static str) -> Result<Duration, St
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("XDG_DATA_HOME", home)
+        // Crucible's own home, so twenty runs write their sessions somewhere
+        // this probe deletes rather than into the home directory of whoever is
+        // benchmarking.
+        .env(crucible_config::HOME, home)
         .env("ANTHROPIC_API_KEY", KEY)
         .spawn()?;
 

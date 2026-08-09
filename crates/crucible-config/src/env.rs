@@ -32,3 +32,16 @@ pub const NAMESPACE: &str = "CRUCIBLE_CODE_";
 pub(crate) fn ours(name: &str) -> bool {
     name.starts_with(NAMESPACE)
 }
+
+/// Whether crucible has already read this variable by the time it opens a file.
+///
+/// A variable in this list is one of crucible's own and is still refused in
+/// every layer, because it is read *to find* the files: by the time one of them
+/// could set it, the answer has been used. Refusing it is what stops a setting
+/// that looks applied from doing nothing.
+///
+/// One name so far. When a second arrives it joins this list, which is the only
+/// place the question is asked.
+pub(crate) fn too_late(name: &str) -> bool {
+    name == crate::home::HOME
+}

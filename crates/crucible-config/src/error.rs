@@ -180,4 +180,39 @@ pub enum ConfigError {
         /// crucible's prefix, carried so the message cannot drift from it.
         namespace: &'static str,
     },
+
+    /// An `env` variable that crucible has already read by the time it opens a
+    /// file, so a value written in one could never apply.
+    ///
+    /// Refused rather than ignored. Every other name in `env` does something,
+    /// and a reader has no way to tell this one apart — accepting it would mean
+    /// a setting that looks applied, merges like the others, and does nothing.
+    #[error(
+        "{file}: env cannot set {name}{at} — crucible reads it before it opens \
+         any configuration file, because it is what says where the files are. \
+         Set it in your shell instead"
+    )]
+    TooLate {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The variable name.
+        name: Box<str>,
+        /// Where it is, when that can be said.
+        at: At,
+    },
+
+    /// The environment says nowhere to keep crucible's own files.
+    ///
+    /// Not a fault in a document — it is why there is no document to read — but
+    /// the same read, and one error type is what keeps the wiring above from
+    /// having to hold two.
+    #[error(
+        "crucible has nowhere to keep its files: set HOME, or set {named} to the \
+         absolute path of the directory you want it to use"
+    )]
+    Homeless {
+        /// crucible's own variable, carried so the message cannot drift from
+        /// the name that is actually read.
+        named: &'static str,
+    },
 }

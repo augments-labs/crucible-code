@@ -66,7 +66,7 @@ impl Document {
 
         let reader = Reader { file, text };
         reader.check(&value, &DOCUMENT, Spot::ROOT)?;
-        reader.secrets(&value, origin)?;
+        reader.variables(&value, origin)?;
 
         Ok(Self { value, origin })
     }

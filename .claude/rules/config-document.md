@@ -26,6 +26,23 @@ Every `Field` needs an `about` that reads as a sentence to somebody who has
 never opened this repository — it is what an editor shows in the completion
 popup, and it is the only documentation most people will see.
 
+## The home directory
+
+`home.rs` resolves where crucible's own files are, and it is the only place that
+asks. Everything else — including the runner's session log — is handed a path.
+Do not read `HOME`, `CRUCIBLE_CODE_HOME` or an XDG variable anywhere else; a
+second answer to "where do the files live" is a bug that only shows up on
+somebody else's machine.
+
+A tree that is already on disk is read where it is. Never copy, move or delete
+one to reach a tidier layout: `--continue` has to keep working for somebody who
+upgrades in the middle of a piece of work, and those operations cannot be undone
+on files the docs call theirs.
+
+A variable crucible reads *before* it opens a file cannot be set from one. Add
+such a variable to `env::too_late` in the same commit that starts reading it,
+or it becomes a setting that looks applied and does nothing.
+
 ## Where a value's meaning is decided
 
 `shape.rs` says a value is one of a fixed set; `settings.rs` says what each

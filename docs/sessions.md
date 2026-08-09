@@ -34,22 +34,52 @@ yourself, and nothing would say why.
 
 ## Where they are kept
 
-One file per session, under the data directory:
+One file per session, in crucible's home directory:
 
 ```
-$XDG_DATA_HOME/crucible/sessions/
-$HOME/.local/share/crucible/sessions/     # when XDG_DATA_HOME is not usable
+~/.crucible/sessions/
 ```
 
-`XDG_DATA_HOME` is used only when it is set to an absolute path; a relative one
-is ignored rather than resolved against wherever you happened to start crucible,
-which would scatter sessions across the directories you work in. `HOME` is read
-the same way, and if neither is absolute crucible says so and stops instead of
-guessing.
+That directory holds your configuration file too, so everything crucible keeps
+for you is in one place you can back up, inspect or delete as a unit.
+
+`CRUCIBLE_CODE_HOME` moves the whole directory. It is taken as the home itself,
+not as somewhere to put a `.crucible` inside, and only when it is an absolute
+path — a relative one is ignored rather than resolved against wherever you
+happened to start crucible, which would scatter a home directory across every
+repository you work in. `HOME` is read the same way, and if neither is absolute
+crucible says so and stops instead of guessing.
+
+When you set it, everything is under it and nowhere else is consulted — which
+is what makes it usable for a container or a throwaway run that must not write
+into your real home directory.
+
+Because it is read to find the configuration file, `CRUCIBLE_CODE_HOME` is the
+one setting of crucible's own that a configuration file cannot set. Writing it
+in an `env` block is refused rather than ignored, so it cannot look applied and
+do nothing.
 
 Each file is named for its session and ends in `.jsonl`. They are yours: reading
 one with `cat`, `jq` or a text editor is a supported thing to do, and deleting
 one is how you forget a session.
+
+### If you used crucible 0.0.2 or earlier
+
+Sessions used to live under `$XDG_DATA_HOME/crucible/sessions`, falling back to
+`$HOME/.local/share/crucible/sessions`. If a directory is already there and
+`~/.crucible/sessions` is not, crucible keeps using the one you have. Nothing is
+copied, moved or deleted, and `--continue` goes on finding the session you were
+in the middle of. Setting `CRUCIBLE_CODE_HOME` turns this off: an explicit home
+is used as given.
+
+To move to the new place, move the directory yourself:
+
+```sh
+mkdir -p ~/.crucible
+mv ~/.local/share/crucible/sessions ~/.crucible/sessions
+```
+
+The new location wins as soon as it exists, so that is the whole migration.
 
 ## Who can read them
 

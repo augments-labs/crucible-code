@@ -1,6 +1,6 @@
 [package]
 name = "crucible-config"
-description = "The configuration document, its layers, and the schema generated from them."
+description = "Where crucible's own files are, what they may say, and which of them wins."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

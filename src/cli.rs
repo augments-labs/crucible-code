@@ -19,6 +19,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
+use crucible_config::{ConfigError, Home};
 use crucible_core::{
     ApiKey, Cancel, Credential, CredentialError, Header, HeaderKey, PathError, Provider, Workspace,
 };
@@ -113,6 +114,10 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Session(#[from] SessionError),
 
+    /// crucible's own files could not be found or read.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+
     /// There is no key to authenticate with.
     #[error(transparent)]
     Credential(#[from] CredentialError),
@@ -161,7 +166,9 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
 
-    let directory = Session::directory()?;
+    // Where crucible keeps its own files, read from the environment here and
+    // handed down as a path — no crate below this one asks where anything is.
+    let home = Home::find(&|name| std::env::var_os(name))?;
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -177,7 +184,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let mut renderer = Renderer::new(SystemTerminal::stdout());
     draw::opening(&mut renderer, &cli.model, &workspace)?;
 
-    let runner = assemble(cli, &directory, &workspace, &cancel, &|name| {
+    let runner = assemble(cli, home.sessions(), &workspace, &cancel, &|name| {
         std::env::var(name).ok()
     })?;
     let outcome = converse::converse(runner, &mut renderer, &cancel, &mut io::stdin().lock());

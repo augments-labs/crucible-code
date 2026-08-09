@@ -218,6 +218,7 @@ name = "crucible-code"
 version = "0.0.2"
 dependencies = [
  "clap",
+ "crucible-config",
  "crucible-core",
  "crucible-provider",
  "crucible-runner",

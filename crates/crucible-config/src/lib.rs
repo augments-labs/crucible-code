@@ -1,4 +1,9 @@
-//! Configuration: the document, its layers, and the schema generated from them.
+//! Configuration: where crucible's own files are, what they may say, and which
+//! of them wins.
+//!
+//! [`Home`] answers the first question and is the only place it is asked;
+//! everything else in this workspace is handed a path. The rest of the crate
+//! answers the second and third.
 //!
 //! Four layers decide a setting. Nearest wins:
 //!
@@ -36,6 +41,7 @@ mod check;
 mod document;
 mod env;
 mod error;
+mod home;
 mod schema;
 mod settings;
 mod shape;
@@ -43,5 +49,6 @@ mod shape;
 pub use document::{Document, Origin};
 pub use env::NAMESPACE;
 pub use error::{Accepted, At, ConfigError};
+pub use home::{HOME, Home};
 pub use schema::schema;
 pub use settings::{Color, Settings, ToolDetail};
