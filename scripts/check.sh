@@ -13,6 +13,10 @@ cd "$(dirname "$0")/.."
 
 # A file longer than this is doing more than one thing. The compiler cannot see
 # file boundaries, so this is the one structural rule a lint cannot carry.
+#
+# A ceiling, not a target, and no number here is either. A short file under a
+# name that says what it holds is the shape being asked for; nothing rewards
+# filling the budget, and nothing rewards being small for its own sake.
 readonly MAX_FILE_LINES=400
 
 failed=0
@@ -43,6 +47,45 @@ if ((counted == 0)); then
     printf '    FAIL no .rs files under crates/ or src/; this check measured nothing\n'
     failed=1
 fi
+
+echo "==> no process memory in shipped files"
+# `docs/` is published as a website and `crates/`, `src/` and `schema/` are the
+# program, so all four are read by people who have never opened this repository.
+# A decision identifier, an assumption label or the name of a planning directory
+# is this repository talking to itself: a stranger cannot resolve it and has no
+# reason to want to. Those notes are allowed to exist — just not to travel — so
+# the files that hold them are deliberately not scanned here.
+if grep -rInE '\b[A-Z]-[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/' \
+    --include='*.rs' --include='*.md' --include='*.json' \
+    crates src docs schema; then
+    printf '    FAIL the lines above name something only this repository can resolve\n'
+    failed=1
+fi
+
+echo "==> documentation links"
+# Every topic under `docs/` is a directory whose path is a public URL, so a
+# rename that misses one link publishes a dead page rather than failing a build.
+# The markdown at the root is read with it: GitHub renders those pages too, and
+# a changelog entry keeps pointing at the tree it was written against long after
+# that tree has moved. `AGENTS.md` is a symlink, so its links are CLAUDE.md's
+# and are already checked under that name.
+#
+# Only repository-relative links are checked: an external one can rot without
+# this tree changing, and a gate that goes red for someone else's outage stops
+# being read.
+while IFS= read -r found; do
+    file=${found%%:*}
+    target=${found#*:}
+    [[ "$target" == \#* ]] && continue
+    if [[ ! -e "$(dirname "$file")/${target%%#*}" ]]; then
+        printf '    FAIL %s: link to %s leads nowhere\n' "$file" "$target"
+        failed=1
+    fi
+done < <({
+    find docs -name '*.md' -type f -print0
+    find . -maxdepth 1 -name '*.md' -type f -print0
+} | xargs -0 grep -IHoE '\]\([^)#][^)]*\)' |
+    sed -E 's/\]\(([^)]*)\)$/\1/' | grep -v '://')
 
 echo "==> agent rules files"
 # One set of rules, one file. CLAUDE.md is the original everywhere in this
