@@ -5,7 +5,7 @@ and crucible runs the same way.
 
 ```json
 {
-  "$schema": "https://json.schemastore.org/crucible-code-schema.json",
+  "$schema": "https://www.schemastore.org/crucible-code-schema.json",
   "providers": {
     "anthropic": { "model": "claude-opus-5" },
     "openai": { "apiKeyEnv": "WORK_OPENAI_KEY" }

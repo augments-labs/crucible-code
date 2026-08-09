@@ -17,10 +17,20 @@ use serde_json::{Map, Value, json};
 use crate::shape::{DOCUMENT, Field, Shape};
 
 /// The dialect this schema is written in.
-const DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
+///
+/// draft-07 rather than 2020-12 because SchemaStore asks for it: later drafts
+/// are not recommended there until editor support catches up, and a schema
+/// nobody's editor reads is a schema that does nothing. Nothing here is newer
+/// than draft-07 anyway — `type`, `properties`, `patternProperties`, `enum` and
+/// `additionalProperties` are all in it — so this costs a version string and
+/// buys the registry that serves the file.
+const DIALECT: &str = "http://json-schema.org/draft-07/schema#";
 
 /// Where SchemaStore serves it, which is what a document's `$schema` points at.
-const ID: &str = "https://json.schemastore.org/crucible-code-schema.json";
+///
+/// `www` rather than `json`: both hostnames resolve, and the registry requires
+/// the `$id` of a schema it hosts to be `https://www.schemastore.org/<file>`.
+const ID: &str = "https://www.schemastore.org/crucible-code-schema.json";
 
 /// The keys of the standard's own that a document may carry at any level.
 ///

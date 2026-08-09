@@ -49,7 +49,7 @@ or through the environment can now be written down.
 
 - **A JSON schema**, at
   [`schema/crucible-code-schema.json`](schema/crucible-code-schema.json). Adding
-  `"$schema": "https://json.schemastore.org/crucible-code-schema.json"` to a
+  `"$schema": "https://www.schemastore.org/crucible-code-schema.json"` to a
   file gets completion, validation and a sentence about each key from your
   editor. It is generated from the same declaration the parser walks and a gate
   compares it against the checked-in copy, so an editor that accepts a document
