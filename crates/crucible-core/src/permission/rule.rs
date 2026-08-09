@@ -63,7 +63,7 @@ pub enum RuleError {
 }
 
 /// Every rule, held by kind.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Rules {
     deny: Vec<Rule>,
     ask: Vec<Rule>,
@@ -71,7 +71,7 @@ pub struct Rules {
 }
 
 /// One rule: a tool, and what it may act on.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Rule {
     /// Matched against the call's name exactly. A rule is about one tool.
     tool: Box<str>,
@@ -79,7 +79,7 @@ struct Rule {
 }
 
 /// What a rule says about the thing a call acts on.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Pattern {
     /// `*`, or the tool named on its own: everything that tool could do.
     ///
@@ -123,6 +123,20 @@ impl Rules {
             Disposition::Deny => self.deny.push(rule),
         }
         Ok(())
+    }
+
+    /// Takes on every rule another set holds.
+    ///
+    /// Concatenation is the only merge a set of rules can have. Configuration
+    /// arrives in layers, and a nearer one that *replaced* a farther one would
+    /// let a checked-out repository discard the `deny` somebody wrote at home.
+    /// Appending is safe in the other direction precisely because the kind
+    /// decides which rule wins: another `allow` cannot qualify a `deny`, so
+    /// what a layer can add to is what may happen and never what may not.
+    pub fn absorb(&mut self, other: Self) {
+        self.deny.extend(other.deny);
+        self.ask.extend(other.ask);
+        self.allow.extend(other.allow);
     }
 
     /// Whether any rule at all was read, which is what decides if the

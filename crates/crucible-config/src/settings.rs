@@ -1,9 +1,22 @@
 //! The layers, resolved into the settings a turn actually runs with.
+//!
+//! This file holds what every block shares — the layering, and the merge that
+//! decides which layer wins a position. A block that carries meaning of its own
+//! has a module beside it under `settings/`, so its keys, the types they become
+//! and the tests for both sit in one place. `providers` and `env` stay here:
+//! they are read out as the strings they were written as, and there is nothing
+//! to interpret.
 
+use crucible_core::Rules;
 use serde_json::{Map, Value};
 
 use crate::document::Document;
 use crate::shape::{DOCUMENT, Shape};
+
+mod output;
+mod permissions;
+
+pub use output::{Color, ToolDetail};
 
 /// What every layer together says a setting is.
 ///
@@ -12,6 +25,11 @@ use crate::shape::{DOCUMENT, Shape};
 #[derive(Debug, Clone, Default)]
 pub struct Settings {
     value: Value,
+
+    /// Every layer's rules together. Held apart from the value because a rule
+    /// is read where it is written — see [`crate::rules`] — and what survives
+    /// the layering is the rule rather than its text.
+    rules: Rules,
 }
 
 impl Settings {
@@ -31,7 +49,15 @@ impl Settings {
             merge(&mut value, document.value(), &DOCUMENT);
         }
 
-        Self { value }
+        // Concatenated, like every list in the document and for the reason
+        // `Rules::absorb` gives: a nearer layer may add to what is allowed and
+        // may not take away what a farther one denied.
+        let mut rules = Rules::new();
+        for document in documents {
+            rules.absorb(document.rules());
+        }
+
+        Self { value, rules }
     }
 
     /// The model to ask this provider for, when the command line names none.
@@ -58,18 +84,6 @@ impl Settings {
             .as_str()
     }
 
-    /// Whether to write colour, when the command line does not say.
-    #[must_use]
-    pub fn color(&self) -> Option<Color> {
-        Color::read(self.output("color")?)
-    }
-
-    /// How much of a tool call to show, when the command line does not say.
-    #[must_use]
-    pub fn tool_detail(&self) -> Option<ToolDetail> {
-        ToolDetail::read(self.output("toolDetail")?)
-    }
-
     /// The variables the commands crucible runs are started with.
     ///
     /// Crucible's own environment is not touched and cannot be: writing to it
@@ -88,76 +102,26 @@ impl Settings {
                     .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?)))
             })
     }
-
-    /// One string out of the `output` block.
-    fn output(&self, key: &str) -> Option<&str> {
-        self.value.get("output")?.get(key)?.as_str()
-    }
-}
-
-/// Whether the terminal is written to in colour.
-///
-/// `Auto` is not the absence of an answer — it is the answer "decide from the
-/// terminal", which a layer may state to override a nearer one that did not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Color {
-    /// Follow the terminal and `NO_COLOR`.
-    Auto,
-    /// Colour even when the output is not a terminal.
-    Always,
-    /// Never, even when it is.
-    Never,
-}
-
-impl Color {
-    /// Reads one of [`shape::COLOR`](crate::shape::COLOR).
-    ///
-    /// `None` for anything else, which the shape refused before this could be
-    /// reached. There is no fourth answer to fall back to and no call for a
-    /// panic over a string that cannot arrive; the test below is what keeps
-    /// "cannot arrive" true as the set changes.
-    fn read(found: &str) -> Option<Self> {
-        match found {
-            "auto" => Some(Self::Auto),
-            "always" => Some(Self::Always),
-            "never" => Some(Self::Never),
-            _ => None,
-        }
-    }
-}
-
-/// How much of a tool call and its result one line shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolDetail {
-    /// Truncated to fit a line.
-    Compact,
-    /// Whatever the terminal is wide enough for.
-    Full,
-}
-
-impl ToolDetail {
-    /// Reads one of [`shape::TOOL_DETAIL`](crate::shape::TOOL_DETAIL).
-    fn read(found: &str) -> Option<Self> {
-        match found {
-            "compact" => Some(Self::Compact),
-            "full" => Some(Self::Full),
-            _ => None,
-        }
-    }
 }
 
 /// Lays a nearer layer over what the farther ones already said.
 ///
 /// The shape decides how, which is what keeps the merge rule from becoming a
-/// second description of the document. Anything that is not an object at this
-/// position — every scalar, so `output.color` — is replaced outright by the
-/// nearer layer. An object is merged key by key, so `providers` and `env` take
-/// the nearest layer that mentioned each *name* rather than the nearest layer
-/// that mentioned the block. Nothing in this release is a list; when the first
-/// one arrives it will land in the first arm and be replaced wholesale, which
-/// is the rule `docs/configuration/configuration.md` states, so adding one does not silently
-/// get a rule nobody chose.
+/// second description of the document. A scalar — `output.color` — is replaced
+/// outright by the nearer layer. An object is merged key by key, so `providers`
+/// and `env` take the nearest layer that mentioned each *name* rather than the
+/// nearest layer that mentioned the block. A list is concatenated: a nearer
+/// layer adds entries and removes none, which is the only rule that leaves a
+/// `deny` written at home standing when a checked-out repository states rules
+/// of its own. All three are in `docs/configuration/configuration.md`.
 fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
+    if shape.element().is_some()
+        && let (Some(into), Some(from)) = (base.as_array_mut(), near.as_array())
+    {
+        into.extend(from.iter().cloned());
+        return;
+    }
+
     let (Some(into), Some(from)) = (base.as_object_mut(), near.as_object()) else {
         *base = near.clone();
         return;
@@ -178,22 +142,17 @@ fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
 #[cfg(test)]
 mod tests {
     use crate::document::Origin;
-    use crate::shape;
 
     use super::*;
 
-    fn document(text: &str, origin: Origin) -> Document {
-        Document::parse(text, "config.json", origin).unwrap()
-    }
-
     #[test]
     fn a_project_naming_one_provider_leaves_the_users_other_one_alone() {
-        let user = document(
+        let user = Document::sample(
             r#"{"providers": {"anthropic": {"model": "from-home"},
                               "openai": {"model": "also-from-home"}}}"#,
             Origin::User,
         );
-        let project = document(
+        let project = Document::sample(
             r#"{"providers": {"anthropic": {"model": "from-project"}}}"#,
             Origin::Project,
         );
@@ -212,26 +171,8 @@ mod tests {
     }
 
     #[test]
-    fn the_nearest_layer_that_set_a_scalar_wins_it_outright() {
-        let user = document(
-            r#"{"output": {"color": "always", "toolDetail": "full"}}"#,
-            Origin::User,
-        );
-        let local = document(r#"{"output": {"color": "never"}}"#, Origin::ProjectLocal);
-
-        let settings = Settings::resolve(vec![user, local]);
-
-        assert_eq!(settings.color(), Some(Color::Never));
-
-        // `output` is still an object, so it merges key by key like any other.
-        // Only the scalar inside it is replaced, and a layer that said nothing
-        // about `toolDetail` has not thereby unset it.
-        assert_eq!(settings.tool_detail(), Some(ToolDetail::Full));
-    }
-
-    #[test]
     fn a_provider_can_be_told_which_variable_holds_its_key() {
-        let user = document(
+        let user = Document::sample(
             r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#,
             Origin::User,
         );
@@ -248,24 +189,20 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_no_layer_mentioned_is_left_for_the_command_line_to_decide() {
+    fn a_provider_no_layer_mentioned_is_left_for_the_command_line_to_decide() {
         // None is "the files did not say", not a default. The default lives
         // where it already lives, and the wiring lays the command line over
         // this.
-        let settings = Settings::resolve(Vec::new());
-
-        assert_eq!(settings.color(), None);
-        assert_eq!(settings.tool_detail(), None);
-        assert_eq!(settings.model("anthropic"), None);
+        assert_eq!(Settings::resolve(Vec::new()).model("anthropic"), None);
     }
 
     #[test]
     fn env_takes_the_nearest_layer_that_named_each_variable() {
-        let user = document(
+        let user = Document::sample(
             r#"{"env": {"RUST_LOG": "warn", "PAGER": "cat"}}"#,
             Origin::User,
         );
-        let local = document(r#"{"env": {"RUST_LOG": "debug"}}"#, Origin::ProjectLocal);
+        let local = Document::sample(r#"{"env": {"RUST_LOG": "debug"}}"#, Origin::ProjectLocal);
 
         let settings = Settings::resolve(vec![user, local]);
         let mut found: Vec<_> = settings.env().collect();
@@ -274,21 +211,5 @@ mod tests {
         // Per name, not per block: overriding one variable in a checkout does
         // not turn off the rest of what the user set at home.
         assert_eq!(found, vec![("PAGER", "cat"), ("RUST_LOG", "debug")]);
-    }
-
-    #[test]
-    fn every_answer_the_document_accepts_reads_back_as_a_value() {
-        // The shape decides what a document may say and this module decides
-        // what each answer means, so the two lists have to agree. Without this,
-        // renaming an answer in the shape leaves the reader matching a string
-        // nobody can write any more, and the setting stops working with no
-        // error anywhere — the schema would accept the file and the value would
-        // be dropped on the floor.
-        for name in shape::COLOR {
-            assert!(Color::read(name).is_some(), "color: {name}");
-        }
-        for name in shape::TOOL_DETAIL {
-            assert!(ToolDetail::read(name).is_some(), "toolDetail: {name}");
-        }
     }
 }

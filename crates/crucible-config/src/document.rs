@@ -1,9 +1,11 @@
 //! One configuration file, read and checked against the shape.
 
+use crucible_core::Rules;
 use serde_json::Value;
 
 use crate::check::{Reader, Spot};
 use crate::error::ConfigError;
+use crate::rules;
 use crate::shape::DOCUMENT;
 
 /// Which of the layers a document was read from.
@@ -44,6 +46,11 @@ impl Origin {
 pub struct Document {
     value: Value,
     origin: Origin,
+
+    /// The rules this file states, read here rather than after the layers are
+    /// resolved: a rule that will not parse has to be reported with the file it
+    /// is in, and by then nothing could say which file that was.
+    rules: Rules,
 }
 
 impl Document {
@@ -54,8 +61,10 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ConfigError::Malformed`] when the text is not JSON, and one of the
-    /// shape errors when it is JSON crucible does not understand.
+    /// [`ConfigError::Malformed`] when the text is not JSON, one of the shape
+    /// errors when it is JSON crucible does not understand, and
+    /// [`ConfigError::BadRule`] or [`ConfigError::Relative`] when the
+    /// permissions block holds text that is the right shape and says nothing.
     pub fn parse(text: &str, file: &str, origin: Origin) -> Result<Self, ConfigError> {
         let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
             file: file.into(),
@@ -67,8 +76,14 @@ impl Document {
         let reader = Reader { file, text };
         reader.check(&value, &DOCUMENT, Spot::ROOT)?;
         reader.variables(&value, origin)?;
+        reader.directories(&value)?;
+        let rules = rules::read(&reader, &value)?;
 
-        Ok(Self { value, origin })
+        Ok(Self {
+            value,
+            origin,
+            rules,
+        })
     }
 
     /// The checked value, for the layering above to merge.
@@ -79,6 +94,21 @@ impl Document {
     /// Which layer this came from, which is what decides precedence.
     pub(crate) fn origin(&self) -> Origin {
         self.origin
+    }
+
+    /// The rules this file stated, for the layering above to concatenate.
+    pub(crate) fn rules(self) -> Rules {
+        self.rules
+    }
+
+    /// A document from text that the test author knows is one.
+    ///
+    /// Here rather than in each test module that wants one, so that the tests
+    /// about layering are not each carrying their own copy of how a document is
+    /// made. Panics on text that will not parse, which in a test is the report.
+    #[cfg(test)]
+    pub(crate) fn sample(text: &str, origin: Origin) -> Self {
+        Self::parse(text, "config.json", origin).expect("the test wrote a document")
     }
 }
 

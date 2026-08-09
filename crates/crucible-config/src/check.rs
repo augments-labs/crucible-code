@@ -9,12 +9,17 @@
 #[cfg(test)]
 mod tests;
 
+use std::path::Path;
+
 use serde_json::Value;
 
 use crate::document::Origin;
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::shape::Shape;
+
+/// The key naming directories outside the root that tools may reach.
+const DIRECTORIES: &str = "extraDirectories";
 
 /// Where in a document the walk is standing.
 ///
@@ -58,6 +63,7 @@ impl Reader<'_> {
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named(inner) => self.named(value, inner, shape, spot),
+            Shape::List(inner) => self.list(value, inner, shape, spot),
         }
     }
 
@@ -146,6 +152,34 @@ impl Reader<'_> {
         Ok(())
     }
 
+    /// An array, every element of the same shape.
+    ///
+    /// An element is named by the index it sits at and located at the key that
+    /// holds the list. There is no key of its own to find in the source, and
+    /// the position of some other `"read(src/**)"` in the file would send the
+    /// reader to a line that is perfectly correct.
+    fn list(
+        &self,
+        value: &Value,
+        inner: &'static Shape,
+        shape: &Shape,
+        spot: Spot<'_>,
+    ) -> Result<(), ConfigError> {
+        let Some(items) = value.as_array() else {
+            return Err(self.wrong_type(shape, spot));
+        };
+
+        for (index, held) in items.iter().enumerate() {
+            let path = format!("{}[{index}]", spot.path);
+            let spot = Spot {
+                path: &path,
+                at: spot.at,
+            };
+            self.check(held, inner, spot)?;
+        }
+        Ok(())
+    }
+
     /// Checks the `env` block against the two rules that are not about shape.
     ///
     /// Both are about *which name* was written rather than what kind of value it
@@ -188,6 +222,41 @@ impl Reader<'_> {
                     namespace: env::NAMESPACE,
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Checks that every directory the workspace is asked to reach is named by
+    /// an absolute path.
+    ///
+    /// Not a shape rule: a relative path is a string like any other, and the
+    /// shape has nothing to say about it. Not left to the workspace either,
+    /// which refuses the same entry — by the time it does, the file the entry
+    /// was written in is gone, and this is a message read with that file open.
+    ///
+    /// There is no schema `pattern` beside it. An absolute path does not begin
+    /// with `/` on every platform, and a schema that is wrong about one is
+    /// worse than a schema that says nothing.
+    pub(crate) fn directories(&self, value: &Value) -> Result<(), ConfigError> {
+        let Some(entries) = value
+            .get("permissions")
+            .and_then(|block| block.get(DIRECTORIES))
+            .and_then(Value::as_array)
+        else {
+            return Ok(());
+        };
+
+        for (index, held) in entries.iter().enumerate() {
+            let Some(found) = held.as_str() else { continue };
+            if Path::new(found).is_absolute() {
+                continue;
+            }
+            return Err(ConfigError::Relative {
+                file: self.file.into(),
+                path: format!("permissions.{DIRECTORIES}[{index}]").into(),
+                found: found.into(),
+                at: At::of(DIRECTORIES, self.text),
+            });
         }
         Ok(())
     }

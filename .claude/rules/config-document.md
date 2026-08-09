@@ -45,19 +45,37 @@ or it becomes a setting that looks applied and does nothing.
 
 ## Where a value's meaning is decided
 
-`shape.rs` says a value is one of a fixed set; `settings.rs` says what each
-answer means. Those are two lists, so they are tested against each other. If you
-add an answer to a `Choice`, add its arm to the matching `read` — the test that
-walks every accepted string will tell you if you forget, and without it the
-schema would accept a value the program then drops on the floor.
+`shape.rs` says a value is one of a fixed set; the module under `settings/` that
+owns that block says what each answer means. Those are two lists, so they are
+tested against each other. If you add an answer to a `Choice`, add its arm to
+the matching `read` — the test that walks every accepted string will tell you if
+you forget, and without it the schema would accept a value the program then
+drops on the floor.
+
+A block whose values mean something other than the strings they were written as
+gets a module under `settings/`, so its keys, the types they become and the
+tests for both sit in one place. `settings.rs` keeps the layering, the merge,
+and the blocks that are read straight back out.
 
 ## Merging
 
-A scalar takes the nearest layer that set it. An object is merged key by key.
-The shape decides which, so neither rule is written down twice — do not add a
-special case to `merge` for a particular block. Nothing in the document is a
-list yet; when the first one arrives, decide the rule deliberately and write it
-in `docs/configuration/configuration.md` before implementing it.
+A scalar takes the nearest layer that set it. An object is merged key by key. A
+list is concatenated. The shape decides which, so no rule is written down twice
+— do not add a special case to `merge` for a particular block.
+
+A nearer layer can add to a list and can never shorten one. That is forced
+rather than chosen: `permissions.deny` is a list, and a checked-out repository
+that replaced it would silently drop what somebody denied on their own machine.
+Anything you add that holds several values inherits that rule, so a list whose
+entries are meant to *remove* something is a list that cannot be written here.
+
+## Rules and the position they were written at
+
+A permission rule is read in `rules.rs`, per document, while the file it came
+from is still known. Do not move that read up to the resolved settings: by then
+a rule is one line among the lines every layer contributed, and a refusal could
+no longer name the file or the position — which is the one thing an error in
+this crate owes its reader.
 
 ## The layer that travels
 

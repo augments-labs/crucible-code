@@ -19,9 +19,9 @@
 //! the rules are not the same for every kind of value. A scalar takes the
 //! nearest layer that set it. A map — `providers`, `env` — is merged key by
 //! key, so a project can name one provider's model without erasing the other
-//! one the user set. No block in this release is a list, so no rule for lists
-//! is implemented; the rule it will take when the first one arrives is written
-//! down in `docs/configuration/configuration.md` rather than left to whoever adds it.
+//! one the user set. A list — the permission rules, the extra directories — is
+//! concatenated, so a nearer layer adds entries and removes none. All three are
+//! in `docs/configuration/configuration.md`.
 //!
 //! Two properties are structural here rather than documented:
 //!
@@ -43,6 +43,7 @@ mod env;
 mod error;
 mod home;
 mod layers;
+mod rules;
 #[cfg(test)]
 mod sample;
 mod schema;
