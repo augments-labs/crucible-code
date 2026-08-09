@@ -19,10 +19,11 @@ const NOT_RUN: &str = "not run: the turn ended first";
 /// What a call is answered with when the user said no.
 const DENIED: &str = "the user did not allow this";
 
-/// What a call is answered with when a rule forbids it. Phrased for the model,
-/// which is what reads it: it says the wall is standing rather than momentary,
-/// so the answer is to do something else and not to rephrase this.
-const FORBIDDEN: &str = "a permission rule does not allow this; asking again will not change it";
+/// What a call is answered with when standing policy forbids it — a rule, or
+/// the engine keeping its own configuration out of reach. Phrased for the
+/// model, which is what reads it: it says the wall is standing rather than
+/// momentary, so the answer is to do something else and not to rephrase this.
+const FORBIDDEN: &str = "permission policy does not allow this; asking again will not change it";
 
 /// What one round of calls decided about the turn.
 pub(crate) enum Went {

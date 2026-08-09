@@ -2,6 +2,8 @@ use super::*;
 use crate::ids::ToolId;
 use crate::tool::ToolArgs;
 
+mod configuration;
+
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {
     verdict: Verdict,
