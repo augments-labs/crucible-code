@@ -127,54 +127,8 @@ fn absolute(from: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<PathB
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
-
-    /// A tree under the system temporary directory, removed when it drops.
-    ///
-    /// Real directories rather than a fake filesystem: what is being tested is
-    /// which of two trees is on the disk, so a fake would only be testing the
-    /// fake's answer to that question.
-    struct Scratch {
-        base: PathBuf,
-    }
-
-    impl Scratch {
-        /// A fresh, empty tree. `name` only has to be unique within this crate's
-        /// tests, which run in one process.
-        fn new(name: &str) -> Self {
-            let base =
-                std::env::temp_dir().join(format!("crucible-home-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&base);
-            fs::create_dir_all(&base).expect("a writable temporary directory");
-
-            Self { base }
-        }
-
-        /// Creates a directory inside it, and returns the whole path.
-        fn make(&self, at: &str) -> PathBuf {
-            let path = self.at(at);
-            fs::create_dir_all(&path).expect("a writable temporary directory");
-            path
-        }
-
-        /// A path inside it, whether or not anything is there.
-        fn at(&self, at: &str) -> PathBuf {
-            self.base.join(at)
-        }
-
-        /// The same, as an environment variable would carry it.
-        fn text(&self, at: &str) -> String {
-            self.at(at).display().to_string()
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.base);
-        }
-    }
+    use crate::sample::Scratch;
 
     /// An environment holding exactly these variables and nothing else.
     fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {

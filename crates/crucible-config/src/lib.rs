@@ -42,6 +42,9 @@ mod document;
 mod env;
 mod error;
 mod home;
+mod layers;
+#[cfg(test)]
+mod sample;
 mod schema;
 mod settings;
 mod shape;

@@ -20,8 +20,10 @@ impl Settings {
     /// Order is taken from each document's origin rather than from the sequence
     /// they arrive in, so a caller that reads the files in a different order
     /// than it lists them still gets the same answer.
-    #[must_use]
-    pub fn resolve(mut documents: Vec<Document>) -> Self {
+    ///
+    /// Not public: [`Settings::read`] is the one way in, so there is no second
+    /// path that could find a different set of files than the first one does.
+    pub(crate) fn resolve(mut documents: Vec<Document>) -> Self {
         documents.sort_by_key(|document| document.origin().nearness());
 
         let mut value = Value::Object(Map::new());
