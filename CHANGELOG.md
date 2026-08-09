@@ -40,6 +40,13 @@ expensive to change after people have started linking to it.
   reading a shipped file cannot resolve one and has no reason to want to.
 - `scripts/check.sh` resolves every repository-relative markdown link under
   `docs/` and at the root, which is what caught the two above.
+- **`main` is behind a repository ruleset.** Nothing reaches it except through a
+  pull request with `scripts/check.sh` and `scripts/bench.sh` green on it, and a
+  `v*` tag can no longer be deleted or moved — which is a paragraph
+  `RELEASING.md` already had, now enforced rather than remembered. Neither
+  ruleset has a bypass actor, so both bind whoever holds admin. `RELEASING.md`
+  documents the branch-and-pull-request flow that replaces the direct push to
+  `main` it used to describe.
 
 ## [0.0.3] - 2026-08-09
 
