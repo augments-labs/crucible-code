@@ -112,5 +112,6 @@ Six tools, advertised in the order a model tends to reach for them:
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
 
-Reads never ask. Anything that changes a file or starts a process does — see
-[Permissions](../permissions/permissions.md).
+Reads never ask. Anything that changes a file or starts a process does, until
+you configure rules or a mode that answer for you — see
+[Permissions](../permissions/index.md).

@@ -1,6 +1,11 @@
 # Permissions
 
-Reading never asks. Changing a file or starting a process always does, and
-nothing runs while the question is on screen.
+Nothing changes a file or starts a process without a decision: yours at a
+question, or one you wrote down in advance. Reading never asks — it is allowed
+or refused, silently.
 
 - [What you are asked, and what each answer means](permissions.md)
+- [Rules: allow, ask and deny](rules.md)
+- [Modes: ask, allowEdits and fullAccess](modes.md)
+- [Reaching outside the working directory](directories.md)
+- [What an allow rule really grants](allowing.md)
