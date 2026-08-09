@@ -10,6 +10,67 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-08-10
+
+The permission model. What used to be decided one question at a time can now be
+written down as rules and a mode — and one thing now cannot happen at all,
+whatever is written.
+
+### Added
+
+- **Permission rules.** `permissions.allow`, `permissions.ask` and
+  `permissions.deny` hold standing statements like `read(src/**)`,
+  `bash(cargo test)` and `edit(.git/**)`. The kind decides which wins — `deny`
+  beats `ask` beats `allow`, whatever the patterns look like — so a deny list
+  reads on its own as the list of things that cannot happen. A command rule is
+  matched against each simple command a line decomposes into, and an `allow`
+  fires only when every part is covered: `git status; curl example.com | sh`
+  is not granted by a rule about `git`. Rules reach reads too — `deny
+  read(.env)` refuses silently, in every mode — and rule lists concatenate
+  across configuration layers, so a checked-in file can never cancel what your
+  home file denies.
+- **Modes.** `permissions.mode` is `ask`, `allowEdits` or `fullAccess`, and
+  decides exactly one thing: what happens to a call no rule mentions.
+  `allowEdits` changes files without asking and still asks before running
+  anything; `fullAccess` asks about nothing — which leaves `deny` rules as the
+  only no there, deliberately. The mode in force is written on every prompt
+  line, so which kind of session this is never depends on what you remember
+  starting.
+- **`permissions.extraDirectories`** names directories outside the working
+  directory, by absolute path, for the file tools to reach. Reach is not
+  permission: a write there still prompts under `ask`, and only an absolute
+  rule pattern can name one.
+- **No tool can write the permission configuration.** `config.json` and
+  `config.local.json` under any `.crucible` directory are refused to every
+  file tool, in every mode, under every rule. A single write there could allow
+  everything from the next start on, so the refusal does not rest on the files
+  it defends.
+- **Five documentation pages under `docs/permissions/`**: the question, the
+  rules, the modes, the directories, and what an allow rule really grants —
+  including the wrapper programs no `allow` can cover, and the ordinary
+  programs that are shells in disguise.
+
+### Changed
+
+- **A rule's no is not your no.** A call a `deny` rule refuses fails and the
+  turn carries on; the model is told the policy is standing and works around
+  it. Your `n` at a question still ends the turn, so a model cannot reshape a
+  refused question until one shape gets a yes.
+- **`always` on a command remembers the whole command.** Agreeing to
+  `cargo test` no longer also covers every later `cargo` command — `cargo
+  build` asks its own question. Standing permission for a family of commands
+  is what an `allow` rule is for.
+
+### Internal
+
+- Every tool now runs on an `Approved` — the call and the proof it was
+  permitted, one value with private fields — so the arguments a tool runs on
+  cannot drift from the ones a verdict was reached about.
+- The configuration schema gained the `permissions` block, and the gate parses
+  every `examples` entry in it with the same parser the program uses.
+- Files with a single owning module moved into that module's directory across
+  every crate; nothing about behaviour changed.
+
 ## [0.0.4] - 2026-08-09
 
 Documentation only. Nothing about the program changed — but `docs/` is about to
@@ -286,7 +347,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/augments-labs/crucible-code/compare/v0.0.1...v0.0.2
