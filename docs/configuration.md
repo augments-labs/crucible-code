@@ -155,6 +155,11 @@ that accepts a document and a crucible that refuses it would have to disagree
 with itself. [`schema/crucible-code-schema.json`](../schema/crucible-code-schema.json)
 in this repository is the copy a build gate keeps honest.
 
+The schema is not fixed. Keys may be added, renamed or removed in any 0.0.x
+release, and the URL above serves one copy — the newest release, not the version
+you are running. An editor marking something red is worth a second look; the
+program is what decides.
+
 ## When something is wrong
 
 crucible stops before drawing anything and says which file, which key, where it
