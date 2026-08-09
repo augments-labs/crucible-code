@@ -154,6 +154,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let home = Home::find(&|name| std::env::var_os(name))?;
     let settings = Settings::read(&home, workspace.root())?;
 
+    // Widened after the files are read because the root is what found them:
+    // `.crucible/config.json` is looked for in the directory crucible was
+    // started in, so the workspace has to exist before it can be told what else
+    // to reach. Once, here, and never again — nothing in a turn may widen it.
+    let workspace = workspace.reaching(settings.extra_directories())?;
+
     // An absent flag parses as "the default provider, no model named", so the
     // resolution below has one path through it rather than two.
     let choice =

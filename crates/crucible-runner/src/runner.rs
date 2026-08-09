@@ -58,6 +58,18 @@ impl Runner {
         }
     }
 
+    /// Takes the engine configuration described, rather than the default one.
+    ///
+    /// Built by the wiring and handed over whole, so this crate never learns
+    /// that a rule has a syntax or that a mode has a spelling. A session
+    /// without this call is one where nothing was configured, which is the
+    /// engine asking about every change and every command.
+    #[must_use]
+    pub fn permitting(mut self, permission: Permission) -> Self {
+        self.permission = permission;
+        self
+    }
+
     /// Picks up a transcript that already happened — what `--continue`
     /// replays.
     ///

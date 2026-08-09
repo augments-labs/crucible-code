@@ -102,7 +102,11 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         tools(workspace, startup.cancel, settings),
         model(startup.model, workspace),
         session,
-    );
+    )
+    // The mode the files named, or the one that asks. `None` here is "no layer
+    // said", which is a different thing from a layer that said `ask` — but the
+    // answer is the same, and the distinction is the command line's to use.
+    .permitting(settings.permission(settings.mode().unwrap_or_default()));
     if let Some(transcript) = earlier {
         runner = runner.resuming(transcript);
     }
