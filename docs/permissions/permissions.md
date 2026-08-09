@@ -1,4 +1,4 @@
-# Permission
+# Permissions
 
 Reading never asks. Changing a file or starting a process always does.
 

@@ -16,7 +16,7 @@ which is the point. Two projects open in two terminals are two sessions.
 `--continue` replays the transcript so the model has the earlier turns, and
 appends to the same file. It does not restore permissions: a grant lives as long
 as the process that made it, so a continued session asks again the first time it
-wants to change a file or run something. See [Permission](permission.md).
+wants to change a file or run something. See [Permissions](../permissions/permissions.md).
 
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.

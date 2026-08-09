@@ -25,7 +25,7 @@ cargo build --release
 
 crucible reads a key from the environment and never stores one. Which variable
 is read depends on the provider serving the model you ask for — see
-[Providers and models](providers.md).
+[Providers and models](../providers/providers.md).
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -97,7 +97,7 @@ one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
 in the terminal's cooked mode and no signal is caught, so there is no way to stop
 a single answer and keep the session. The session log is written as the turn
 goes, so `crucible --continue` picks the session up from wherever it
-stopped — see [Sessions](sessions.md).
+stopped — see [Sessions](../sessions/sessions.md).
 
 ## What it can do
 
@@ -113,4 +113,4 @@ Six tools, advertised in the order a model tends to reach for them:
 | `bash` | Runs a command | yes |
 
 Reads never ask. Anything that changes a file or starts a process does — see
-[Permission](permission.md).
+[Permissions](../permissions/permissions.md).

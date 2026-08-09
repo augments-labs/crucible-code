@@ -42,6 +42,11 @@ scripts/check.sh
 
 Run it before every commit. It is exactly what CI runs.
 
+Its thresholds only ever tighten. Raising one so a file fits is how a limit
+stops being one, and no gate can catch that because the gate is the thing being
+edited. They are ceilings, not targets: what a file owes is one reason to
+change, under a name that says what it holds. Its length follows from that.
+
 ## Layout
 
 ```
@@ -56,7 +61,8 @@ crates/
   crucible-runner/     the turn loop, over traits only.         -> core
   crucible-tui/        inline renderer, prompt, transcript.     -> core
 scripts/        gates and benchmarks
-docs/           user-facing documentation
+docs/           the published site. One directory per topic, `index.md` beside
+                the pages; a directory name is a public URL segment.
 ```
 
 Dependencies point **down only**. Cargo enforces it: a crate reaches only what
@@ -92,7 +98,11 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    value needs a comment saying why.
 7. **No process memory in shipped artifacts.** Comments explain the code.
    No requirement IDs, no design-doc citations, no references to planning
-   directories. Traceability lives in commit messages and test names.
+   directories. Traceability lives in commit messages and test names. `docs/`
+   is shipped — it is published as a website — so this binds every page: one
+   documents what exists today and never what a later release will add.
+   `scripts/check.sh` greps the shipped tree for those shapes, because the
+   files that legitimately hold them sit one directory away.
 8. **Dependencies are `=`-pinned and justified.** A new one needs a comment in
    `Cargo.toml` saying why it is needed; `scripts/check.sh` fails without both.
    Pinning is also what hides an advisory published afterwards, so `deny.toml`
@@ -142,6 +152,8 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
 ## Conventions
 
 - `0.0.x` formats are unstable. Config, session files and CLI flags may change
-  in any 0.0.x release with no deprecation period, and say so in their docs.
+  in any 0.0.x release with no deprecation period.
 - Commits: `feat(scope): …`, `fix(scope): …`, `chore(scope): …`.
+- Documentation carries no icons or emoji. A glyph crucible itself prints may of
+  course be quoted, because there it is output rather than decoration.
 - New ideas go to the parking lot, never silently into the current release.

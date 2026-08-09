@@ -155,7 +155,7 @@ impl ToolDetail {
 /// the nearest layer that mentioned each *name* rather than the nearest layer
 /// that mentioned the block. Nothing in this release is a list; when the first
 /// one arrives it will land in the first arm and be replaced wholesale, which
-/// is the rule `docs/configuration.md` states, so adding one does not silently
+/// is the rule `docs/configuration/configuration.md` states, so adding one does not silently
 /// get a rule nobody chose.
 fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
     let (Some(into), Some(from)) = (base.as_object_mut(), near.as_object()) else {

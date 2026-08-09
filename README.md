@@ -13,12 +13,6 @@ A terminal coding agent in Rust — fast to start, light on memory, and yours to
 
 ---
 
-> **Status: early development.** `0.0.x` is a walking skeleton, and it runs: a
-> session streams, six tools work, permission is asked for, and the transcript
-> is kept. Flags, session files and config are unstable for the whole 0.0.x
-> line. See [Releases](https://github.com/augments-labs/crucible-code/releases)
-> for what is tagged today.
-
 ## What it is
 
 A coding agent you drive from a terminal. It reads and edits files, runs
@@ -61,9 +55,9 @@ cargo build --release
 
 There are no published binaries yet; when there are, they will be attached to
 the GitHub Release for the tag. Anything past this point —
-[getting started](docs/getting-started.md),
-[providers](docs/providers.md), [configuration](docs/configuration.md),
-[permission](docs/permission.md), [sessions](docs/sessions.md) — lives in
+[getting started](docs/getting-started/index.md),
+[providers](docs/providers/index.md), [configuration](docs/configuration/index.md),
+[permissions](docs/permissions/index.md), [sessions](docs/sessions/index.md) — lives in
 `docs/` rather than here, so there is one copy of it to keep true.
 
 ## Running it
@@ -91,7 +85,7 @@ Reading never asks. Anything that changes a file or starts a process does:
   [y]es  [a]lways  [n]o › 
 ```
 
-Full documentation is in [`docs/`](docs/README.md).
+Full documentation is in [`docs/`](docs/index.md).
 
 ## Contributing
 

@@ -10,6 +10,37 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-08-09
+
+Documentation only. Nothing about the program changed — but `docs/` is about to
+be published as a website, and the shape of a URL is the one thing that gets
+expensive to change after people have started linking to it.
+
+### Changed
+
+- **Every documentation topic is a directory.** `docs/permission.md` is now
+  `docs/permissions/permissions.md`, with a `docs/permissions/index.md` beside
+  it naming the topic; the other four topics moved the same way. A directory
+  name is a public URL segment, so this is the layout the site will serve.
+- **The instability notices are gone from the pages.** Three of them said what
+  the top of this file says once. Somebody who opened one page to answer one
+  question is not there to read a compatibility policy.
+
+### Fixed
+
+- Two links in this file pointed at documentation paths that no longer exist —
+  GitHub renders a changelog against the default branch, so they had gone dead
+  where anybody would actually click them.
+
+### Internal
+
+- `scripts/check.sh` refuses a decision identifier, an assumption label or the
+  name of a planning directory anywhere under `crates/`, `src/`, `docs/` or
+  `schema/`. Those notes are how this repository talks to itself; a stranger
+  reading a shipped file cannot resolve one and has no reason to want to.
+- `scripts/check.sh` resolves every repository-relative markdown link under
+  `docs/` and at the root, which is what caught the two above.
+
 ## [0.0.3] - 2026-08-09
 
 Configuration files. Everything crucible could only be told on the command line
@@ -33,7 +64,7 @@ or through the environment can now be written down.
   Three blocks: `providers`, keyed by provider name, each taking a `model` and
   an `apiKeyEnv`; `env`, the variables the commands crucible runs are given; and
   `output`, holding `color` and `toolDetail`. See
-  [`docs/configuration.md`](docs/configuration.md).
+  [`docs/configuration/configuration.md`](docs/configuration/configuration.md).
 
 - **`apiKeyEnv`**, which points a provider at a different environment variable —
   what a second key for the same vendor needs. It takes a variable *name*, and a
@@ -75,7 +106,7 @@ or through the environment can now be written down.
   **Nothing is moved for you.** A sessions directory already at the old path
   keeps being used, so `--continue` still finds the work you were in the middle
   of; the new location is taken only by a machine that has neither.
-  [`docs/sessions.md`](docs/sessions.md) says how to move it by hand if you want
+  [`docs/sessions/sessions.md`](docs/sessions/sessions.md) says how to move it by hand if you want
   it moved.
 
   `CRUCIBLE_CODE_HOME` relocates the whole directory, as an absolute path, and
@@ -248,7 +279,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/augments-labs/crucible-code/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/augments-labs/crucible-code/releases/tag/v0.0.1

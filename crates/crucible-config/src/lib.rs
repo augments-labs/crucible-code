@@ -21,7 +21,7 @@
 //! key, so a project can name one provider's model without erasing the other
 //! one the user set. No block in this release is a list, so no rule for lists
 //! is implemented; the rule it will take when the first one arrives is written
-//! down in `docs/configuration.md` rather than left to whoever adds it.
+//! down in `docs/configuration/configuration.md` rather than left to whoever adds it.
 //!
 //! Two properties are structural here rather than documented:
 //!
