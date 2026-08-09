@@ -14,7 +14,7 @@ halves, so a model name that contains slashes of its own stays intact:
 `openai/meta/llama-4` asks the `openai` provider for `meta/llama-4`.
 
 A provider and a bare slash names the provider and leaves the model to your
-[configuration](configuration.md) — `providers.openai.model`. With nothing
+[configuration](../configuration/configuration.md) — `providers.openai.model`. With nothing
 configured for it either, the model is `claude-sonnet-5`.
 
 Naming a provider this build does not have is a startup failure that says which
@@ -50,7 +50,7 @@ the other: `ANTHROPIC_API_KEY` is then not read at all.
 
 A key never appears in a log line, an error message, a session file, or
 anything crucible prints. If you see one, that is a bug worth
-[reporting privately](../SECURITY.md).
+[reporting privately](../../SECURITY.md).
 
 ## Authentication is a separate axis
 

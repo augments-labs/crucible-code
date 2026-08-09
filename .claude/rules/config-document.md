@@ -57,7 +57,7 @@ A scalar takes the nearest layer that set it. An object is merged key by key.
 The shape decides which, so neither rule is written down twice — do not add a
 special case to `merge` for a particular block. Nothing in the document is a
 list yet; when the first one arrives, decide the rule deliberately and write it
-in `docs/configuration.md` before implementing it.
+in `docs/configuration/configuration.md` before implementing it.
 
 ## The layer that travels
 

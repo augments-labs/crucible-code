@@ -33,7 +33,7 @@ or through the environment can now be written down.
   Three blocks: `providers`, keyed by provider name, each taking a `model` and
   an `apiKeyEnv`; `env`, the variables the commands crucible runs are given; and
   `output`, holding `color` and `toolDetail`. See
-  [`docs/configuration.md`](docs/configuration.md).
+  [`docs/configuration/configuration.md`](docs/configuration/configuration.md).
 
 - **`apiKeyEnv`**, which points a provider at a different environment variable —
   what a second key for the same vendor needs. It takes a variable *name*, and a
@@ -75,7 +75,7 @@ or through the environment can now be written down.
   **Nothing is moved for you.** A sessions directory already at the old path
   keeps being used, so `--continue` still finds the work you were in the middle
   of; the new location is taken only by a machine that has neither.
-  [`docs/sessions.md`](docs/sessions.md) says how to move it by hand if you want
+  [`docs/sessions/sessions.md`](docs/sessions/sessions.md) says how to move it by hand if you want
   it moved.
 
   `CRUCIBLE_CODE_HOME` relocates the whole directory, as an absolute path, and

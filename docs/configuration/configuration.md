@@ -58,7 +58,7 @@ crucible at another variable also points it away from the usual one: with
 That model is reached by naming the provider and no model — `crucible --model
 openai/`. A bare `crucible` uses `anthropic`, so it takes
 `providers.anthropic.model`, and falls back to `claude-sonnet-5` if nothing set
-one. See [Providers and models](providers.md).
+one. See [Providers and models](../providers/providers.md).
 
 ### `output`
 
@@ -152,7 +152,7 @@ you type, and show what each key means. It is optional and crucible ignores it.
 
 The schema is generated from the same declaration the parser walks, so an editor
 that accepts a document and a crucible that refuses it would have to disagree
-with itself. [`schema/crucible-code-schema.json`](../schema/crucible-code-schema.json)
+with itself. [`schema/crucible-code-schema.json`](../../schema/crucible-code-schema.json)
 in this repository is the copy a build gate keeps honest.
 
 The schema is not fixed. Keys may be added, renamed or removed in any 0.0.x
@@ -183,9 +183,3 @@ Where a key appears more than once in the file, the position is left off rather
 than pointing at one of them, which would send you to a line that is correct.
 
 An error may name an environment variable. It never quotes the value beside it.
-
----
-
-> **0.0.x is unstable.** Any key here may be renamed or removed in any 0.0.x
-> release with no deprecation period. Nothing above is a compatibility promise
-> until 0.1.0.

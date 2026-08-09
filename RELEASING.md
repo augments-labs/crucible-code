@@ -54,7 +54,7 @@ the workspace ships as one unit and there is no per-crate version to drift.
    itself names — no shell, no toolchain, no certificate bundle, no source tree,
    and a home directory that did not exist a moment ago. It reports the glibc
    floor, which is the number that decides which distributions this release
-   leaves behind; when it moves, `docs/getting-started.md` says so.
+   leaves behind; when it moves, `docs/getting-started/getting-started.md` says so.
 
    The run stops short of a completed turn unless `CRUCIBLE_SMOKE_KEY` is set,
    because a turn costs tokens. Set it for the release you actually cut:
