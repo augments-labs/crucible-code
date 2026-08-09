@@ -62,9 +62,9 @@ cargo build --release
 There are no published binaries yet; when there are, they will be attached to
 the GitHub Release for the tag. Anything past this point —
 [getting started](docs/getting-started.md),
-[providers](docs/providers.md), [permission](docs/permission.md),
-[sessions](docs/sessions.md) — lives in `docs/` rather than here, so there is
-one copy of it to keep true.
+[providers](docs/providers.md), [configuration](docs/configuration.md),
+[permission](docs/permission.md), [sessions](docs/sessions.md) — lives in
+`docs/` rather than here, so there is one copy of it to keep true.
 
 ## Running it
 

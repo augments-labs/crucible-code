@@ -142,7 +142,7 @@ pub enum ConfigError {
     },
 
     /// A string that is not one of the values that key accepts.
-    #[error("{file}: {path} does not accept {found}{at} — accepted: {accepted}")]
+    #[error("{file}: {path} does not accept {found}{at} — {accepted}")]
     NotAChoice {
         /// The file, as the user would name it.
         file: Box<str>,

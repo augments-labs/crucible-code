@@ -61,7 +61,7 @@ impl Document {
             file: file.into(),
             line: source.line(),
             column: source.column(),
-            problem: source.to_string().into(),
+            problem: without_position(&source.to_string()).into(),
         })?;
 
         let reader = Reader { file, text };
@@ -80,6 +80,18 @@ impl Document {
     pub(crate) fn origin(&self) -> Origin {
         self.origin
     }
+}
+
+/// What the JSON parser said, without the position crucible says itself.
+///
+/// The parser ends its sentence with ` at line N column M`, and the error this
+/// becomes has already given the same two numbers in crucible's own words. Both
+/// of them, punctuated differently, is the reader's first clue that nobody read
+/// the message. The line and column are taken from the parser separately, so
+/// nothing is lost by cutting the tail off the text.
+fn without_position(said: &str) -> &str {
+    said.rsplit_once(" at line ")
+        .map_or(said, |(problem, _)| problem)
 }
 
 #[cfg(test)]

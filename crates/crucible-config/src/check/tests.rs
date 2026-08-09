@@ -69,6 +69,28 @@ fn a_choice_names_what_it_accepts_rather_than_only_refusing() {
 }
 
 #[test]
+fn a_refusal_introduces_the_list_it_carries_exactly_once() {
+    // The list renders its own lead-in, because an unknown key and a wrong
+    // answer both end with it. A message that adds a second one reads as
+    // though the sentence was assembled rather than written.
+    let said = shared(r#"{"output": {"color": "beige"}}"#)
+        .unwrap_err()
+        .to_string();
+
+    assert_eq!(said.matches("accepted").count(), 1, "got {said}");
+}
+
+#[test]
+fn a_file_that_is_not_json_gives_the_position_once() {
+    // The parser puts the position in its own sentence, and crucible has
+    // already said it in words of its own. Two of them, disagreeing about
+    // punctuation, is the reader's first clue that nobody read this message.
+    let said = shared("{\n  \"output\": {,\n}").unwrap_err().to_string();
+
+    assert_eq!(said.matches("line").count(), 1, "got {said}");
+}
+
+#[test]
 fn a_key_the_user_chose_is_not_checked_against_a_list() {
     // `providers` and `env` are keyed by names crucible cannot know. Only
     // the values inside them have a shape.
@@ -148,6 +170,27 @@ fn a_dollar_key_the_standard_does_not_reserve_is_still_an_unknown_key() {
     // and would swallow `$schemas` as a typo nobody is ever told about.
     let err = local(r#"{"$schemas": "x"}"#).unwrap_err();
     assert!(matches!(err, ConfigError::UnknownKey { .. }), "got {err:?}");
+}
+
+#[test]
+fn a_refusal_names_which_of_the_files_it_came_from() {
+    // Three layers can all hold the same key, so a position on its own sends
+    // the reader to line 3 of whichever one they happened to open. The name is
+    // what makes the rest of the sentence actionable.
+    for (read, named) in [
+        (
+            mine as fn(&str) -> Result<Document, ConfigError>,
+            "~/.crucible/config.json",
+        ),
+        (shared, ".crucible/config.json"),
+        (local, ".crucible/config.local.json"),
+    ] {
+        let said = read(r#"{"output": {"color": "beige"}}"#)
+            .unwrap_err()
+            .to_string();
+
+        assert!(said.contains(named), "got {said}");
+    }
 }
 
 #[test]

@@ -5,12 +5,17 @@
 ```bash
 crucible --model claude-sonnet-5      # anthropic, because nothing said otherwise
 crucible --model openai/gpt-5.2       # openai
-crucible                              # the default: claude-sonnet-5
+crucible --model openai/              # openai, asking for the model it is configured with
+crucible                              # anthropic, the same way
 ```
 
 An unqualified name goes to Anthropic. Only the **first** slash divides the two
 halves, so a model name that contains slashes of its own stays intact:
 `openai/meta/llama-4` asks the `openai` provider for `meta/llama-4`.
+
+A provider and a bare slash names the provider and leaves the model to your
+[configuration](configuration.md) — `providers.openai.model`. With nothing
+configured for it either, the model is `claude-sonnet-5`.
 
 Naming a provider this build does not have is a startup failure that says which
 ones it has:
@@ -32,6 +37,16 @@ variable is read follows from the provider:
 Only the chosen provider's variable is read. Running `crucible --model
 openai/gpt-5.2` needs `OPENAI_API_KEY` set and does not care whether
 `ANTHROPIC_API_KEY` is.
+
+A configuration file can point a provider at a different variable, which is what
+a second key for the same vendor needs:
+
+```json
+{ "providers": { "anthropic": { "apiKeyEnv": "WORK_ANTHROPIC_KEY" } } }
+```
+
+That is a variable **name**, and pointing crucible at one points it away from
+the other: `ANTHROPIC_API_KEY` is then not read at all.
 
 A key never appears in a log line, an error message, a session file, or
 anything crucible prints. If you see one, that is a bug worth
