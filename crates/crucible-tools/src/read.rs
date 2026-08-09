@@ -3,9 +3,10 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 
-use crucible_core::{Grant, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
 
 use crate::args::Args;
+use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "read";
@@ -122,12 +123,14 @@ impl Tool for Read {
         SCHEMA
     }
 
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly
+    fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: target::existing(&self.workspace, NAME, args, "path"),
+        }
     }
 
-    fn run(&self, args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, &args)?;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let from = args.count("offset", 1)?;
         let limit = args.count("limit", LINES)?;
@@ -168,12 +171,11 @@ fn numbered_line(number: usize, line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sample::{Sample, allowed, call};
+    use crate::sample::{Sample, allowed};
 
     fn read(sample: &Sample, args: &str) -> ToolOutput {
-        Read::new(sample.workspace())
-            .run(call(args), allowed())
-            .unwrap()
+        let tool = Read::new(sample.workspace());
+        tool.run(allowed(&tool, args)).unwrap()
     }
 
     #[test]
@@ -310,21 +312,23 @@ mod tests {
     fn a_call_with_no_path_says_what_is_missing() {
         let sample = Sample::new("read-nopath");
 
-        let problem = Read::new(sample.workspace())
-            .run(call("{}"), allowed())
-            .unwrap_err();
+        let tool = Read::new(sample.workspace());
+        let problem = tool.run(allowed(&tool, "{}")).unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
     }
 
     #[test]
-    fn reading_is_never_put_to_the_user() {
+    fn reading_names_the_file_it_would_read() {
+        // Read-only, so it is never put to the user — but a rule can still deny
+        // it, and a rule is about a path.
         let sample = Sample::new("read-sensitivity");
+        sample.write("one.txt", "alpha\n");
         let tool = Read::new(sample.workspace());
 
-        assert_eq!(
-            tool.sensitivity(&ToolArgs::new("{}")),
-            Sensitivity::ReadOnly
-        );
+        let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
+
+        assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
+        assert_eq!(sensitivity.to_string(), "read one.txt");
     }
 }

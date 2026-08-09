@@ -3,12 +3,11 @@
 use std::fs;
 
 use super::{Sensitivity, Tool, ToolArgs, ToolOutput, Write};
-use crate::sample::{Sample, call, permitted};
+use crate::sample::{Sample, allowed};
 
 fn write(sample: &Sample, args: &str) -> ToolOutput {
-    Write::new(sample.workspace())
-        .run(call(args), permitted(&Sensitivity::MutatesFile))
-        .unwrap()
+    let tool = Write::new(sample.workspace());
+    tool.run(allowed(&tool, args)).unwrap()
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -148,23 +147,35 @@ fn a_directory_is_not_a_file_to_write_over() {
 fn a_call_with_no_content_says_what_is_missing() {
     let sample = Sample::new("write-nocontent");
 
-    let problem = Write::new(sample.workspace())
-        .run(
-            call(r#"{"path":"one.txt"}"#),
-            permitted(&Sensitivity::MutatesFile),
-        )
+    let tool = Write::new(sample.workspace());
+    let problem = tool
+        .run(allowed(&tool, r#"{"path":"one.txt"}"#))
         .unwrap_err();
 
     assert_eq!(problem.to_string(), "write: content is required");
 }
 
 #[test]
-fn writing_is_always_put_to_the_user() {
+fn writing_names_the_file_it_would_change() {
+    // A rule can be about `one.txt`, so the sensitivity has to say which file
+    // this is — and say it before the call runs, from the arguments alone.
     let sample = Sample::new("write-sensitivity");
     let tool = Write::new(sample.workspace());
 
-    assert_eq!(
-        tool.sensitivity(&ToolArgs::new("{}")),
-        Sensitivity::MutatesFile
-    );
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
+
+    assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
+    assert_eq!(sensitivity.to_string(), "change one.txt");
+}
+
+#[test]
+fn a_path_that_does_not_resolve_still_says_a_file_is_about_to_change() {
+    // No rule matches an unresolved target, so this is asked about rather than
+    // waved through by a rule written about somewhere else.
+    let sample = Sample::new("write-unresolved");
+    let tool = Write::new(sample.workspace());
+
+    let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
+
+    assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
 }

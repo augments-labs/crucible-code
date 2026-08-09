@@ -19,8 +19,8 @@
 mod cancel;
 mod credential;
 mod event;
-mod grant;
 mod ids;
+mod permission;
 mod provider;
 mod tool;
 mod transcript;
@@ -29,8 +29,11 @@ mod workspace;
 pub use cancel::Cancel;
 pub use credential::{ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing};
 pub use event::{Event, Post, TurnError};
-pub use grant::{Ask, Grant, Permission, Sensitivity, Verdict};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
+pub use permission::{
+    Approved, Ask, Command, Disposition, Grant, Mode, Permission, Remember, RuleError, Rules,
+    Sensitivity, Settled, Target, Verdict,
+};
 pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};

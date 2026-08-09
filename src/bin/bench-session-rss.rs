@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crucible_core::{
-    ApiKey, Ask, Cancel, Event, Header, HeaderKey, Post, Sensitivity, ToolCall, Verdict, Workspace,
+    ApiKey, Ask, Cancel, Event, Header, HeaderKey, Post, Remember, Sensitivity, ToolCall, Verdict,
+    Workspace,
 };
 use crucible_provider::{Anthropic, Response, Transport, TransportError};
 use crucible_runner::{Model, Runner, Session, Tools};
@@ -241,8 +242,8 @@ impl Post for Drawing {
 struct Allowing;
 
 impl Ask for Allowing {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
-        Verdict::AllowSession
+    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+        (Verdict::Allow, Remember::Session)
     }
 }
 

@@ -17,7 +17,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Ask, Grant, Permission, Sensitivity, Tool, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
+    Approved, Ask, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolId,
+    Verdict, Workspace,
 };
 use crucible_tools::Grep;
 
@@ -89,7 +90,7 @@ fn ours(corpus: &Corpus) -> Result<Duration, Problem> {
     let args = ToolArgs::new(format!(r#"{{"pattern":"{PATTERN}","limit":100000}}"#));
 
     let started = Instant::now();
-    let output = grep.run(args, granted()?)?;
+    let output = grep.run(approved(&grep, args)?)?;
     let took = started.elapsed();
 
     if output.is_failed() {
@@ -128,26 +129,27 @@ fn theirs(corpus: &Corpus) -> Result<Duration, Problem> {
     Ok(took)
 }
 
-/// A grant, minted the only way one can be. A read is allowed without asking,
-/// so nothing is ever put to a user who is not there.
-fn granted() -> Result<Grant, Problem> {
+/// The call, permitted the only way one can be. A read is allowed without
+/// asking, so nothing is ever put to a user who is not there.
+fn approved(grep: &Grep, args: ToolArgs) -> Result<Approved, Problem> {
     struct Nobody;
 
     impl Ask for Nobody {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
-            Verdict::Deny
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            (Verdict::Deny, Remember::Never)
         }
     }
 
     let call = ToolCall {
         id: ToolId::new("bench"),
-        name: "grep".into(),
-        args: ToolArgs::new("{}"),
+        name: grep.name().into(),
+        args,
     };
 
-    Permission::new()
-        .decide(&call, &Sensitivity::ReadOnly, &mut Nobody)
-        .ok_or(Problem::NoGrant)
+    match Permission::new().decide(&call, &grep.sensitivity(&call.args), &mut Nobody) {
+        Settled::Approved(approved) => Ok(approved),
+        Settled::Forbidden | Settled::Refused => Err(Problem::NoGrant),
+    }
 }
 
 /// A tree to search, removed when the probe ends.

@@ -5,10 +5,10 @@ mod reported;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crucible_core::{ProviderError, Sensitivity, ToolId, Verdict};
+use crucible_core::{ProviderError, ToolId, Verdict};
 
 use super::*;
-use crate::fake::{Fixed, Says, Script, Sent};
+use crate::fake::{Fixed, Says, Script, Sent, changing};
 use crate::sample::Sample;
 
 /// A runner over a scripted provider, with somewhere for its events to go.
@@ -166,7 +166,7 @@ fn a_tool_call_runs_and_what_it_produced_goes_back_to_the_model() {
     let mut scripted = Scripted::new(
         script,
         tools([Fixed::new("read").answering("fn main() {}")]),
-        Verdict::AllowOnce,
+        Verdict::Allow,
     );
 
     assert_eq!(scripted.turn("read x").unwrap(), StopReason::Yielded);
@@ -185,7 +185,7 @@ fn the_second_request_carries_the_first_round_in_full() {
     // Without it the model answers the same question again, having no
     // record of the tool it just called.
     let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
 
     scripted.turn("go").unwrap();
 
@@ -201,7 +201,7 @@ fn a_tool_the_user_refused_ends_the_turn_and_is_still_answered() {
     let script = Script::new(vec![calling("a", "write", "{}")]);
     let mut scripted = Scripted::new(
         script,
-        tools([Fixed::new("write").risking(Sensitivity::MutatesFile)]),
+        tools([Fixed::new("write").risking(changing())]),
         Verdict::Deny,
     );
 
@@ -230,7 +230,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
         Delta::ToolArgs("{\"path\":".into()),
         Delta::Stopped(StopReason::Cancelled),
     ]]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
 
@@ -250,7 +250,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
 fn a_model_that_wants_tools_but_names_none_yields_instead_of_asking_again() {
     // An unchanged transcript sent again produces the same answer again.
     let script = Script::new(vec![vec![Delta::Stopped(StopReason::WantsTools)]]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Yielded);
 
@@ -259,7 +259,7 @@ fn a_model_that_wants_tools_but_names_none_yields_instead_of_asking_again() {
 
 #[test]
 fn a_provider_that_fails_ends_the_turn() {
-    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::Allow);
 
     let problem = scripted.turn("go").unwrap_err();
 
@@ -272,7 +272,7 @@ fn a_provider_that_fails_ends_the_turn() {
 #[test]
 fn the_tools_a_runner_offers_are_advertised_on_every_request() {
     let script = Script::new(vec![saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
 
     scripted.turn("go").unwrap();
 
@@ -283,7 +283,7 @@ fn the_tools_a_runner_offers_are_advertised_on_every_request() {
 fn a_turn_starts_with_the_stop_the_last_one_left_behind_cleared() {
     // Otherwise the next turn is cancelled before it sends anything.
     let script = Script::new(vec![saying("done")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.cancel.request();
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Yielded);
@@ -303,7 +303,7 @@ fn everything_a_turn_adds_to_the_transcript_is_also_recorded() {
     let mut scripted = Scripted::recording(
         script,
         tools([Fixed::new("read").answering("fn main() {}")]),
-        Verdict::AllowOnce,
+        Verdict::Allow,
         session,
     );
 

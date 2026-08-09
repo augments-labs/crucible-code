@@ -7,7 +7,8 @@
 //! saying why there is nothing in it.
 
 use crucible_core::{
-    Ask, Cancel, Event, Permission, Post, StopReason, ToolCall, ToolError, ToolOutput, ToolResult,
+    Ask, Cancel, Event, Permission, Post, Settled, StopReason, ToolCall, ToolError, ToolOutput,
+    ToolResult,
 };
 
 use crate::tools::Tools;
@@ -17,6 +18,11 @@ const NOT_RUN: &str = "not run: the turn ended first";
 
 /// What a call is answered with when the user said no.
 const DENIED: &str = "the user did not allow this";
+
+/// What a call is answered with when a rule forbids it. Phrased for the model,
+/// which is what reads it: it says the wall is standing rather than momentary,
+/// so the answer is to do something else and not to rephrase this.
+const FORBIDDEN: &str = "a permission rule does not allow this; asking again will not change it";
 
 /// What one round of calls decided about the turn.
 pub(crate) enum Went {
@@ -106,11 +112,18 @@ impl Work<'_> {
         };
 
         let sensitivity = tool.sensitivity(&call.args);
-        let Some(grant) = self.permission.decide(call, &sensitivity, self.ask) else {
-            return Ran::Refused;
+        let approved = match self.permission.decide(call, &sensitivity, self.ask) {
+            Settled::Approved(approved) => approved,
+            // Standing policy, which the model can read and work around. It
+            // costs nothing to hit twice, so the turn carries on.
+            Settled::Forbidden => return Ran::Output(ToolOutput::failed(FORBIDDEN)),
+            // A person, about this moment. The turn ends, because a model that
+            // is told no and left running will ask the same thing in a shape
+            // the rules happen not to cover.
+            Settled::Refused => return Ran::Refused,
         };
 
-        match tool.run(call.args.clone(), grant) {
+        match tool.run(approved) {
             Ok(output) => Ran::Output(output),
             // Cancelling is not a result the model should reason about. The
             // user stopped the turn, so the turn stops.
@@ -129,10 +142,10 @@ fn failure(problem: &ToolError) -> ToolOutput {
 mod tests {
     use std::sync::mpsc::{Receiver, Sender, channel};
 
-    use crucible_core::{Sensitivity, ToolArgs, ToolId, Verdict};
+    use crucible_core::{ToolArgs, ToolId, Verdict};
 
     use super::*;
-    use crate::fake::{Fixed, Says};
+    use crate::fake::{Fixed, Says, changing};
 
     /// One round, with everything it needed set up around it.
     struct Round {
@@ -146,12 +159,16 @@ mod tests {
 
     impl Round {
         fn new(verdict: Verdict) -> Self {
+            Self::asking(Says::new(verdict))
+        }
+
+        fn asking(says: Says) -> Self {
             let (events, seen) = channel();
 
             Self {
                 tools: Tools::new(),
                 permission: Permission::new(),
-                says: Says::new(verdict),
+                says,
                 cancel: Cancel::new(),
                 events,
                 seen,
@@ -190,7 +207,7 @@ mod tests {
     #[test]
     fn a_call_that_runs_comes_back_with_what_the_tool_produced() {
         let mut round =
-            Round::new(Verdict::AllowOnce).offering(Fixed::new("read").answering("fn main() {}"));
+            Round::new(Verdict::Allow).offering(Fixed::new("read").answering("fn main() {}"));
 
         let (results, went) = round.round(&[call("a", "read")]);
 
@@ -201,7 +218,7 @@ mod tests {
     #[test]
     fn a_name_no_tool_answers_to_is_reported_to_the_model_rather_than_ending_the_turn() {
         // The model invented it, so the model is the one that can fix it.
-        let mut round = Round::new(Verdict::AllowOnce).offering(Fixed::new("read"));
+        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
 
         let (results, went) = round.round(&[call("a", "frobnicate")]);
 
@@ -213,7 +230,7 @@ mod tests {
     #[test]
     fn a_tool_that_fails_reports_it_to_the_model_rather_than_ending_the_turn() {
         let mut round =
-            Round::new(Verdict::AllowOnce).offering(Fixed::new("read").breaking("unreadable"));
+            Round::new(Verdict::Allow).offering(Fixed::new("read").breaking("unreadable"));
 
         let (results, went) = round.round(&[call("a", "read")]);
 
@@ -223,8 +240,7 @@ mod tests {
 
     #[test]
     fn a_denied_call_ends_the_turn_and_says_so_in_its_result() {
-        let mut round = Round::new(Verdict::Deny)
-            .offering(Fixed::new("write").risking(Sensitivity::MutatesFile));
+        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
         let (results, went) = round.round(&[call("a", "write")]);
 
@@ -239,8 +255,7 @@ mod tests {
     fn every_call_is_answered_even_after_the_turn_is_over() {
         // A call with no result is a transcript the provider refuses, so the
         // ones that never ran are answered too.
-        let mut round = Round::new(Verdict::Deny)
-            .offering(Fixed::new("write").risking(Sensitivity::MutatesFile));
+        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
         let (results, _) = round.round(&[call("a", "write"), call("b", "write")]);
 
@@ -249,9 +264,21 @@ mod tests {
     }
 
     #[test]
+    fn a_call_allowed_for_the_session_is_not_put_to_the_user_again() {
+        // One permission engine covers the round, so the second call finds what
+        // the first was allowed. A fresh engine per call would ask twice and
+        // make `always` mean `once`.
+        let mut round = Round::asking(Says::for_the_session())
+            .offering(Fixed::new("write").risking(changing()));
+
+        round.round(&[call("a", "write"), call("b", "write")]);
+
+        assert_eq!(round.says.asked, 1);
+    }
+
+    #[test]
     fn a_call_after_a_denial_is_never_put_to_the_user() {
-        let mut round = Round::new(Verdict::Deny)
-            .offering(Fixed::new("write").risking(Sensitivity::MutatesFile));
+        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
         round.round(&[call("a", "write"), call("b", "write")]);
 
@@ -260,7 +287,7 @@ mod tests {
 
     #[test]
     fn a_cancelled_round_stops_the_turn_without_running_anything_more() {
-        let mut round = Round::new(Verdict::AllowOnce).offering(Fixed::new("read"));
+        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
         round.cancel.request();
 
         let (results, went) = round.round(&[call("a", "read")]);
@@ -273,7 +300,7 @@ mod tests {
     fn a_tool_that_noticed_the_cancellation_itself_stops_the_turn() {
         // A long-running tool checks the flag mid-work and returns. That is not
         // a failure to report to the model — the user stopped the turn.
-        let mut round = Round::new(Verdict::AllowOnce).offering(Fixed::new("bash").cancelling());
+        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("bash").cancelling());
 
         let (_, went) = round.round(&[call("a", "bash")]);
 
@@ -284,7 +311,7 @@ mod tests {
     fn every_call_reports_that_it_finished() {
         // The renderer redraws the line it drew when the call was requested, so
         // a call with no finish stays on screen as if it were still running.
-        let mut round = Round::new(Verdict::AllowOnce).offering(Fixed::new("read"));
+        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
 
         round.round(&[call("a", "read"), call("b", "read")]);
 

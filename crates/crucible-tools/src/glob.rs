@@ -1,9 +1,10 @@
 //! Finding files by the shape of their path.
 
-use crucible_core::{Grant, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
 use globset::GlobBuilder;
 
 use crate::args::Args;
+use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "glob";
@@ -57,12 +58,14 @@ impl Tool for Glob {
         SCHEMA
     }
 
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly
+    fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: target::searched(&self.workspace, NAME, args, "path"),
+        }
     }
 
-    fn run(&self, args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, &args)?;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
         let limit = args.count("limit", PATHS)?;
 
@@ -128,12 +131,11 @@ fn report(found: &[String], pattern: &str, limit: usize) -> ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sample::{Sample, allowed, call};
+    use crate::sample::{Sample, allowed};
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
-        Glob::new(sample.workspace())
-            .run(call(args), allowed())
-            .unwrap()
+        let tool = Glob::new(sample.workspace());
+        tool.run(allowed(&tool, args)).unwrap()
     }
 
     /// A tree with files at two depths.
@@ -255,13 +257,14 @@ mod tests {
     }
 
     #[test]
-    fn listing_is_never_put_to_the_user() {
+    fn listing_names_the_directory_it_would_walk() {
         let sample = Sample::new("glob-sensitivity");
+        sample.write("src/main.rs", "");
         let tool = Glob::new(sample.workspace());
 
-        assert_eq!(
-            tool.sensitivity(&ToolArgs::new("{}")),
-            Sensitivity::ReadOnly
-        );
+        let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"src"}"#));
+
+        assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
+        assert_eq!(sensitivity.to_string(), "read src");
     }
 }

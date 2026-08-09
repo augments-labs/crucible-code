@@ -10,12 +10,14 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crucible_core::{Grant, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{Searcher, SearcherBuilder};
 use ignore::WalkState;
 use ignore::overrides::{Override, OverrideBuilder};
+
+use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "grep";
@@ -195,12 +197,14 @@ impl Tool for Grep {
         SCHEMA
     }
 
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly
+    fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: target::searched(&self.workspace, NAME, args, "path"),
+        }
     }
 
-    fn run(&self, args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
-        let args = crate::args::Args::parse(NAME, &args)?;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+        let args = crate::args::Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
         let limit = args.count("limit", MATCHES)?;
 

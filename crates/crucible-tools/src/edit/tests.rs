@@ -3,12 +3,11 @@
 use std::fs;
 
 use super::{Edit, Sensitivity, Tool, ToolArgs, ToolOutput};
-use crate::sample::{Sample, call, permitted};
+use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
-    Edit::new(sample.workspace())
-        .run(call(args), permitted(&Sensitivity::MutatesFile))
-        .unwrap()
+    let tool = Edit::new(sample.workspace());
+    tool.run(allowed(&tool, args)).unwrap()
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -164,23 +163,22 @@ fn something_that_is_not_text_says_so_instead_of_corrupting_it() {
 fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
-    let problem = Edit::new(sample.workspace())
-        .run(
-            call(r#"{"path":"one.rs","replace":"b"}"#),
-            permitted(&Sensitivity::MutatesFile),
-        )
+    let tool = Edit::new(sample.workspace());
+    let problem = tool
+        .run(allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#))
         .unwrap_err();
 
     assert_eq!(problem.to_string(), "edit: find is required");
 }
 
 #[test]
-fn editing_is_always_put_to_the_user() {
+fn editing_names_the_file_it_would_change() {
     let sample = Sample::new("edit-sensitivity");
+    sample.write("one.rs", "a\n");
     let tool = Edit::new(sample.workspace());
 
-    assert_eq!(
-        tool.sensitivity(&ToolArgs::new("{}")),
-        Sensitivity::MutatesFile
-    );
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.rs"}"#));
+
+    assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
+    assert_eq!(sensitivity.to_string(), "change one.rs");
 }

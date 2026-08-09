@@ -8,7 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_core::{
-    Ask, Grant, Permission, Sensitivity, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
+    Approved, Ask, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolId,
+    Verdict, Workspace,
 };
 
 /// A workspace with a directory beside it that is deliberately outside.
@@ -70,53 +71,32 @@ impl Drop for Sample {
     }
 }
 
-/// Arguments as the model would have written them.
-pub(crate) fn call(args: &str) -> ToolArgs {
-    ToolArgs::new(args)
-}
-
-/// A grant, minted the only way one can be.
+/// A call the tool may run, permitted the only way one can be.
 ///
-/// There is no constructor outside the permission engine, so even a test has
-/// to go through a verdict — which is the property the token exists to have.
-pub(crate) fn allowed() -> Grant {
+/// There is no constructor outside the permission engine, so even a test goes
+/// through a verdict — which is the property the token exists to have. It also
+/// means a test runs a tool on the arguments a verdict was reached about, by
+/// the same construction the runner uses, rather than on a pair that only
+/// happened to be assembled together.
+pub(crate) fn allowed(tool: &dyn Tool, args: &str) -> Approved {
     struct Yes;
 
     impl Ask for Yes {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
-            Verdict::AllowOnce
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            (Verdict::Allow, Remember::Never)
         }
     }
 
     let call = ToolCall {
         id: ToolId::new("sample"),
-        name: "sample".into(),
-        args: ToolArgs::new("{}"),
+        name: tool.name().into(),
+        args: ToolArgs::new(args),
     };
 
-    Permission::new()
-        .decide(&call, &Sensitivity::ReadOnly, &mut Yes)
-        .expect("a read-only call is always granted")
-}
-
-/// A grant for a tool that changes something, minted the same way: through a
-/// verdict, because there is no other way.
-pub(crate) fn permitted(sensitivity: &Sensitivity) -> Grant {
-    struct Yes;
-
-    impl Ask for Yes {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
-            Verdict::AllowOnce
+    match Permission::new().decide(&call, &tool.sensitivity(&call.args), &mut Yes) {
+        Settled::Approved(approved) => approved,
+        Settled::Forbidden | Settled::Refused => {
+            panic!("nothing is denied without rules, and the answer above is yes")
         }
     }
-
-    let call = ToolCall {
-        id: ToolId::new("sample"),
-        name: "sample".into(),
-        args: ToolArgs::new("{}"),
-    };
-
-    Permission::new()
-        .decide(&call, sensitivity, &mut Yes)
-        .expect("the answer above is yes")
 }

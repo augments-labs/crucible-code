@@ -58,10 +58,10 @@ impl Tools {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Sensitivity, ToolArgs};
+    use crucible_core::ToolArgs;
 
     use super::*;
-    use crate::fake::Fixed;
+    use crate::fake::{Fixed, changing};
 
     #[test]
     fn a_tool_is_found_by_the_name_the_model_used() {
@@ -86,20 +86,14 @@ mod tests {
         // would reach whichever the search happened to meet first.
         let mut tools = Tools::new();
         tools.add(Box::new(Fixed::new("read")));
-        tools.add(Box::new(Fixed::new("read").risking(
-            Sensitivity::SpawnsProcess {
-                program: "sh".into(),
-            },
-        )));
+        tools.add(Box::new(Fixed::new("read").risking(changing())));
 
         assert_eq!(tools.schemas().len(), 1);
         assert_eq!(
             tools
                 .find("read")
                 .map(|tool| tool.sensitivity(&ToolArgs::new("{}"))),
-            Some(Sensitivity::SpawnsProcess {
-                program: "sh".into()
-            })
+            Some(changing())
         );
     }
 

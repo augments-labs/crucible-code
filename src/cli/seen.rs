@@ -10,7 +10,12 @@
 
 use std::sync::mpsc::{Receiver, Sender};
 
-use crucible_core::{Ask, Event, Post, Sensitivity, ToolCall, Verdict};
+use crucible_core::{Ask, Event, Post, Remember, Sensitivity, ToolCall, Verdict};
+
+/// What comes back when a question is answered: what was decided, and how long
+/// it holds. Named because it travels down a channel, and a bare tuple in a
+/// channel type says nothing about which half is which.
+pub(crate) type Answer = (Verdict, Remember);
 
 /// Something the drawing thread has to deal with.
 #[derive(Debug)]
@@ -49,12 +54,12 @@ impl Post for Relay {
 #[derive(Debug)]
 pub(crate) struct Asking {
     to: Sender<Seen>,
-    answers: Receiver<Verdict>,
+    answers: Receiver<Answer>,
 }
 
 impl Asking {
     /// Takes the two ends it needs: where questions go, where answers arrive.
-    pub(crate) fn new(to: Sender<Seen>, answers: Receiver<Verdict>) -> Self {
+    pub(crate) fn new(to: Sender<Seen>, answers: Receiver<Answer>) -> Self {
         Self { to, answers }
     }
 }
@@ -66,25 +71,31 @@ impl Ask for Asking {
     /// that closes before an answer comes back, means nobody is left to consent
     /// — and running a tool nobody agreed to is the one outcome worth avoiding
     /// more than stopping.
-    fn ask(&mut self, call: &ToolCall, sensitivity: &Sensitivity) -> Verdict {
+    fn ask(&mut self, call: &ToolCall, sensitivity: &Sensitivity) -> Answer {
         let question = Seen::Question {
             call: call.clone(),
             sensitivity: sensitivity.clone(),
         };
 
         if self.to.send(question).is_err() {
-            return Verdict::Deny;
+            return refused();
         }
 
-        self.answers.recv().unwrap_or(Verdict::Deny)
+        self.answers.recv().unwrap_or_else(|_| refused())
     }
+}
+
+/// What silence means. A duration is still needed alongside it, and the only
+/// honest one is that this answer covers nothing beyond the call it refused.
+fn refused() -> Answer {
+    (Verdict::Deny, Remember::Never)
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::channel;
 
-    use crucible_core::{ToolArgs, ToolId};
+    use crucible_core::{Command, ToolArgs, ToolId};
 
     use super::*;
 
@@ -93,6 +104,12 @@ mod tests {
             id: ToolId::new("a"),
             name: "bash".into(),
             args: ToolArgs::new(r#"{"command":"ls"}"#),
+        }
+    }
+
+    fn running() -> Sensitivity {
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood(Box::from([Box::from("ls")])),
         }
     }
 
@@ -117,12 +134,12 @@ mod tests {
         let (reply, answers) = channel();
         let mut asking = Asking::new(to, answers);
 
-        let asked = std::thread::spawn(move || asking.ask(&call(), &Sensitivity::MutatesFile));
+        let asked = std::thread::spawn(move || asking.ask(&call(), &running()));
 
         assert!(matches!(seen.recv().unwrap(), Seen::Question { .. }));
-        reply.send(Verdict::AllowSession).unwrap();
+        reply.send((Verdict::Allow, Remember::Session)).unwrap();
 
-        assert_eq!(asked.join().unwrap(), Verdict::AllowSession);
+        assert_eq!(asked.join().unwrap(), (Verdict::Allow, Remember::Session));
     }
 
     #[test]
@@ -130,26 +147,26 @@ mod tests {
         // Not a deadlock and not an allow: the process is leaving, and a tool
         // that ran on the way out ran without consent.
         let (to, seen) = channel();
-        let (reply, answers) = channel::<Verdict>();
+        let (reply, answers) = channel::<Answer>();
         let mut asking = Asking::new(to, answers);
         drop(reply);
 
-        let verdict = asking.ask(&call(), &Sensitivity::MutatesFile);
+        let answer = asking.ask(&call(), &running());
 
-        assert_eq!(verdict, Verdict::Deny);
+        assert_eq!(answer, (Verdict::Deny, Remember::Never));
         drop(seen);
     }
 
     #[test]
     fn a_question_that_cannot_be_delivered_is_a_refusal() {
         let (to, seen) = channel();
-        let (_reply, answers) = channel::<Verdict>();
+        let (_reply, answers) = channel::<Answer>();
         let mut asking = Asking::new(to, answers);
         drop(seen);
 
         assert_eq!(
-            asking.ask(&call(), &Sensitivity::MutatesFile),
-            Verdict::Deny
+            asking.ask(&call(), &running()),
+            (Verdict::Deny, Remember::Never)
         );
     }
 }

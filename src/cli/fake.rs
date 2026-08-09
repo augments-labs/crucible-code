@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Cancel, Delta, DeltaStream, Grant, Provider, ProviderError, Request, Sensitivity, Tool,
-    ToolArgs, ToolError, ToolOutput,
+    Approved, Cancel, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity, Target,
+    Tool, ToolArgs, ToolError, ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -123,7 +123,17 @@ impl Tool for Fixed {
         self.sensitivity.clone()
     }
 
-    fn run(&self, _args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::ok(self.answer))
+    }
+}
+
+/// A change to a file: what every mode but `fullAccess` puts to the user.
+///
+/// The target is one nothing resolved, so no rule written about a path matches
+/// it and what these tests exercise is the loop rather than the matcher.
+pub(crate) fn changing() -> Sensitivity {
+    Sensitivity::MutatesFile {
+        target: Target::unresolved(),
     }
 }

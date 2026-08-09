@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn turns_are_numbered_from_one() {
     let script = Script::new(vec![saying("first"), saying("second")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     scripted.turn("one").unwrap();
     scripted.turn("two").unwrap();
@@ -22,7 +22,7 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
     // Numbering the first continued turn 1 would tell the user this is a new
     // session, which is exactly what they asked it not to be.
     let script = Script::new(vec![saying("still here")]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     let mut earlier = Transcript::new();
     earlier.push(Message::User("one".into()));
@@ -46,7 +46,7 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
 fn a_call_is_announced_before_it_runs() {
     // The renderer draws the line for a running tool from this.
     let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
-    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
 
     scripted.turn("go").unwrap();
 
@@ -73,7 +73,7 @@ fn a_turn_reports_why_it_stopped() {
         Delta::Text("as I was say".into()),
         Delta::Stopped(StopReason::OutOfTokens),
     ]]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::OutOfTokens);
 
@@ -88,7 +88,7 @@ fn a_turn_a_tool_round_ended_reports_why_as_well() {
     let mut scripted = Scripted::new(
         script,
         tools([Fixed::new("bash").cancelling()]),
-        Verdict::AllowOnce,
+        Verdict::Allow,
     );
 
     assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
@@ -100,7 +100,7 @@ fn a_turn_a_tool_round_ended_reports_why_as_well() {
 fn a_turn_that_failed_reports_no_reason_because_it_reached_none() {
     // The failure is its own event. Posting a stop as well would put two
     // endings on the screen for one turn.
-    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::AllowOnce);
+    let mut scripted = Scripted::new(Script::failing(), Tools::new(), Verdict::Allow);
 
     scripted.turn("go").unwrap_err();
 
