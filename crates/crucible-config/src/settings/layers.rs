@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use crate::document::{Document, Origin};
 use crate::error::ConfigError;
 use crate::home::Home;
-use crate::settings::Settings;
+
+use super::Settings;
 
 /// What a configuration file is called, in the home directory and in a project.
 const FILE: &str = "config.json";

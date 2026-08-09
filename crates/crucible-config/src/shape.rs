@@ -12,6 +12,8 @@
 //! regenerates, `scripts/check.sh` compares it against the checked-in copy, and
 //! the parser accepts the key without being told about it separately.
 
+pub(crate) mod schema;
+
 #[cfg(test)]
 mod tests;
 

@@ -12,10 +12,14 @@ use crucible_core::{
     Transcript, TurnError, TurnId,
 };
 
-use crate::answer::Answer;
 use crate::session::Session;
 use crate::tools::Tools;
-use crate::work::{Went, Work};
+
+mod answer;
+mod work;
+
+use answer::Answer;
+use work::{Went, Work};
 
 /// Which model to ask, and how.
 #[derive(Debug, Clone)]

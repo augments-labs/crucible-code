@@ -13,10 +13,11 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::document::Origin;
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::shape::Shape;
+
+use super::Origin;
 
 /// The key naming directories outside the root that tools may reach.
 const DIRECTORIES: &str = "extraDirectories";
@@ -27,7 +28,7 @@ const DIRECTORIES: &str = "extraDirectories";
 /// the position — so they are carried as one thing rather than as a pair of
 /// parameters threaded through every arm.
 #[derive(Clone, Copy)]
-pub(crate) struct Spot<'a> {
+pub(super) struct Spot<'a> {
     /// The dotted route to this value.
     path: &'a str,
     /// Where the key holding it was found.
@@ -36,23 +37,23 @@ pub(crate) struct Spot<'a> {
 
 impl Spot<'_> {
     /// The root of a document, which no key holds and which has no path.
-    pub(crate) const ROOT: Self = Self {
+    pub(super) const ROOT: Self = Self {
         path: "",
         at: At::Ambiguous,
     };
 }
 
 /// One document being checked: the text it came from and what to call it.
-pub(crate) struct Reader<'a> {
+pub(super) struct Reader<'a> {
     /// The file as the user would name it, for the message.
-    pub(crate) file: &'a str,
+    pub(super) file: &'a str,
     /// The source, so a key can be located in it.
-    pub(crate) text: &'a str,
+    pub(super) text: &'a str,
 }
 
 impl Reader<'_> {
     /// Checks one value against the shape it is standing in.
-    pub(crate) fn check(
+    pub(super) fn check(
         &self,
         value: &Value,
         shape: &'static Shape,
@@ -197,7 +198,7 @@ impl Reader<'_> {
     /// The second holds in every layer: a variable crucible has already read by
     /// the time it opens a file cannot be set from one, so it is refused instead
     /// of accepted and quietly dropped.
-    pub(crate) fn variables(&self, value: &Value, origin: Origin) -> Result<(), ConfigError> {
+    pub(super) fn variables(&self, value: &Value, origin: Origin) -> Result<(), ConfigError> {
         let Some(vars) = value.get("env").and_then(Value::as_object) else {
             return Ok(());
         };
@@ -237,7 +238,7 @@ impl Reader<'_> {
     /// There is no schema `pattern` beside it. An absolute path does not begin
     /// with `/` on every platform, and a schema that is wrong about one is
     /// worse than a schema that says nothing.
-    pub(crate) fn directories(&self, value: &Value) -> Result<(), ConfigError> {
+    pub(super) fn directories(&self, value: &Value) -> Result<(), ConfigError> {
         let Some(entries) = value
             .get("permissions")
             .and_then(|block| block.get(DIRECTORIES))
@@ -288,7 +289,7 @@ impl Reader<'_> {
 /// These two by name rather than every key starting with a dollar, so that this
 /// and the generated schema accept the same documents.
 fn reserved(key: &str) -> bool {
-    crate::schema::RESERVED.contains(&key)
+    crate::shape::schema::RESERVED.contains(&key)
 }
 
 /// The dotted path to a key, for a message that has to say where it is.

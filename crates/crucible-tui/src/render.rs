@@ -9,12 +9,17 @@
 //! tail, erase from the cursor *down*, and write the tail again. Erasing
 //! downward cannot reach scrollback, so committed output is unreachable by
 //! construction rather than by care. The sequences themselves live in
-//! [`crate::frame`]; this module decides when a frame happens.
+//! [`frame`]; this module decides when a frame happens.
 
-use crate::frame::Frame;
-use crate::tail::Tail;
 use crate::terminal::{Size, Terminal, TerminalError};
-use crate::{plain, screen};
+
+mod frame;
+mod plain;
+mod screen;
+mod tail;
+
+use frame::Frame;
+use tail::Tail;
 
 /// Draws the transcript into the terminal's scrollback.
 #[derive(Debug)]

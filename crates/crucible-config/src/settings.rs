@@ -13,6 +13,7 @@ use serde_json::{Map, Value};
 use crate::document::Document;
 use crate::shape::{DOCUMENT, Shape};
 
+mod layers;
 mod output;
 mod permissions;
 
@@ -27,7 +28,7 @@ pub struct Settings {
     value: Value,
 
     /// Every layer's rules together. Held apart from the value because a rule
-    /// is read where it is written — see [`crate::rules`] — and what survives
+    /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
 }

@@ -12,7 +12,7 @@
 use crucible_core::{Disposition, Rules};
 use serde_json::Value;
 
-use crate::check::Reader;
+use super::check::Reader;
 use crate::error::{At, ConfigError};
 
 /// The keys holding rules, and what a rule under each one means.
@@ -32,7 +32,7 @@ const KINDS: [(&str, Disposition); 3] = [
 /// The value has already been walked against the shape, so anything found here
 /// is a string in a list under a key crucible has. What is left to fail is the
 /// text itself.
-pub(crate) fn read(reader: &Reader<'_>, value: &Value) -> Result<Rules, ConfigError> {
+pub(super) fn read(reader: &Reader<'_>, value: &Value) -> Result<Rules, ConfigError> {
     let mut rules = Rules::new();
 
     let Some(block) = value.get("permissions") else {

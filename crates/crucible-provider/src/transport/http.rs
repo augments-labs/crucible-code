@@ -11,7 +11,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-use crate::transport::{Response, Transport, TransportError};
+use super::{Response, Transport, TransportError};
 
 /// How long to wait for the response to *start*.
 ///

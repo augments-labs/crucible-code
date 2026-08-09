@@ -7,7 +7,7 @@
 
 use std::io::{self, IsTerminal, StdoutLock, Write};
 
-use crate::terminal::{Size, Terminal, TerminalError};
+use super::{Size, Terminal, TerminalError};
 
 /// Standard output, as a terminal.
 ///

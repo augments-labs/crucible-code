@@ -14,7 +14,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::shape::{DOCUMENT, Field, Shape};
+use super::{DOCUMENT, Field, Shape};
 
 /// The dialect this schema is written in.
 ///

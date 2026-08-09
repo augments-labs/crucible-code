@@ -22,7 +22,7 @@ const TAB_STOP: usize = 8;
 
 /// The wrapped, bounded live region.
 #[derive(Debug)]
-pub struct Tail {
+pub(crate) struct Tail {
     /// Display rows, oldest first. The last one is still being appended to.
     rows: VecDeque<Row>,
     /// Columns available for text.
@@ -44,7 +44,7 @@ impl Tail {
     /// Both are clamped to at least one: a zero width would wrap forever, and a
     /// zero bound would overflow the row that is still being written.
     #[must_use]
-    pub fn new(width: usize, bound: usize) -> Self {
+    pub(crate) fn new(width: usize, bound: usize) -> Self {
         Self {
             rows: VecDeque::from([Row::default()]),
             width: width.max(1),
@@ -56,7 +56,7 @@ impl Tail {
     ///
     /// The caller owns `overflow` and reuses it across frames, so a delta that
     /// pushes nothing out of the tail allocates nothing.
-    pub fn push(&mut self, delta: &str, overflow: &mut Vec<String>) {
+    pub(crate) fn push(&mut self, delta: &str, overflow: &mut Vec<String>) {
         for character in delta.chars() {
             match character {
                 // A newline ends the row wherever it is.
@@ -79,7 +79,7 @@ impl Tail {
     }
 
     /// The rows currently drawn, oldest first.
-    pub fn rows(&self) -> impl ExactSizeIterator<Item = &str> {
+    pub(crate) fn rows(&self) -> impl ExactSizeIterator<Item = &str> {
         self.rows.iter().map(|row| row.text.as_str())
     }
 
@@ -90,7 +90,7 @@ impl Tail {
     /// somebody wrote. Settling [`Self::rows`] instead would leave a blank line
     /// in the record after every answer that ended with a newline -- which is
     /// most of them.
-    pub fn content(&self) -> impl ExactSizeIterator<Item = &str> {
+    pub(crate) fn content(&self) -> impl ExactSizeIterator<Item = &str> {
         let rows = match self.rows.back() {
             Some(row) if row.text.is_empty() => self.rows.len().saturating_sub(1),
             _ => self.rows.len(),
@@ -101,13 +101,13 @@ impl Tail {
 
     /// How many rows are live. This is what the renderer moves back over.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.rows.len()
     }
 
     /// Whether the tail holds nothing but an empty row.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(|row| row.text.is_empty())
     }
 
@@ -115,7 +115,7 @@ impl Tail {
     ///
     /// The rows are gone rather than committed: the caller decides whether
     /// what was live deserved to reach scrollback.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.rows.clear();
         self.rows.push_back(Row::default());
     }

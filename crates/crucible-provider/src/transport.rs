@@ -5,8 +5,10 @@
 //! protocol be tested against a recorded response, with no socket and no server
 //! anywhere in the test.
 //!
-//! It is also the seam for the HTTP client itself. [`crate::http`] is the only
-//! file that names one; swapping it is that file and nothing else.
+//! It is also the seam for the HTTP client itself. [`http`] is the only file
+//! that names one; swapping it is that file and nothing else.
+
+pub(crate) mod http;
 
 use std::fmt;
 use std::io::{self, Read};

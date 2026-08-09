@@ -37,22 +37,17 @@
 //! `0.0.x` is unstable: every key here may be renamed or removed in any `0.0.x`
 //! release with no deprecation period.
 
-mod check;
 mod document;
 mod env;
 mod error;
 mod home;
-mod layers;
-mod rules;
 #[cfg(test)]
 mod sample;
-mod schema;
 mod settings;
 mod shape;
 
 pub use document::{Document, Origin};
-pub use env::NAMESPACE;
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
-pub use schema::schema;
 pub use settings::{Color, Settings, ToolDetail};
+pub use shape::schema::schema;

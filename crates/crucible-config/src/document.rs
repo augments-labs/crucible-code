@@ -3,10 +3,13 @@
 use crucible_core::Rules;
 use serde_json::Value;
 
-use crate::check::{Reader, Spot};
 use crate::error::ConfigError;
-use crate::rules;
 use crate::shape::DOCUMENT;
+
+mod check;
+mod rules;
+
+use check::{Reader, Spot};
 
 /// Which of the layers a document was read from.
 ///
