@@ -26,7 +26,7 @@
 ///
 /// Written once. Anything that reads a variable of crucible's own, or decides
 /// whether a name is one, builds it from this rather than spelling it again.
-pub const NAMESPACE: &str = "CRUCIBLE_CODE_";
+pub(crate) const NAMESPACE: &str = "CRUCIBLE_CODE_";
 
 /// Whether an environment variable is one of crucible's own.
 pub(crate) fn ours(name: &str) -> bool {

@@ -14,7 +14,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::shape::{DOCUMENT, Field, Shape};
+use super::{DOCUMENT, Field, Shape};
 
 /// The dialect this schema is written in.
 ///
@@ -72,7 +72,52 @@ fn of(shape: &Shape) -> Value {
         Shape::Text => json!({ "type": "string" }),
         Shape::Choice(allowed) => json!({ "type": "string", "enum": allowed }),
         Shape::Fields(_) | Shape::Named(_) => object(shape),
+
+        // `uniqueItems` because no list here means anything by a repeat: the
+        // kind decides which rule wins, so a second copy of a rule cannot
+        // change an outcome, and a directory named twice is reached once. The
+        // editor marking it is how a paste that went in twice is noticed.
+        Shape::List(inner) => json!({
+            "type": "array",
+            "items": of(inner),
+            "uniqueItems": true,
+        }),
     }
+}
+
+/// One field of an object, as a schema: its shape, its sentence, its examples.
+///
+/// Examples are *elements* wherever the field holds a list, so they hang off
+/// `items` rather than off the array. An editor offering `["read(src/**)"]`
+/// where one entry goes would be offering a list inside a list.
+fn described(field: &Field) -> Value {
+    // Destructured rather than read member by member, so a new member of
+    // `Field` stops the build here instead of being quietly left out. That is
+    // what caught `examples`, which would otherwise have been documentation no
+    // editor ever showed.
+    let Field {
+        name: _,
+        about,
+        shape,
+        examples,
+    } = field;
+
+    let mut described = of(shape);
+    if let Some(into) = described.as_object_mut() {
+        into.insert("description".into(), (*about).into());
+    }
+    if examples.is_empty() {
+        return described;
+    }
+
+    let holder = match shape {
+        Shape::List(_) => described.get_mut("items"),
+        Shape::Text | Shape::Choice(_) | Shape::Fields(_) | Shape::Named(_) => Some(&mut described),
+    };
+    if let Some(into) = holder.and_then(Value::as_object_mut) {
+        into.insert("examples".into(), json!(examples));
+    }
+    described
 }
 
 /// An object, whichever way its keys are decided.
@@ -87,12 +132,8 @@ fn object(shape: &Shape) -> Value {
         // `false` is what turns a misspelling into a red squiggle in the editor
         // instead of a setting that silently never applies.
         Shape::Fields(fields) => {
-            for Field { name, about, shape } in *fields {
-                let mut described = of(shape);
-                if let Some(into) = described.as_object_mut() {
-                    into.insert("description".into(), (*about).into());
-                }
-                properties.insert((*name).into(), described);
+            for field in *fields {
+                properties.insert(field.name.into(), described(field));
             }
             json!({
                 "type": "object",
@@ -112,7 +153,7 @@ fn object(shape: &Shape) -> Value {
             "additionalProperties": false,
         }),
 
-        Shape::Text | Shape::Choice(_) => of(shape),
+        Shape::Text | Shape::Choice(_) | Shape::List(_) => of(shape),
     }
 }
 

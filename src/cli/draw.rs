@@ -5,6 +5,8 @@
 //! colour code is bytes it would count as width. Colour therefore goes only
 //! where nothing is ever redrawn: the prompt mark, written straight through.
 
+use std::fmt;
+
 use crucible_core::{Event, Sensitivity, StopReason, ToolCall, ToolOutput, Workspace};
 use crucible_tui::{Renderer, Terminal, TerminalError};
 
@@ -71,10 +73,7 @@ pub(crate) fn event<T: Terminal>(
         // may become extra rows.
         Event::Failed { error } => {
             renderer.settle()?;
-            renderer.commit(&format!(
-                "! {}",
-                clipped(&error.to_string(), style.output(columns))
-            ))
+            renderer.commit(&format!("! {}", clipped(error, style.output(columns))))
         }
     }
 }
@@ -188,24 +187,25 @@ fn notice(stop: StopReason) -> Option<&'static str> {
 /// What the user is being asked to allow.
 fn asked(call: &ToolCall, sensitivity: &Sensitivity, width: usize) -> String {
     match sensitivity {
-        // Never reached through the permission engine, which allows reads
-        // without asking. Here so that a tool reclassified later still has a
-        // question to show rather than a blank one.
-        Sensitivity::ReadOnly => format!("? {} {}", call.name, clipped(call.args.as_str(), width)),
+        // Never reached through the permission engine, which allows or refuses
+        // a read and never asks about one. Here so that a tool reclassified
+        // later still has a question to show rather than a blank one.
+        Sensitivity::ReadOnly { target } => {
+            format!("? {} wants to read: {}", call.name, clipped(target, width))
+        }
 
-        Sensitivity::MutatesFile => format!(
-            "? {} wants to change a file: {}",
+        Sensitivity::MutatesFile { target } => format!(
+            "? {} wants to change: {}",
             call.name,
-            clipped(call.args.as_str(), width)
+            clipped(target, width)
         ),
 
-        // Clipped like the others, and for a stronger reason. A command that
-        // chains or redirects is reported whole, so this text is the model's
-        // to choose. Unclipped, a newline in it commits a second row, and the
-        // last two rows on screen become a question the attacker wrote and the
-        // genuine answer mark underneath it.
-        Sensitivity::SpawnsProcess { program } => {
-            format!("? {} wants to run: {}", call.name, clipped(program, width))
+        // Clipped like the others, and for a stronger reason. What runs is the
+        // model's text to choose. Unclipped, a newline in it commits a second
+        // row, and the last two rows on screen become a question the attacker
+        // wrote and the genuine answer mark underneath it.
+        Sensitivity::SpawnsProcess { command } => {
+            format!("? {} wants to run: {}", call.name, clipped(command, width))
         }
     }
 }
@@ -215,7 +215,8 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, width: usize) -> String {
 /// Control characters become spaces: a newline inside JSON arguments would
 /// otherwise break the line in two, and the tail would be counting rows that
 /// the caller did not mean to write.
-fn clipped(text: &str, width: usize) -> String {
+fn clipped(text: impl fmt::Display, width: usize) -> String {
+    let text = text.to_string();
     let mut clipped: String = text
         .trim()
         .chars()

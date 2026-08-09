@@ -10,8 +10,8 @@
 
 use std::fmt;
 
-use crate::grant::{Grant, Sensitivity};
 use crate::ids::ToolId;
+use crate::permission::{Approved, Sensitivity};
 
 /// Why a tool call did not produce a result.
 ///
@@ -146,15 +146,18 @@ pub trait Tool: Send + Sync {
 
     /// Runs the call.
     ///
-    /// The [`Grant`] cannot be constructed outside the permission engine, so a
-    /// call site that has not obtained a verdict cannot reach this function.
+    /// An [`Approved`] cannot be constructed outside the permission engine, so
+    /// a call site that has not obtained a verdict cannot reach this function.
+    /// It carries the arguments as well as the proof, which is what makes the
+    /// arguments a tool runs on *the* arguments a verdict was reached about —
+    /// a separate `args` parameter left that to the caller's care.
     ///
     /// # Errors
     ///
     /// [`ToolError`] when the call could not be carried out at all. A result
     /// the model should see, including a failure, comes back as a failed
     /// [`ToolOutput`].
-    fn run(&self, args: ToolArgs, grant: Grant) -> Result<ToolOutput, ToolError>;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError>;
 }
 
 impl fmt::Debug for dyn Tool {

@@ -23,7 +23,8 @@ existing types sit, and a new one has to join a side:
   `DeltaStream`, `Tool`, `Credential`, `Ask`, `Post`. If adding an adapter
   requires a change to this crate, the seam is in the wrong place.
 - **Enum**, so a new variant breaks every `match` that handles it: `Delta`,
-  `Event`, `Message`, `Verdict`, `Sensitivity`, `StopReason`, and every error.
+  `Event`, `Message`, `Verdict`, `Settled`, `Sensitivity`, `Mode`,
+  `Disposition`, `StopReason`, and every error.
 
 Never add `#[non_exhaustive]` to a core enum, and never end a `match` on one
 with a `_ =>` arm — not in this crate and not in any crate that reads one. Both
@@ -44,7 +45,9 @@ puts the value in every error, log line and panic payload that formats it.
 
 ## Grants
 
-`Grant`'s field is private to `grant.rs` — not to the crate, to the module.
-Widening it to `pub(crate)` would let any core module mint one, which ends the
-guarantee that a verdict was reached. If a new call site needs a grant, it
-takes one as an argument.
+`Grant`'s field is private to `permission/grant.rs` — not to the crate, to the
+module. Widening it to `pub(crate)` would let any core module mint one, which
+ends the guarantee that a verdict was reached. A grant leaves the engine only
+inside an `Approved`, bound to the call it was reached about; a new call site
+that needs one takes an `Approved` as an argument — never a bare `Verdict`,
+which any caller can construct.

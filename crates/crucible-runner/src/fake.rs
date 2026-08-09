@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Ask, Cancel, Delta, DeltaStream, Grant, Provider, ProviderError, Request, Sensitivity, Tool,
-    ToolArgs, ToolCall, ToolError, ToolOutput, Verdict,
+    Approved, Ask, Cancel, Delta, DeltaStream, Provider, ProviderError, Remember, Request,
+    Sensitivity, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Verdict,
 };
 
 /// The name a scripted provider answers to.
@@ -106,7 +106,9 @@ impl Fixed {
             answer: "done".into(),
             problem: None,
             cancels: false,
-            sensitivity: Sensitivity::ReadOnly,
+            sensitivity: Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            },
         }
     }
 
@@ -149,7 +151,7 @@ impl Tool for Fixed {
         self.sensitivity.clone()
     }
 
-    fn run(&self, _args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
         if self.cancels {
             return Err(ToolError::Cancelled(self.name));
         }
@@ -164,22 +166,48 @@ impl Tool for Fixed {
     }
 }
 
+/// A call that gets the user asked: a change to a file, which no mode waves
+/// through except `fullAccess`.
+///
+/// The target is one nothing resolved, so no rule written about a path matches
+/// it and what the tests here exercise is the loop rather than the matcher.
+pub(crate) fn changing() -> Sensitivity {
+    Sensitivity::MutatesFile {
+        target: Target::unresolved(),
+    }
+}
+
 /// A user who answers every question the same way, and counts them.
 pub(crate) struct Says {
     verdict: Verdict,
+    remember: Remember,
     /// How often the user was put to the question.
     pub(crate) asked: usize,
 }
 
 impl Says {
+    /// Answers `verdict`, for this call only.
     pub(crate) fn new(verdict: Verdict) -> Self {
-        Self { verdict, asked: 0 }
+        Self {
+            verdict,
+            remember: Remember::Never,
+            asked: 0,
+        }
+    }
+
+    /// Answers the same way, and asks for it to hold until the session ends.
+    pub(crate) fn for_the_session() -> Self {
+        Self {
+            verdict: Verdict::Allow,
+            remember: Remember::Session,
+            asked: 0,
+        }
     }
 }
 
 impl Ask for Says {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> Verdict {
+    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
         self.asked += 1;
-        self.verdict
+        (self.verdict, self.remember)
     }
 }

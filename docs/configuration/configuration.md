@@ -10,6 +10,10 @@ and crucible runs the same way.
     "anthropic": { "model": "claude-opus-5" },
     "openai": { "apiKeyEnv": "WORK_OPENAI_KEY" }
   },
+  "permissions": {
+    "allow": ["bash(cargo test)"],
+    "deny": ["read(.env)"]
+  },
   "output": { "toolDetail": "full" }
 }
 ```
@@ -59,6 +63,45 @@ That model is reached by naming the provider and no model — `crucible --model
 openai/`. A bare `crucible` uses `anthropic`, so it takes
 `providers.anthropic.model`, and falls back to `claude-sonnet-5` if nothing set
 one. See [Providers and models](../providers/providers.md).
+
+### `permissions`
+
+What runs without asking, what is refused outright, and what happens to
+everything else. See [Permissions](../permissions/permissions.md) for the model;
+this is the key reference.
+
+| Key | Answers | Means |
+| --- | --- | --- |
+| `mode` | `ask`, `allowEdits`, `fullAccess` | What happens to a call no rule mentions. |
+| `allow` | a list of rules | Runs without asking. |
+| `ask` | a list of rules | Put to you, whatever the mode says. |
+| `deny` | a list of rules | Refused, in every mode. |
+| `extraDirectories` | a list of absolute paths | Directories outside the working directory that tools may reach. |
+
+A rule is a tool name and what it may act on: `read(src/**)`,
+`bash(cargo test)`. A tool name on its own — or `bash(*)` — is everything that
+tool could do.
+
+```json
+{
+  "permissions": {
+    "mode": "allowEdits",
+    "allow": ["read(src/**)", "bash(cargo test)"],
+    "deny": ["read(.env)", "edit(.git/**)"]
+  }
+}
+```
+
+The kind decides which rule wins, never how specific its pattern is. `deny`
+beats `ask` beats `allow`, so a `deny` holds even under `fullAccess` and cannot
+be qualified by an `allow` written next to it. The price is that "deny every
+`git` except `git status`" cannot be said; the return is that a `deny` list is
+readable on its own as the list of things that cannot happen.
+
+`extraDirectories` entries are absolute, because a path in a configuration file
+is not relative to anything the file knows. An absolute path names one machine,
+so `.crucible/config.local.json` is where one belongs — `/home/someone/src/lib`
+means nothing to anyone else who clones the repository.
 
 ### `output`
 
@@ -129,21 +172,33 @@ because it is what says where the files are. Set it in your shell instead
 ## How layers combine
 
 A **scalar** takes the nearest layer that set it. An **object** is merged key by
-key, so a project naming one provider leaves your other one alone.
+key, so a project naming one provider leaves your other one alone. A **list** is
+concatenated: every layer's entries are kept and none of them replaces another.
 
 ```json5
 // ~/.crucible/config.json
 { "providers": { "anthropic": { "model": "claude-opus-5" },
                  "openai":    { "model": "gpt-5.2" } },
-  "output": { "toolDetail": "full" } }
+  "output": { "toolDetail": "full" },
+  "permissions": { "deny": ["read(.env)"] } }
 
 // .crucible/config.json
-{ "providers": { "openai": { "model": "gpt-5.2-mini" } } }
+{ "providers": { "openai": { "model": "gpt-5.2-mini" } },
+  "permissions": { "allow": ["bash(cargo test)"] } }
 ```
 
 In that project: `openai` asks for `gpt-5.2-mini`, `anthropic` still asks for
-`claude-opus-5`, and `toolDetail` is still `full`. Nothing in the document is a
-list yet, so there is no third rule to learn.
+`claude-opus-5`, `toolDetail` is still `full`, and both permission rules are in
+force.
+
+Concatenation is the only rule a list could have here. If a nearer layer
+replaced a farther one, a `.crucible/config.json` that mentions `deny` at all
+would silently drop every `deny` you wrote at home — and a checked-out
+repository would be deciding what your own machine protects. Keeping both is
+safe precisely because `deny` wins wherever it came from.
+
+The cost is that a list cannot be shortened by a nearer layer, only added to.
+Removing an entry means editing the file that holds it.
 
 ## Your editor
 
@@ -177,7 +232,21 @@ fixed set of strings at line 3, column 5
 
 crucible: /home/you/.crucible/config.json is not valid JSON at line 2,
 column 14: key must be a string
+
+crucible: /home/you/api/.crucible/config.json: permissions.allow[1] at line 3,
+column 5 — read(src is not a rule; a rule names a tool and what it may act on,
+like read(src/**)
+
+crucible: /home/you/api/.crucible/config.local.json:
+permissions.extraDirectories[0] must be an absolute path at line 3, column 5 —
+../shared is relative, and a configuration file cannot know what it would be
+relative to
 ```
+
+An entry in a list is named by the index it sits at and located at the key
+holding the list, because an entry has no key of its own to search the file for
+— and the other `"read(src/**)"` further down would be a perfectly correct line
+to be sent to.
 
 Where a key appears more than once in the file, the position is left off rather
 than pointing at one of them, which would send you to a line that is correct.

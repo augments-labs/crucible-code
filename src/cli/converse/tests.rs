@@ -3,18 +3,19 @@
 use std::cell::Cell;
 use std::io::Cursor;
 
-use crucible_core::{Delta, Sensitivity, StopReason, ToolId};
+use crucible_core::{Delta, Mode, StopReason, ToolId};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, TerminalError};
 
 use super::*;
-use crate::cli::fake::{Fixed, Script};
+use crate::cli::fake::{Fixed, Script, changing};
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 fn plain() -> Terms {
     Terms {
         style: Style::plain(),
+        mode: Mode::Ask,
         cancel: Cancel::new(),
     }
 }
@@ -195,11 +196,11 @@ fn a_question_asked_mid_turn_is_answered_from_the_same_input() {
     // Both are on the one channel, so this deadlocks if they are not.
     let written = conversing(
         vec![calling("write"), saying("changed it")],
-        tools(Fixed::new("write", Sensitivity::MutatesFile)),
+        tools(Fixed::new("write", changing())),
         "edit it\ny\n",
     );
 
-    assert!(written.contains("wants to change a file"), "{written}");
+    assert!(written.contains("wants to change"), "{written}");
     assert!(written.contains("changed it"), "{written}");
 }
 
@@ -207,7 +208,7 @@ fn a_question_asked_mid_turn_is_answered_from_the_same_input() {
 fn refusing_a_tool_ends_the_turn_where_the_user_can_see_why() {
     let written = conversing(
         vec![calling("write")],
-        tools(Fixed::new("write", Sensitivity::MutatesFile)),
+        tools(Fixed::new("write", changing())),
         "edit it\nn\n",
     );
 
@@ -220,7 +221,7 @@ fn a_question_left_unanswered_at_end_of_input_is_refused() {
     // the loop still returns instead of waiting on a pipe that is closed.
     let written = conversing(
         vec![calling("write")],
-        tools(Fixed::new("write", Sensitivity::MutatesFile)),
+        tools(Fixed::new("write", changing())),
         "edit it\n",
     );
 
@@ -320,28 +321,54 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
 }
 
 #[test]
+fn the_prompt_line_names_the_mode_in_force() {
+    // fullAccess is the mode worth pinning: in `ask` every sensitive call
+    // announces itself with a question, so the prompt line is the only place a
+    // session that never asks says what it is. Written before the read, which
+    // is why empty input still shows it once.
+    let runner = scripted(Script::new(vec![]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(Vec::new());
+
+    let terms = Terms {
+        style: Style::plain(),
+        mode: Mode::FullAccess,
+        cancel: Cancel::new(),
+    };
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("fullAccess › "), "{written}");
+}
+
+#[test]
 fn yes_allows_this_call_only() {
-    assert_eq!(verdict(Some("y\n")), Verdict::AllowOnce);
-    assert_eq!(verdict(Some("yes")), Verdict::AllowOnce);
+    assert_eq!(verdict(Some("y\n")), (Verdict::Allow, Remember::Never));
+    assert_eq!(verdict(Some("yes")), (Verdict::Allow, Remember::Never));
 }
 
 #[test]
 fn always_allows_calls_like_it_for_the_rest_of_the_session() {
-    assert_eq!(verdict(Some("a\n")), Verdict::AllowSession);
-    assert_eq!(verdict(Some("always")), Verdict::AllowSession);
+    assert_eq!(verdict(Some("a\n")), (Verdict::Allow, Remember::Session));
+    assert_eq!(verdict(Some("always")), (Verdict::Allow, Remember::Session));
 }
 
 #[test]
-fn anything_else_is_a_refusal() {
+fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
     // Including the empty line, which is what someone types when they meant
-    // to read the question first.
+    // to read the question first. A refusal covers the call it refused and no
+    // other, so there is nothing for a duration to hold.
     for answer in ["n", "no", "", "\n", "yeah", "Y E S", "1"] {
-        assert_eq!(verdict(Some(answer)), Verdict::Deny, "{answer:?}");
+        assert_eq!(
+            verdict(Some(answer)),
+            (Verdict::Deny, Remember::Never),
+            "{answer:?}"
+        );
     }
 }
 
 #[test]
 fn end_of_input_is_a_refusal() {
     // A pipe that closed mid-question cannot consent to anything.
-    assert_eq!(verdict(None), Verdict::Deny);
+    assert_eq!(verdict(None), (Verdict::Deny, Remember::Never));
 }

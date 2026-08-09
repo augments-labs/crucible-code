@@ -12,10 +12,14 @@ use crucible_core::{
     Transcript, TurnError, TurnId,
 };
 
-use crate::answer::Answer;
 use crate::session::Session;
 use crate::tools::Tools;
-use crate::work::{Went, Work};
+
+mod answer;
+mod work;
+
+use answer::Answer;
+use work::{Went, Work};
 
 /// Which model to ask, and how.
 #[derive(Debug, Clone)]
@@ -56,6 +60,18 @@ impl Runner {
             session,
             turn: TurnId::FIRST,
         }
+    }
+
+    /// Takes the engine configuration described, rather than the default one.
+    ///
+    /// Built by the wiring and handed over whole, so this crate never learns
+    /// that a rule has a syntax or that a mode has a spelling. A session
+    /// without this call is one where nothing was configured, which is the
+    /// engine asking about every change and every command.
+    #[must_use]
+    pub fn permitting(mut self, permission: Permission) -> Self {
+        self.permission = permission;
+        self
     }
 
     /// Picks up a transcript that already happened — what `--continue`

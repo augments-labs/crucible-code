@@ -14,7 +14,6 @@
 //! a turn is the return value, because the caller is what decides whether the
 //! session goes on.
 
-mod answer;
 #[cfg(test)]
 mod fake;
 mod runner;
@@ -22,7 +21,6 @@ mod runner;
 mod sample;
 mod session;
 mod tools;
-mod work;
 
 pub use runner::{Model, Runner};
 pub use session::{Session, SessionError};

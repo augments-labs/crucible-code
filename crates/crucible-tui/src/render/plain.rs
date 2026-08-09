@@ -6,8 +6,8 @@
 //! row is written once, at the moment it can no longer change, and the rows
 //! still live when a turn ends are written then instead of being lost.
 
-use crate::frame::Frame;
-use crate::tail::Tail;
+use super::frame::Frame;
+use super::tail::Tail;
 
 /// Builds a frame from the rows that have left the tail for good.
 ///

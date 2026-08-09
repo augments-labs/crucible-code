@@ -1,12 +1,11 @@
 //! What `grep` finds, and what it declines to look at.
 
 use super::{Grep, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
-use crate::sample::{Sample, allowed, call};
+use crate::sample::{Sample, allowed};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
-    Grep::new(sample.workspace())
-        .run(call(args), allowed())
-        .unwrap()
+    let tool = Grep::new(sample.workspace());
+    tool.run(allowed(&tool, args)).unwrap()
 }
 
 /// A tree with something to find in two files and something to skip.
@@ -161,12 +160,14 @@ fn something_that_is_not_text_contributes_nothing() {
 }
 
 #[test]
-fn searching_is_never_put_to_the_user() {
+fn a_search_with_no_path_named_covers_the_whole_workspace() {
+    // The honest answer to what it acts on, and a wider one than a file: see
+    // the note on searching in the permissions documentation.
     let sample = Sample::new("grep-sensitivity");
     let tool = Grep::new(sample.workspace());
 
-    assert_eq!(
-        tool.sensitivity(&ToolArgs::new("{}")),
-        Sensitivity::ReadOnly
-    );
+    let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
+
+    assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
+    assert_eq!(sensitivity.to_string(), "read .");
 }

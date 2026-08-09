@@ -154,6 +154,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let home = Home::find(&|name| std::env::var_os(name))?;
     let settings = Settings::read(&home, workspace.root())?;
 
+    // Widened after the files are read because the root is what found them:
+    // `.crucible/config.json` is looked for in the directory crucible was
+    // started in, so the workspace has to exist before it can be told what else
+    // to reach. Once, here, and never again — nothing in a turn may widen it.
+    let workspace = workspace.reaching(settings.extra_directories())?;
+
     // An absent flag parses as "the default provider, no model named", so the
     // resolution below has one path through it rather than two.
     let choice =
@@ -173,6 +179,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let held = Title::set()?;
     let mut renderer = Renderer::new(SystemTerminal::stdout());
 
+    // The mode the files named, or the one that asks. `None` is "no layer
+    // said", which is a different thing from a layer that said `ask` — but the
+    // answer is the same, and the distinction is the command line's to use.
+    // Resolved once and handed to the prompt line and the engine both, so the
+    // mode on screen cannot drift from the mode in force.
+    let mode = settings.mode().unwrap_or_default();
+
     // Settled once, here, from the files and the terminal together. Nothing on
     // the render path may ask either of them again.
     let terms = Terms {
@@ -182,6 +195,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             Terminal::is_terminal(renderer.terminal()),
             &from,
         ),
+        mode,
         cancel: cancel.clone(),
     };
 
@@ -191,6 +205,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         provider: &choice.provider,
         model: &model,
         resuming: cli.r#continue,
+        mode,
         settings: &settings,
         sessions: home.sessions(),
         workspace: &workspace,

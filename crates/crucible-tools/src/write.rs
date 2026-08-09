@@ -2,9 +2,10 @@
 
 use std::fs;
 
-use crucible_core::{Grant, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
 
 use crate::args::Args;
+use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "write";
@@ -50,12 +51,14 @@ impl Tool for Write {
         SCHEMA
     }
 
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::MutatesFile
+    fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+        Sensitivity::MutatesFile {
+            target: target::creatable(&self.workspace, NAME, args, "path"),
+        }
     }
 
-    fn run(&self, args: ToolArgs, _grant: Grant) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, &args)?;
+    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+        let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let content = args.exact("content")?;
 

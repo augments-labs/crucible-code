@@ -156,6 +156,43 @@ pub enum ConfigError {
         accepted: Accepted,
     },
 
+    /// Text in one of the rule lists that is not a rule.
+    ///
+    /// The position is the key holding the list rather than the entry, since an
+    /// entry has no key of its own to find in the source. The index says which
+    /// one.
+    #[error("{file}: {path}{at} — {problem}")]
+    BadRule {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the entry, with the index it sits at.
+        path: Box<str>,
+        /// Where the list is, when that can be said.
+        at: At,
+        /// What the rule reader said about the text.
+        problem: Box<str>,
+    },
+
+    /// A directory the workspace was asked to reach, named by a relative path.
+    ///
+    /// Refused rather than resolved against the working directory: a file says
+    /// nothing about which directory crucible will be started in, so the same
+    /// entry would name a different place per invocation.
+    #[error(
+        "{file}: {path} must be an absolute path{at} — {found} is relative, and \
+         a configuration file cannot know what it would be relative to"
+    )]
+    Relative {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the entry, with the index it sits at.
+        path: Box<str>,
+        /// What was written there.
+        found: Box<str>,
+        /// Where the list is, when that can be said.
+        at: At,
+    },
+
     /// An `env` variable that is not crucible's own, in the layer that travels
     /// with a clone.
     ///

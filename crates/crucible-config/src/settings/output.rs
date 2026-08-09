@@ -1,0 +1,131 @@
+//! What the layers together say the terminal shows.
+//!
+//! Both answers here are strings in the document and values in the program, so
+//! the reading of each sits beside the type it produces. Nothing in this module
+//! decides anything about a terminal — that is `Style`'s job, one crate up,
+//! from these answers and what the terminal itself reports.
+
+use super::Settings;
+
+impl Settings {
+    /// Whether to write colour, when the command line does not say.
+    #[must_use]
+    pub fn color(&self) -> Option<Color> {
+        Color::read(self.output("color")?)
+    }
+
+    /// How much of a tool call to show, when the command line does not say.
+    #[must_use]
+    pub fn tool_detail(&self) -> Option<ToolDetail> {
+        ToolDetail::read(self.output("toolDetail")?)
+    }
+
+    /// One string out of the `output` block.
+    fn output(&self, key: &str) -> Option<&str> {
+        self.value.get("output")?.get(key)?.as_str()
+    }
+}
+
+/// Whether the terminal is written to in colour.
+///
+/// `Auto` is not the absence of an answer — it is the answer "decide from the
+/// terminal", which a layer may state to override a nearer one that did not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    /// Follow the terminal and `NO_COLOR`.
+    Auto,
+    /// Colour even when the output is not a terminal.
+    Always,
+    /// Never, even when it is.
+    Never,
+}
+
+impl Color {
+    /// Reads one of [`shape::COLOR`](crate::shape::COLOR).
+    ///
+    /// `None` for anything else, which the shape refused before this could be
+    /// reached. There is no fourth answer to fall back to and no call for a
+    /// panic over a string that cannot arrive; the test below is what keeps
+    /// "cannot arrive" true as the set changes.
+    fn read(found: &str) -> Option<Self> {
+        match found {
+            "auto" => Some(Self::Auto),
+            "always" => Some(Self::Always),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
+/// How much of a tool call and its result one line shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolDetail {
+    /// Truncated to fit a line.
+    Compact,
+    /// Whatever the terminal is wide enough for.
+    Full,
+}
+
+impl ToolDetail {
+    /// Reads one of [`shape::TOOL_DETAIL`](crate::shape::TOOL_DETAIL).
+    fn read(found: &str) -> Option<Self> {
+        match found {
+            "compact" => Some(Self::Compact),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::document::{Document, Origin};
+    use crate::shape;
+
+    use super::*;
+
+    #[test]
+    fn the_nearest_layer_that_set_a_scalar_wins_it_outright() {
+        let user = Document::sample(
+            r#"{"output": {"color": "always", "toolDetail": "full"}}"#,
+            Origin::User,
+        );
+        let local = Document::sample(r#"{"output": {"color": "never"}}"#, Origin::ProjectLocal);
+
+        let settings = Settings::resolve(vec![user, local]);
+
+        assert_eq!(settings.color(), Some(Color::Never));
+
+        // `output` is still an object, so it merges key by key like any other.
+        // Only the scalar inside it is replaced, and a layer that said nothing
+        // about `toolDetail` has not thereby unset it.
+        assert_eq!(settings.tool_detail(), Some(ToolDetail::Full));
+    }
+
+    #[test]
+    fn a_setting_no_layer_mentioned_is_left_for_the_command_line_to_decide() {
+        // None is "the files did not say", not a default. The default lives
+        // where it already lives, and the wiring lays the command line over
+        // this.
+        let settings = Settings::resolve(Vec::new());
+
+        assert_eq!(settings.color(), None);
+        assert_eq!(settings.tool_detail(), None);
+    }
+
+    #[test]
+    fn every_answer_the_document_accepts_reads_back_as_a_value() {
+        // The shape decides what a document may say and this module decides
+        // what each answer means, so the two lists have to agree. Without this,
+        // renaming an answer in the shape leaves the reader matching a string
+        // nobody can write any more, and the setting stops working with no
+        // error anywhere — the schema would accept the file and the value would
+        // be dropped on the floor.
+        for name in shape::COLOR {
+            assert!(Color::read(name).is_some(), "color: {name}");
+        }
+        for name in shape::TOOL_DETAIL {
+            assert!(ToolDetail::read(name).is_some(), "toolDetail: {name}");
+        }
+    }
+}

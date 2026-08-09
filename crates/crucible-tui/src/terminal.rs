@@ -10,6 +10,8 @@
 //! that keeps the bytes, so a test can assert on the exact escape sequences
 //! written rather than on a screenshot.
 
+pub(crate) mod system;
+
 use std::io;
 
 /// What can go wrong while talking to a terminal.

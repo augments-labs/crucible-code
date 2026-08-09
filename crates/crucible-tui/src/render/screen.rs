@@ -5,8 +5,8 @@
 //! the rows that have left it are permanent. Everything a frame is allowed to
 //! do to the screen is in these two functions.
 
-use crate::frame::Frame;
-use crate::tail::Tail;
+use super::frame::Frame;
+use super::tail::Tail;
 
 /// Builds a frame: back over what was drawn, then the rows that have left the
 /// tail for good, then the rows still live.
