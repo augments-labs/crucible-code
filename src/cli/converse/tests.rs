@@ -10,6 +10,15 @@ use crucible_tui::{Recording, Size, TerminalError};
 use super::*;
 use crate::cli::fake::{Fixed, Script};
 
+/// The terms a test runs under when neither the style nor cancelling is what
+/// it is watching.
+fn plain() -> Terms {
+    Terms {
+        style: Style::plain(),
+        cancel: Cancel::new(),
+    }
+}
+
 /// A terminal that narrows to ten columns once the renderer has read the
 /// size it starts with.
 ///
@@ -89,7 +98,7 @@ fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &Cancel::new(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -141,7 +150,7 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     let mut renderer = Renderer::new(Narrowing::new());
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &Cancel::new(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -301,7 +310,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &Cancel::new(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(

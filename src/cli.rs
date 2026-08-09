@@ -1,8 +1,9 @@
-//! Argument parsing, and the wiring those arguments choose.
+//! Argument parsing, and what the arguments and the files together decided.
 //!
-//! This is the only place concrete types meet. A provider, six tools, a session
-//! log and a renderer are built here and handed to each other as trait objects,
-//! which is what leaves every crate below free of the others.
+//! The command line is read here and resolved against the configuration; the
+//! concrete types those answers choose are built one module along, in
+//! [`startup`]. Everything below is reached as a trait object, which is what
+//! leaves every crate free of the others.
 //!
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
@@ -12,56 +13,31 @@ mod converse;
 mod draw;
 #[cfg(test)]
 mod fake;
+#[cfg(test)]
+mod sample;
 mod seen;
+mod startup;
+mod style;
 
 use std::io::{self, Write as _};
-use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
-use crucible_core::{
-    ApiKey, Cancel, Credential, CredentialError, Header, HeaderKey, PathError, Provider, Workspace,
-};
-use crucible_provider::{Anthropic, Https, OpenAi};
-use crucible_runner::{Model, Runner, Session, SessionError, Tools};
-use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
-use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError};
+use crucible_config::{ConfigError, Home, Settings};
+use crucible_core::{Cancel, CredentialError, PathError, Workspace};
+use crucible_runner::SessionError;
+use crucible_tui::{Renderer, SystemTerminal, Terminal, TerminalError, Title, TitleError};
 
 use crate::cli::choice::Choice;
+use crate::cli::converse::Terms;
+use crate::cli::startup::{Startup, assemble};
+use crate::cli::style::Style;
 
 /// The model asked when the command line does not name one.
 const MODEL: &str = "claude-sonnet-5";
 
 /// The providers this is built with, for the sentence a wrong name gets back.
 const PROVIDERS: &str = "anthropic, openai";
-
-/// The variables each key is read from. The *names* are what is configured
-/// here; a value never appears in this repository or in a session file.
-const ANTHROPIC_KEY: &str = "ANTHROPIC_API_KEY";
-const OPENAI_KEY: &str = "OPENAI_API_KEY";
-
-/// Ceiling on one response, in tokens.
-const MAX_TOKENS: u32 = 8192;
-
-/// The standing instructions every turn carries.
-///
-/// Written for this harness. It says how to work and how to answer, and leaves
-/// what the tools do to the tools' own schemas — a system prompt that also
-/// describes each tool is a second place for that description to go stale.
-const SYSTEM: &str = "\
-You are crucible, a coding agent working in a terminal beside a developer.
-
-Work from what the code says rather than what it probably says: read a file \
-before changing it, and search before concluding something is not there. \
-Prefer the smallest change that finishes the job, and match the conventions of \
-the file you are editing rather than your own habits.
-
-Answer in plain prose, briefly. The developer is reading a terminal: put the \
-conclusion first, skip the preamble, and do not read a file's contents back \
-after editing it — say what changed and why.
-
-Ask when the answer would change what you build. Otherwise decide, say which \
-way you decided, and carry on.";
 
 /// The command-line surface.
 ///
@@ -83,12 +59,17 @@ edits and runs things in the current directory, and asks before anything that \
 changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
-claude-sonnet-5, or openai/gpt-5.2. Unqualified names go to Anthropic. The key \
-is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, whichever the chosen \
-provider needs.
+claude-sonnet-5, or openai/gpt-5.2. Unqualified names go to Anthropic. Left \
+off, or given as a provider and a bare slash, the model comes from your \
+configuration. The key is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, or \
+from whichever variable that provider's apiKeyEnv names.
 
-Sessions are written under the data directory, one file per session, and \
---continue picks up the most recent one for this directory.
+crucible keeps its own files in ~/.crucible, and reads config.json there, then \
+.crucible/config.json and .crucible/config.local.json in the directory it was \
+started in. Nearer wins; the command line is nearer than all of them.
+
+Sessions are written one file per session, and --continue picks up the most \
+recent one for this directory.
 
 Flags, session files and config are unstable for the whole 0.0.x line."
 )]
@@ -97,9 +78,10 @@ struct Cli {
     #[arg(short, long)]
     r#continue: bool,
 
-    /// The model to ask, optionally as provider/model.
-    #[arg(short, long, default_value = MODEL)]
-    model: String,
+    /// The model to ask, optionally as provider/model. Defaults to what your
+    /// configuration says, then to claude-sonnet-5.
+    #[arg(short, long)]
+    model: Option<String>,
 }
 
 /// Why crucible could not run, or could not carry on.
@@ -112,6 +94,10 @@ pub(crate) enum Fatal {
     /// The session could not be recorded or continued.
     #[error(transparent)]
     Session(#[from] SessionError),
+
+    /// crucible's own files could not be found or read.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
 
     /// There is no key to authenticate with.
     #[error(transparent)]
@@ -132,9 +118,9 @@ pub(crate) enum Fatal {
         named: Box<str>,
     },
 
-    /// The command line named no model.
-    #[error("--model needs a name, as in --model {MODEL}")]
-    Nameless,
+    /// The command line put nothing before the slash.
+    #[error("--model needs a provider before the slash, as in --model openai/gpt-5.2")]
+    Providerless,
 
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
@@ -160,8 +146,19 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Input)?;
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
+    let from = |name: &str| std::env::var(name).ok();
 
-    let directory = Session::directory()?;
+    // Where crucible keeps its own files, read from the environment here and
+    // handed down as a path — no crate below this one asks where anything is.
+    // Then the files themselves, once, before anything that could want them.
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let settings = Settings::read(&home, workspace.root())?;
+
+    // An absent flag parses as "the default provider, no model named", so the
+    // resolution below has one path through it rather than two.
+    let choice =
+        Choice::parse(cli.model.as_deref().unwrap_or_default()).ok_or(Fatal::Providerless)?;
+    let model = wanted(&choice, &settings);
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -175,137 +172,50 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set()?;
     let mut renderer = Renderer::new(SystemTerminal::stdout());
-    draw::opening(&mut renderer, &cli.model, &workspace)?;
 
-    let runner = assemble(cli, &directory, &workspace, &cancel, &|name| {
-        std::env::var(name).ok()
+    // Settled once, here, from the files and the terminal together. Nothing on
+    // the render path may ask either of them again.
+    let terms = Terms {
+        style: Style::resolve(
+            settings.color(),
+            settings.tool_detail(),
+            Terminal::is_terminal(renderer.terminal()),
+            &from,
+        ),
+        cancel: cancel.clone(),
+    };
+
+    draw::opening(&mut renderer, &model, &workspace)?;
+
+    let runner = assemble(&Startup {
+        provider: &choice.provider,
+        model: &model,
+        resuming: cli.r#continue,
+        settings: &settings,
+        sessions: home.sessions(),
+        workspace: &workspace,
+        cancel: &cancel,
+        from: &from,
     })?;
-    let outcome = converse::converse(runner, &mut renderer, &cancel, &mut io::stdin().lock());
+    let outcome = converse::converse(runner, &mut renderer, &terms, &mut io::stdin().lock());
 
     drop(held);
     outcome
 }
 
-/// The runner the loop drives, built from what the command line asked for.
+/// Which model to ask for, once the command line and the files have both spoken.
 ///
-/// `directory` and `from` are parameters rather than read here so that a test
-/// can point a startup at somewhere disposable, fail it either way it can fail,
-/// and look at what it left behind.
-fn assemble(
-    cli: &Cli,
-    directory: &Path,
-    workspace: &Workspace,
-    cancel: &Cancel,
-    from: &dyn Fn(&str) -> Option<String>,
-) -> Result<Runner, Fatal> {
-    let choice = Choice::parse(&cli.model).ok_or(Fatal::Nameless)?;
-
-    // Before the session, and the last thing on the way in that can fail: the
-    // caller has already prepared the terminal for the same reason. Starting a
-    // session writes a file, and one written for a run that never happened is
-    // then the newest for this directory — which is what `--continue` would
-    // offer instead of the last real session.
-    let provider = provider(&choice, from)?;
-
-    let (session, earlier) = if cli.r#continue {
-        let (session, transcript) = Session::resume(directory, workspace)?;
-        (session, Some(transcript))
-    } else {
-        (Session::start(directory, workspace)?, None)
-    };
-
-    let mut runner = Runner::new(
-        provider,
-        tools(workspace, cancel),
-        model(&choice.model, workspace),
-        session,
-    );
-    if let Some(transcript) = earlier {
-        runner = runner.resuming(transcript);
-    }
-
-    Ok(runner)
-}
-
-/// The provider that serves the chosen model.
-///
-/// The one place in the program where a provider's name becomes a type. Adding
-/// another is an arm here and a `Credential` beside it — nothing in any crate
-/// below has to learn that it exists.
-///
-/// `from` reads the environment. It is a parameter because the pairing below is
-/// worth a test and the real environment cannot be set from one: writing to it
-/// is `unsafe` in edition 2024, which this workspace forbids.
-fn provider(
-    choice: &Choice,
-    from: &dyn Fn(&str) -> Option<String>,
-) -> Result<Box<dyn Provider>, Fatal> {
-    match &*choice.provider {
-        // Two protocols, one credential kind pointed at different headers.
-        // Authentication is a separate axis, and this is what that buys.
-        "anthropic" => Ok(Box::new(Anthropic::new(
-            key(ANTHROPIC_KEY, Header::bare("x-api-key"), from)?,
-            Box::new(Https::new()),
-        ))),
-
-        "openai" => Ok(Box::new(OpenAi::new(
-            key(OPENAI_KEY, Header::bearer(), from)?,
-            Box::new(Https::new()),
-        ))),
-
-        named => Err(Fatal::Provider {
-            named: named.into(),
-        }),
-    }
-}
-
-/// A key from the environment, ready to sign a request with.
-///
-/// The variable's name is what is configured; the value is read once, here, and
-/// goes no further than the header it is applied to.
-fn key(
-    variable: &str,
-    header: Header,
-    from: &dyn Fn(&str) -> Option<String>,
-) -> Result<Box<dyn Credential>, Fatal> {
-    let key = ApiKey::from_lookup(variable, from)?;
-
-    Ok(Box::new(HeaderKey::new(key, header)))
-}
-
-/// Everything the model may call.
-///
-/// The order is the order they are advertised in, which is the order a model
-/// tends to reach for them: read before write, search before either.
-fn tools(workspace: &Workspace, cancel: &Cancel) -> Tools {
-    let mut tools = Tools::new();
-
-    tools.add(Box::new(Read::new(workspace.clone())));
-    tools.add(Box::new(Grep::new(workspace.clone())));
-    tools.add(Box::new(Glob::new(workspace.clone())));
-    tools.add(Box::new(Edit::new(workspace.clone())));
-    tools.add(Box::new(Write::new(workspace.clone())));
-    tools.add(Box::new(Bash::new(workspace.clone(), cancel.clone())));
-
-    tools
-}
-
-/// Which model to ask, and what it is standing on.
-///
-/// The root goes in the system prompt because every tool takes paths relative
-/// to it, and a model that has to guess the root spends its first tool call
-/// finding out.
-fn model(name: &str, workspace: &Workspace) -> Model {
-    let system = format!(
-        "{SYSTEM}\n\nThe workspace root is {}. Every tool path is relative to it.",
-        workspace.root().display()
-    );
-
-    Model {
-        name: name.into(),
-        max_tokens: MAX_TOKENS,
-        system: Some(system.into()),
-    }
+/// The flag, then the configuration for that provider, then the name this is
+/// built with. `--model openai/` naming a provider and no model is what makes
+/// the middle rung reachable: without it every way of choosing a provider names
+/// a model in the same breath, and `providers.openai.model` could never be the
+/// answer to anything.
+fn wanted(choice: &Choice, settings: &Settings) -> Box<str> {
+    choice
+        .model
+        .clone()
+        .or_else(|| settings.model(&choice.provider).map(Into::into))
+        .unwrap_or_else(|| MODEL.into())
 }
 
 /// Writes a fatal error where the user will see it.

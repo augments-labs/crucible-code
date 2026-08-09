@@ -26,6 +26,22 @@ const RUNS: usize = 20;
 /// drawing. Nothing is ever sent: standard input is closed, so no turn starts.
 const KEY: &str = "bench-not-a-key";
 
+/// A user-level configuration file, so the reading includes parsing one.
+///
+/// A budget measured against an empty home would say nothing about the thing
+/// this budget exists to bound — a file read and parsed before the first frame
+/// — and would keep saying nothing as the document grew. Every block is
+/// represented, because they are resolved by walking the document and a block
+/// nobody writes down is a block nobody measures.
+const CONFIG: &str = r#"{
+  "providers": {
+    "anthropic": {"model": "claude-sonnet-5", "apiKeyEnv": "ANTHROPIC_API_KEY"},
+    "openai": {"model": "gpt-5.2"}
+  },
+  "env": {"RUST_LOG": "warn", "PAGER": "cat"},
+  "output": {"color": "auto", "toolDetail": "compact"}
+}"#;
+
 /// Why a reading could not be taken.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StartupError {
@@ -75,7 +91,10 @@ fn once(binary: &Path, home: &Path, needle: &'static str) -> Result<Duration, St
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("XDG_DATA_HOME", home)
+        // Crucible's own home, so twenty runs write their sessions somewhere
+        // this probe deletes rather than into the home directory of whoever is
+        // benchmarking.
+        .env(crucible_config::HOME, home)
         .env("ANTHROPIC_API_KEY", KEY)
         .spawn()?;
 
@@ -129,8 +148,9 @@ fn beside(name: &str) -> Result<PathBuf, StartupError> {
     }
 }
 
-/// A data directory of its own, so twenty runs do not leave twenty session
-/// files in the directory a real session uses.
+/// A home of its own, holding a configuration file and taking the session logs,
+/// so twenty runs neither read nor write anything belonging to whoever is
+/// benchmarking.
 #[derive(Debug)]
 pub(crate) struct Scratch(PathBuf);
 
@@ -142,6 +162,7 @@ impl Scratch {
             std::process::id()
         ));
         fs::create_dir_all(&base)?;
+        fs::write(base.join("config.json"), CONFIG)?;
         Ok(Self(base))
     }
 

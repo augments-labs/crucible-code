@@ -3,9 +3,8 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{
-    Bash, Cancel, OUTPUT, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, cut, program,
-};
+use super::output::{OUTPUT, cut};
+use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, program};
 use crate::sample::{Sample, call, permitted};
 
 /// The sensitivity a granted `bash` call carries.
@@ -324,4 +323,41 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
             program: "not json at all".into()
         }
     );
+}
+
+#[test]
+fn the_variables_the_tool_was_given_reach_the_command() {
+    // crucible cannot put these in its own environment — writing to it is
+    // `unsafe` in edition 2024 and this workspace forbids that — so they are
+    // handed to each child directly. Which is the better answer anyway: the
+    // model's commands get them and nothing else on the machine does.
+    let sample = Sample::new("bash-env");
+
+    let output = Bash::new(sample.workspace(), Cancel::new())
+        .exporting([("CRUCIBLE_TEST_PAGER", "cat")])
+        .run(
+            call(r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#),
+            permitted(&running("sh")),
+        )
+        .expect("the command ran");
+
+    assert_eq!(output.text(), "cat");
+}
+
+#[test]
+fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
+    // The file is the nearer answer: somebody who wrote `PATH` or `RUST_LOG`
+    // into their configuration meant it for the commands crucible runs, and
+    // inheriting the shell's copy instead would leave it doing nothing.
+    let sample = Sample::new("bash-env-over");
+
+    let output = Bash::new(sample.workspace(), Cancel::new())
+        .exporting([("HOME", "/nowhere-in-particular")])
+        .run(
+            call(r#"{"command":"echo $HOME"}"#),
+            permitted(&running("sh")),
+        )
+        .expect("the command ran");
+
+    assert_eq!(output.text(), "/nowhere-in-particular");
 }

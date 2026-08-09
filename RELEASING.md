@@ -110,8 +110,28 @@ promise nobody keeps.
    against the published `.sha256`, and runs everything from step 5 on that copy
    — so a build that was fine locally and an upload that went wrong are told
    apart rather than averaged.
-2. Open a fresh `Unreleased` section in the changelog.
-3. If the release is broken, do not delete or move the tag. Fix forward with a
+2. **If the schema changed, republish it.**
+
+   ```bash
+   git diff v0.0.2..v0.0.3 -- schema/
+   ```
+
+   `schema/crucible-code-schema.json` is generated from `shape.rs` and a gate
+   keeps the checked-in copy honest, so it is always right *here*. SchemaStore
+   serves a separate copy, and nothing in this repository can make that one
+   follow: a release that adds a key leaves every editor pointed at the
+   published URL marking it red, and a release that removes one leaves them
+   completing a key crucible now refuses. Open a pull request against
+   [SchemaStore/schemastore](https://github.com/SchemaStore/schemastore)
+   replacing `src/schemas/json/crucible-code-schema.json` with the file this tag
+   ships.
+
+   Only one copy is served, so it describes the newest release and not the one
+   somebody is running. That is why the schema's own description says the format
+   is unstable for the whole 0.0.x line — an editor is a hint, and the program is
+   the authority.
+3. Open a fresh `Unreleased` section in the changelog.
+4. If the release is broken, do not delete or move the tag. Fix forward with a
    patch release. A tag that changes meaning breaks every checksum anyone
    recorded against it.
 

@@ -163,6 +163,17 @@ impl<T: Terminal> Renderer<T> {
         &mut self.terminal
     }
 
+    /// How wide the terminal was when this last looked.
+    ///
+    /// Held rather than asked for, because a caller that decides how much of a
+    /// line to show does so once per event and asking the operating system each
+    /// time would put a syscall on the render path. [`Renderer::resized`] is
+    /// what keeps it true.
+    #[must_use]
+    pub fn columns(&self) -> usize {
+        self.columns
+    }
+
     /// One frame, assembled by [`screen`].
     fn draw(&mut self) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {

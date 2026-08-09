@@ -22,9 +22,23 @@ use crucible_tui::{Renderer, Terminal};
 use super::Fatal;
 use super::draw;
 use super::seen::{Asking, Relay, Seen};
+use super::style::Style;
 
 /// What the user types after.
 const MARK: &str = "› ";
+
+/// What every turn in a conversation is taken under.
+///
+/// Both are settled before the first prompt and neither changes at one: the
+/// style comes from the files and the terminal together, and the cancel is the
+/// same one the tools were built with. One value rather than two parameters
+/// carried down through every turn.
+pub(crate) struct Terms {
+    /// Whether to write colour, and how much of a tool call to show.
+    pub(crate) style: Style,
+    /// What stops a turn.
+    pub(crate) cancel: Cancel,
+}
 
 /// Reads prompts and takes turns until input ends.
 ///
@@ -34,9 +48,11 @@ const MARK: &str = "› ";
 pub(crate) fn converse<T: Terminal>(
     mut runner: Runner,
     renderer: &mut Renderer<T>,
-    cancel: &Cancel,
+    terms: &Terms,
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
+    let style = terms.style;
+
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -47,17 +63,17 @@ pub(crate) fn converse<T: Terminal>(
         // resize sends needs `unsafe`, so a prompt is the only moment there is:
         // what a resize costs in 0.0.1 is the turn it lands in, not the session.
         renderer.resized()?;
-        draw::mark(renderer, MARK)?;
+        draw::mark(renderer, MARK, style)?;
 
         let Some(prompt) = read(input)? else { break };
         if prompt.trim().is_empty() {
             continue;
         }
 
-        runner = take(runner, renderer, cancel, input, prompt)?;
+        runner = take(runner, renderer, terms, input, prompt)?;
 
         if !told && let Some(problem) = runner.session().trouble() {
-            draw::trouble(renderer, &problem)?;
+            draw::trouble(renderer, &problem, style)?;
             told = true;
         }
     }
@@ -76,7 +92,7 @@ pub(crate) fn converse<T: Terminal>(
     if let Some(problem) = problem
         && !told
     {
-        draw::trouble(renderer, &problem)?;
+        draw::trouble(renderer, &problem, style)?;
     }
 
     renderer.settle()?;
@@ -91,10 +107,12 @@ pub(crate) fn converse<T: Terminal>(
 fn take<T: Terminal>(
     runner: Runner,
     renderer: &mut Renderer<T>,
-    cancel: &Cancel,
+    terms: &Terms,
     input: &mut dyn BufRead,
     prompt: String,
 ) -> Result<Runner, Fatal> {
+    let style = terms.style;
+
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = channel();
@@ -102,7 +120,7 @@ fn take<T: Terminal>(
 
     let mut asking = Asking::new(post.clone(), hear);
     let relay = Relay::new(post);
-    let running = cancel.clone();
+    let running = terms.cancel.clone();
 
     let working = thread::spawn(move || {
         let mut runner = runner;
@@ -121,9 +139,9 @@ fn take<T: Terminal>(
     // last delta.
     for one in seen {
         match one {
-            Seen::Turn(event) => draw::event(renderer, event)?,
+            Seen::Turn(event) => draw::event(renderer, event, style)?,
             Seen::Question { call, sensitivity } => {
-                draw::question(renderer, &call, &sensitivity)?;
+                draw::question(renderer, &call, &sensitivity, style)?;
                 // A worker that stopped waiting has already denied itself.
                 let _ = reply.send(verdict(read(input)?.as_deref()));
             }

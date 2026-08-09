@@ -6,6 +6,7 @@ a file or starts a process.
 
 - [Getting started](getting-started.md) — install, a key, a first session.
 - [Providers and models](providers.md) — `--model`, and which key is read.
+- [Configuration](configuration.md) — the JSON files, and which one wins.
 - [Permission](permission.md) — what you are asked, and what each answer means.
 - [Sessions](sessions.md) — where a session is kept, and `--continue`.
 

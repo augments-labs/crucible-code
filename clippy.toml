@@ -5,7 +5,7 @@ msrv = "1.97.1"
 # Provider names are proper nouns, not identifiers, so `doc_markdown` must not
 # push them into backticks — `OpenAI` in a sentence reads as a type that does
 # not exist. `..` keeps clippy's own list rather than replacing it.
-doc-valid-idents = ["OpenAI", ".."]
+doc-valid-idents = ["OpenAI", "SchemaStore", ".."]
 
 # A function longer than this is doing more than one thing.
 too-many-lines-threshold = 100
