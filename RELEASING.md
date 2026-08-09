@@ -124,7 +124,22 @@ promise nobody keeps.
    completing a key crucible now refuses. Open a pull request against
    [SchemaStore/schemastore](https://github.com/SchemaStore/schemastore)
    replacing `src/schemas/json/crucible-code-schema.json` with the file this tag
-   ships.
+   ships, and run their formatter and their gate over it before committing:
+
+   ```bash
+   npm clean-install
+   ./node_modules/.bin/prettier --config .prettierrc.cjs --write \
+     src/schemas/json/crucible-code-schema.json
+   node ./cli.js check --schema-name=crucible-code-schema.json
+   ```
+
+   Their formatter sorts `$schema` above `$id` and puts a short `enum` on one
+   line, so the copy they serve is never byte for byte ours and a plain `cp`
+   fails their CI. Key order and whitespace are the only things it may change;
+   a diff touching anything else means the file was hand-edited, which is what
+   the generator exists to prevent. Their positive and negative tests under
+   `src/test/` and `src/negative_test/` are the other half of the pull request,
+   and a key that changed shape needs them changed with it.
 
    Only one copy is served, so it describes the newest release and not the one
    somebody is running. That is why the schema's own description says the format
