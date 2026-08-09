@@ -179,6 +179,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let held = Title::set()?;
     let mut renderer = Renderer::new(SystemTerminal::stdout());
 
+    // The mode the files named, or the one that asks. `None` is "no layer
+    // said", which is a different thing from a layer that said `ask` — but the
+    // answer is the same, and the distinction is the command line's to use.
+    // Resolved once and handed to the prompt line and the engine both, so the
+    // mode on screen cannot drift from the mode in force.
+    let mode = settings.mode().unwrap_or_default();
+
     // Settled once, here, from the files and the terminal together. Nothing on
     // the render path may ask either of them again.
     let terms = Terms {
@@ -188,6 +195,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             Terminal::is_terminal(renderer.terminal()),
             &from,
         ),
+        mode,
         cancel: cancel.clone(),
     };
 
@@ -197,6 +205,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         provider: &choice.provider,
         model: &model,
         resuming: cli.r#continue,
+        mode,
         settings: &settings,
         sessions: home.sessions(),
         workspace: &workspace,

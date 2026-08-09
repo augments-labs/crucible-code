@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crucible_config::Settings;
-use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Provider, Workspace};
+use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
 use crucible_provider::{Anthropic, Https, OpenAi};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
@@ -60,6 +60,10 @@ pub(super) struct Startup<'a> {
     pub(super) model: &'a str,
     /// Whether to carry on the most recent session for this directory.
     pub(super) resuming: bool,
+    /// The mode the permission engine starts in. The caller resolves it once
+    /// and gives the same value to the prompt line, which is what keeps the
+    /// mode on screen the mode in force.
+    pub(super) mode: Mode,
     /// What the configuration files said.
     pub(super) settings: &'a Settings,
     /// Where session logs go.
@@ -103,10 +107,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         model(startup.model, workspace),
         session,
     )
-    // The mode the files named, or the one that asks. `None` here is "no layer
-    // said", which is a different thing from a layer that said `ask` — but the
-    // answer is the same, and the distinction is the command line's to use.
-    .permitting(settings.permission(settings.mode().unwrap_or_default()));
+    .permitting(settings.permission(startup.mode));
     if let Some(transcript) = earlier {
         runner = runner.resuming(transcript);
     }

@@ -15,7 +15,7 @@ use std::io::BufRead;
 use std::sync::mpsc::channel;
 use std::thread;
 
-use crucible_core::{Cancel, Event, Post as _, Remember, Verdict};
+use crucible_core::{Cancel, Event, Mode, Post as _, Remember, Verdict};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Terminal};
 
@@ -29,13 +29,16 @@ const MARK: &str = "› ";
 
 /// What every turn in a conversation is taken under.
 ///
-/// Both are settled before the first prompt and neither changes at one: the
-/// style comes from the files and the terminal together, and the cancel is the
-/// same one the tools were built with. One value rather than two parameters
-/// carried down through every turn.
+/// All of these are settled before the first prompt and none changes at one:
+/// the style comes from the files and the terminal together, the mode from the
+/// same resolution the engine was built with, and the cancel is the same one
+/// the tools were built with. One value rather than three parameters carried
+/// down through every turn.
 pub(crate) struct Terms {
     /// Whether to write colour, and how much of a tool call to show.
     pub(crate) style: Style,
+    /// The mode the permission engine is in, written on every prompt line.
+    pub(crate) mode: Mode,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
 }
@@ -53,6 +56,13 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
+    // The mode in force, in front of every prompt, spelled the way
+    // configuration spells it. It is on screen every time rather than said
+    // once at the top because the moment it matters is hours in, when the top
+    // has scrolled away — a `fullAccess` session must not be distinguishable
+    // from an `ask` one only by what the user remembers starting.
+    let mark = format!("{} {MARK}", terms.mode);
+
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -63,7 +73,7 @@ pub(crate) fn converse<T: Terminal>(
         // resize sends needs `unsafe`, so a prompt is the only moment there is:
         // what a resize costs in 0.0.1 is the turn it lands in, not the session.
         renderer.resized()?;
-        draw::mark(renderer, MARK, style)?;
+        draw::mark(renderer, &mark, style)?;
 
         let Some(prompt) = read(input)? else { break };
         if prompt.trim().is_empty() {

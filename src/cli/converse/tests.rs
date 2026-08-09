@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::io::Cursor;
 
-use crucible_core::{Delta, StopReason, ToolId};
+use crucible_core::{Delta, Mode, StopReason, ToolId};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, TerminalError};
 
@@ -15,6 +15,7 @@ use crate::cli::fake::{Fixed, Script, changing};
 fn plain() -> Terms {
     Terms {
         style: Style::plain(),
+        mode: Mode::Ask,
         cancel: Cancel::new(),
     }
 }
@@ -317,6 +318,27 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
         written.contains("stopped being recorded"),
         "the drained failure never reached the terminal: {written}"
     );
+}
+
+#[test]
+fn the_prompt_line_names_the_mode_in_force() {
+    // fullAccess is the mode worth pinning: in `ask` every sensitive call
+    // announces itself with a question, so the prompt line is the only place a
+    // session that never asks says what it is. Written before the read, which
+    // is why empty input still shows it once.
+    let runner = scripted(Script::new(vec![]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(Vec::new());
+
+    let terms = Terms {
+        style: Style::plain(),
+        mode: Mode::FullAccess,
+        cancel: Cancel::new(),
+    };
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("fullAccess › "), "{written}");
 }
 
 #[test]
