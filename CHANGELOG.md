@@ -10,6 +10,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-08-10
+
+The answers that outlast the question. `always` writes the rule into the file
+git ignores, so the next session starts already knowing — and `allowEdits`
+stops asking about the commands it can prove change nothing outside the
+workspace.
+
 ### Added
 
 - **`always` writes the rule down.** Answering `a` at a permission question now
@@ -402,7 +409,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...v0.0.3
