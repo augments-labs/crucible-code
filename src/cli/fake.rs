@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
-    Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Reach, Request,
+    Sensitivity, Target, Tool, ToolArgs, ToolError, ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -141,6 +141,9 @@ pub(crate) fn changing() -> Sensitivity {
 /// One program, run with nothing after it: the shape a rule can be minted from.
 pub(crate) fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
-        command: Command::Understood(Box::from([Box::from(command)])),
+        command: Command::Understood {
+            parts: Box::from([Box::from(command)]),
+            reach: Reach::Anything,
+        },
     }
 }

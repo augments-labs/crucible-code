@@ -1,4 +1,4 @@
-use super::super::{Command, Target};
+use super::super::{Command, Reach, Target};
 use super::*;
 use crate::ids::ToolId;
 use crate::tool::ToolArgs;
@@ -30,7 +30,10 @@ fn writing(absolute: &str, below_root: Option<&str>) -> Sensitivity {
 
 fn running(parts: &[&str]) -> Sensitivity {
     Sensitivity::SpawnsProcess {
-        command: Command::Understood(parts.iter().map(|part| (*part).into()).collect()),
+        command: Command::Understood {
+            parts: parts.iter().map(|part| (*part).into()).collect(),
+            reach: Reach::Anything,
+        },
     }
 }
 

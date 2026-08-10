@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use crucible_core::{Command, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, narrowest};
+use crucible_core::{Command, Reach, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, narrowest};
 
 use crate::cli::sample::Sample;
 
@@ -18,7 +18,10 @@ fn call() -> ToolCall {
 
 fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
-        command: Command::Understood(Box::from([Box::from(command)])),
+        command: Command::Understood {
+            parts: Box::from([Box::from(command)]),
+            reach: Reach::Anything,
+        },
     }
 }
 

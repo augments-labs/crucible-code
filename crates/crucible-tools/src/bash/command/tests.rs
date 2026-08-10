@@ -9,7 +9,7 @@ use super::read;
 /// which words a rule would be matched against.
 fn parts(line: &str) -> Vec<String> {
     match read(line) {
-        Command::Understood(parts) => parts.iter().map(ToString::to_string).collect(),
+        Command::Understood { parts, .. } => parts.iter().map(ToString::to_string).collect(),
         Command::Opaque(text) => panic!("{text} was expected to be readable"),
     }
 }

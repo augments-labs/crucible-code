@@ -1,6 +1,6 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{Command, ProviderError, Target, ToolArgs, ToolId, TurnError};
+use crucible_core::{Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError};
 use crucible_tui::Recording;
 
 use super::*;
@@ -32,7 +32,10 @@ fn rule(command: &str) -> Minted {
     crucible_core::narrowest(
         &call("bash", "{}"),
         &Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from(command)])),
+            command: Command::Understood {
+                parts: Box::from([Box::from(command)]),
+                reach: Reach::Anything,
+            },
         },
     )
     .expect("one command can be written down")
@@ -121,7 +124,10 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
     let asking = asked(
         &call("bash", r#"{"command":"rm -rf build"}"#),
         &Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from("rm -rf build")])),
+            command: Command::Understood {
+                parts: Box::from([Box::from("rm -rf build")]),
+                reach: Reach::Anything,
+            },
         },
         args(),
     );

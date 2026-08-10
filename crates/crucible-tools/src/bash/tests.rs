@@ -3,7 +3,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::Command;
+use crucible_core::{Command, Reach};
 
 use super::output::{OUTPUT, cut};
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
@@ -241,7 +241,10 @@ fn the_sensitivity_carries_what_the_call_will_run() {
     assert_eq!(
         sensitivity,
         Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from("/usr/bin/git status")]))
+            command: Command::Understood {
+                parts: Box::from([Box::from("/usr/bin/git status")]),
+                reach: Reach::Anything,
+            }
         }
     );
 }
