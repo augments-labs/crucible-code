@@ -41,6 +41,7 @@ mod document;
 mod env;
 mod error;
 mod home;
+mod remember;
 #[cfg(test)]
 mod sample;
 mod settings;
@@ -49,5 +50,6 @@ mod shape;
 pub use document::{Document, Origin};
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
+pub use remember::allowing;
 pub use settings::{Color, Settings, ToolDetail};
 pub use shape::schema::schema;
