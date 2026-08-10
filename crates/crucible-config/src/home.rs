@@ -62,7 +62,7 @@ impl Home {
             });
         }
 
-        let path = absolute(from, "HOME")
+        let path = user(from)
             .map(|home| home.join(DIRECTORY))
             .ok_or(ConfigError::Homeless { named: HOME })?;
 
@@ -113,6 +113,34 @@ fn older(from: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
         })
 }
 
+/// The user's own home directory, whatever this platform calls it.
+///
+/// `HOME` first everywhere, because it is the one a user can set to move their
+/// files and the one every Unix already has. Windows sets `USERPROFILE` instead
+/// and leaves `HOME` to whichever shell was started, so it is asked second
+/// rather than first.
+///
+/// That order is also what puts a Git Bash session and a PowerShell one in the
+/// same directory rather than two. A `HOME` inherited from Git Bash can arrive
+/// spelled `/c/Users/ada`, which Windows does not call an absolute path — so
+/// [`absolute`] declines it and `USERPROFILE` answers instead, which is the
+/// directory the shell meant either way.
+fn user(from: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    absolute(from, "HOME").or_else(|| profile(from))
+}
+
+/// What Windows calls it.
+#[cfg(windows)]
+fn profile(from: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    absolute(from, "USERPROFILE")
+}
+
+/// Nothing: every other platform sets `HOME` and means it.
+#[cfg(not(windows))]
+fn profile(_from: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    None
+}
+
 /// One variable, as a path, when it names an absolute one.
 ///
 /// A relative path is ignored rather than resolved against the working
@@ -130,6 +158,20 @@ mod tests {
     use super::*;
     use crate::sample::Scratch;
 
+    /// An absolute path, spelled the way this platform spells one.
+    ///
+    /// Whether a variable names a home is decided by `is_absolute`, and a
+    /// leading slash is not enough for Windows — a path is absolute there only
+    /// with a drive or a share in front of it. A fixture hard-coding a Unix path
+    /// would be testing the wrong question on half the targets.
+    fn rooted(path: &str) -> String {
+        if cfg!(windows) {
+            format!(r"C:\{}", path.replace('/', r"\"))
+        } else {
+            format!("/{path}")
+        }
+    }
+
     /// An environment holding exactly these variables and nothing else.
     fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let held: Vec<(String, String)> = pairs
@@ -146,33 +188,65 @@ mod tests {
 
     #[test]
     fn the_variable_crucible_owns_places_the_whole_directory() {
+        let named = rooted("srv/crucible");
         let home = Home::find(&environment(&[
-            (HOME, "/srv/crucible"),
-            ("HOME", "/home/ada"),
+            (HOME, &named),
+            ("HOME", &rooted("home/ada")),
         ]))
         .expect("an absolute path was given");
 
         // Taken as the directory itself, not as somewhere to put `.crucible`:
         // somebody who names it has named it.
-        assert_eq!(home.path(), Path::new("/srv/crucible"));
-        assert_eq!(home.sessions(), Path::new("/srv/crucible/sessions"));
+        assert_eq!(home.path(), Path::new(&named));
+        assert_eq!(home.sessions(), Path::new(&named).join(SESSIONS));
     }
 
     #[test]
     fn without_it_the_directory_sits_in_the_users_home() {
-        let home = Home::find(&environment(&[("HOME", "/home/ada")])).expect("HOME was given");
+        let user = rooted("home/ada");
+        let home = Home::find(&environment(&[("HOME", &user)])).expect("HOME was given");
 
-        assert_eq!(home.path(), Path::new("/home/ada/.crucible"));
+        assert_eq!(home.path(), Path::new(&user).join(DIRECTORY));
     }
 
     #[test]
     fn a_relative_path_is_ignored_rather_than_resolved_where_crucible_was_started() {
-        let home = Home::find(&environment(&[(HOME, "crucible"), ("HOME", "/home/ada")]))
+        let user = rooted("home/ada");
+        let home = Home::find(&environment(&[(HOME, "crucible"), ("HOME", &user)]))
             .expect("HOME is still absolute");
 
         // Not `./crucible` under whichever repository this was run in, which
         // would be a different home directory in every one of them.
-        assert_eq!(home.path(), Path::new("/home/ada/.crucible"));
+        assert_eq!(home.path(), Path::new(&user).join(DIRECTORY));
+    }
+
+    #[test]
+    fn windows_keeps_the_home_directory_under_a_name_of_its_own() {
+        let profile = rooted("Users/ada");
+        let found = Home::find(&environment(&[("USERPROFILE", &profile)]));
+
+        if cfg!(windows) {
+            let home = found.expect("USERPROFILE was given");
+            assert_eq!(home.path(), Path::new(&profile).join(DIRECTORY));
+        } else {
+            // Everywhere else it is a variable crucible has never heard of, so
+            // an environment naming only it names no home at all.
+            assert!(found.is_err(), "USERPROFILE is not a home on this platform");
+        }
+    }
+
+    #[test]
+    fn a_shell_that_sets_home_and_one_that_does_not_land_in_the_same_directory() {
+        let user = rooted("home/ada");
+        let home = Home::find(&environment(&[
+            ("HOME", &user),
+            ("USERPROFILE", &rooted("Users/ada")),
+        ]))
+        .expect("HOME was given");
+
+        // Whichever shell started crucible, the answer is the same directory —
+        // which is the only reason to ask them in a fixed order at all.
+        assert_eq!(home.path(), Path::new(&user).join(DIRECTORY));
     }
 
     #[test]

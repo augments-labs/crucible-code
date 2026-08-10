@@ -10,7 +10,7 @@
 use crucible_core::Reach;
 
 use super::of;
-use crate::sample::Sample;
+use crate::sample::{Sample, symlink};
 
 /// A tree with something in it to move about.
 fn sample(name: &str) -> Sample {
@@ -145,7 +145,7 @@ fn a_path_that_lands_outside_is_proved_nothing_about() {
 
     // The far end of a symbolic link is where the change lands.
     let link = sample.root().join("link");
-    std::os::unix::fs::symlink(&outside, &link).expect("a link inside the workspace");
+    symlink(&outside, &link);
     assert!(asks(&sample, "rm link"));
 }
 

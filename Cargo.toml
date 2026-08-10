@@ -86,13 +86,38 @@ serde_json = "=1.0.151"
 # is the Unicode Annex #11 table as data, with no dependencies of its own.
 unicode-width = "=0.2.2"
 
+# Windows has no file mode, so the 0600 a session log is held at has to be
+# written as a DACL instead: one entry, for the account crucible is running as,
+# with the inheritance from the user profile switched off. Nothing in `std`
+# reaches that call and no safe wrapper is maintained — the one on crates.io was
+# last published in 2021, which is not what security-critical code should be
+# resting on. Already in the tree as a transitive dependency of `ureq` and
+# `ignore` for Windows targets, so it costs no crate that was not being compiled
+# already, and it is confined to `session/privacy/windows.rs`.
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
 # --- Encoded standards -------------------------------------------------------
 # These lint tables are the standard. A rule that cannot be expressed here, in
 # `clippy.toml`, or in `scripts/check.sh` is not enforceable and does not exist.
 # Every crate opts in with `[lints] workspace = true`.
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# `deny` rather than `forbid`, which it was until Windows became a target this
+# tree ships. Holding a session log out of another account's reach is a file
+# mode on Unix and a DACL on Windows, and the call that writes a DACL is FFI —
+# there is no safe way to make it, only a choice about where the unsafe lives.
+# `forbid` cannot be opted out of anywhere, so it would have moved that code
+# into a third-party crate rather than removed it, which is the same unsafe with
+# less review. `deny` keeps every file in this tree an error by default and
+# makes the one exception appear in the diff, spelled out, where it can be
+# argued with. Exactly one module opts in: `session/privacy/windows.rs`.
+unsafe_code = "deny"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"

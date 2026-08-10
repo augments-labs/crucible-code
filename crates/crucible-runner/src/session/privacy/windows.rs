@@ -1,0 +1,221 @@
+//! An access control list says it.
+//!
+//! Windows has no file mode. The nearest thing is a list with one entry — full
+//! control for the account crucible is running as — and the inheritance from the
+//! user profile switched off, so that what the profile hands Administrators and
+//! SYSTEM does not reach the transcript merely by being above it. That is
+//! stricter than the Unix side, where root reads everything regardless. An
+//! administrator can still take ownership and read it, which is the same escape
+//! by a longer route, and is the honest limit of what a file permission
+//! promises on either system.
+//!
+//! Written rather than read first. The Unix side compares the mode and calls
+//! `chmod` only when it is wrong, because `chmod` fails outright on a filesystem
+//! carrying no modes. Reading a list back to compare it costs more than writing
+//! one, and this runs once per session, so it simply writes.
+#![allow(
+    unsafe_code,
+    reason = "Setting an access control list is FFI, and the safe wrapper on \
+              crates.io has not been published since 2021. This is the one \
+              module in the tree that opts in; the workspace lint in Cargo.toml \
+              is `deny` rather than `forbid` so that it can, and so that it \
+              shows up in a diff when another tries."
+)]
+
+use std::ffi::c_void;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::os::windows::ffi::OsStrExt as _;
+use std::path::Path;
+
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
+use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
+use windows_sys::Win32::Security::{
+    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, DACL_SECURITY_INFORMATION,
+    GetLengthSid, GetTokenInformation, InitializeAcl, PROTECTED_DACL_SECURITY_INFORMATION, PSID,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+/// Makes the sessions directory, out of every other account's reach.
+pub(in crate::session) fn directory(path: &Path) -> Result<(), io::Error> {
+    std::fs::create_dir_all(path)?;
+
+    narrow(path)
+}
+
+/// Opens a log for appending, making it if it is not there, out of reach.
+pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
+    // Between these two calls the log carries what it inherited, which on Unix
+    // it never does — the mode is part of the call that creates it there. It
+    // costs nothing here: `directory` ran first and what it wrote admits this
+    // account alone, so a file that has not been narrowed yet is already behind
+    // a door that is shut.
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
+
+    narrow(path)?;
+
+    Ok(file)
+}
+
+/// Puts one entry on `path`, for this account, inheriting nothing.
+fn narrow(path: &Path) -> Result<(), io::Error> {
+    let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+    name.push(0);
+
+    let user = Sid::current()?;
+    let mut list = Acl::granting(user.as_psid())?;
+
+    // SAFETY: `name` is nul-terminated and outlives the call, and `list` is an
+    // initialized list whose header records the length actually allocated for
+    // it. The first two nulls are the owner and the group, which this does not
+    // set, and the last is the audit list, which it does not set either.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            list.as_mut_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+
+    if status == ERROR_SUCCESS {
+        return Ok(());
+    }
+
+    Err(io::Error::from_raw_os_error(
+        i32::try_from(status).unwrap_or(-1),
+    ))
+}
+
+/// This process's own user.
+struct Sid(Vec<u64>);
+
+impl Sid {
+    /// Reads it off the process token.
+    ///
+    /// `GetTokenInformation` will not say how much room it needs until it has
+    /// refused once, so it is called twice: the first call is the question and
+    /// the second is the answer. The buffer is `u64` rather than `u8` because
+    /// what lands in it is a struct holding a pointer, and a vector of bytes is
+    /// not aligned to hold one.
+    fn current() -> Result<Self, io::Error> {
+        let token = Token::open()?;
+        let mut wanted = 0_u32;
+
+        // SAFETY: a null buffer of length zero is how this call is asked for a
+        // size. It writes `wanted` and touches nothing else, and it is meant to
+        // fail — the size is the answer, not the return value.
+        unsafe {
+            GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &raw mut wanted);
+        }
+
+        let words = usize::try_from(wanted)
+            .unwrap_or(0)
+            .div_ceil(size_of::<u64>());
+        if words == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut held = vec![0_u64; words];
+
+        // SAFETY: `held` is at least `wanted` bytes, which is the size the call
+        // above asked for, and is aligned for what is written into it.
+        let answered = unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                held.as_mut_ptr().cast::<c_void>(),
+                wanted,
+                &raw mut wanted,
+            )
+        };
+
+        if answered == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(Self(held))
+    }
+
+    /// The identifier inside it.
+    fn as_psid(&self) -> PSID {
+        // SAFETY: the buffer holds a `TOKEN_USER` written by the call above,
+        // whose first field carries this pointer. What it points at sits in the
+        // same buffer, so it lives exactly as long as `self` does.
+        unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+    }
+}
+
+/// This process's access token, closed when it goes out of scope.
+struct Token(HANDLE);
+
+impl Token {
+    /// Opens it for reading.
+    fn open() -> Result<Self, io::Error> {
+        let mut handle: HANDLE = std::ptr::null_mut();
+
+        // SAFETY: `GetCurrentProcess` hands back a pseudo-handle that needs no
+        // closing, and `handle` is written only when this succeeds.
+        let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut handle) };
+
+        if opened == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(Self(handle))
+    }
+}
+
+impl Drop for Token {
+    fn drop(&mut self) {
+        // SAFETY: opened by `open`, closed once here, and not used after.
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// An access control list holding one entry and nothing else.
+struct Acl(Vec<u32>);
+
+impl Acl {
+    /// Full control for `sid`, and no other entry.
+    fn granting(sid: PSID) -> Result<Self, io::Error> {
+        // SAFETY: `sid` points into a token buffer this process owns and which
+        // outlives this call.
+        let identifier = unsafe { GetLengthSid(sid) };
+
+        // The header, one entry, and the identifier that entry ends with — less
+        // the placeholder word the entry declares where that identifier starts.
+        let bytes = size_of::<ACL>() + size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>()
+            + usize::try_from(identifier).unwrap_or(0);
+        let length = u32::try_from(bytes)
+            .map_err(|_| io::Error::other("an access control list larger than a word"))?;
+
+        // `u32` rather than `u8`, for the same reason the token buffer is not
+        // bytes: a list is read as words and has to be aligned as one.
+        let mut held = vec![0_u32; bytes.div_ceil(size_of::<u32>())];
+        let list = held.as_mut_ptr().cast::<ACL>();
+
+        // SAFETY: `list` points at `length` zeroed bytes, aligned for a list.
+        if unsafe { InitializeAcl(list, length, ACL_REVISION) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: `list` was initialized above with room for exactly this one
+        // entry and the identifier it carries.
+        if unsafe { AddAccessAllowedAce(list, ACL_REVISION, FILE_ALL_ACCESS, sid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(Self(held))
+    }
+
+    /// The list itself.
+    fn as_mut_ptr(&mut self) -> *mut ACL {
+        self.0.as_mut_ptr().cast::<ACL>()
+    }
+}
