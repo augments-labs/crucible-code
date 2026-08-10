@@ -6,10 +6,12 @@
 //! where nothing is ever redrawn: the prompt mark, written straight through.
 
 use std::fmt;
+use std::path::Path;
 
-use crucible_core::{Event, Sensitivity, StopReason, ToolCall, ToolOutput, Workspace};
+use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput, Workspace};
 use crucible_tui::{Renderer, Terminal, TerminalError};
 
+use super::remember::RememberError;
 use super::style::Style;
 
 /// Dim, then back. Only for text that is written once and never redrawn.
@@ -98,17 +100,38 @@ pub(crate) fn trouble<T: Terminal>(
 }
 
 /// Draws a permission question and leaves the cursor where the answer goes.
+///
+/// `rule` is what an answer of `always` would write down, and `None` where this
+/// call is one no rule can be minted for.
 pub(crate) fn question<T: Terminal>(
     renderer: &mut Renderer<T>,
     call: &ToolCall,
     sensitivity: &Sensitivity,
+    rule: Option<&Minted>,
     style: Style,
 ) -> Result<(), TerminalError> {
     let width = style.args(renderer.columns());
 
     renderer.settle()?;
     renderer.commit(&asked(call, sensitivity, width))?;
-    mark(renderer, "  [y]es  [a]lways  [n]o › ", style)
+    mark(renderer, answers(rule.is_some()), style)
+}
+
+/// Says what an answer of `always` left behind, or why it left nothing.
+///
+/// Drawn after the answer rather than offered before it: what a user needs is
+/// the rule and the file it went into, so they can find it again to take the
+/// permission back.
+pub(crate) fn remembered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    rule: &Minted,
+    outcome: Result<&Path, &RememberError>,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let width = style.output(renderer.columns());
+
+    renderer.settle()?;
+    renderer.commit(&kept(rule, outcome, width))
 }
 
 /// Writes something the user is expected to type after.
@@ -207,6 +230,46 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, width: usize) -> String {
         Sensitivity::SpawnsProcess { command } => {
             format!("? {} wants to run: {}", call.name, clipped(command, width))
         }
+    }
+}
+
+/// The answers on offer, and the mark to type one after.
+///
+/// `always` is missing where nothing can be written down. Offering a yes that
+/// outlives the process when no rule can be minted would be a promise crucible
+/// cannot keep, and the user would find out by the same question coming back
+/// tomorrow.
+fn answers(writable: bool) -> &'static str {
+    if writable {
+        "  [y]es  [s]ession  [a]lways  [n]o › "
+    } else {
+        "  [y]es  [s]ession  [n]o › "
+    }
+}
+
+/// The line for a rule that was written down, or that was not.
+///
+/// The rule is named either way, and clipped either way: it is minted from the
+/// call the model asked for, so its text is the model's, and an unclipped
+/// newline in it is a row the renderer did not count.
+fn kept(rule: &Minted, outcome: Result<&Path, &RememberError>, width: usize) -> String {
+    match outcome {
+        // The file as well as the rule, because between them they are what
+        // somebody opens and deletes to take the permission back.
+        Ok(file) => format!(
+            "· remembered {} in {}",
+            clipped(rule, width),
+            file.display()
+        ),
+
+        // The turn carries on and the engine still holds the answer for this
+        // session, so this line is the whole of what the user is told: the rule
+        // is here to be typed by hand, and the problem is why it has to be.
+        Err(problem) => format!(
+            "! {} was not remembered: {}",
+            clipped(rule, width),
+            clipped(problem, width)
+        ),
     }
 }
 

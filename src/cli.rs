@@ -13,6 +13,7 @@ mod converse;
 mod draw;
 #[cfg(test)]
 mod fake;
+mod remember;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -197,6 +198,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ),
         mode,
         cancel: cancel.clone(),
+
+        // The layer git ignores, resolved from the root the project's own
+        // files were read from — so what an answer of `always` writes is what
+        // the next crucible started here reads back.
+        remembering: crucible_config::local(workspace.root()),
     };
 
     draw::opening(&mut renderer, &model, &workspace)?;

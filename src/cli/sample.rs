@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_config::{Home, Settings};
-use crucible_core::Workspace;
+use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
 
 /// A tree under the system temporary directory, removed when this is dropped.
 pub(super) struct Sample {
@@ -32,7 +32,13 @@ impl Sample {
     }
 
     pub(super) fn workspace(&self) -> Workspace {
-        Workspace::open(self.base.join("work")).expect("the directory exists")
+        Workspace::open(self.root()).expect("the directory exists")
+    }
+
+    /// The directory crucible would have been started in, for the tests that
+    /// want the project's own files rather than a workspace.
+    pub(super) fn root(&self) -> PathBuf {
+        self.base.join("work")
     }
 
     /// The settings this workspace's own `.crucible/config.json` resolves to.
@@ -53,6 +59,36 @@ impl Sample {
         .expect("an absolute path was given");
 
         Settings::read(&home, &self.base.join("work")).expect("a document this test wrote")
+    }
+
+    /// What the permission engine makes of one call, with this tree's files
+    /// read from the start again.
+    ///
+    /// The question a rule written down has to answer is not what the text of
+    /// the file says but what the next crucible to start does with it, and
+    /// starting is what reads these files. Nobody is here to be asked, so a
+    /// call that still reaches the user comes back refused — which is how a
+    /// rule that landed is told from one that did not.
+    pub(super) fn settles(&self, call: &ToolCall, sensitivity: &Sensitivity) -> Settled {
+        struct Nobody;
+
+        impl Ask for Nobody {
+            fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+                (Verdict::Deny, Remember::Never)
+            }
+        }
+
+        // Pointed at a directory that does not exist, so nothing configured on
+        // the machine running this test can allow anything.
+        let home = Home::find(&|name: &str| {
+            (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
+        })
+        .expect("an absolute path was given");
+
+        Settings::read(&home, &self.root())
+            .expect("a file crucible wrote")
+            .permission(Mode::Ask)
+            .decide(call, sensitivity, &mut Nobody)
     }
 }
 

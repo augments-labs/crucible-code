@@ -62,6 +62,16 @@ impl Settings {
     }
 }
 
+/// Where a project keeps the settings git does not carry.
+///
+/// The one layer crucible itself writes to, so it is named here beside the
+/// layers it is read from rather than wherever the writing happens: a second
+/// answer to which file that is would be a rule written to a file nobody reads.
+#[must_use]
+pub fn local(workspace: &Path) -> PathBuf {
+    workspace.join(PROJECT).join(LOCAL)
+}
+
 /// The three files, in the order they merge: furthest first.
 fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
     let project = workspace.join(PROJECT);
@@ -122,6 +132,29 @@ mod tests {
             r#"{"providers":{"a":{"model":"local"}}}"#,
         );
         let settings = Settings::read(&home(&scratch), scratch.root()).expect("three files");
+        assert_eq!(settings.model("a"), Some("local"));
+    }
+
+    #[test]
+    fn the_file_crucible_writes_to_is_the_layer_git_ignores_and_not_the_one_that_travels() {
+        // `.crucible/config.json` is checked in, so a rule somebody answered
+        // `always` to on their own machine would reach everyone who clones.
+        // Watched through a document only the other layer accepts: an `env`
+        // name outside crucible's own is refused in the file that travels, so
+        // reading this back at all is where it landed.
+        let scratch = Scratch::new("layers-local");
+        let path = local(scratch.root());
+
+        fs::create_dir_all(path.parent().expect("a directory to write into"))
+            .expect("a writable temporary directory");
+        fs::write(
+            &path,
+            r#"{"env": {"WHOSE": "mine"}, "providers": {"a": {"model": "local"}}}"#,
+        )
+        .expect("a writable temporary directory");
+
+        let settings = Settings::read(&home(&scratch), scratch.root()).expect("a layer it reads");
+
         assert_eq!(settings.model("a"), Some("local"));
     }
 

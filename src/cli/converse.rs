@@ -12,15 +12,17 @@
 //! session up from wherever it stopped.
 
 use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::thread;
 
-use crucible_core::{Cancel, Event, Mode, Post as _, Remember, Verdict};
+use crucible_core::{Cancel, Event, Minted, Mode, Post as _, Remember, Verdict, narrowest};
 use crucible_runner::Runner;
-use crucible_tui::{Renderer, Terminal};
+use crucible_tui::{Renderer, Terminal, TerminalError};
 
 use super::Fatal;
 use super::draw;
+use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
 
@@ -41,6 +43,8 @@ pub(crate) struct Terms {
     pub(crate) mode: Mode,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// The file an answer of `always` writes its rule into.
+    pub(crate) remembering: PathBuf,
 }
 
 /// Reads prompts and takes turns until input ends.
@@ -151,14 +155,54 @@ fn take<T: Terminal>(
         match one {
             Seen::Turn(event) => draw::event(renderer, event, style)?,
             Seen::Question { call, sensitivity } => {
-                draw::question(renderer, &call, &sensitivity, style)?;
+                // Minted once and used twice. What the question offers has to
+                // be the rule that gets written, or the user agreed to one
+                // thing and crucible wrote down another.
+                let rule = narrowest(&call, &sensitivity);
+
+                draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
+                let answer = verdict(read(input)?.as_deref(), rule.is_some());
+
+                // Before the answer goes back, so the file is written by the
+                // time the tool it allowed runs. `always` is only ever answered
+                // where a rule was minted, so the two arriving together is one
+                // fact twice rather than a case that has to be handled.
+                if let (Some(rule), Remember::Always) = (&rule, answer.1) {
+                    keep(renderer, &terms.remembering, rule, style)?;
+                }
+
                 // A worker that stopped waiting has already denied itself.
-                let _ = reply.send(verdict(read(input)?.as_deref()));
+                let _ = reply.send(answer);
             }
         }
     }
 
     working.join().map_err(|_| Fatal::Lost)
+}
+
+/// Writes one rule down, and says what happened either way.
+///
+/// A failure here does not end the turn and does not change the answer. The
+/// engine treats `always` as at least a session's worth on its own, so what a
+/// failed write costs is the part that outlives the process — and the line
+/// drawn says which rule that was, so it can be added by hand.
+fn keep<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    file: &Path,
+    rule: &Minted,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let outcome = remember::allowing(file, rule);
+
+    draw::remembered(
+        renderer,
+        rule,
+        match &outcome {
+            Ok(()) => Ok(file),
+            Err(problem) => Err(problem),
+        },
+        style,
+    )
 }
 
 /// Reads one line, or `None` at end of input.
@@ -174,13 +218,19 @@ fn read(input: &mut dyn BufRead) -> Result<Option<String>, Fatal> {
 
 /// What an answer to a permission question means.
 ///
-/// Anything unrecognised is a refusal, and so is end of input. The two ways to
-/// say yes are both explicit; everything else, including a typo and a closed
-/// pipe, leaves the tool unrun.
-fn verdict(answer: Option<&str>) -> Answer {
+/// Anything unrecognised is a refusal, and so is end of input. Every way to say
+/// yes is explicit; everything else, including a typo and a closed pipe, leaves
+/// the tool unrun.
+///
+/// `writable` is whether a rule could be minted for this call. Where none can,
+/// `always` is neither offered nor accepted: an answer that cannot be written
+/// down would last a session while reading as though it lasted for ever, and
+/// the difference would only show up the next time crucible started.
+fn verdict(answer: Option<&str>, writable: bool) -> Answer {
     match answer.map(str::trim) {
         Some("y" | "Y" | "yes") => (Verdict::Allow, Remember::Never),
-        Some("a" | "A" | "always") => (Verdict::Allow, Remember::Session),
+        Some("s" | "S" | "session") => (Verdict::Allow, Remember::Session),
+        Some("a" | "A" | "always") if writable => (Verdict::Allow, Remember::Always),
         _ => (Verdict::Deny, Remember::Never),
     }
 }
