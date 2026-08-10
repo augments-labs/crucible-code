@@ -27,6 +27,14 @@ impl Answer {
             asked: 0,
         }
     }
+
+    fn for_ever() -> Self {
+        Self {
+            verdict: Verdict::Allow,
+            remember: Remember::Always,
+            asked: 0,
+        }
+    }
 }
 
 impl Ask for Answer {
@@ -244,6 +252,26 @@ fn a_command_with_an_uncovered_constituent_is_asked_about() {
 fn allowing_for_the_session_stops_the_asking() {
     let mut permission = Permission::new();
     let mut answer = Answer::for_the_session();
+    let call = call("write");
+
+    for _ in 0..3 {
+        assert!(
+            permission
+                .decide(&call, &writing("src/a.rs"), &mut answer)
+                .ran()
+        );
+    }
+
+    assert_eq!(answer.asked, 1);
+}
+
+#[test]
+fn allowing_for_ever_stops_the_asking_without_waiting_for_the_file() {
+    // The rule is written above this crate, and nothing re-reads configuration
+    // mid-session. An engine that only understood `Session` would ask again
+    // about the very call somebody had just said `always` to.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_ever();
     let call = call("write");
 
     for _ in 0..3 {

@@ -36,6 +36,7 @@ mod verdict;
 
 pub use grant::{Approved, Grant};
 pub use mode::Mode;
+pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
 pub use sensitivity::{Command, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
@@ -145,7 +146,14 @@ impl Permission {
         }
 
         let (verdict, remember) = ask.ask(call, sensitivity);
-        if verdict == Verdict::Allow && remember == Remember::Session {
+
+        // Matched rather than compared, so a duration added later stops the
+        // build here instead of being quietly read as "do not remember".
+        let lasts = match remember {
+            Remember::Never => false,
+            Remember::Session | Remember::Always => true,
+        };
+        if verdict == Verdict::Allow && lasts {
             self.remembered.insert(scope);
         }
 
