@@ -1,0 +1,12 @@
+# One byte sequence per file, on every machine that checks this tree out.
+#
+# `schema/crucible-code-schema.json` is generated and compared against what is
+# checked in, byte for byte, so that the file cannot drift from the declaration
+# it comes from. A Windows checkout with the usual `core.autocrlf` rewrites the
+# checked-in copy on the way to disk, which makes that comparison fail for a
+# reason that has nothing to do with the schema. `scripts/*.sh` would be handed
+# to a shell with carriage returns in it for the same reason.
+#
+# `eol=lf` rather than plain `text=auto`: the working tree is what those two
+# read, not the blob.
+* text=auto eol=lf

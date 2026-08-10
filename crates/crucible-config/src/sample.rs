@@ -8,6 +8,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// An absolute path, spelled the way this platform spells one.
+///
+/// Several settings take an absolute path and are checked with `is_absolute`,
+/// which a leading slash is not enough to satisfy on Windows — a path is
+/// absolute there only with a drive or a share in front of it. A fixture
+/// hard-coding a Unix spelling would be testing the wrong question on half the
+/// targets, and would fail on them for a reason the setting has nothing to do
+/// with.
+pub(crate) fn rooted(path: &str) -> String {
+    if cfg!(windows) {
+        format!(r"C:\{}", path.replace('/', r"\"))
+    } else {
+        format!("/{path}")
+    }
+}
+
 /// A tree that exists while the test does.
 pub(crate) struct Scratch {
     base: PathBuf,

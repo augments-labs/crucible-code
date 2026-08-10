@@ -2,12 +2,33 @@
 
 ## What it runs on
 
-Linux x86-64. The released binary is dynamically linked against glibc and needs
-**2.34 or newer** — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine;
-older than that has to build from source. It asks the system for nothing else:
-no certificate bundle, no shell, no runtime to install. `scripts/smoke.sh` is
-what keeps that true, by running each release in a sandbox holding the binary
-and its two libraries and nothing besides.
+Seven builds, one per release:
+
+| Platform | Artifact |
+| --- | --- |
+| Linux x86-64 | `crucible-<version>-linux-x86_64.tar.gz` |
+| Linux ARM64 | `crucible-<version>-linux-aarch64.tar.gz` |
+| macOS Apple silicon | `crucible-<version>-macos-aarch64.tar.gz` |
+| macOS Intel | `crucible-<version>-macos-x86_64.tar.gz` |
+| Windows x86-64 | `crucible-<version>-windows-x86_64.tar.gz`, `.exe` |
+| Windows ARM64 | `crucible-<version>-windows-aarch64.tar.gz`, `.exe` |
+| FreeBSD x86-64 | `crucible-<version>-freebsd-x86_64.tar.gz` |
+
+`SHA256SUMS` beside them covers all of it. Anything else builds from source.
+
+The Linux binaries are dynamically linked against glibc and need **2.34 or
+newer** — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older
+than that has to build from source. Every build asks the system for nothing
+else: no certificate bundle, no runtime to install. `scripts/smoke.sh` is what
+keeps that true, by running each release in a sandbox holding the binary and its
+two libraries and nothing besides.
+
+The one thing crucible does look for is a POSIX shell, and only when the `bash`
+tool runs a command. Every platform here has one except Windows, where it is
+whichever `sh.exe` is on the `PATH` — [Git for
+Windows](https://git-scm.com/download/win) carries one, and crucible finds that
+one where it is normally installed even when it is not on the `PATH`. Without
+one, everything except the `bash` tool works and that tool says what is missing.
 
 ## Build it
 

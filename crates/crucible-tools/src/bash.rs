@@ -18,6 +18,7 @@
 mod command;
 mod output;
 mod reach;
+mod shell;
 mod wrapper;
 
 use std::process::Stdio;
@@ -142,7 +143,14 @@ impl Tool for Bash {
             return Err(ToolError::Cancelled(NAME));
         }
 
-        let child = std::process::Command::new("sh")
+        let shell = shell::find().ok_or_else(|| {
+            io(
+                "no POSIX shell to run it with",
+                std::io::Error::new(std::io::ErrorKind::NotFound, shell::ABSENT),
+            )
+        })?;
+
+        let child = std::process::Command::new(&shell)
             .arg("-c")
             .arg(command)
             .current_dir(self.workspace.root())

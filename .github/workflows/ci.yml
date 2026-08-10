@@ -26,6 +26,30 @@ jobs:
       # version and components a contributor has — one pin, not two.
       - run: scripts/check.sh
 
+  platforms:
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    # The gate above is the whole standard and runs once, because formatting,
+    # the line-count cap and every grep over the tree answer the same on any
+    # machine. What does not is the code that is split by platform — a session
+    # log held private by an access control list rather than a mode, the shell
+    # the bash tool resolves, where the home directory is. This job is what
+    # executes that rather than merely compiling it.
+    #
+    # FreeBSD is not here. It builds in a virtual machine, which is minutes per
+    # run, and it shares the Unix half of every split with the two runners that
+    # are — the release workflow is where it gets its own build.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - run: cargo test --workspace --locked
+
   budgets:
     name: scripts/bench.sh
     runs-on: ubuntu-latest

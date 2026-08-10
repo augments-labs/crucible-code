@@ -13,7 +13,7 @@
 use std::fmt;
 use std::path::Path;
 
-use crate::workspace::{Workspace, WorkspacePath};
+use crate::workspace::{Workspace, WorkspacePath, written};
 
 /// What a call would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,20 +78,22 @@ impl Target {
     }
 
     /// Both spellings of a path already known to be one the workspace reaches.
+    ///
+    /// Through [`written`] on the way, which is the same door a listing leaves
+    /// by — the rule text and the line a search printed are meant to be one
+    /// string rather than two that started out alike.
     fn spelled(workspace: &Workspace, path: &Path) -> Self {
-        let below_root =
-            path.strip_prefix(workspace.root())
-                .ok()
-                .map(|below| match below.to_string_lossy() {
-                    // The root strips to nothing, and nothing is neither a path a
-                    // pattern can match nor a word a prompt can show. `.` is both,
-                    // and it is what somebody would have typed.
-                    below if below.is_empty() => ".".into(),
-                    below => below.into(),
-                });
+        let below_root = path.strip_prefix(workspace.root()).ok().map(|below| {
+            let below: Box<str> = written(below).into();
+
+            // The root strips to nothing, and nothing is neither a path a
+            // pattern can match nor a word a prompt can show. `.` is both, and
+            // it is what somebody would have typed.
+            if below.is_empty() { ".".into() } else { below }
+        });
 
         Self(Some(Named {
-            absolute: path.to_string_lossy().into(),
+            absolute: written(path).into(),
             below_root,
         }))
     }

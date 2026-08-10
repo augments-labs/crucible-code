@@ -48,6 +48,25 @@ impl Drop for Fixture {
     }
 }
 
+/// A symbolic link at `link` pointing at `target`, which need not exist.
+///
+/// Every link here stands in for one a cloned repository shipped, so the far end
+/// is always a file. Windows has a call per kind and no way to make one for a
+/// target that is not there yet, which is why the kind is in the name rather
+/// than read off the target.
+///
+/// Making one on Windows is a privilege: developer mode, or an elevated shell.
+/// Failing loudly is right — a link that was not made turns a containment test
+/// into one that passes because there was nothing to escape through.
+fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link);
+
+    made.expect("a symbolic link: on Windows this needs developer mode");
+}
+
 #[test]
 fn a_path_inside_the_workspace_resolves() {
     let f = Fixture::new("inside");
@@ -78,7 +97,7 @@ fn an_absolute_path_outside_is_rejected() {
 fn a_symlink_pointing_out_is_rejected() {
     let f = Fixture::new("symlink");
     let link = f.workspace.root().join("escape.txt");
-    std::os::unix::fs::symlink(f.outside.join("secret.txt"), &link).unwrap();
+    symlink(f.outside.join("secret.txt"), &link);
 
     // The text "escape.txt" says nothing about where it goes. Only the
     // resolved path does, which is why containment runs after
@@ -116,7 +135,7 @@ fn a_new_file_outside_is_not_creatable() {
 fn a_symlinked_leaf_pointing_out_is_not_creatable() {
     let f = Fixture::new("createlink");
     let link = f.workspace.root().join("notes.txt");
-    std::os::unix::fs::symlink(f.outside.join("secret.txt"), &link).unwrap();
+    symlink(f.outside.join("secret.txt"), &link);
 
     // The parent is inside and the name is inside, so the lexical path is
     // inside — and writing to it still lands outside. Only resolving the
@@ -129,7 +148,7 @@ fn a_symlinked_leaf_pointing_out_is_not_creatable() {
 fn a_dangling_symlinked_leaf_pointing_out_is_not_creatable() {
     let f = Fixture::new("createdangling");
     let link = f.workspace.root().join("fresh.txt");
-    std::os::unix::fs::symlink(f.outside.join("absent.txt"), &link).unwrap();
+    symlink(f.outside.join("absent.txt"), &link);
 
     // Nothing exists at the far end, so there is no resolved path to decide
     // containment on and the write is refused. Which is also what stops a
@@ -142,7 +161,7 @@ fn a_dangling_symlinked_leaf_pointing_out_is_not_creatable() {
 fn a_dangling_leaf_is_refused_for_the_reason_it_is_actually_refused_for() {
     let f = Fixture::new("createdanglingin");
     let link = f.workspace.root().join("fresh.txt");
-    std::os::unix::fs::symlink(f.workspace.root().join("absent.txt"), &link).unwrap();
+    symlink(f.workspace.root().join("absent.txt"), &link);
 
     // The target is inside the workspace, so "resolves outside" is a
     // sentence about this path that is not true — and the model is handed
@@ -159,7 +178,7 @@ fn a_dangling_leaf_is_refused_for_the_reason_it_is_actually_refused_for() {
 fn a_symlinked_leaf_pointing_back_inside_is_creatable() {
     let f = Fixture::new("createinside");
     let link = f.workspace.root().join("alias.txt");
-    std::os::unix::fs::symlink(f.workspace.root().join("kept.txt"), &link).unwrap();
+    symlink(f.workspace.root().join("kept.txt"), &link);
 
     let path = f.workspace.creatable("alias.txt").unwrap();
     assert!(path.as_path().starts_with(f.workspace.root()));

@@ -22,11 +22,13 @@ mod error;
 mod path;
 mod resolve;
 mod roots;
+mod spelling;
 #[cfg(test)]
 mod tests;
 
 pub use error::PathError;
 pub use path::WorkspacePath;
+pub use spelling::written;
 
 use roots::Roots;
 

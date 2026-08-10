@@ -51,6 +51,12 @@ one like `/etc/**` against the whole resolved path. A file in an
 so only an absolute pattern reaches it. In a file pattern `*` stops at `/`:
 `src/*` names the files in `src`, and `src/**` everything below it.
 
+A pattern separates directories with `/` on every platform, Windows included:
+write `read(src/**)` and `read(C:/Users/you/src/**)`. A backslash is the escape
+character in a pattern rather than a separator, so a Windows path spelled with
+one names something else. Crucible writes rules that way itself — a path in a
+question and a rule `always` writes down are both spelled with `/` there.
+
 **Command patterns** — `bash(cargo test)`, `bash(git *)` — are matched against
 each simple command a line decomposes into, with runs of whitespace collapsed,
 so `cargo   test` and `cargo test` are one thing to a rule. In a command

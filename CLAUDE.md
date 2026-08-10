@@ -9,31 +9,6 @@ lives in `Cargo.toml`
 `[workspace.lints]`, `clippy.toml`, and `scripts/check.sh` — those files are the
 standard, not a description of it.
 
-## Where agent instructions live
-
-Three homes. Which one a thing belongs in is decided by who has to be able to
-see it.
-
-| Kind | Home | Read by |
-| --- | --- | --- |
-| True whatever you are touching | this file | both harnesses, via the symlink |
-| Applies to one part of the tree | `.claude/rules/*.md`, with `paths:` frontmatter | Claude Code, when it opens a matching file |
-| A procedure with steps | `.claude/skills/<name>/SKILL.md`, symlinked from `.agents/skills/` | either harness, on demand |
-
-Codex concatenates `AGENTS.md` and resolves nothing else — no `@path` imports,
-no rules directory. So anything under `.claude/rules/` is amplification for one
-corner of the tree and may never be something a contributor has to know to be
-correct; that belongs here, where the symlink carries it to both. Keep this file
-under 200 lines — a longer one is followed less.
-
-There is one rules file per crate, carrying the obligations that only bind when
-you are inside it: what a new provider has to touch, what a new tool has to
-declare, which word is allowed where. They say what to *do*, not what the code
-already says about itself — a rule that restates a module doc is a second copy
-waiting to drift. `scripts/check.sh` checks each one still has `paths:`
-frontmatter aimed at something that exists, because a rule that loads for
-nothing fails by staying silent.
-
 ## Gate
 
 ```bash
@@ -88,8 +63,8 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
 5. **Clean-room.** No code, prompt text, UI string or asset copied or adapted
-   from Claude Code, jcode, opencode, codex or any other harness. This repo is
-   public; this is a legal boundary.
+   from Claude Code, jcode, opencode, codex or any other harness, except my own code.
+   This repo is public; this is a legal boundary.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
@@ -108,6 +83,11 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    Pinning is also what hides an advisory published afterwards, so `deny.toml`
    is scanned on a clock instead — that check cannot live in a script whose
    whole promise is the same answer for the same tree.
+9. **The changelog is brief.** An entry is a bold lead and a sentence or two —
+   what changed, and what it costs the person deciding whether to upgrade. Not
+   the reasoning, not the alternatives weighed, not the threat model. Those have
+   readers who asked for them: the commit message, the code comment, the docs
+   page.
 
 ## Vocabulary
 
@@ -148,12 +128,3 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   transcript grows. A full-screen renderer would move that job into this
   process; what it may not move is the budget, so it would owe a virtualized
   viewport in exchange. The budget is the rule; inline is how 0.0.x meets it.
-
-## Conventions
-
-- `0.0.x` formats are unstable. Config, session files and CLI flags may change
-  in any 0.0.x release with no deprecation period.
-- Commits: `feat(scope): …`, `fix(scope): …`, `chore(scope): …`.
-- Documentation carries no icons or emoji. A glyph crucible itself prints may of
-  course be quoted, because there it is output rather than decoration.
-- New ideas go to the parking lot, never silently into the current release.

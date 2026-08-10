@@ -5,6 +5,7 @@ use super::super::{Disposition, Rules};
 use super::*;
 use crate::ids::ToolId;
 use crate::tool::ToolArgs;
+use crate::workspace::Workspace;
 
 fn call(name: &str) -> ToolCall {
     ToolCall {
@@ -84,6 +85,64 @@ fn a_file_no_relative_spelling_can_name_is_written_absolutely() {
 }
 
 #[test]
+fn a_rule_minted_from_a_file_the_workspace_resolved_covers_that_file() {
+    // Through the resolution a real call goes through, rather than through
+    // `Target::at`, which is these tests spelling a path themselves. The
+    // separator is picked up there and nowhere else, and a rule minted from a
+    // path still spelled the way Windows spells one escapes it as a literal
+    // character — so this passes everywhere while saying `[\]` on Windows, and
+    // the file it was minted from stops matching the moment it is written down.
+    let base = std::env::temp_dir().join(format!("crucible-mint-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("src")).expect("a writable temporary directory");
+    std::fs::write(base.join("src").join("main.rs"), "").expect("a writable temporary directory");
+
+    let workspace = Workspace::open(&base).expect("a directory that is there");
+    let path = workspace
+        .existing("src/main.rs")
+        .expect("a file inside the workspace");
+    let target = Target::resolved(&workspace, &path);
+
+    // The other spelling, which a file in an extra directory has only, so no
+    // rule about one can be written any other way. Resolving a path on Windows
+    // returns it extended-length — `\\?\C:\...` — and a rule somebody wrote as
+    // `C:/...` is matched against whatever this holds.
+    let absolute = target.absolute().expect("a resolved path").to_owned();
+    assert!(
+        !absolute.starts_with("//?/"),
+        "{absolute} keeps the prefix resolving put on it"
+    );
+    assert!(
+        !absolute.contains('\\'),
+        "{absolute} keeps a separator a pattern reads as an escape"
+    );
+
+    let sensitivity = Sensitivity::MutatesFile { target };
+    let text = minted("edit", &sensitivity).expect("a resolved file can be written down");
+    assert!(
+        covers(&text, "edit", &sensitivity),
+        "{text} does not cover the file it was minted from"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A file whose name holds a backslash, where one can be named that.
+///
+/// Unix reads it as an ordinary character, so the escaping is exactly what
+/// keeps a rule minted from such a file from being a pattern. Windows reads it
+/// as a separator, no file may be named with one, and `Target` has turned it
+/// into `/` long before a rule is minted — so there is nothing to prove there
+/// and a case asserting otherwise would be asserting about a path that cannot
+/// occur.
+#[cfg(not(windows))]
+const BACKSLASH: [(&str, &str); 1] = [("src/back\\slash.rs", "src/backslash.rs")];
+
+/// Nothing: see the Unix half.
+#[cfg(windows)]
+const BACKSLASH: [(&str, &str); 0] = [];
+
+#[test]
 fn a_minted_rule_covers_what_it_came_from_and_nothing_beside_it() {
     // The property the whole module is for, and the one place the escaping is
     // observable: a file may be named with the characters a glob reads, and a
@@ -95,10 +154,9 @@ fn a_minted_rule_covers_what_it_came_from_and_nothing_beside_it() {
         ("src/a[xy].rs", "src/ax.rs"),
         ("src/a{x,y}.rs", "src/ax.rs"),
         ("src/a]b.rs", "src/ab.rs"),
-        ("src/back\\slash.rs", "src/backslash.rs"),
     ];
 
-    for (shown, sibling) in cases {
+    for (shown, sibling) in cases.into_iter().chain(BACKSLASH) {
         let sensitivity = writing(&format!("/w/{shown}"), Some(shown));
         let text = minted("edit", &sensitivity).expect("a resolved file can be written down");
 

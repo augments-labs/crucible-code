@@ -5,7 +5,7 @@
 //! temporary directory and removes it when it drops.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crucible_core::{
     Approved, Ask, Disposition, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs,
@@ -56,12 +56,23 @@ impl Sample {
     pub(crate) fn outside(&self, name: &str, text: &str) -> String {
         let path = self.base.join("outside").join(name);
         fs::write(&path, text).expect("a writable temporary directory");
-        path.display().to_string()
+        crucible_core::written(&path)
     }
 
     /// The workspace root, for the tests that need an absolute path into it.
     pub(crate) fn root(&self) -> &PathBuf {
         &self.root
+    }
+
+    /// The workspace root as the text of a call names it.
+    ///
+    /// Spelled the way [`Self::outside`] is, and for a reason that is about the
+    /// test rather than about paths: this goes into a JSON string literal, and a
+    /// backslash is what JSON escapes with. A Windows path dropped into one is
+    /// not a path but a parse error a few characters in, so the tool refuses the
+    /// arguments and never reaches the refusal the test is about.
+    pub(crate) fn named(&self) -> String {
+        crucible_core::written(&self.root)
     }
 }
 
@@ -69,6 +80,25 @@ impl Drop for Sample {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+
+/// A symbolic link at `link` pointing at `target`, which need not exist.
+///
+/// Every link here stands in for one a cloned repository shipped, so the far end
+/// is always a file. Windows has a call per kind and no way to make one for a
+/// target that is not there yet, which is why the kind is in the name rather
+/// than read off the target.
+///
+/// Making one on Windows is a privilege: developer mode, or an elevated shell.
+/// Failing loudly is right — a link that was not made turns a containment test
+/// into one that passes because there was nothing to escape through.
+pub(crate) fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link);
+
+    made.expect("a symbolic link: on Windows this needs developer mode");
 }
 
 /// A call the tool may run, permitted the only way one can be.

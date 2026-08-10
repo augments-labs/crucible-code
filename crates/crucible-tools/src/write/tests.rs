@@ -3,7 +3,7 @@
 use std::fs;
 
 use super::{Sensitivity, Tool, ToolArgs, ToolOutput, Write};
-use crate::sample::{Sample, allowed};
+use crate::sample::{Sample, allowed, symlink};
 
 fn write(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Write::new(sample.workspace());
@@ -60,7 +60,7 @@ fn the_directories_above_a_new_file_are_made() {
 #[test]
 fn a_path_outside_the_workspace_is_refused_without_writing_it() {
     let sample = Sample::new("write-escape");
-    let outside = format!("{}/../outside/secret.txt", sample.root().display());
+    let outside = format!("{}/../outside/secret.txt", sample.named());
 
     let output = write(
         &sample,
@@ -108,7 +108,7 @@ fn writing_through_a_symlink_that_leaves_the_workspace_is_refused() {
     // thing standing between the two.
     let sample = Sample::new("write-symlink");
     let outside = sample.outside("secret.txt", "original\n");
-    std::os::unix::fs::symlink(&outside, sample.root().join("notes.txt")).unwrap();
+    symlink(&outside, sample.root().join("notes.txt"));
 
     let output = write(&sample, r#"{"path":"notes.txt","content":"stolen\n"}"#);
 
@@ -124,7 +124,7 @@ fn creating_through_a_dangling_symlink_that_leaves_the_workspace_is_refused() {
     let sample = Sample::new("write-dangling");
     let outside = sample.outside("absent.txt", "");
     fs::remove_file(&outside).unwrap();
-    std::os::unix::fs::symlink(&outside, sample.root().join("fresh.txt")).unwrap();
+    symlink(&outside, sample.root().join("fresh.txt"));
 
     let output = write(&sample, r#"{"path":"fresh.txt","content":"stolen\n"}"#);
 

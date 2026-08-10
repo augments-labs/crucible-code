@@ -98,7 +98,7 @@ impl Tool for Glob {
             .filter_map(|entry| {
                 let relative = entry.path().strip_prefix(self.workspace.root()).ok()?;
                 glob.is_match(relative)
-                    .then(|| relative.display().to_string())
+                    .then(|| crucible_core::written(relative))
             })
             .collect();
 
@@ -241,7 +241,7 @@ mod tests {
     fn a_path_outside_the_workspace_is_refused() {
         let sample = tree("glob-escape");
         sample.outside("secret.txt", "");
-        let outside = format!("{}/../outside", sample.root().display());
+        let outside = format!("{}/../outside", sample.named());
 
         let output = glob(
             &sample,

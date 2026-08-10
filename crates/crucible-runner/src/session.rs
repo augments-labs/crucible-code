@@ -13,9 +13,8 @@
 //! `fsync`. Paying milliseconds per message to also survive a power cut is not
 //! the trade a coding session wants.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -23,6 +22,7 @@ use std::thread::{self, JoinHandle};
 
 use crucible_core::{Message, SessionId, Transcript, Workspace};
 
+mod privacy;
 mod replay;
 mod wire;
 
@@ -96,21 +96,7 @@ impl Session {
     ///
     /// [`SessionError`] when the directory or the file cannot be made.
     pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
-        // 0700 because the listing itself is worth keeping private: one entry
-        // per session says how often crucible ran and when. And a group-writable
-        // directory would let another account drop a log in for `--continue` to
-        // find, which is the injection the mode on the logs guards against from
-        // the other side.
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(directory)
-            .map_err(|source| SessionError::Directory {
-                at: directory.display().to_string().into(),
-                source,
-            })?;
-
-        narrow(directory, 0o700).map_err(|source| SessionError::Directory {
+        privacy::directory(directory).map_err(|source| SessionError::Directory {
             at: directory.display().to_string().into(),
             source,
         })?;
@@ -141,10 +127,11 @@ impl Session {
     ) -> Result<(Self, Transcript), SessionError> {
         // Narrowed here as well as in `start`, because this is the path that
         // reads what is in the directory rather than only adding to it. A
-        // group-writable directory lets another account drop in a log with this
-        // workspace in its header and a name that sorts late, and `--continue`
-        // replays whatever it finds as though the user had typed it.
-        narrow(directory, 0o700).map_err(|source| SessionError::Directory {
+        // directory another account can write to lets them drop in a log with
+        // this workspace in its header and a name that sorts late, and
+        // `--continue` replays whatever it finds as though the user had typed
+        // it.
+        privacy::directory(directory).map_err(|source| SessionError::Directory {
             at: directory.display().to_string().into(),
             source,
         })?;
@@ -152,17 +139,12 @@ impl Session {
         let path = newest(directory, workspace)?;
         let (transcript, settled_at) = replay(&path)?;
 
-        let file = open(&path)?;
-        // Before a single byte is appended: the log is opened for append, so
-        // whatever `replay` stopped at would otherwise have the next turn
-        // written straight onto the end of it. See [`replay`].
-        file.set_len(settled_at)
-            .map_err(|source| SessionError::Log {
-                at: path.display().to_string().into(),
-                source,
-            })?;
+        // Before a single byte is appended, and before the handle that will
+        // append them exists: whatever `replay` stopped at would otherwise have
+        // the next turn written straight onto the end of it. See [`replay`].
+        shorten(&path, settled_at)?;
 
-        Ok((Self::writing(path.clone(), file), transcript))
+        Ok((Self::writing(path.clone(), open(&path)?), transcript))
     }
 
     /// A session that records nothing, for a run that asked not to be kept.
@@ -288,55 +270,38 @@ fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, trouble: &Troubl
 
 /// Opens a log for appending, making it if it is not there.
 ///
-/// The mode is the user's alone. A log holds what was typed, what the model
-/// said, the contents of files that were read and everything a command printed
-/// — so the default 0644 would put a session on a shared machine within reach
-/// of anybody with an account on it, and a group-writable umask would let them
-/// append lines that `--continue` later replays as though the user had typed
-/// them.
+/// Reachable by this account and no other — see [`privacy`], which is where
+/// what that means on each platform is written down. A log holds what was
+/// typed, what the model said, the contents of the files that were read and
+/// everything a command printed.
 fn open(path: &Path) -> Result<File, SessionError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|source| SessionError::Log {
-            at: path.display().to_string().into(),
-            source,
-        })?;
-
-    narrow(path, 0o600).map_err(|source| SessionError::Log {
+    privacy::log(path).map_err(|source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
-    })?;
-
-    Ok(file)
+    })
 }
 
-/// Puts `path` at exactly `mode`, and only when it is not already there.
+/// Cuts a log back to `bytes`, through a handle opened for that and nothing
+/// else.
 ///
-/// `DirBuilderExt::mode` and `OpenOptionsExt::mode` apply only when the call
-/// creates the thing, so a sessions directory or a log left by an earlier build
-/// keeps whatever it was made with until something sets it.
-///
-/// Reading the mode first is what keeps the ordinary case — a directory already
-/// at 0700, every run after the first — from calling `chmod` at all. That call
-/// fails on a filesystem carrying no Unix modes, and a startup that dies over a
-/// permission which is already correct helps nobody. It is compared exactly and
-/// not as "at least this tight", because the two ways to be wrong both need
-/// fixing and only one of them is about secrecy: too open hands the transcript
-/// to every account on the machine, and too tight is a session that cannot
-/// start, reported against the log rather than the directory that refused.
-/// Where the mode really cannot be set, the error stands.
-///
-/// Setting it also clears any set-user, set-group or sticky bit, which is why
-/// the ones already correct are left alone rather than rewritten.
-fn narrow(path: &Path, mode: u32) -> Result<(), io::Error> {
-    if std::fs::metadata(path)?.permissions().mode() & 0o777 == mode {
-        return Ok(());
-    }
+/// Its own handle because of what appending is. On Windows a handle opened for
+/// append is granted the right to add to a file and not the right to change
+/// what is already in it — the two are separate rights, and shortening a file
+/// needs the second one. So the log is shortened through a handle that may
+/// write it, which is closed again before the one that may only append is
+/// opened.
+fn shorten(path: &Path, bytes: u64) -> Result<(), SessionError> {
+    let trouble = |source| SessionError::Log {
+        at: path.display().to_string().into(),
+        source,
+    };
 
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    File::options()
+        .write(true)
+        .open(path)
+        .map_err(trouble)?
+        .set_len(bytes)
+        .map_err(trouble)
 }
 
 #[cfg(test)]

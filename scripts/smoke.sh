@@ -24,7 +24,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 readonly REPO=augments-labs/crucible-code
-readonly TRIPLE=x86_64-unknown-linux-gnu
+
+# Which of the published artifacts this gate is about. `bwrap`, `ldd` and the
+# glibc floor below are all Linux, so this is the one it can run against — the
+# other six are proved by the release build and by CI, not from here.
+readonly PLATFORM=linux-x86_64
 
 offline=0
 target=
@@ -75,7 +79,9 @@ if [[ -f $target ]]; then
     echo "    a local file, so its checksum is not the published one"
     published=0
 else
-    name=crucible-$target-$TRIPLE.tar.gz
+    # An artifact is named for the version it holds, not for the tag it was cut
+    # from — the `v` belongs to git.
+    name=crucible-${target#v}-$PLATFORM.tar.gz
     command -v gh >/dev/null || {
         echo "    FAIL gh is not installed, and $target is not a file"
         exit 1
@@ -84,7 +90,7 @@ else
     # is not allowed to trust, because it is the thing every other gate already
     # used.
     gh release download "$target" --repo "$REPO" --dir "$work" \
-        --pattern "$name" --pattern "$name.sha256" --clobber
+        --pattern "$name" --pattern SHA256SUMS --clobber
     tarball=$work/$name
     published=1
 fi
@@ -93,7 +99,9 @@ printf '    %s\n' "$tarball"
 
 echo "==> checksum"
 if ((published)); then
-    (cd "$(dirname "$tarball")" && sha256sum -c "$(basename "$tarball").sha256")
+    # One file for the whole release rather than one beside each artifact, so
+    # every line in it names something this gate did not download.
+    (cd "$(dirname "$tarball")" && sha256sum --ignore-missing -c SHA256SUMS)
 else
     echo "    SKIP no published checksum for a local file"
 fi

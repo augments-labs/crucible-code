@@ -42,7 +42,7 @@ the workspace ships as one unit and there is no per-crate version to drift.
    release workflow does and put it somewhere that holds nothing else:
 
    ```bash
-   name=crucible-v$VERSION-x86_64-unknown-linux-gnu
+   name=crucible-$VERSION-linux-x86_64
    install -Dm755 target/release/crucible "$name/crucible"
    install -Dm644 README.md LICENSE -t "$name/"
    tar czf "$name.tar.gz" "$name"
@@ -96,23 +96,38 @@ the dependency set changes, so on a release that touches no dependency it never
 reports — and a required check that never reports leaves the pull request
 pending for ever rather than failing it.
 
-Pushing the tag is the trigger. The release workflow builds the binary, attaches
-it with its checksum, and opens the GitHub Release with the changelog section as
-its body.
+Pushing the tag is the trigger. The release workflow builds every artifact,
+checksums them all into one file, and opens the GitHub Release with the changelog
+section as its body.
 
 ## Artifacts
 
-| Target | Artifact |
-| --- | --- |
-| `x86_64-unknown-linux-gnu` | `crucible-v<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Platform | Target | Artifact |
+| --- | --- | --- |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | `crucible-<version>-linux-x86_64.tar.gz` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | `crucible-<version>-linux-aarch64.tar.gz` |
+| macOS Apple silicon | `aarch64-apple-darwin` | `crucible-<version>-macos-aarch64.tar.gz` |
+| macOS Intel | `x86_64-apple-darwin` | `crucible-<version>-macos-x86_64.tar.gz` |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | `crucible-<version>-windows-x86_64.tar.gz`, `.exe` |
+| Windows ARM64 | `aarch64-pc-windows-msvc` | `crucible-<version>-windows-aarch64.tar.gz`, `.exe` |
+| FreeBSD x86-64 | `x86_64-unknown-freebsd` | `crucible-<version>-freebsd-x86_64.tar.gz` |
 
-Each archive ships beside a `.sha256` file. Builds are release profile — fat
-LTO, one codegen unit, symbols stripped — the same settings every published
-measurement was taken under, so the numbers in the changelog describe the binary
-people actually download.
+An artifact is named for the version it holds rather than for the tag it was cut
+from, so there is no `v` in it — the `v` belongs to git. The triple is what the
+build is; the name is what somebody has to recognise in a list, and the two are
+not the same job.
 
-Other targets are added when someone runs them; a platform nobody tests is a
-promise nobody keeps.
+Each Windows target ships the bare `.exe` beside its archive, because the usual
+way to get one on Windows is to download it and run it.
+
+One `SHA256SUMS` covers the lot, rather than a file beside each artifact: a
+single line to publish and a single file to check against.
+
+Every target builds on a runner of its own architecture, FreeBSD in a virtual
+machine and the other six natively — nothing here is cross-compiled. Builds are
+release profile — fat LTO, one codegen unit, symbols stripped — the same
+settings every published measurement was taken under, so the numbers in the
+changelog describe the binary people actually download.
 
 ## After the tag
 
@@ -124,9 +139,11 @@ promise nobody keeps.
    ```
 
    Given a tag rather than a file it downloads the release, checks the tarball
-   against the published `.sha256`, and runs everything from step 5 on that copy
-   — so a build that was fine locally and an upload that went wrong are told
-   apart rather than averaged.
+   against the published `SHA256SUMS`, and runs everything from step 5 on that
+   copy — so a build that was fine locally and an upload that went wrong are told
+   apart rather than averaged. It is the Linux x86-64 artifact it looks for: the
+   sandbox it runs in is a Linux one, and the other six are proved by their own
+   native build and by CI rather than from here.
 2. **If the schema changed, republish it.**
 
    ```bash

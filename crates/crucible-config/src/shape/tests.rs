@@ -70,6 +70,13 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
     assert!(!found.is_empty(), "no field offers an example");
 
     for (path, field) in found {
+        // The one field whose examples are absolute paths, which is a thing
+        // spelled differently per platform. It offers a spelling each and only
+        // this platform's can be read back here — the other is a valid example
+        // for the machine it is meant for, not a defect.
+        let spellings = path == ["permissions", "extraDirectories"];
+        let mut accepted = 0;
+
         for example in field.examples {
             // Through `Document::parse`, not through a narrower reader: an
             // example has to survive the shape walk, the absolute-path check
@@ -78,13 +85,27 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
             let text = written(&path, &field.shape, example);
             let read = Document::parse(&text, "config.json", Origin::ProjectLocal);
 
+            if read.is_ok() {
+                accepted += 1;
+                continue;
+            }
+
             assert!(
-                read.is_ok(),
+                spellings,
                 "{}: {example} — {:?}",
                 path.join("."),
                 read.err()
             );
         }
+
+        // Without this a field could offer nothing but other platforms'
+        // spellings and pass in silence, which is the failure this test exists
+        // to catch, arrived at from the other side.
+        assert!(
+            accepted > 0,
+            "{}: no example this platform accepts",
+            path.join(".")
+        );
     }
 }
 

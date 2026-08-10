@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_core::{Message, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+use serde_json::Value;
 
 use super::{Session, SessionError};
 use crate::sample::Sample;
@@ -42,111 +43,6 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);
     path
-}
-
-#[test]
-fn a_log_is_readable_only_by_the_user_who_started_it() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // A transcript carries what was typed, the contents of files that were
-    // read and everything a command printed. On a shared machine the default
-    // 0644 hands all of it to anyone with an account.
-    let sample = Sample::new("session-mode");
-    let path = record(&sample, &[said("hello")]);
-
-    let mode = fs::metadata(&path).unwrap().permissions().mode();
-    assert_eq!(mode & 0o077, 0, "log is {:o}", mode & 0o777);
-
-    let directory = fs::metadata(sample.logs()).unwrap().permissions().mode();
-    assert_eq!(directory & 0o077, 0, "directory is {:o}", directory & 0o777);
-}
-
-#[test]
-fn a_sessions_directory_left_open_is_narrowed_before_anything_is_written_to_it() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // `DirBuilderExt::mode` applies only when the call creates the directory, so
-    // one made by an earlier build — or by a hand running `mkdir -p` — keeps
-    // whatever the umask gave it, and every log written into it afterwards sits
-    // somewhere the whole machine can list.
-    let sample = Sample::new("session-widened-directory");
-    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o755)).expect("a temporary dir");
-
-    record(&sample, &[said("hello")]);
-
-    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
-    assert_eq!(mode & 0o077, 0, "directory is {:o}", mode & 0o777);
-}
-
-#[test]
-fn a_sessions_directory_left_open_is_narrowed_when_a_session_is_continued() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // `start` is not the only way in. A run that goes straight to `--continue`
-    // never reaches it, so a directory widened since the last session stays
-    // widened for the whole of this one — and this is the path that goes
-    // looking in it, so another account's log is what `--continue` might find.
-    let sample = Sample::new("session-widened-directory-continued");
-    record(&sample, &[said("hello")]);
-    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o755)).expect("a temporary dir");
-
-    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-    drop(session);
-
-    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
-    assert_eq!(mode & 0o077, 0, "directory is {:o}", mode & 0o777);
-}
-
-#[test]
-fn a_sessions_directory_too_tight_to_use_is_repaired_rather_than_left_broken() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // Nothing is exposed by a directory the owner cannot write to, so it is not
-    // a security problem — it is a session that cannot start, reported against
-    // the log rather than against the directory that actually refused.
-    let sample = Sample::new("session-tight-directory");
-    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o500)).expect("a temporary dir");
-
-    record(&sample, &[said("hello")]);
-
-    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
-    assert_eq!(mode & 0o777, 0o700, "directory is {:o}", mode & 0o777);
-}
-
-#[test]
-fn a_mode_that_is_already_right_is_not_written_again() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // The whole point of reading the mode first is the `chmod` that then does
-    // not happen — on a filesystem carrying no Unix modes that call fails, and
-    // a startup dying over a permission which is already correct helps nobody.
-    // A `chmod` leaves no trace a test can read, so the sticky bit stands in for
-    // it: writing 0700 over this directory would take it off.
-    let sample = Sample::new("session-untouched-directory");
-    fs::set_permissions(sample.logs(), fs::Permissions::from_mode(0o1700))
-        .expect("a temporary dir");
-
-    record(&sample, &[said("hello")]);
-
-    let mode = fs::metadata(sample.logs()).unwrap().permissions().mode();
-    assert_eq!(mode & 0o7777, 0o1700, "directory is {:o}", mode & 0o7777);
-}
-
-#[test]
-fn a_log_left_open_is_narrowed_when_it_is_continued() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    // Same for the log: `OpenOptionsExt::mode` says nothing about a file that
-    // already exists, and `--continue` is exactly the path that opens one.
-    let sample = Sample::new("session-widened-log");
-    let path = record(&sample, &[said("hello")]);
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("a temporary file");
-
-    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-    drop(session);
-
-    let mode = fs::metadata(&path).unwrap().permissions().mode();
-    assert_eq!(mode & 0o077, 0, "log is {:o}", mode & 0o777);
 }
 
 #[test]
@@ -214,9 +110,21 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
     let written = fs::read_to_string(path).expect("the log");
     let header = written.lines().next().expect("a header");
 
-    assert!(header.contains(r#""format":1"#), "{header}");
-    assert!(
-        header.contains(&sample.workspace().root().display().to_string()),
+    // Read back as what it is rather than searched as text. A path is written
+    // into JSON escaped, so on a platform whose separator is the escape
+    // character a substring check compares the two spellings of the same path
+    // and reports the difference as a missing workspace.
+    let header: Value = serde_json::from_str(header).expect("a header line of JSON");
+    let root = sample.workspace().root().display().to_string();
+
+    assert_eq!(
+        header.get("format").and_then(Value::as_u64),
+        Some(1),
+        "{header}"
+    );
+    assert_eq!(
+        header.get("workspace").and_then(Value::as_str),
+        Some(root.as_str()),
         "{header}"
     );
 }
@@ -263,14 +171,10 @@ fn continuing_a_session_appends_to_the_same_log() {
 #[test]
 fn the_newest_session_for_this_workspace_is_the_one_continued() {
     let sample = Sample::new("session-newest");
-    let workspace = sample.workspace().root().display().to_string();
 
     sample.plant(
         "0000000000001-000001",
-        &[
-            format!(r#"{{"format":1,"session":"old","workspace":"{workspace}"}}"#),
-            r#"{"user":"long ago"}"#.to_owned(),
-        ],
+        &[sample.header(1, "old"), r#"{"user":"long ago"}"#.to_owned()],
     );
     record(&sample, &[said("just now")]);
 

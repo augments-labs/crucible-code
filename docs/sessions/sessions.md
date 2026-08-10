@@ -84,20 +84,26 @@ The new location wins as soon as it exists, so that is the whole migration.
 
 ## Who can read them
 
-Logs are written `0600` and their directory `0700` — yours alone. A transcript
-holds what you typed, what the model said, the contents of every file that was
-read and everything a command printed, so on a shared machine the usual `0644`
-would hand all of it to anyone with an account. The directory is closed for the
-matching reason from the other side: somewhere another account can write is
-somewhere a log can be *planted* for `--continue` to replay back to the model as
-though you had typed it.
+Yours alone. A transcript holds what you typed, what the model said, the
+contents of every file that was read and everything a command printed, so on a
+shared machine the usual default would hand all of it to anyone with an account.
+The directory is closed for the matching reason from the other side: somewhere
+another account can write is somewhere a log can be *planted* for `--continue` to
+replay back to the model as though you had typed it.
+
+On Unix that is a mode: `0600` on a log and `0700` on the directory. On Windows
+it is an access control list naming the account crucible is running as and
+nothing else, with the inheritance from your user profile switched off — so what
+that profile hands Administrators and SYSTEM does not reach a transcript merely
+by sitting above it. An administrator can still take ownership and read it, which
+is the same escape by a longer route and the honest limit of what a file
+permission promises on either system.
 
 Both are set on every start and every `--continue`, not only when they are
 created, because a directory made by an earlier build or by hand keeps whatever
-your umask gave it — and `--continue` is the run that goes looking in it. One
-already at the right mode is left alone, so this costs nothing on the ordinary
-path. A path that cannot be set stops the run and says so, rather than carrying
-on and writing a transcript somewhere the whole machine can read.
+it was made with — and `--continue` is the run that goes looking in it. A path
+that cannot be set stops the run and says so, rather than carrying on and writing
+a transcript somewhere the whole machine can read.
 
 ## What is in a file
 

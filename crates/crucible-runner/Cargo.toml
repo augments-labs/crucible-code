@@ -20,6 +20,11 @@ serde_json.workspace = true
 # `SessionError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
 
+# The DACL that holds a session log private on Windows. Unix does the same job
+# with a file mode and needs nothing.
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 # A log that has stopped working cannot be made from outside this crate: every
 # public way in ends at a real file, and a real file on a real disk does not
 # fail on request. The wiring in the binary that reports such a failure is

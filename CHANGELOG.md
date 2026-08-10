@@ -4,11 +4,26 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **`0.0.x` is unstable.** Configuration files, session files and the
-> command-line surface may change in any `0.0.x` release with no deprecation
-> period. Nothing in this line carries a compatibility guarantee.
-
 ## [Unreleased]
+
+## [0.0.7] - 2026-08-10
+
+### Added
+
+- **Seven platforms.** Linux, macOS and Windows on x86-64 and ARM64, and FreeBSD
+  on x86-64, each built on a machine of its own architecture. Windows is a real
+  target rather than one that merely compiles: a session log is held private with
+  an access control list, the home directory falls back to `USERPROFILE`, and the
+  `bash` tool runs commands through an `sh.exe` — Git for Windows carries one, and
+  the tool says what to install when there is none.
+
+### Changed
+
+- **An artifact is named for its platform rather than its target triple.**
+  `crucible-0.0.7-linux-x86_64.tar.gz`, with no `v` in it, in place of
+  `crucible-v0.0.6-x86_64-unknown-linux-gnu.tar.gz`. One `SHA256SUMS` covers the
+  release instead of a `.sha256` beside each archive. Anything that fetches a
+  release by name needs updating.
 
 ## [0.0.6] - 2026-08-10
 
@@ -409,7 +424,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...v0.0.4
