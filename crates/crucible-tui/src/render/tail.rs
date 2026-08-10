@@ -15,10 +15,7 @@
 
 use std::collections::VecDeque;
 
-use unicode_width::UnicodeWidthChar;
-
-/// How far a tab advances, matching what terminals do.
-const TAB_STOP: usize = 8;
+use crate::width::{self, EMOJI_PRESENTATION};
 
 /// The wrapped, bounded live region.
 #[derive(Debug)]
@@ -65,6 +62,7 @@ impl Tail {
                 // output. Dropping them is what stops a blank row per line.
                 '\r' => {}
                 '\t' => self.advance_to_tab_stop(),
+                EMOJI_PRESENTATION => self.place_emoji_presentation(),
                 _ => self.place(character),
             }
         }
@@ -105,7 +103,7 @@ impl Tail {
         self.rows.len()
     }
 
-    /// Whether the tail holds nothing but an empty row.
+    /// Whether the tail holds nothing but empty rows.
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(|row| row.text.is_empty())
@@ -122,10 +120,9 @@ impl Tail {
 
     /// Puts one character on the current row, wrapping first if it will not fit.
     fn place(&mut self, character: char) {
-        // Zero for combining marks, two for the wide scripts, `None` for
-        // controls — which are dropped, because a stray escape byte from a tool
-        // would move a cursor this renderer believes it is tracking.
-        let Some(advance) = character.width() else {
+        // Zero for combining marks, two for the wide scripts, and nothing at
+        // all for a control character, which is dropped rather than drawn.
+        let Some(advance) = width::advance(character) else {
             return;
         };
 
@@ -139,12 +136,45 @@ impl Tail {
         }
     }
 
+    /// Puts the emoji presentation selector down, taking the column it makes
+    /// the character before it worth. A row counted a column short is a row the
+    /// terminal wraps itself, leaving the cursor a row below where the next
+    /// frame rewinds to.
+    fn place_emoji_presentation(&mut self) {
+        let current = self.rows.back();
+        let base = current.and_then(|row| row.text.chars().next_back());
+
+        if !width::widens(base) {
+            self.place(EMOJI_PRESENTATION);
+            return;
+        }
+
+        if self.current_width() + 1 > self.width {
+            // The pair moves down together: a selector parted from its base
+            // stops asking for anything, and the base left behind would draw
+            // narrow on a row this tail had already counted wide.
+            if let Some(row) = self.rows.back_mut() {
+                row.text.pop();
+                row.width = row.width.saturating_sub(1);
+            }
+            self.rows.push_back(Row::default());
+            if let Some(base) = base {
+                self.place(base);
+            }
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            row.text.push(EMOJI_PRESENTATION);
+            row.width += 1;
+        }
+    }
+
     /// Pads with spaces to the next tab stop, wrapping if the stop is past the
     /// edge. Expanded here rather than passed through so the width this tail
     /// reports is the width the terminal will show.
     fn advance_to_tab_stop(&mut self) {
         let current = self.current_width();
-        let target = (current / TAB_STOP + 1) * TAB_STOP;
+        let target = width::tab_stop(current);
 
         if target > self.width {
             self.rows.push_back(Row::default());
@@ -165,6 +195,10 @@ impl Tail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One column as text, two once the selector follows it. Spelled out
+    /// because a selector is invisible in a source file.
+    const WARNING: &str = "\u{26A0}\u{FE0F}";
 
     /// Pushes and returns what overflowed, so a test reads as one call.
     fn push(tail: &mut Tail, delta: &str) -> Vec<String> {
@@ -233,6 +267,29 @@ mod tests {
         let mut tail = Tail::new(2, 5);
         push(&mut tail, "e\u{301}x");
         assert_eq!(rows(&tail), ["e\u{301}x"]);
+    }
+
+    #[test]
+    fn an_emoji_presentation_selector_takes_the_column_it_asks_for() {
+        // The base is one column alone and two once the selector follows, so
+        // three do not fit on a four-column row. Counted per character it is 45
+        // of them on an 80-column row the terminal lays out at 90.
+        let mut tail = Tail::new(4, 5);
+        push(&mut tail, &WARNING.repeat(3));
+
+        assert_eq!(rows(&tail), [WARNING.repeat(2), WARNING.to_owned()]);
+    }
+
+    #[test]
+    fn a_selector_arriving_in_the_next_delta_still_widens_the_pair() {
+        // Providers split wherever the socket did, so the row was measured
+        // before the selector turned up. The pair moves down together: one
+        // parted from its base stops being a selector at all.
+        let mut tail = Tail::new(3, 5);
+        push(&mut tail, "ab\u{26A0}");
+        push(&mut tail, "\u{FE0F}");
+
+        assert_eq!(rows(&tail), ["ab", WARNING]);
     }
 
     #[test]

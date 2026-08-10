@@ -281,7 +281,6 @@ name = "crucible-tui"
 version = "0.0.7"
 dependencies = [
  "crossterm",
- "crucible-core",
  "thiserror",
  "unicode-width",
 ]

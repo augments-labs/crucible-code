@@ -13,14 +13,17 @@
 //! the alternate screen makes this process the owner of scrollback, which is a
 //! job the terminal is doing today.
 //!
-//! Depends on `crucible-core` alone. It renders domain types and never calls a
-//! tool or a provider.
+//! Depends on no other crate in this workspace. What reaches it is already
+//! text, so it never names a domain type, calls a tool or asks a provider for
+//! anything.
 
 mod render;
 mod terminal;
 mod title;
+mod width;
 
 pub use render::Renderer;
 pub use terminal::system::SystemTerminal;
 pub use terminal::{Recording, Size, Terminal, TerminalError};
 pub use title::{TITLE, Title, TitleError};
+pub use width::cut;

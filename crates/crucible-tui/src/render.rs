@@ -33,8 +33,12 @@ pub struct Renderer<T: Terminal> {
     /// Rows of tail currently on screen. What the next frame must move back
     /// over, and the only piece of screen state this process tracks.
     drawn: usize,
-    /// Columns the tail is currently wrapped for.
-    columns: usize,
+    /// The size the tail is currently wrapped and bounded for.
+    ///
+    /// Rows as much as columns: the bound is the height, so a window that only
+    /// got shorter would otherwise leave the tail holding more rows than there
+    /// is screen to show them, and every rewind would reach above the top.
+    size: Size,
     /// Reused across frames: a frame is one string, so it is one write.
     frame: Frame,
     /// Reused across frames: rows leaving the tail on their way to scrollback.
@@ -62,7 +66,7 @@ impl<T: Terminal> Renderer<T> {
             finished: Tail::new(size.columns, 1),
             terminal,
             drawn: 0,
-            columns: size.columns,
+            size,
             frame: Frame::new(),
             overflow: Vec::new(),
         }
@@ -109,7 +113,12 @@ impl<T: Terminal> Renderer<T> {
 
         if self.tail.is_empty() {
             // Nothing live is worth keeping, but the region may still be on
-            // screen from a frame that only committed rows.
+            // screen from a frame that only committed rows. The tail is emptied
+            // whichever way this ends, so both paths leave the same thing
+            // behind: empty rows kept here would be drawn again by the next
+            // frame and settle into the record as blank lines nobody wrote.
+            self.tail.clear();
+
             if self.drawn > 0 {
                 self.erase()?;
                 self.terminal.flush()?;
@@ -134,38 +143,73 @@ impl<T: Terminal> Renderer<T> {
 
     /// Re-wraps for a terminal the user resized.
     ///
-    /// The rows already on screen were wrapped for the old width, so what is
-    /// live is dropped rather than redrawn wrongly: it is at most one screen,
-    /// and the model is still streaming into it.
+    /// The rows already on screen were wrapped for the old width, so on a
+    /// terminal what is live is dropped rather than redrawn wrongly: it is at
+    /// most one screen, and the model is still streaming into it. Height counts
+    /// as much as width, because the height is what bounds the tail.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn resized(&mut self) -> Result<(), TerminalError> {
         let size = self.terminal.size().unwrap_or(Size::FALLBACK);
-        if size.columns == self.columns {
+        if size == self.size {
             return Ok(());
         }
 
         // The size comes from the terminal, not from the stream, so a run whose
         // output is redirected still sees the window change. There is no live
         // region in a pipe to wipe, and an erase sequence written into one ends
-        // up in whatever kept the output. The rewrap below still applies.
+        // up in whatever kept the output -- but neither can a pipe take a row
+        // back, so what is live there is written out instead of dropped. The
+        // rewrap below applies either way.
         if self.terminal.is_terminal() {
             self.erase()?;
             self.terminal.flush()?;
+        } else {
+            self.settle_plain()?;
         }
 
-        self.columns = size.columns;
+        self.size = size;
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
         self.drawn = 0;
         Ok(())
     }
 
-    /// The terminal underneath, for the wiring that owns it.
-    pub fn terminal(&mut self) -> &mut T {
-        &mut self.terminal
+    /// Ends the live region and writes `text` exactly as given.
+    ///
+    /// Nothing is added: a prompt mark the user types after wants no line
+    /// ending, and a caller that wants the row to end puts one in `text`. The
+    /// bytes are not counted either, which is safe because the settle above has
+    /// just left nothing live -- no frame will ever move back over this row.
+    /// That is also what makes colour the caller's to decide and to put into
+    /// `text`: escape bytes in a row that is never redrawn cannot cost a column
+    /// this renderer is counting.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn prompt(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.settle()?;
+        self.terminal.write(text)?;
+        self.terminal.flush()
+    }
+
+    /// Whether output is going to a terminal rather than a pipe or a file.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        self.terminal.is_terminal()
+    }
+
+    /// The terminal underneath, to read rather than to write on.
+    ///
+    /// Shared and not exclusive: a write made through here would land in the
+    /// middle of the live region, and the count of what is on screen would be
+    /// wrong with nothing in this crate able to notice. [`Renderer::prompt`] is
+    /// how a caller puts bytes down; this is how it asks what came back.
+    pub fn terminal(&self) -> &T {
+        &self.terminal
     }
 
     /// How wide the terminal was when this last looked.
@@ -176,7 +220,7 @@ impl<T: Terminal> Renderer<T> {
     /// what keeps it true.
     #[must_use]
     pub fn columns(&self) -> usize {
-        self.columns
+        self.size.columns
     }
 
     /// One frame, assembled by [`screen`].
