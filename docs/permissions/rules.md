@@ -71,6 +71,34 @@ without a question. So `deny read(.env)` refuses silently even under
 wrote it asked not to have that read go through unwatched, and refusing is the
 only remaining answer that respects that.
 
+## Searching
+
+A search is settled once, about the directory it walks. `grep` and `glob` name
+that directory and not the files under it, because which files there are is
+what the walk is for. A rule about a file below it therefore does not refuse
+the call — the call runs, and the walk skips the file.
+
+```json
+{
+  "permissions": {
+    "deny": ["grep(private/**)", "glob(private/**)"]
+  }
+}
+```
+
+That searches the rest of the workspace and returns nothing from `private`,
+not even that a file is there. An `ask` rule reads the same way, since an `ask`
+about a read is already a refusal.
+
+A rule names one tool, so each tool that can reach a file needs its own.
+`deny read(private/**)` stops `read` and leaves `grep` free to print the lines
+of the same file. Keeping something out of every answer means naming every tool
+that could put it there — `read`, `grep` and `glob` each on its own line.
+
+`bash` is not one of them. A command is matched against what will run rather
+than against the paths it will touch, so a file pattern says nothing about a
+shell; what bounds a command is a command pattern and the [mode](modes.md).
+
 ## Layers add, they never replace
 
 Rule lists concatenate across the [configuration

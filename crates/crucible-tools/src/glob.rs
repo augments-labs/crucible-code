@@ -80,18 +80,21 @@ impl Tool for Glob {
             return Ok(ToolOutput::failed(format!("{pattern} is not a valid glob")));
         };
 
-        let from = match args.optional_text("path")? {
-            None => self.workspace.root().to_path_buf(),
-            Some(requested) => match self.workspace.existing(requested) {
-                Ok(path) => path.as_path().to_path_buf(),
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            },
+        let requested = args.optional_text("path")?.unwrap_or(".");
+        let from = match self.workspace.existing(requested) {
+            Ok(path) => path,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        let mut found: Vec<String> = crate::tree::walk(&from)
+        let mut found: Vec<String> = crate::tree::walk(from.as_path())
             .build()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+            // A listing is decided about the directory, so a rule about a file
+            // under it is honoured here — where the file is reached. `grep`
+            // does the same, which is what keeps the two from disagreeing
+            // about what is in the workspace.
+            .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
             .filter_map(|entry| {
                 let relative = entry.path().strip_prefix(self.workspace.root()).ok()?;
                 glob.is_match(relative)
@@ -131,7 +134,9 @@ fn report(found: &[String], pattern: &str, limit: usize) -> ToolOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sample::{Sample, allowed};
+    use crucible_core::Disposition;
+
+    use crate::sample::{Sample, allowed, under};
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
         let tool = Glob::new(sample.workspace());
@@ -254,6 +259,27 @@ mod tests {
         let output = glob(&sample, r#"{"pattern":"src"}"#);
 
         assert!(output.is_failed(), "{}", output.text());
+    }
+
+    #[test]
+    fn a_file_a_deny_rule_names_is_never_listed() {
+        // `grep` and `glob` walk the same tree and may not disagree about what
+        // is in it: a file one of them refuses to open is not one the other
+        // announces the existence of.
+        let sample = tree("glob-denied");
+        sample.write("private/key.rs", "");
+
+        let tool = Glob::new(sample.workspace());
+        let output = tool
+            .run(under(
+                &tool,
+                r#"{"pattern":"**/*.rs"}"#,
+                &[(Disposition::Deny, "glob(private/**)")],
+            ))
+            .unwrap();
+
+        assert!(!output.text().contains("private/"), "{}", output.text());
+        assert!(output.text().contains("src/main.rs"), "{}", output.text());
     }
 
     #[test]

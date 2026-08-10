@@ -99,7 +99,7 @@ impl Permission {
         ask: &mut dyn Ask,
     ) -> Settled {
         match self.disposition(call, sensitivity) {
-            Disposition::Allow => Self::approve(call, Verdict::Allow),
+            Disposition::Allow => self.approve(call, Verdict::Allow),
             Disposition::Deny => Settled::Forbidden,
             Disposition::Ask => self.put(call, sensitivity, ask),
         }
@@ -141,7 +141,7 @@ impl Permission {
     fn put(&mut self, call: &ToolCall, sensitivity: &Sensitivity, ask: &mut dyn Ask) -> Settled {
         let scope = Self::scope(call, sensitivity);
         if self.remembered.contains(&scope) {
-            return Self::approve(call, Verdict::Allow);
+            return self.approve(call, Verdict::Allow);
         }
 
         let (verdict, remember) = ask.ask(call, sensitivity);
@@ -152,13 +152,23 @@ impl Permission {
         // Nothing is remembered about a no. The turn ends on one, so there is
         // no next call in it to remember for, and the next turn is a fresh
         // instruction that deserves its own question.
-        Self::approve(call, verdict)
+        self.approve(call, verdict)
     }
 
     /// Mints the proof, or reports that the user said no.
-    fn approve(call: &ToolCall, verdict: Verdict) -> Settled {
+    ///
+    /// The rules that end a read travel with it. A tool that reaches further
+    /// than the call it was decided about — a search walks a whole directory —
+    /// has no way to ask this engine again from inside its own walk, and the
+    /// alternative to carrying them is a second copy of the rules somewhere
+    /// nothing keeps in step.
+    fn approve(&self, call: &ToolCall, verdict: Verdict) -> Settled {
         match Grant::issue(verdict) {
-            Some(grant) => Settled::Approved(Approved::new(call.clone(), grant)),
+            Some(grant) => Settled::Approved(Approved::new(
+                call.clone(),
+                grant,
+                self.rules.denials(&call.name),
+            )),
             None => Settled::Refused,
         }
     }

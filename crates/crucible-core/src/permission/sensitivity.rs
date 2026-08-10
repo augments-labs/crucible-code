@@ -11,6 +11,7 @@
 //! question get asked instead.
 
 use std::fmt;
+use std::path::Path;
 
 use crate::workspace::{Workspace, WorkspacePath};
 
@@ -61,9 +62,25 @@ impl Target {
     /// against is the one the workspace proved, never the text the model sent.
     #[must_use]
     pub fn resolved(workspace: &Workspace, path: &WorkspacePath) -> Self {
+        Self::spelled(workspace, path.as_path())
+    }
+
+    /// The path a walk reached, from a root the workspace had already proved.
+    ///
+    /// A walk descends from a [`WorkspacePath`] and never follows a symbolic
+    /// link, so what it yields is inside the workspace for the same reason its
+    /// root was — and is the path that will actually be opened, which is what
+    /// a rule has to be matched against. A path that is not under that root
+    /// came from somewhere this walk cannot vouch for, and gets nothing back.
+    pub(super) fn walked(workspace: &Workspace, from: &WorkspacePath, path: &Path) -> Option<Self> {
+        path.starts_with(from.as_path())
+            .then(|| Self::spelled(workspace, path))
+    }
+
+    /// Both spellings of a path already known to be one the workspace reaches.
+    fn spelled(workspace: &Workspace, path: &Path) -> Self {
         let below_root =
-            path.as_path()
-                .strip_prefix(workspace.root())
+            path.strip_prefix(workspace.root())
                 .ok()
                 .map(|below| match below.to_string_lossy() {
                     // The root strips to nothing, and nothing is neither a path a
@@ -74,7 +91,7 @@ impl Target {
                 });
 
         Self(Some(Named {
-            absolute: path.as_path().to_string_lossy().into(),
+            absolute: path.to_string_lossy().into(),
             below_root,
         }))
     }

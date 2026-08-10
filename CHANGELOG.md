@@ -10,6 +10,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `deny` rule about a file now stops a search from reading it.** `grep` and
+  `glob` are settled once, about the directory they walk, so a rule naming a
+  file below it never spoke about the call — and `deny grep(private/**)` handed
+  back that file's lines anyway. The rules that end a read now travel with the
+  proof the call may run, and a walk skips a file they name before opening it.
+  A rule still names one tool, so `deny read(private/**)` does not bind `grep`.
+
 ## [0.0.5] - 2026-08-10
 
 The permission model. What used to be decided one question at a time can now be

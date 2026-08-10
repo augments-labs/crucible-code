@@ -8,8 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_core::{
-    Approved, Ask, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolId,
-    Verdict, Workspace,
+    Approved, Ask, Disposition, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs,
+    ToolCall, ToolId, Verdict, Workspace,
 };
 
 /// A workspace with a directory beside it that is deliberately outside.
@@ -79,6 +79,17 @@ impl Drop for Sample {
 /// the same construction the runner uses, rather than on a pair that only
 /// happened to be assembled together.
 pub(crate) fn allowed(tool: &dyn Tool, args: &str) -> Approved {
+    permitted(tool, args, &[])
+}
+
+/// The same, with rules standing — for the tools that reach more files than
+/// the one they were decided about, and have to refuse the rest themselves.
+pub(crate) fn under(tool: &dyn Tool, args: &str, rules: &[(Disposition, &str)]) -> Approved {
+    permitted(tool, args, rules)
+}
+
+/// Decides one call the only way a call can be decided.
+fn permitted(tool: &dyn Tool, args: &str, written: &[(Disposition, &str)]) -> Approved {
     struct Yes;
 
     impl Ask for Yes {
@@ -87,16 +98,26 @@ pub(crate) fn allowed(tool: &dyn Tool, args: &str) -> Approved {
         }
     }
 
+    let mut rules = Rules::new();
+    for (kind, text) in written {
+        rules.add(*kind, text).expect("a readable rule");
+    }
+
     let call = ToolCall {
         id: ToolId::new("sample"),
         name: tool.name().into(),
         args: ToolArgs::new(args),
     };
 
-    match Permission::new().decide(&call, &tool.sensitivity(&call.args), &mut Yes) {
+    let sensitivity = tool.sensitivity(&call.args);
+    match Permission::with(crucible_core::Mode::default(), rules).decide(
+        &call,
+        &sensitivity,
+        &mut Yes,
+    ) {
         Settled::Approved(approved) => approved,
         Settled::Forbidden | Settled::Refused => {
-            panic!("nothing is denied without rules, and the answer above is yes")
+            panic!("the rules here name files below the call, and the answer above is yes")
         }
     }
 }

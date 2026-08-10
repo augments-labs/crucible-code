@@ -70,7 +70,7 @@ fn for_tool<'a>(rules: &'a [Rule], call: &'a ToolCall) -> impl Iterator<Item = &
 
 impl Pattern {
     /// Whether this pattern names the path a call acts on.
-    fn covers_path(&self, target: &Target) -> bool {
+    pub(super) fn covers_path(&self, target: &Target) -> bool {
         match self {
             Self::Blanket => true,
 

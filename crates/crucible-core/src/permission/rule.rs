@@ -14,7 +14,7 @@ use globset::GlobMatcher;
 
 use crate::tool::ToolCall;
 
-use super::Sensitivity;
+use super::{Sensitivity, Target};
 
 mod matches;
 mod parse;
@@ -102,6 +102,25 @@ enum Pattern {
     },
 }
 
+/// The patterns a call must refuse for itself, whatever it reaches.
+///
+/// Empty for almost every call, which is what the walk checks first: rules
+/// nobody wrote cost nothing to honour.
+#[derive(Debug, Default, Clone)]
+pub(super) struct Denials(Box<[Pattern]>);
+
+impl Denials {
+    /// Whether one of them names this path.
+    pub(super) fn names(&self, target: &Target) -> bool {
+        self.0.iter().any(|pattern| pattern.covers_path(target))
+    }
+
+    /// Whether there is nothing here to check.
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 impl Rules {
     /// No rules at all, which is what an empty configuration means.
     #[must_use]
@@ -144,6 +163,28 @@ impl Rules {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.deny.is_empty() && self.ask.is_empty() && self.allow.is_empty()
+    }
+
+    /// Every rule about `tool` that ends a read.
+    ///
+    /// Handed to a tool along with the proof it may run, for the calls that
+    /// reach more files than the one they were decided about: a search is
+    /// settled once, about the directory it walks, so a rule written about a
+    /// file below that directory has no other moment to be honoured in.
+    ///
+    /// `ask` rules come along with the `deny` ones because a read is never put
+    /// to the user — an `ask` about one has already become a refusal by the
+    /// time any tool sees it, and a walk honouring only half the rules written
+    /// about it would leave the other half looking like protection.
+    pub(super) fn denials(&self, tool: &str) -> Denials {
+        Denials(
+            self.deny
+                .iter()
+                .chain(self.ask.iter())
+                .filter(|rule| *rule.tool == *tool)
+                .map(|rule| rule.pattern.clone())
+                .collect(),
+        )
     }
 
     /// What the rules say about this call, if they say anything.

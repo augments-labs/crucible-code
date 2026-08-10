@@ -10,7 +10,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{
+    Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
+};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{Searcher, SearcherBuilder};
@@ -66,6 +68,14 @@ pub struct Grep {
     workspace: Workspace,
 }
 
+/// What one call is looking for: the expression, the files it restricts itself
+/// to, and how many lines are wanted back.
+struct Query {
+    matcher: RegexMatcher,
+    only: Option<Override>,
+    limit: usize,
+}
+
 /// One matching line.
 struct Hit {
     /// Relative to the workspace root, so the model can pass it back to `read`.
@@ -81,23 +91,19 @@ impl Grep {
         Self { workspace }
     }
 
-    /// Walks `from` and searches every file the ignore rules keep.
+    /// Walks `from` and searches every file the ignore rules keep and no rule
+    /// refuses.
     ///
     /// The walk is parallel because the budget is measured against a tool that
     /// walks in parallel. Order therefore means nothing until the hits are
     /// sorted, which is what makes the same search answer the same way twice.
-    fn hunt(
-        &self,
-        from: &Path,
-        matcher: &RegexMatcher,
-        only: Option<Override>,
-        limit: usize,
-    ) -> Vec<Hit> {
-        let mut walk = crate::tree::walk(from);
-        if let Some(only) = only {
+    fn hunt(&self, from: &WorkspacePath, query: Query, approved: &Approved) -> Vec<Hit> {
+        let mut walk = crate::tree::walk(from.as_path());
+        if let Some(only) = query.only {
             walk.overrides(only);
         }
 
+        let (matcher, limit) = (&query.matcher, query.limit);
         let hits = Mutex::new(Vec::new());
         let found = AtomicUsize::new(0);
 
@@ -117,6 +123,13 @@ impl Grep {
                     return WalkState::Continue;
                 };
                 if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+                    return WalkState::Continue;
+                }
+
+                // The call was settled about the directory. This file is one
+                // nobody was asked about, so it is asked about here, before it
+                // is opened rather than after its lines are in hand.
+                if approved.denies(&self.workspace, from, entry.path()) {
                     return WalkState::Continue;
                 }
 
@@ -217,12 +230,10 @@ impl Tool for Grep {
             )));
         };
 
-        let from = match args.optional_text("path")? {
-            None => self.workspace.root().to_path_buf(),
-            Some(requested) => match self.workspace.existing(requested) {
-                Ok(path) => path.as_path().to_path_buf(),
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            },
+        let requested = args.optional_text("path")?.unwrap_or(".");
+        let from = match self.workspace.existing(requested) {
+            Ok(path) => path,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
         let Ok(only) = self.only(args.optional_text("glob")?) else {
@@ -232,11 +243,12 @@ impl Tool for Grep {
             )));
         };
 
-        Ok(report(
-            &self.hunt(&from, &matcher, only, limit),
-            pattern,
+        let query = Query {
+            matcher,
+            only,
             limit,
-        ))
+        };
+        Ok(report(&self.hunt(&from, query, &approved), pattern, limit))
     }
 }
 

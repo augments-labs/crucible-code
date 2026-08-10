@@ -1,11 +1,21 @@
 //! What `grep` finds, and what it declines to look at.
 
+use std::path::Path;
+
+use crucible_core::Disposition;
+
 use super::{Grep, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
-use crate::sample::{Sample, allowed};
+use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Grep::new(sample.workspace());
     tool.run(allowed(&tool, args)).unwrap()
+}
+
+/// The same search, with rules standing about files below the one searched.
+fn grep_under(sample: &Sample, args: &str, rules: &[(Disposition, &str)]) -> ToolOutput {
+    let tool = Grep::new(sample.workspace());
+    tool.run(under(&tool, args, rules)).unwrap()
 }
 
 /// A tree with something to find in two files and something to skip.
@@ -157,6 +167,85 @@ fn something_that_is_not_text_contributes_nothing() {
     let output = grep(&sample, r#"{"pattern":"needle"}"#);
 
     assert_eq!(output.text(), "one.txt:1:needle\n");
+}
+
+#[test]
+fn a_file_a_deny_rule_names_is_never_searched() {
+    // The call was decided about the directory, and a rule about a file below
+    // it says nothing at that moment. The walk is where it has to be honoured,
+    // or a deny rule protects a file from `read` and hands it back through the
+    // search.
+    let sample = tree("grep-denied");
+    sample.write("private/token.txt", "the needle nobody may see\n");
+
+    let output = grep_under(
+        &sample,
+        r#"{"pattern":"needle"}"#,
+        &[(Disposition::Deny, "grep(private/**)")],
+    );
+
+    assert!(!output.text().contains("private/"), "{}", output.text());
+    assert!(output.text().contains("src/main.rs:"), "{}", output.text());
+}
+
+#[test]
+fn an_ask_rule_stops_a_walk_the_way_a_deny_rule_does() {
+    // A read is never put to the user, so an `ask` about one is already a
+    // refusal by the time the engine is done with it. A walk that honoured
+    // only the deny list would leave half of somebody's rules looking like
+    // protection while returning the file.
+    let sample = tree("grep-ask");
+    sample.write("private/token.txt", "the needle nobody may see\n");
+
+    let output = grep_under(
+        &sample,
+        r#"{"pattern":"needle"}"#,
+        &[(Disposition::Ask, "grep(private/**)")],
+    );
+
+    assert!(!output.text().contains("private/"), "{}", output.text());
+    assert!(output.text().contains("src/main.rs:"), "{}", output.text());
+}
+
+#[test]
+fn a_path_the_walk_could_not_have_reached_is_refused() {
+    // Nothing the walker yields sits outside the root it was given, so this is
+    // the answer to a question that cannot arise yet — which is why it is
+    // pinned here. The one that costs nothing is the one that keeps a file out
+    // of an answer.
+    let sample = tree("grep-elsewhere");
+    let tool = Grep::new(sample.workspace());
+    let approved = under(
+        &tool,
+        r#"{"pattern":"needle"}"#,
+        &[(Disposition::Deny, "grep(private/**)")],
+    );
+    let workspace = sample.workspace();
+    let from = workspace
+        .existing(".")
+        .expect("the root is in the workspace");
+
+    assert!(approved.denies(&workspace, &from, Path::new("/etc/passwd")));
+}
+
+#[test]
+fn a_deny_rule_about_one_tool_is_not_about_another() {
+    // A rule names a tool. `grep` skipping what `read` was denied would be a
+    // second, invisible rule nobody wrote.
+    let sample = tree("grep-denied-elsewhere");
+    sample.write("private/token.txt", "a needle in the open\n");
+
+    let output = grep_under(
+        &sample,
+        r#"{"pattern":"needle"}"#,
+        &[(Disposition::Deny, "read(private/**)")],
+    );
+
+    assert!(
+        output.text().contains("private/token.txt:"),
+        "{}",
+        output.text()
+    );
 }
 
 #[test]
