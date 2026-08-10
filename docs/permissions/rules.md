@@ -2,7 +2,9 @@
 
 A rule is a standing statement, written in
 [configuration](../configuration/configuration.md) before any call exists: a
-tool name, and what it may act on.
+tool name, and what it may act on. Answering
+[`always`](permissions.md#what-always-writes) at a question writes one for you,
+into the file this project keeps out of git; the rest you write yourself.
 
 ```json
 {
@@ -113,6 +115,17 @@ Rule lists concatenate across the [configuration
 files](../configuration/configuration.md): what `~/.crucible/config.json`
 denies, a project's checked-in file cannot allow. A nearer layer can add to
 what may happen, never subtract from what may not.
+
+That holds for the rules crucible writes as well as the ones you do. `always`
+adds an `allow` to `.crucible/config.local.json`, which is the nearest layer of
+all — and a `deny` anywhere still beats it. A file you must never have touched
+is denied once, in your home configuration, and no answer given in a project
+can qualify that.
+
+`ask` beats an allow the same way, so a call some layer wrote an `ask` rule
+about goes on asking however often `always` is answered. That is the intended
+reading: the rule is what you decided with the file open, and the answer is
+what you decided with a turn waiting.
 
 ## The model never sees them
 

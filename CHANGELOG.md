@@ -12,10 +12,32 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **`always` writes the rule down.** Answering `a` at a permission question now
+  puts an `allow` rule for that exact call into `.crucible/config.local.json` —
+  the layer git ignores — so the next session starts already knowing. The rule
+  is the narrowest one that covers the call, with any `*` in the command or the
+  filename escaped rather than left to widen it, and the line under the question
+  names both the rule and the file it went into. Everything already in that file
+  stays byte for byte, including settings crucible has no name for.
+
+  Calls no rule can describe — a command line that is several commands, or one
+  whose text does not say what will run — are not offered `always` at all, and
+  typing it there refuses rather than quietly granting a session. A file that
+  cannot be written costs the rule and nothing else: the call runs, the session
+  stops asking, and the rule is printed so it can be pasted in by hand.
+
 - **`*` where a rule names a tool means every tool.** `deny *(.env)` is the
   whole of it in one line, rather than one rule per tool that can reach the
   file. It is the reading `*` already had inside the brackets, now in both
   positions.
+
+### Changed
+
+- **`a` at a question now means `always`, and `s` means the session.** The
+  session-long yes has moved to its own letter, because the two are different
+  promises and one of them now writes a file. A finger that types `a` out of
+  habit grants more than it used to — the same call, but until you delete the
+  rule rather than until crucible exits. The prompt spells both out every time.
 
 ### Fixed
 

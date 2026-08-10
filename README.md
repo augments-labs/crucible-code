@@ -82,8 +82,11 @@ Reading never asks. Anything that changes a file or starts a process does:
 
 ```
 ? bash wants to run: cargo
-  [y]es  [a]lways  [n]o › 
+  [y]es  [s]ession  [a]lways  [n]o › 
 ```
+
+`always` writes the rule into `.crucible/config.local.json`, so the next
+session starts already knowing.
 
 Full documentation is in [`docs/`](docs/index.md).
 
