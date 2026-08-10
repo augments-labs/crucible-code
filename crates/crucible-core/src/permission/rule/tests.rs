@@ -16,6 +16,20 @@ fn at(absolute: &str, below_root: Option<&str>) -> Target {
     Target::at(absolute, below_root)
 }
 
+/// An absolute path, spelled the way a rule about one is written here.
+///
+/// A drive on Windows, because that is what `is_absolute` asks for and a
+/// pattern is sorted into absolute or relative by it. The separator stays `/`
+/// on both, which is what the pattern language uses and what a resolved target
+/// carries.
+fn rooted(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:/{path}")
+    } else {
+        format!("/{path}")
+    }
+}
+
 fn reading(absolute: &str, below_root: Option<&str>) -> Sensitivity {
     Sensitivity::ReadOnly {
         target: at(absolute, below_root),
@@ -157,10 +171,17 @@ fn a_relative_pattern_is_matched_below_the_root() {
 
 #[test]
 fn an_absolute_pattern_is_matched_against_the_resolved_path() {
-    let rules = rules(&[(Disposition::Deny, "read(/etc/**)")]);
+    // Whether a pattern is absolute is `is_absolute`, which wants a drive or a
+    // share on Windows rather than a leading slash — so a rule hard-coding the
+    // Unix spelling would be read as a relative one there and this test would
+    // be about the wrong branch entirely.
+    let rules = rules(&[(Disposition::Deny, &format!("read({}/**)", rooted("etc")))]);
 
     assert_eq!(
-        rules.stated(&call("read"), &reading("/etc/shadow", None)),
+        rules.stated(
+            &call("read"),
+            &reading(&format!("{}/shadow", rooted("etc")), None)
+        ),
         Some(Disposition::Deny),
         "a file no relative spelling can name is still reachable by an absolute rule"
     );

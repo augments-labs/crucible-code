@@ -39,6 +39,34 @@ pub enum Sensitivity {
     },
 }
 
+/// A path with the separator a rule is written with.
+///
+/// `/` on every platform, because that is the separator the pattern language
+/// has: a matcher normalises a candidate to it before comparing, and a rule
+/// minted from a path keeps whatever the path was spelled with. So a Windows
+/// path left alone would mint `src[\]main.rs` — the backslash escaped as the
+/// literal character it is not — and that rule would never match again.
+/// Somebody would answer "always" and be asked the same question next turn.
+///
+/// Converted once, here, because the rule text and the text the prompt showed
+/// are meant to be one string rather than two that started out alike.
+#[cfg(windows)]
+fn separated(path: &str) -> std::borrow::Cow<'_, str> {
+    if path.contains('\\') {
+        std::borrow::Cow::Owned(path.replace('\\', "/"))
+    } else {
+        std::borrow::Cow::Borrowed(path)
+    }
+}
+
+/// A path with the separator a rule is written with, which is the one it
+/// already has. A backslash here is a character in a filename, not a
+/// separator, and a rule minted from such a file has to keep it.
+#[cfg(not(windows))]
+fn separated(path: &str) -> &str {
+    path
+}
+
 /// The path a call acts on.
 ///
 /// Held in both spellings a rule might be written in: an absolute pattern is
@@ -79,19 +107,17 @@ impl Target {
 
     /// Both spellings of a path already known to be one the workspace reaches.
     fn spelled(workspace: &Workspace, path: &Path) -> Self {
-        let below_root =
-            path.strip_prefix(workspace.root())
-                .ok()
-                .map(|below| match below.to_string_lossy() {
-                    // The root strips to nothing, and nothing is neither a path a
-                    // pattern can match nor a word a prompt can show. `.` is both,
-                    // and it is what somebody would have typed.
-                    below if below.is_empty() => ".".into(),
-                    below => below.into(),
-                });
+        let below_root = path.strip_prefix(workspace.root()).ok().map(|below| {
+            let below: Box<str> = separated(&below.to_string_lossy()).into();
+
+            // The root strips to nothing, and nothing is neither a path a
+            // pattern can match nor a word a prompt can show. `.` is both, and
+            // it is what somebody would have typed.
+            if below.is_empty() { ".".into() } else { below }
+        });
 
         Self(Some(Named {
-            absolute: path.to_string_lossy().into(),
+            absolute: separated(&path.to_string_lossy()).into(),
             below_root,
         }))
     }
