@@ -183,6 +183,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_heartbeat_with_no_payload_does_not_end_the_turn() {
+        // A proxy holding the connection open spells its keep-alive however it
+        // likes and may send no data line with it. Read as a payload it is
+        // empty rather than JSON, which would fail the turn mid-answer and
+        // discard everything the model had said in it.
+        let mut stream = reading(&format!("event: keep-alive\n\n{ANSWER}"), &Cancel::new());
+
+        assert_eq!(
+            deltas(&mut stream),
+            vec![
+                Delta::Text("Hello".into()),
+                Delta::Text(", world".into()),
+                Delta::Stopped(StopReason::Yielded),
+            ]
+        );
+    }
+
+    #[test]
     fn a_failure_reported_mid_stream_stops_the_stream() {
         let body = concat!(
             "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n",

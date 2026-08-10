@@ -202,6 +202,23 @@ mod tests {
         out
     }
 
+    /// The same, delivered the way a socket delivers one.
+    ///
+    /// `at_a_time` bytes per read, because that is what a buffer of that size
+    /// gives the framing: nothing arrives whole, and every field, line ending
+    /// and event boundary falls across a read.
+    fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
+        let reader = io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
+        let mut framed = Events::new(reader);
+        let mut out = Vec::new();
+
+        while let Some(event) = framed.next() {
+            out.push(event.unwrap());
+        }
+
+        out
+    }
+
     #[test]
     fn an_event_carries_its_name_and_its_payload() {
         let out = events("event: ping\ndata: {\"ok\":true}\n\n");
@@ -276,6 +293,51 @@ mod tests {
         let out = events("event: e\ndata: x\n\n");
 
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_stream_arriving_one_byte_at_a_time_frames_the_same_as_one_that_arrives_whole() {
+        // What a socket delivers per read has nothing to do with where the
+        // peer put its line endings, so a parser that is only right for whole
+        // events is a parser that is right until the network is busy.
+        let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
+
+        let out = dripped(stream, 1);
+
+        assert_eq!(out.len(), 2, "a read boundary swallowed an event: {out:?}");
+        assert_eq!(out, events(stream));
+    }
+
+    #[test]
+    fn a_character_split_across_reads_is_put_back_together() {
+        // The reason the framing works in bytes and converts once per event.
+        // Two of these characters are three bytes each, so read one byte at a
+        // time every one of them spans three reads.
+        let stream = "data: {\"text\":\"héllo — wörld\"}\n\n";
+
+        let out = dripped(stream, 1);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out.first().unwrap().data,
+            "{\"text\":\"héllo — wörld\"}",
+            "a character was lost or mangled at a read boundary"
+        );
+    }
+
+    #[test]
+    fn an_event_far_larger_than_one_read_still_arrives_whole() {
+        // A tool call's arguments are one event, and a model writing a file
+        // puts the whole file in it. Under the ceiling, length is not a reason
+        // to refuse or to truncate.
+        let payload = "x".repeat(256 * 1024);
+        let stream = format!("event: big\ndata: {payload}\n\n");
+
+        let out = dripped(&stream, 7);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.first().unwrap().data.len(), payload.len());
+        assert_eq!(out.first().unwrap().data, payload);
     }
 
     #[test]

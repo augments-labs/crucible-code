@@ -11,22 +11,22 @@
 pub(crate) mod http;
 
 use std::fmt;
-use std::io::{self, Read};
+use std::io::Read;
 
 /// Why a request did not produce a response.
 ///
 /// A response that arrived and said no is not an error here — that is a status,
 /// and the provider turns it into its own refusal with the message the vendor
-/// sent.
+/// sent. Neither is a connection that breaks part-way through a body: [`post`]
+/// has returned by then and the break arrives through the reader it handed
+/// back, which is where the stream turns it into a failed turn.
+///
+/// [`post`]: Transport::post
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
-
-    /// The connection broke while the response was being read.
-    #[error("{0}")]
-    Io(#[from] io::Error),
 }
 
 /// What came back.
@@ -133,7 +133,7 @@ impl Transport for Replay {
 
         Ok(Response {
             status: self.status,
-            body: Box::new(io::Cursor::new(self.body.clone().into_bytes())),
+            body: Box::new(std::io::Cursor::new(self.body.clone().into_bytes())),
         })
     }
 }

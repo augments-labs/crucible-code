@@ -21,15 +21,30 @@ const DONE: &str = "[DONE]";
 
 /// What a chunk means, or nothing if it means nothing to us.
 ///
+/// `open` is which tool call the response has open, by the index its vendor
+/// gave it. The caller carries it between chunks because a call is opened in
+/// one chunk and its arguments arrive in the ones after it — so no single chunk
+/// can tell whether a fragment belongs where it is about to be assembled.
+///
 /// # Errors
 ///
 /// [`ProviderError::Upstream`] when the chunk is the provider reporting a
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when a chunk does not parse.
-pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+pub(super) fn deltas(
+    event: &SseEvent,
+    open: &mut Option<i64>,
+) -> Result<Vec<Delta>, ProviderError> {
     // Not JSON, and the one thing every response ends with. Reading it as a
     // chunk would fail every turn at the last moment.
     if event.data.trim() == DONE {
+        return Ok(Vec::new());
+    }
+
+    // A heartbeat, which a proxy may spell any way it likes and may send with
+    // no data line at all. There is nothing to parse; reading it as a chunk
+    // fails the turn and discards the answer that had already arrived.
+    if event.data.trim().is_empty() {
         return Ok(Vec::new());
     }
 
@@ -55,7 +70,7 @@ pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
     };
 
     if let Some(delta) = choice.get("delta") {
-        said(delta, &mut out)?;
+        said(delta, &mut out, open)?;
     }
 
     // Last, and in the same chunk as whatever came with it: a reason shares a
@@ -69,7 +84,7 @@ pub(super) fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
 }
 
 /// What the model produced in one chunk.
-fn said(delta: &Value, out: &mut Vec<Delta>) -> Result<(), ProviderError> {
+fn said(delta: &Value, out: &mut Vec<Delta>, open: &mut Option<i64>) -> Result<(), ProviderError> {
     // Empty is what the opening chunk carries, the one that only announces the
     // role. Emitting it would put a blank line in front of every answer.
     if let Some(content) = text(delta, "content").filter(|content| !content.is_empty()) {
@@ -83,17 +98,13 @@ fn said(delta: &Value, out: &mut Vec<Delta>) -> Result<(), ProviderError> {
         out.push(Delta::Text(refusal.into()));
     }
 
-    // Which call this chunk opened, if it opened one. Arguments in the same
-    // chunk have to belong to it; see `calling`.
-    let mut opened = None;
-
     for call in delta
         .get("tool_calls")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
     {
-        calling(call, out, &mut opened)?;
+        calling(call, out, open)?;
     }
 
     Ok(())
@@ -109,11 +120,12 @@ fn said(delta: &Value, out: &mut Vec<Delta>) -> Result<(), ProviderError> {
 /// opened last. That works because a provider sends each call's fragments
 /// before opening the next one — an assumption, and the one this parser rests
 /// on. What it will not do is assemble a fragment onto a call that is visibly
-/// the wrong one, which is what the two guards below are for.
+/// the wrong one, which is what the two guards below are for. `open` is the
+/// call the fragments belong to, and outlives the chunk it was opened in.
 fn calling(
     call: &Value,
     out: &mut Vec<Delta>,
-    opened: &mut Option<i64>,
+    open: &mut Option<i64>,
 ) -> Result<(), ProviderError> {
     let function = call.get("function");
     let index = call.get("index").and_then(Value::as_i64);
@@ -125,7 +137,7 @@ fn calling(
 
     match (id, name) {
         (Some(id), Some(name)) => {
-            *opened = index;
+            *open = index;
             out.push(Delta::ToolStarted {
                 id: ToolId::new(id),
                 name: name.into(),
@@ -151,14 +163,15 @@ fn calling(
         .filter(|args| !args.is_empty());
     let Some(args) = args else { return Ok(()) };
 
-    // A chunk that opens one call and then carries arguments for a different
-    // one would have those arguments assembled onto the call just opened.
-    if let (Some(opened), Some(index)) = (*opened, index)
-        && opened != index
+    // Arguments under any index but the open call's would be assembled onto
+    // that call. The call may have been opened chunks ago, which is the whole
+    // reason `open` is not a local of this parse.
+    if let (Some(open), Some(index)) = (*open, index)
+        && open != index
     {
         return Err(ProviderError::Protocol {
             provider: NAME,
-            problem: "a chunk carried arguments for a tool call it did not open".into(),
+            problem: "arguments arrived for a tool call other than the one open".into(),
         });
     }
 
