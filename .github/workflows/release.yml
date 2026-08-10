@@ -7,11 +7,14 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # creates the GitHub Release and uploads the archive
+  contents: write # creates the GitHub Release and uploads the archives
 
 jobs:
-  linux-x86_64:
-    name: x86_64-unknown-linux-gnu
+  # Everything that can refuse a release happens once, here, before seven
+  # machines spend a quarter of an hour building something that was never
+  # going to ship.
+  gate:
+    name: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,24 +46,163 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notes
+          path: NOTES.md
+          if-no-files-found: error
+
+  # One job per target, and every runner here is the architecture it builds
+  # for. That is the whole reason the list is runners rather than a cross
+  # toolchain: a binary nobody could execute is one whose first run happens on
+  # a user's machine.
+  build:
+    name: ${{ matrix.stem }}
+    needs: gate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One target failing is not a reason to stop learning about the other
+      # five. A release is cancelled by hand either way.
+      fail-fast: false
+      matrix:
+        include:
+          - stem: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - stem: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - stem: macos-aarch64
+            target: aarch64-apple-darwin
+            runner: macos-latest
+          - stem: macos-x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - stem: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            exe: .exe
+          - stem: windows-aarch64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            exe: .exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       # --locked: the lockfile in the tag is the lockfile that gets built, so
       # the artifact is reproducible from the tag alone.
       - name: Build
-        run: cargo build --release --locked
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+
+      # Git Bash ships on the Windows images, so one shell packages all six.
+      - name: It runs, and says the version the tag claims
+        shell: bash
+        run: |
+          said=$(./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} --version)
+          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
+            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
+            exit 1
+          fi
 
       - name: Package
+        shell: bash
         run: |
-          name="crucible-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
-          install -Dm755 target/release/crucible "$name/crucible"
-          install -Dm644 README.md LICENSE -t "$name/"
+          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          mkdir -p "$name"
+          cp ./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} "$name/"
+          cp README.md LICENSE "$name/"
           tar czf "$name.tar.gz" "$name"
-          sha256sum "$name.tar.gz" >"$name.tar.gz.sha256"
+
+          # Windows gets the bare executable beside the archive. Unpacking a
+          # tarball to reach one file is a step, and the machines that need
+          # this one are the least likely to have a shell that does it.
+          if [[ -n "${{ matrix.exe }}" ]]; then
+            cp "./target/${{ matrix.target }}/release/crucible.exe" "$name.exe"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.stem }}
+          path: |
+            crucible-*.tar.gz
+            crucible-*.exe
+          if-no-files-found: error
+
+  # GitHub hosts no FreeBSD runner, so this one target builds inside a guest
+  # rather than cross-compiled from Linux. It costs about a quarter of an hour,
+  # and what it buys is the same thing the six above get for free: a binary
+  # that ran on the system it is published for.
+  freebsd-x86_64:
+    name: freebsd-x86_64
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1.5.3
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: pkg install -y curl
+          # `--default-toolchain none` leaves the choice to
+          # rust-toolchain.toml, so this guest compiles with the version every
+          # other machine here does rather than whatever pkg happens to carry.
+          run: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            . "$HOME/.cargo/env"
+
+            cargo build --release --locked --target x86_64-unknown-freebsd
+
+            # Written in by Actions before the guest is started. The guest gets
+            # only the environment this action is asked to forward, and a tag
+            # that arrived empty would package an artifact named for no version
+            # at all.
+            version=$(echo '${{ github.ref_name }}' | sed 's/^v//')
+            said=$(./target/x86_64-unknown-freebsd/release/crucible --version)
+            if [ "$said" != "crucible $version" ]; then
+              echo "--version said '$said', expected 'crucible $version'"
+              exit 1
+            fi
+
+            name=crucible-$version-freebsd-x86_64
+            mkdir -p "$name"
+            cp ./target/x86_64-unknown-freebsd/release/crucible "$name/"
+            cp README.md LICENSE "$name/"
+            tar czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: freebsd-x86_64
+          path: crucible-*.tar.gz
+          if-no-files-found: error
+
+  # The release is opened once, with everything attached, so there is never a
+  # window where it is public and half the platforms are missing.
+  publish:
+    needs: [build, freebsd-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: assets
+          merge-multiple: true
+
+      # One file rather than one `.sha256` per archive: a reader checking what
+      # they downloaded wants a single line to look up, and `sha256sum -c`
+      # takes the whole thing.
+      - name: One checksum file for the release
+        working-directory: assets
+        run: sha256sum crucible-* | tee SHA256SUMS
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "crucible ${GITHUB_REF_NAME#v}" \
-            --notes-file NOTES.md \
-            ./*.tar.gz ./*.tar.gz.sha256
+            --notes-file assets/NOTES.md \
+            assets/crucible-* assets/SHA256SUMS
