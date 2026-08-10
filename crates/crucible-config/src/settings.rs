@@ -17,6 +17,7 @@ mod layers;
 mod output;
 mod permissions;
 
+pub use layers::local;
 pub use output::{Color, ToolDetail};
 
 /// What every layer together says a setting is.

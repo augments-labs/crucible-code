@@ -66,7 +66,7 @@ fn read(found: &str) -> Option<Mode> {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        Ask, Command, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
+        Ask, Command, Reach, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
     };
 
     use crate::document::{Document, Origin};
@@ -93,7 +93,10 @@ mod tests {
             args: ToolArgs::new("{}"),
         };
         let sensitivity = Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from(command)])),
+            command: Command::Understood {
+                parts: Box::from([Box::from(command)]),
+                reach: Reach::Anything,
+            },
         };
 
         settings

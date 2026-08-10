@@ -2,7 +2,9 @@
 
 A rule is a standing statement, written in
 [configuration](../configuration/configuration.md) before any call exists: a
-tool name, and what it may act on.
+tool name, and what it may act on. Answering
+[`always`](permissions.md#what-always-writes) at a question writes one for you,
+into the file this project keeps out of git; the rest you write yourself.
 
 ```json
 {
@@ -35,6 +37,11 @@ so `ask` and `deny` are the kinds that carve exceptions out of it.
 
 A tool, an opening bracket, a pattern: `write(src/**)`. A tool name on its
 own, or `tool(*)`, is a blanket — everything that tool could do.
+
+`*` means everything the position it sits in can hold, so it works where the
+tool goes as well: `deny *(.env)` is every tool, on that file. Tool names are
+matched without regard to case, because every tool is named in lower case and
+`Bash(*)` is somebody writing one of them the way a sentence would.
 
 **File patterns** are matched against the path the call acts on, resolved and
 after symbolic links, so a link into `.env` is `.env`. A relative pattern like
@@ -71,12 +78,54 @@ without a question. So `deny read(.env)` refuses silently even under
 wrote it asked not to have that read go through unwatched, and refusing is the
 only remaining answer that respects that.
 
+## Searching
+
+A search is settled once, about the directory it walks. `grep` and `glob` name
+that directory and not the files under it, because which files there are is
+what the walk is for. A rule about a file below it therefore does not refuse
+the call — the call runs, and the walk skips the file.
+
+```json
+{
+  "permissions": {
+    "deny": ["grep(private/**)", "glob(private/**)"]
+  }
+}
+```
+
+That searches the rest of the workspace and returns nothing from `private`,
+not even that a file is there. An `ask` rule reads the same way, since an `ask`
+about a read is already a refusal.
+
+A rule names one tool, so each tool that can reach a file needs its own.
+`deny read(private/**)` stops `read` and leaves `grep` free to print the lines
+of the same file. Keeping something out of every answer means naming every tool
+that could put it there — or writing `deny *(private/**)`, which is the same
+thing said once.
+
+That still leaves `bash`. A command is matched against what will run rather
+than against the paths it will touch, so a file pattern says nothing about a
+shell — `*(private/**)` included, since the `*` widens which tool is meant and
+not what a pattern can say. What bounds a command is a command pattern and the
+[mode](modes.md).
+
 ## Layers add, they never replace
 
 Rule lists concatenate across the [configuration
 files](../configuration/configuration.md): what `~/.crucible/config.json`
 denies, a project's checked-in file cannot allow. A nearer layer can add to
 what may happen, never subtract from what may not.
+
+That holds for the rules crucible writes as well as the ones you do. `always`
+adds an `allow` to `.crucible/config.local.json`, which is the nearest layer of
+all — and a `deny` anywhere still beats it. A file you must never have touched
+is denied once, in your home configuration, and no answer given in a project
+can qualify that.
+
+`ask` beats an allow the same way, so a call some layer wrote an `ask` rule
+about goes on asking however often `always` is answered. That is the intended
+reading: the rule is what you decided with the file open, and the answer is
+what you decided with a turn waiting.
 
 ## The model never sees them
 

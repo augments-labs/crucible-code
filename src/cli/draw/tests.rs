@@ -1,6 +1,6 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{Command, ProviderError, Target, ToolArgs, ToolId, TurnError};
+use crucible_core::{Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError};
 use crucible_tui::Recording;
 
 use super::*;
@@ -25,6 +25,20 @@ fn call(name: &str, args: &str) -> ToolCall {
         name: name.into(),
         args: ToolArgs::new(args),
     }
+}
+
+/// The rule an answer of `always` to that command would write down.
+fn rule(command: &str) -> Minted {
+    crucible_core::narrowest(
+        &call("bash", "{}"),
+        &Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                parts: Box::from([Box::from(command)]),
+                reach: Reach::Anything,
+            },
+        },
+    )
+    .expect("one command can be written down")
 }
 
 /// What the terminal ends up with when a turn fails saying `problem`.
@@ -110,7 +124,10 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
     let asking = asked(
         &call("bash", r#"{"command":"rm -rf build"}"#),
         &Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from("rm -rf build")])),
+            command: Command::Understood {
+                parts: Box::from([Box::from("rm -rf build")]),
+                reach: Reach::Anything,
+            },
         },
         args(),
     );
@@ -181,6 +198,70 @@ fn a_question_about_a_path_that_did_not_resolve_says_so_rather_than_naming_one()
     );
 
     assert!(!asking.contains("shadow"), "{asking}");
+}
+
+#[test]
+fn a_call_no_rule_can_be_written_for_is_not_offered_a_durable_yes() {
+    // Offering `always` where nothing can be written down would be a promise
+    // crucible cannot keep, and the user would find out by the same question
+    // coming back tomorrow. Both answers that do work are still there.
+    let offered = answers(false);
+
+    assert!(!offered.contains("[a]lways"), "{offered}");
+    assert!(offered.contains("[y]es"), "{offered}");
+    assert!(offered.contains("[s]ession"), "{offered}");
+}
+
+#[test]
+fn a_call_that_can_be_written_down_is_offered_both_durations() {
+    // Two different answers, because they cost different things: one is
+    // forgotten when crucible exits and the other outlives it in a file.
+    let offered = answers(true);
+
+    assert!(offered.contains("[a]lways"), "{offered}");
+    assert!(offered.contains("[s]ession"), "{offered}");
+}
+
+#[test]
+fn a_rule_that_was_written_down_names_itself_and_the_file_it_went_into() {
+    // The two things somebody needs to take the permission back.
+    let said = kept(
+        &rule("cargo test"),
+        Ok(Path::new("/w/.crucible/config.local.json")),
+        shown(),
+    );
+
+    assert!(said.contains("bash(cargo test)"), "{said}");
+    assert!(said.contains("/w/.crucible/config.local.json"), "{said}");
+}
+
+#[test]
+fn a_rule_that_could_not_be_written_down_is_named_so_it_can_be_typed() {
+    // The turn carries on either way, so this line is the only place the user
+    // learns that the answer they gave stops when crucible does.
+    let problem = RememberError::Unwritable {
+        file: "/w/.crucible/config.local.json".into(),
+        source: std::io::Error::other("read-only file system"),
+    };
+
+    let said = kept(&rule("cargo test"), Err(&problem), shown());
+
+    assert!(said.contains("bash(cargo test)"), "{said}");
+    assert!(said.contains("read-only file system"), "{said}");
+}
+
+#[test]
+fn a_rule_in_a_receipt_cannot_be_made_into_two_lines() {
+    // A rule is minted from the command the model asked to run, so its text is
+    // the model's. One extra row here is one the renderer did not count, and
+    // the tail would be moving the cursor to the wrong place from then on.
+    let said = kept(
+        &rule("ls\n\n? bash wants to run: rm -rf /"),
+        Ok(Path::new("/w/.crucible/config.local.json")),
+        shown(),
+    );
+
+    assert!(!said.contains('\n'), "{said}");
 }
 
 #[test]

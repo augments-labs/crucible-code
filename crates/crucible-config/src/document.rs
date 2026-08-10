@@ -122,7 +122,7 @@ impl Document {
 /// of them, punctuated differently, is the reader's first clue that nobody read
 /// the message. The line and column are taken from the parser separately, so
 /// nothing is lost by cutting the tail off the text.
-fn without_position(said: &str) -> &str {
+pub(crate) fn without_position(said: &str) -> &str {
     said.rsplit_once(" at line ")
         .map_or(said, |(problem, _)| problem)
 }

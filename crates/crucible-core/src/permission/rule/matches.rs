@@ -17,7 +17,7 @@ pub(super) fn any(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
             covered(rules, call, target)
         }
         Sensitivity::SpawnsProcess {
-            command: Command::Understood(parts),
+            command: Command::Understood { parts, .. },
         } => parts.iter().any(|part| runs(rules, call, part)),
         Sensitivity::SpawnsProcess {
             command: Command::Opaque(_),
@@ -32,7 +32,7 @@ pub(super) fn all(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
             covered(rules, call, target)
         }
         Sensitivity::SpawnsProcess {
-            command: Command::Understood(parts),
+            command: Command::Understood { parts, .. },
         } => {
             // A command that decomposed into nothing is not a command every
             // rule covers, it is one nobody can say anything about.
@@ -64,13 +64,13 @@ fn blanketed(rules: &[Rule], call: &ToolCall) -> bool {
 fn for_tool<'a>(rules: &'a [Rule], call: &'a ToolCall) -> impl Iterator<Item = &'a Pattern> {
     rules
         .iter()
-        .filter(|rule| *rule.tool == *call.name)
+        .filter(|rule| rule.about(&call.name))
         .map(|rule| &rule.pattern)
 }
 
 impl Pattern {
     /// Whether this pattern names the path a call acts on.
-    fn covers_path(&self, target: &Target) -> bool {
+    pub(super) fn covers_path(&self, target: &Target) -> bool {
         match self {
             Self::Blanket => true,
 

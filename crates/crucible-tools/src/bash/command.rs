@@ -16,9 +16,9 @@
 //! so `cargo   test` and `cargo test` are the same thing to a rule, which is
 //! what somebody writing one would expect.
 
-use crucible_core::Command;
+use crucible_core::{Command, Workspace};
 
-use super::wrapper;
+use super::{reach, wrapper};
 
 /// The shell's word separators, which are not Rust's. `char::is_whitespace`
 /// follows Unicode and would treat a no-break space as one of these; the shell
@@ -35,13 +35,16 @@ enum Quote {
     Double,
 }
 
-/// What this command line will run.
-pub(super) fn read(line: &str) -> Command {
+/// What this command line will run, and how far it was proved to reach.
+pub(super) fn read(line: &str, workspace: &Workspace) -> Command {
     match simple(line) {
         // A line that decomposed into nothing ran nothing a rule could be
         // about. Reported as unreadable rather than as an empty list, because
         // an empty list is a thing every `allow` rule vacuously covers.
-        Some(parts) if !parts.is_empty() => Command::Understood(parts),
+        Some(parts) if !parts.is_empty() => {
+            let reach = reach::of(&parts, workspace);
+            Command::Understood { parts, reach }
+        }
         Some(_) | None => Command::Opaque(line.trim().into()),
     }
 }

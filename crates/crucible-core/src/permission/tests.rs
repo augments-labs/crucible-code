@@ -3,6 +3,7 @@ use crate::ids::ToolId;
 use crate::tool::ToolArgs;
 
 mod configuration;
+mod modes;
 
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {
@@ -24,6 +25,14 @@ impl Answer {
         Self {
             verdict: Verdict::Allow,
             remember: Remember::Session,
+            asked: 0,
+        }
+    }
+
+    fn for_ever() -> Self {
+        Self {
+            verdict: Verdict::Allow,
+            remember: Remember::Always,
             asked: 0,
         }
     }
@@ -58,7 +67,10 @@ fn writing(below_root: &str) -> Sensitivity {
 
 fn running(parts: &[&str]) -> Sensitivity {
     Sensitivity::SpawnsProcess {
-        command: Command::Understood(parts.iter().map(|part| (*part).into()).collect()),
+        command: Command::Understood {
+            parts: parts.iter().map(|part| (*part).into()).collect(),
+            reach: Reach::Anything,
+        },
     }
 }
 
@@ -107,22 +119,6 @@ fn a_refusal_from_the_user_is_not_a_refusal_from_a_rule() {
 }
 
 #[test]
-fn a_read_is_allowed_without_asking_in_every_mode() {
-    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
-        let mut permission = with(mode, &[]);
-        let mut answer = Answer::once(Verdict::Deny);
-
-        assert!(
-            permission
-                .decide(&call("read"), &reading("src/a.rs"), &mut answer)
-                .ran(),
-            "{mode} must allow a read"
-        );
-        assert_eq!(answer.asked, 0, "{mode} must not prompt for a read");
-    }
-}
-
-#[test]
 fn a_read_matching_a_deny_rule_is_refused_without_prompting() {
     let mut permission = with(Mode::FullAccess, &[(Disposition::Deny, "read(.env)")]);
     let mut answer = Answer::once(Verdict::Allow);
@@ -145,71 +141,6 @@ fn an_ask_rule_about_a_read_refuses_rather_than_prompting() {
         permission.decide(&call("read"), &reading("secrets/key"), &mut answer),
         Settled::Forbidden
     ));
-    assert_eq!(answer.asked, 0);
-}
-
-#[test]
-fn a_deny_rule_holds_under_full_access() {
-    let mut permission = with(Mode::FullAccess, &[(Disposition::Deny, "bash(curl *)")]);
-    let mut answer = Answer::once(Verdict::Allow);
-
-    assert!(matches!(
-        permission.decide(
-            &call("bash"),
-            &running(&["curl http://example.invalid"]),
-            &mut answer
-        ),
-        Settled::Forbidden
-    ));
-    assert_eq!(answer.asked, 0);
-}
-
-#[test]
-fn an_ask_rule_holds_under_full_access() {
-    let mut permission = with(Mode::FullAccess, &[(Disposition::Ask, "bash(git push *)")]);
-    let mut answer = Answer::once(Verdict::Allow);
-
-    assert!(
-        permission
-            .decide(&call("bash"), &running(&["git push --force"]), &mut answer)
-            .ran()
-    );
-    assert_eq!(
-        answer.asked, 1,
-        "a mode decides the arm no rule matched, and nothing else"
-    );
-}
-
-#[test]
-fn allow_edits_writes_without_asking_but_still_asks_before_running_anything() {
-    let mut permission = with(Mode::AllowEdits, &[]);
-    let mut answer = Answer::once(Verdict::Allow);
-
-    assert!(
-        permission
-            .decide(&call("write"), &writing("src/a.rs"), &mut answer)
-            .ran()
-    );
-    assert_eq!(answer.asked, 0);
-
-    assert!(
-        permission
-            .decide(&call("bash"), &running(&["ls"]), &mut answer)
-            .ran()
-    );
-    assert_eq!(answer.asked, 1);
-}
-
-#[test]
-fn full_access_asks_about_nothing() {
-    let mut permission = with(Mode::FullAccess, &[]);
-    let mut answer = Answer::once(Verdict::Deny);
-
-    assert!(
-        permission
-            .decide(&call("bash"), &running(&["rm -rf build"]), &mut answer)
-            .ran()
-    );
     assert_eq!(answer.asked, 0);
 }
 
@@ -244,6 +175,26 @@ fn a_command_with_an_uncovered_constituent_is_asked_about() {
 fn allowing_for_the_session_stops_the_asking() {
     let mut permission = Permission::new();
     let mut answer = Answer::for_the_session();
+    let call = call("write");
+
+    for _ in 0..3 {
+        assert!(
+            permission
+                .decide(&call, &writing("src/a.rs"), &mut answer)
+                .ran()
+        );
+    }
+
+    assert_eq!(answer.asked, 1);
+}
+
+#[test]
+fn allowing_for_ever_stops_the_asking_without_waiting_for_the_file() {
+    // The rule is written above this crate, and nothing re-reads configuration
+    // mid-session. An engine that only understood `Session` would ask again
+    // about the very call somebody had just said `always` to.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_ever();
     let call = call("write");
 
     for _ in 0..3 {

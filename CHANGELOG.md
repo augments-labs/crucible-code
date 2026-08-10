@@ -10,6 +10,68 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-08-10
+
+The answers that outlast the question. `always` writes the rule into the file
+git ignores, so the next session starts already knowing — and `allowEdits`
+stops asking about the commands it can prove change nothing outside the
+workspace.
+
+### Added
+
+- **`always` writes the rule down.** Answering `a` at a permission question now
+  puts an `allow` rule for that exact call into `.crucible/config.local.json` —
+  the layer git ignores — so the next session starts already knowing. The rule
+  is the narrowest one that covers the call, with any `*` in the command or the
+  filename escaped rather than left to widen it, and the line under the question
+  names both the rule and the file it went into. Everything already in that file
+  stays byte for byte, including settings crucible has no name for.
+
+  Calls no rule can describe — a command line that is several commands, or one
+  whose text does not say what will run — are not offered `always` at all, and
+  typing it there refuses rather than quietly granting a session. A file that
+  cannot be written costs the rule and nothing else: the call runs, the session
+  stops asking, and the rule is printed so it can be pasted in by hand.
+
+- **`*` where a rule names a tool means every tool.** `deny *(.env)` is the
+  whole of it in one line, rather than one rule per tool that can reach the
+  file. It is the reading `*` already had inside the brackets, now in both
+  positions.
+
+### Changed
+
+- **`allowEdits` now runs a command that only changes files in the workspace.**
+  A `mkdir` is the same change to the same tree whether `write` made it or a
+  shell did, and stopping to ask about one while waving the other through was a
+  distinction nobody who typed `allowEdits` had made. The mode now runs a `bash`
+  call when the line is one simple command, the program is `mkdir`, `rmdir`,
+  `touch`, `rm`, `cp` or `mv`, every flag is one that carries no value of its
+  own, and every path in it resolves inside the workspace after symbolic links.
+  Everything else asks exactly as before, including a glob or a `~`, which the
+  shell rewrites into a path that was never checked. This is not a list of safe
+  commands — `rm -rf src` is on it — but a list of ones whose reach can be
+  established; a `deny` rule still holds over all of them, and `ask` still asks.
+
+- **`a` at a question now means `always`, and `s` means the session.** The
+  session-long yes has moved to its own letter, because the two are different
+  promises and one of them now writes a file. A finger that types `a` out of
+  habit grants more than it used to — the same call, but until you delete the
+  rule rather than until crucible exits. The prompt spells both out every time.
+
+### Fixed
+
+- **A tool spelled with a capital is the same tool.** `Bash(*)` used to parse
+  into a rule about a second tool by that name and match nothing — accepted,
+  written down, and silently protecting nothing. Tool names are now compared
+  without regard to case.
+
+- **A `deny` rule about a file now stops a search from reading it.** `grep` and
+  `glob` are settled once, about the directory they walk, so a rule naming a
+  file below it never spoke about the call — and `deny grep(private/**)` handed
+  back that file's lines anyway. The rules that end a read now travel with the
+  proof the call may run, and a walk skips a file they name before opening it.
+  A rule still names one tool, so `deny read(private/**)` does not bind `grep`.
+
 ## [0.0.5] - 2026-08-10
 
 The permission model. What used to be decided one question at a time can now be
@@ -347,7 +409,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/augments-labs/crucible-code/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/augments-labs/crucible-code/compare/v0.0.2...v0.0.3

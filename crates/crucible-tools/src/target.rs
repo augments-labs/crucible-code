@@ -50,9 +50,9 @@ pub(crate) fn creatable(
 /// when the call named none.
 ///
 /// The scope is the honest answer to what the call acts on, and it is a wider
-/// answer than one file. A rule written about a file therefore says nothing
-/// about a search that would walk over it — see the note on searching in the
-/// permissions documentation.
+/// answer than one file. A rule written about a file below it therefore does
+/// not settle the call; it is honoured during the walk instead, where the file
+/// is reached — see the note on searching in the permissions documentation.
 pub(crate) fn searched(
     workspace: &Workspace,
     tool: &'static str,

@@ -9,9 +9,15 @@
 //! A rule can be written about a command, so the line has to be read far enough
 //! to say what it will run — that is [`command`], which recognises the shapes a
 //! rule can honestly cover and refuses the rest. Refusing means being asked.
+//!
+//! Reading it that far also makes a narrower question answerable for a few
+//! lines: whether this one changes nothing outside the workspace. That is
+//! [`reach`], and it is the only thing `allowEdits` needs from a shell to treat
+//! a `mkdir` the way it already treats a `write`.
 
 mod command;
 mod output;
+mod reach;
 mod wrapper;
 
 use std::process::Stdio;
@@ -110,7 +116,7 @@ impl Tool for Bash {
         let command = match Args::parse(NAME, args)
             .and_then(|args| args.text("command").map(str::to_owned))
         {
-            Ok(line) => command::read(&line),
+            Ok(line) => command::read(&line, &self.workspace),
             // A call this malformed will be refused by `run`, but it still has
             // to be given a sensitivity first — and the safe answer to "what is
             // about to run" when nobody can read it is everything that was

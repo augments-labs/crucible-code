@@ -1,8 +1,12 @@
 //! The proof that a call was permitted, and the call it was permitted for.
 
-use crate::tool::{ToolArgs, ToolCall};
+use std::path::Path;
 
-use super::Verdict;
+use crate::tool::{ToolArgs, ToolCall};
+use crate::workspace::{Workspace, WorkspacePath};
+
+use super::rule::Denials;
+use super::{Target, Verdict};
 
 /// Proof that a verdict was reached and it was to allow.
 ///
@@ -37,15 +41,39 @@ pub struct Approved {
     /// Never read. Holding it is the point: an `Approved` cannot be built
     /// without one, and one cannot be built without an allow.
     _grant: Grant,
+
+    /// What this call may still not read, however far it reaches on its own.
+    denied: Denials,
 }
 
 impl Approved {
     /// Minted by the engine, once a verdict has been reached about this call.
-    pub(super) fn new(call: ToolCall, grant: Grant) -> Self {
+    pub(super) fn new(call: ToolCall, grant: Grant, denied: Denials) -> Self {
         Self {
             call,
             _grant: grant,
+            denied,
         }
+    }
+
+    /// Whether a rule refuses a file this call reached by itself.
+    ///
+    /// A verdict is reached about one thing. For a search that thing is the
+    /// directory it walks, so every file below it is one nobody was asked
+    /// about — and a rule written about such a file has no other moment to be
+    /// honoured in than the moment the walk arrives at it.
+    ///
+    /// `from` is where the walk began, which the workspace proved before it
+    /// started. A path that is not under it is refused rather than allowed:
+    /// this call cannot say where it came from, and the answer that costs
+    /// nothing is the one that keeps a file out of an answer.
+    #[must_use]
+    pub fn denies(&self, workspace: &Workspace, from: &WorkspacePath, path: &Path) -> bool {
+        if self.denied.is_empty() {
+            return false;
+        }
+
+        Target::walked(workspace, from, path).is_none_or(|reached| self.denied.names(&reached))
     }
 
     /// The arguments a verdict was reached about.

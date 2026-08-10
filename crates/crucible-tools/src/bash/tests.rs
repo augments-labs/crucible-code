@@ -3,7 +3,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::Command;
+use crucible_core::{Command, Reach};
 
 use super::output::{OUTPUT, cut};
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
@@ -241,7 +241,32 @@ fn the_sensitivity_carries_what_the_call_will_run() {
     assert_eq!(
         sensitivity,
         Sensitivity::SpawnsProcess {
-            command: Command::Understood(Box::from([Box::from("/usr/bin/git status")]))
+            command: Command::Understood {
+                parts: Box::from([Box::from("/usr/bin/git status")]),
+                reach: Reach::Anything,
+            }
+        }
+    );
+}
+
+#[test]
+fn the_sensitivity_says_when_a_command_was_proved_to_stay_inside() {
+    // What `allowEdits` reads. It is computed here rather than in the engine
+    // because only this tool can parse its own arguments, and only a workspace
+    // can say what is inside it.
+    let sample = Sample::new("bash-reach");
+    sample.write("src/a.rs", "");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"mkdir -p src/net"}"#));
+
+    assert_eq!(
+        sensitivity,
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                parts: Box::from([Box::from("mkdir -p src/net")]),
+                reach: Reach::Workspace,
+            }
         }
     );
 }
