@@ -11,16 +11,26 @@ to appear.
 
 ## Adding a provider
 
-A new provider is a new module here, plus four edits in `src/cli.rs`: the
-`const <NAME>_KEY` naming its environment variable, a match arm in `provider`,
-the name in `PROVIDERS`, and the `long_about` on `Cli`, which is where the
-provider names and their environment variables are spelled out for the user.
+A new provider is a new module here, plus four edits in the binary — two that
+build it and two that tell the user it exists:
+
+- `src/cli/startup.rs`: the `const <NAME>_KEY` naming the environment variable
+  its key is read from, and an arm in `provider` pairing that key with the
+  header this vendor authenticates by. That arm is the one place a provider's
+  name becomes a type.
+- `src/cli.rs`: the name in `PROVIDERS`, which is the sentence a wrong name gets
+  back, and the `long_about` on `Cli`, where the provider names and their
+  environment variables are spelled out for the user.
+
+Two files, two pairs, and the pairs can disagree — a provider the parser accepts
+and the help text never mentions is the failure worth designing against. They
+move in one commit.
+
 It is never an edit to `crucible-core`. If adding one seems to need a new core
 enum variant or a new trait method, the abstraction is wrong — say so rather
-than widening core to fit.
-
-Those four are deliberately together in one file. A provider the parser accepts
-and the help text never mentions is the failure worth designing against.
+than widening core to fit. It is not an edit to `crucible-config` either: the
+`providers` block is a map looked up by name, so a provider can be configured
+the day its arm exists.
 
 How a provider module divides into parts is stated in that module's own doc
 comment, which is the copy to keep current.
