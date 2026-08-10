@@ -217,16 +217,39 @@ impl Pipe {
             let Some(mut pipe) = pipe else { return };
             let mut buffer = [0_u8; 8192];
 
-            while let Ok(read) = pipe.read(&mut buffer) {
+            loop {
+                let read = match pipe.read(&mut buffer) {
+                    // The end of the pipe, and the only way out of here that
+                    // [`ended`] is entitled to read as one.
+                    Ok(0) => return,
+                    Ok(read) => read,
+                    // What `read` documents as non-fatal and asks callers to
+                    // retry. Producing one takes a signal handler that returns,
+                    // and this process installs none — catching a signal needs
+                    // `unsafe`, which the workspace denies — so it cannot
+                    // happen today. It is retried rather than reasoned about
+                    // because the fact protecting it lives in another crate:
+                    // the day anything here catches a resize, dropping this
+                    // would end a reader mid-command and send the cut output
+                    // back looking complete.
+                    Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => continue,
+                    // A pipe we own, on a descriptor nothing else closes. What
+                    // is left is the far end being gone, which is the end of it
+                    // under another name.
+                    Err(_) => return,
+                };
+
                 if until.load(Ordering::Relaxed) {
                     return;
                 }
+                // Neither of these can be the arm that runs. `read` never
+                // reports more than the buffer it was handed, and the lock is
+                // poisoned only by a panic inside `push` or `bytes` — neither
+                // of which indexes, unwraps or does arithmetic that is not
+                // saturating, in a crate where all three are denied anyway.
                 let (Some(arrived), Ok(mut kept)) = (buffer.get(..read), into.lock()) else {
                     return;
                 };
-                if arrived.is_empty() {
-                    return;
-                }
                 kept.push(arrived);
             }
         });
@@ -235,6 +258,12 @@ impl Pipe {
     }
 
     /// Whether the reader has reached the end of the pipe.
+    ///
+    /// Answered by the thread having stopped, which is the same question only
+    /// because every other way out of that loop is one that cannot be taken.
+    /// Anything that makes one of them possible owes an answer here as well: a
+    /// reader that gave up early reports as a command that finished, and what
+    /// it collected goes back to the model looking like all of it.
     fn ended(&self) -> bool {
         self.reader.is_finished()
     }

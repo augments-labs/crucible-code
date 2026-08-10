@@ -5,6 +5,7 @@
 //! `rg` binary", and the only way to hold it on a real tree is to skip what `rg`
 //! skips and read what it reads.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::sync::Mutex;
@@ -30,6 +31,9 @@ const MATCHES: usize = 200;
 /// Where a matching line is cut. A match inside a minified bundle is worth
 /// reporting; the bundle is not worth sending.
 const WIDTH: usize = 400;
+
+/// How many files the answer names before it starts counting them instead.
+const NAMED: usize = 5;
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
@@ -93,6 +97,17 @@ struct Found {
     /// and telling the model to narrow a pattern that needed no narrowing costs
     /// it a turn to rediscover the same lines.
     more: bool,
+    /// The files the search did not get to the end of, named so the model can
+    /// go and look for itself. Sorted, because the walk is parallel and the
+    /// same search has to answer the same way twice.
+    partly: Vec<String>,
+}
+
+/// What one file gave up: its matching lines, and its name if the search
+/// stopped before the end of it.
+struct Searched {
+    hits: Vec<Hit>,
+    partly: Option<String>,
 }
 
 impl Grep {
@@ -116,6 +131,7 @@ impl Grep {
 
         let (matcher, limit) = (&query.matcher, query.limit);
         let hits = Mutex::new(Vec::new());
+        let partly = Mutex::new(BTreeSet::new());
         let so_far = AtomicUsize::new(0);
 
         walk.build_parallel().run(|| {
@@ -135,9 +151,9 @@ impl Grep {
                 // of it too.
                 .memory_map(MmapChoice::never())
                 .build();
-            let (hits, so_far) = (&hits, &so_far);
+            let (hits, partly, so_far) = (&hits, &partly, &so_far);
 
-            // `move` takes the searcher this thread just built. The two shared
+            // `move` takes the searcher this thread just built. The shared
             // values are rebound above so it takes references to them rather
             // than the values themselves.
             Box::new(move |entry| {
@@ -163,10 +179,15 @@ impl Grep {
                 }
 
                 let mine = self.lines(&mut searcher, matcher, entry.path(), limit);
-                if !mine.is_empty() {
-                    so_far.fetch_add(mine.len(), Ordering::Relaxed);
+                if let Some(name) = mine.partly
+                    && let Ok(mut partly) = partly.lock()
+                {
+                    partly.insert(name);
+                }
+                if !mine.hits.is_empty() {
+                    so_far.fetch_add(mine.hits.len(), Ordering::Relaxed);
                     if let Ok(mut hits) = hits.lock() {
-                        hits.extend(mine);
+                        hits.extend(mine.hits);
                     }
                 }
 
@@ -181,21 +202,33 @@ impl Grep {
         // in hand.
         let more = hits.len() > limit;
         hits.truncate(limit);
-        Found { hits, more }
+        let partly = partly
+            .into_inner()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        Found { hits, more, partly }
     }
 
-    /// The matching lines of one file.
+    /// The matching lines of one file, and whether the search reached the end
+    /// of it.
     ///
-    /// A file that cannot be read — no permission, a broken link, a device —
-    /// contributes nothing. Reporting it would fill the answer with entries the
-    /// model asked nothing about and can do nothing with.
+    /// Two things stop it early. The file cannot be read — no permission, a
+    /// device, gone since the walk saw it — or a line the matcher hit is not
+    /// text, because `UTF8` decodes before it hands anything over and only a
+    /// NUL byte quits the searcher, so a Latin-1 file is searched as the text
+    /// it nearly is until one of its bytes is not.
+    ///
+    /// Either way what came back before that point is real and is kept, and the
+    /// name goes back with it. Dropping the lot is what makes a file holding a
+    /// match on its first line answer as a file holding none.
     fn lines(
         &self,
         searcher: &mut Searcher,
         matcher: &RegexMatcher,
         path: &Path,
         limit: usize,
-    ) -> Vec<Hit> {
+    ) -> Searched {
         // Spelled by the module that owns the walk, so `glob` cannot name the
         // same file a second way.
         let shown = crate::tree::named(&self.workspace, path);
@@ -218,8 +251,10 @@ impl Grep {
             }),
         );
 
-        // The sink itself never fails, so an error here is the file, not us.
-        if found.is_err() { Vec::new() } else { hits }
+        Searched {
+            hits,
+            partly: found.err().map(|_| shown),
+        }
     }
 
     /// The glob a call restricts itself to, if it gave one.
@@ -289,8 +324,13 @@ impl Tool for Grep {
 
 /// The hits, as lines the model can hand straight back to `read`.
 fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
+    let note = unread(&found.partly);
+
     if found.hits.is_empty() {
-        return ToolOutput::failed(format!("nothing matched {pattern}"));
+        // The note belongs on this branch too. "Nothing matched" is a claim
+        // about files that were read to the end, and one the search stopped
+        // partway through is not among them.
+        return ToolOutput::failed(format!("nothing matched {pattern}{note}"));
     }
 
     let lines = found
@@ -306,7 +346,33 @@ fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
         String::new()
     };
 
-    ToolOutput::ok(lines + &tail)
+    ToolOutput::ok(lines + &tail + &note)
+}
+
+/// The files the search stopped partway through, said out loud.
+///
+/// An answer that is missing the bottom of a file looks exactly like one that
+/// read the whole thing, so the difference has to be in the text. Bounded like
+/// every other part of the output: a tree of files the searcher cannot decode
+/// would otherwise put a line in the answer for each of them.
+fn unread(partly: &[String]) -> String {
+    if partly.is_empty() {
+        return String::new();
+    }
+
+    let named = partly
+        .iter()
+        .take(NAMED)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rest = partly.len().saturating_sub(NAMED);
+    let more = if rest == 0 {
+        String::new()
+    } else {
+        format!(" and {rest} more")
+    };
+    format!("\n[stopped partway through {named}{more}: a match below that point is not here]")
 }
 
 /// A line, cut on a character boundary if it is longer than anything worth
