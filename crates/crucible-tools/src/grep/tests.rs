@@ -229,6 +229,24 @@ fn a_path_the_walk_could_not_have_reached_is_refused() {
 }
 
 #[test]
+fn a_rule_about_every_tool_reaches_the_walk_too() {
+    // `deny *(private/**)` is how somebody says it once instead of naming
+    // `read`, `grep` and `glob` in turn, and the walk is one of the places it
+    // has to hold for that to be true.
+    let sample = tree("grep-every");
+    sample.write("private/token.txt", "the needle nobody may see\n");
+
+    let output = grep_under(
+        &sample,
+        r#"{"pattern":"needle"}"#,
+        &[(Disposition::Deny, "*(private/**)")],
+    );
+
+    assert!(!output.text().contains("private/"), "{}", output.text());
+    assert!(output.text().contains("src/main.rs:"), "{}", output.text());
+}
+
+#[test]
 fn a_deny_rule_about_one_tool_is_not_about_another() {
     // A rule names a tool. `grep` skipping what `read` was denied would be a
     // second, invisible rule nobody wrote.

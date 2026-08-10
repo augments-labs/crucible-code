@@ -64,7 +64,7 @@ fn blanketed(rules: &[Rule], call: &ToolCall) -> bool {
 fn for_tool<'a>(rules: &'a [Rule], call: &'a ToolCall) -> impl Iterator<Item = &'a Pattern> {
     rules
         .iter()
-        .filter(|rule| *rule.tool == *call.name)
+        .filter(|rule| rule.about(&call.name))
         .map(|rule| &rule.pattern)
 }
 

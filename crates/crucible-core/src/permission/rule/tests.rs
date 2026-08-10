@@ -212,6 +212,38 @@ fn a_tool_named_alone_and_a_star_are_the_same_rule() {
 }
 
 #[test]
+fn a_star_where_the_tool_goes_is_every_tool() {
+    // The same reading as inside the brackets: `*` is everything the position
+    // it sits in can hold. A rule accepted here and matched against nothing
+    // would be the one failure this mechanism cannot survive.
+    let rules = rules(&[(Disposition::Deny, "*(.env)")]);
+    let secret = reading("/w/.env", Some(".env"));
+
+    assert_eq!(
+        rules.stated(&call("read"), &secret),
+        Some(Disposition::Deny)
+    );
+    assert_eq!(
+        rules.stated(&call("grep"), &secret),
+        Some(Disposition::Deny)
+    );
+}
+
+#[test]
+fn a_tool_spelled_with_a_capital_is_the_same_tool() {
+    // Every tool is named in lower case, so `Bash` is somebody writing one of
+    // them the way a sentence would rather than naming a second tool. Reading
+    // it as a second tool accepts the rule and then matches it against
+    // nothing, which is the shape of protection without any.
+    let rules = rules(&[(Disposition::Deny, "Bash(*)")]);
+
+    assert_eq!(
+        rules.stated(&call("bash"), &running(&["curl http://example.invalid"])),
+        Some(Disposition::Deny)
+    );
+}
+
+#[test]
 fn every_constituent_of_a_command_has_to_be_allowed() {
     let rules = rules(&[(Disposition::Allow, "bash(git status)")]);
 

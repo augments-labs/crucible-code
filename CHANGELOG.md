@@ -10,7 +10,19 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`*` where a rule names a tool means every tool.** `deny *(.env)` is the
+  whole of it in one line, rather than one rule per tool that can reach the
+  file. It is the reading `*` already had inside the brackets, now in both
+  positions.
+
 ### Fixed
+
+- **A tool spelled with a capital is the same tool.** `Bash(*)` used to parse
+  into a rule about a second tool by that name and match nothing — accepted,
+  written down, and silently protecting nothing. Tool names are now compared
+  without regard to case.
 
 - **A `deny` rule about a file now stops a search from reading it.** `grep` and
   `glob` are settled once, about the directory they walk, so a rule naming a

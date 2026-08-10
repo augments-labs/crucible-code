@@ -70,12 +70,28 @@ pub struct Rules {
     allow: Vec<Rule>,
 }
 
+/// `*` where a tool goes: every tool, the reading `*` has in the other
+/// position too.
+const EVERY: &str = "*";
+
 /// One rule: a tool, and what it may act on.
 #[derive(Debug, Clone)]
 struct Rule {
-    /// Matched against the call's name exactly. A rule is about one tool.
+    /// The tool this is about, as it was written. `*` is all of them.
     tool: Box<str>,
     pattern: Pattern,
+}
+
+impl Rule {
+    /// Whether this rule is about a call to `tool`.
+    ///
+    /// Case is not part of the answer. Every tool is named in lower case, so a
+    /// capital can only be somebody spelling one of them the way a sentence
+    /// would — and a rule accepted, written down and then matched against
+    /// nothing is the failure this mechanism cannot survive.
+    fn about(&self, tool: &str) -> bool {
+        &*self.tool == EVERY || self.tool.eq_ignore_ascii_case(tool)
+    }
 }
 
 /// What a rule says about the thing a call acts on.
@@ -181,7 +197,7 @@ impl Rules {
             self.deny
                 .iter()
                 .chain(self.ask.iter())
-                .filter(|rule| *rule.tool == *tool)
+                .filter(|rule| rule.about(tool))
                 .map(|rule| rule.pattern.clone())
                 .collect(),
         )

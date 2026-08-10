@@ -36,6 +36,11 @@ so `ask` and `deny` are the kinds that carve exceptions out of it.
 A tool, an opening bracket, a pattern: `write(src/**)`. A tool name on its
 own, or `tool(*)`, is a blanket — everything that tool could do.
 
+`*` means everything the position it sits in can hold, so it works where the
+tool goes as well: `deny *(.env)` is every tool, on that file. Tool names are
+matched without regard to case, because every tool is named in lower case and
+`Bash(*)` is somebody writing one of them the way a sentence would.
+
 **File patterns** are matched against the path the call acts on, resolved and
 after symbolic links, so a link into `.env` is `.env`. A relative pattern like
 `src/**` is matched against the path below the working directory; an absolute
@@ -93,11 +98,14 @@ about a read is already a refusal.
 A rule names one tool, so each tool that can reach a file needs its own.
 `deny read(private/**)` stops `read` and leaves `grep` free to print the lines
 of the same file. Keeping something out of every answer means naming every tool
-that could put it there — `read`, `grep` and `glob` each on its own line.
+that could put it there — or writing `deny *(private/**)`, which is the same
+thing said once.
 
-`bash` is not one of them. A command is matched against what will run rather
+That still leaves `bash`. A command is matched against what will run rather
 than against the paths it will touch, so a file pattern says nothing about a
-shell; what bounds a command is a command pattern and the [mode](modes.md).
+shell — `*(private/**)` included, since the `*` widens which tool is meant and
+not what a pattern can say. What bounds a command is a command pattern and the
+[mode](modes.md).
 
 ## Layers add, they never replace
 
