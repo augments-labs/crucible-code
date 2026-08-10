@@ -33,6 +33,18 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **`allowEdits` now runs a command that only changes files in the workspace.**
+  A `mkdir` is the same change to the same tree whether `write` made it or a
+  shell did, and stopping to ask about one while waving the other through was a
+  distinction nobody who typed `allowEdits` had made. The mode now runs a `bash`
+  call when the line is one simple command, the program is `mkdir`, `rmdir`,
+  `touch`, `rm`, `cp` or `mv`, every flag is one that carries no value of its
+  own, and every path in it resolves inside the workspace after symbolic links.
+  Everything else asks exactly as before, including a glob or a `~`, which the
+  shell rewrites into a path that was never checked. This is not a list of safe
+  commands — `rm -rf src` is on it — but a list of ones whose reach can be
+  established; a `deny` rule still holds over all of them, and `ask` still asks.
+
 - **`a` at a question now means `always`, and `s` means the session.** The
   session-long yes has moved to its own letter, because the two are different
   promises and one of them now writes a file. A finger that types `a` out of
