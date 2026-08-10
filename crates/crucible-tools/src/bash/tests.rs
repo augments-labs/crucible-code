@@ -267,6 +267,27 @@ fn the_sensitivity_says_when_a_command_was_proved_to_stay_inside() {
 }
 
 #[test]
+fn a_recursive_delete_reaches_the_engine_as_a_command_that_gets_asked_about() {
+    // The seam `allowEdits` reads. `Reach::Workspace` is the claim that mode
+    // acts on without a question, so this is where the line between `rm one.txt`
+    // and `rm -rf .` either holds or does not.
+    let sample = Sample::new("bash-recursive");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"rm -rf ."}"#));
+
+    assert_eq!(
+        sensitivity,
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                parts: Box::from([Box::from("rm -rf .")]),
+                reach: Reach::Anything,
+            }
+        }
+    );
+}
+
+#[test]
 fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     // `run` will refuse it, but a sensitivity is needed first, and the safe
     // answer to "what will this run" when the answer is unknown is everything.
