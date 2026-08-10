@@ -41,6 +41,21 @@ Rendering costs nothing as a transcript grows, because it is inline: scrollback
 belongs to the terminal, not to this process. The transcript itself is held in
 memory for the life of the session, and is what the peak-RSS figure bounds.
 
+## Installing
+
+Every release attaches a binary for Linux, macOS and Windows on x86-64 and
+ARM64, and FreeBSD on x86-64, with one `SHA256SUMS` covering all of them, on the
+[releases page](https://github.com/augments-labs/crucible-code/releases).
+
+Take the archive for your platform and that file, check one against the other,
+and put the binary on your `PATH`:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf crucible-<version>-linux-x86_64.tar.gz
+install crucible-<version>-linux-x86_64/crucible ~/.local/bin/
+```
+
 ## Building
 
 Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain
@@ -53,8 +68,7 @@ cargo build --release
 ./target/release/crucible --version
 ```
 
-There are no published binaries yet; when there are, they will be attached to
-the GitHub Release for the tag. Anything past this point —
+Anything past this point —
 [getting started](docs/getting-started/index.md),
 [providers](docs/providers/index.md), [configuration](docs/configuration/index.md),
 [permissions](docs/permissions/index.md), [sessions](docs/sessions/index.md) — lives in

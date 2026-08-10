@@ -175,14 +175,18 @@ A **scalar** takes the nearest layer that set it. An **object** is merged key by
 key, so a project naming one provider leaves your other one alone. A **list** is
 concatenated: every layer's entries are kept and none of them replaces another.
 
-```json5
-// ~/.crucible/config.json
+Say `~/.crucible/config.json` holds this:
+
+```json
 { "providers": { "anthropic": { "model": "claude-opus-5" },
                  "openai":    { "model": "gpt-5.2" } },
   "output": { "toolDetail": "full" },
   "permissions": { "deny": ["read(.env)"] } }
+```
 
-// .crucible/config.json
+and the project's `.crucible/config.json` holds this:
+
+```json
 { "providers": { "openai": { "model": "gpt-5.2-mini" } },
   "permissions": { "allow": ["bash(cargo test)"] } }
 ```
@@ -200,10 +204,28 @@ safe precisely because `deny` wins wherever it came from.
 The cost is that a list cannot be shortened by a nearer layer, only added to.
 Removing an entry means editing the file that holds it.
 
+## Comments
+
+JSON has no comment syntax, which is the one real cost of the format. `$comment`
+is the standard's own answer to it, and crucible takes it anywhere in a
+document — at the top, beside a rule list, inside a provider block — and does
+nothing with it:
+
+```json
+{ "permissions": {
+    "$comment": "read(.env) is denied because the deploy keys are in it",
+    "deny": ["read(.env)"] } }
+```
+
+A `//` line is not a comment here. crucible parses JSON, so a file carrying one
+is refused before anything is drawn.
+
 ## Your editor
 
 The `$schema` line is what makes an editor complete these files, check them as
 you type, and show what each key means. It is optional and crucible ignores it.
+Those two are the keys the standard reserves, and the only ones beginning with
+`$` that mean anything here.
 
 The schema is generated from the same declaration the parser walks, so an editor
 that accepts a document and a crucible that refuses it would have to disagree

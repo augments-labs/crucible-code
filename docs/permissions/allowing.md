@@ -29,10 +29,12 @@ and mean anything at all, so a command containing one of these is treated as a
 command whose text does not say what will run: no rule short of a blanket
 covers it, and it is asked about every time.
 
-The programs treated this way: `env`, `find`, `nice`, `nohup`, `ssh`, `sudo`,
-`time`, `timeout`, `watch`, `xargs` — and the shells themselves, `bash`, `sh`
-and `zsh`, since `sh -c '…'` is one word to a pattern and a whole second
-command line to the machine.
+The programs treated this way: `doas`, `env`, `find`, `nice`, `nohup`, `ssh`,
+`su`, `sudo`, `time`, `timeout`, `watch`, `xargs` — and the shells themselves,
+`bash`, `sh` and `zsh`, since `sh -c '…'` is one word to a pattern and a whole
+second command line to the machine. All three of `sudo`, `su` and `doas`,
+because `su -c '…' root` launders a command exactly the way `sudo` does and a
+list naming only the familiar one would be a rule about spelling.
 
 `allow: ["bash(timeout *)"]` therefore never fires. That is the point: a rule
 whose author could not have known what they authorised is worse than a

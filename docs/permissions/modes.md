@@ -65,6 +65,10 @@ explicitly, with `allow` rules or with `fullAccess`.
 ## `--continue` resumes the transcript, not the mode
 
 The mode is read from configuration at every start. Continuing a session picks
-up its transcript; it does not pick up the mode the session last ran in, nor
-anything allowed with `always` — those live only as long as the process they
-were made in.
+up its transcript; it does not pick up the mode the session last ran in, nor a
+session-long allow — that lives only as long as the process it was made in.
+
+An answer of `always` is not one of those. It writes an `allow`
+[rule](rules.md) into `.crucible/config.local.json`, and every later start reads
+that file, so the permission is in force until you delete the line —
+see [What `always` writes](permissions.md#what-always-writes).

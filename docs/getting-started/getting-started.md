@@ -30,10 +30,32 @@ Windows](https://git-scm.com/download/win) carries one, and crucible finds that
 one where it is normally installed even when it is not on the `PATH`. Without
 one, everything except the `bash` tool works and that tool says what is missing.
 
+## Install it
+
+The archives are attached to the
+[releases page](https://github.com/augments-labs/crucible-code/releases), with
+`SHA256SUMS` beside them. Take the one for your platform and that file, check
+one against the other, unpack it, and put the binary somewhere on your `PATH`:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf crucible-<version>-linux-x86_64.tar.gz
+install crucible-<version>-linux-x86_64/crucible ~/.local/bin/
+```
+
+`--ignore-missing` is what lets one checksum file covering the whole release
+check the one archive you took. Each archive unpacks into a directory named
+after it, holding the binary, the README and the licence.
+
+Each Windows target also ships the executable on its own, beside the archive and
+named the same way — `crucible-<version>-windows-x86_64.exe` — so there is
+nothing to unpack. `SHA256SUMS` covers those too.
+
 ## Build it
 
 Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain
-on the first build.
+on the first build. This is the path for a platform not in the table above, and
+for working on crucible itself.
 
 ```bash
 git clone https://github.com/augments-labs/crucible-code
@@ -65,17 +87,21 @@ crucible
 It opens with the version, the model, and the root it is standing on:
 
 ```
-crucible 0.0.1 · claude-sonnet-5
+crucible <version> · claude-sonnet-5
 /home/you/code/my-project
 
-› 
+ask › 
 ```
+
+The mode in force is on the prompt line every time — `ask` is the one nothing
+configured gives you, and [Permissions](../permissions/index.md) is where the
+others are.
 
 Type a prompt and press enter. The answer streams in as it is produced. Tool
 calls appear as they run:
 
 ```
-› what does the runner do when a tool fails?
+ask › what does the runner do when a tool fails?
 
 · read {"path":"crates/crucible-runner/src/runner.rs"}
        1	//! The turn loop. (+238 lines)
@@ -83,7 +109,7 @@ calls appear as they run:
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
 
-› 
+ask › 
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`
@@ -105,16 +131,22 @@ does, a line says so under the turn:
 ! unfinished: the provider's filter cut the answer short
 ```
 
-The two are named apart because the remedy is opposite. The first means the
-answer ran out of room, and a narrower question gets a complete one. The second
-means the provider stopped the answer on its own, and asking for less buys
-nothing. Without the line, both look exactly like an answer that finished.
+```
+! unfinished: the provider paused this turn; ask it to go on
+```
 
-A turn that ended normally says nothing at all. There is a third line,
-`! stopped`, for a turn that was cancelled — but nothing in 0.0.1 can cancel
+The three are named apart because the remedy differs. The first means the answer
+ran out of room, and a narrower question gets a complete one. The second means
+the provider stopped the answer on its own, and asking for less buys nothing.
+The third means the answer is not over: the same prompt again carries on from a
+transcript that already holds this much. Without the line, all three look
+exactly like an answer that finished.
+
+A turn that ended normally says nothing at all. There is a fourth line,
+`! stopped`, for a turn that was cancelled — but nothing in 0.0.x can cancel
 one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
 
-<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.1 input is left
+<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.x input is left
 in the terminal's cooked mode and no signal is caught, so there is no way to stop
 a single answer and keep the session. The session log is written as the turn
 goes, so `crucible --continue` picks the session up from wherever it

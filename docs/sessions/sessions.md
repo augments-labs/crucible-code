@@ -14,10 +14,12 @@ it somewhere else and you get that directory's most recent session instead —
 which is the point. Two projects open in two terminals are two sessions.
 
 `--continue` replays the transcript so the model has the earlier turns, and
-appends to the same file. It does not restore permissions: anything allowed
-with `always` lives as long as the process that made it, and the mode is read
-fresh from configuration at every start. See
-[Permissions](../permissions/permissions.md).
+appends to the same file. It does not restore permissions: a session-long allow
+lives as long as the process that made it, and the mode is read fresh from
+configuration at every start. An answer of `always` is the exception, and it is
+not restored so much as never lost — it was written into
+`.crucible/config.local.json` as an `allow` rule, so every start reads it, this
+one included. See [Permissions](../permissions/permissions.md).
 
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
@@ -29,9 +31,65 @@ is continued, before anything new is appended: the next turn would otherwise be
 written onto the end of it, which turns a lost line into a log that cannot be
 read at all. Nothing that was handed back is touched.
 
-A log damaged somewhere in the *middle* is refused instead: continuing from a
-transcript with a hole in it would read to the model as you contradicting
-yourself, and nothing would say why.
+What comes back is always the start of a transcript, never one with a hole in
+it. What a line this build cannot read as a message costs is decided by where it
+sits. At the *end* of a log it is where the log stops, and it costs that line
+alone: the turns before it are handed back, and the file is cut there before
+anything new is appended, exactly as a torn line is.
+
+With more of the log after it, the same line stops the run instead. A transcript
+missing its middle would be replayed with nothing to say so, and the cut
+that follows a replay would take every turn recorded after the damage off the
+disk as well. crucible says which file it is and continues nothing, so the file
+is still there, whole, to look at.
+
+A log that stops between a tool call and its result is the one case where the
+last recorded turn does not come back: an unanswered question is not something
+to send a provider, so the replay ends before it and the file is cut to match.
+
+## One at a time
+
+A session is claimed for as long as it is open, so the one crucible is writing
+now is not one another crucible can continue:
+
+```
+crucible: /home/you/.crucible/sessions/1786713045000-3f9c2a.jsonl is open in another crucible
+```
+
+`--continue` says that and stops, having read nothing and changed nothing.
+Continuing a session cuts its log back to what was replayed, so without this the
+second crucible would delete the turns the first had already written and still
+believes are there, and both would append to one file from then on.
+
+Starting a session is never refused. Two crucibles in one directory are two
+sessions, each recording a log of its own — it is only continuing that has to
+pick one, and only continuing that can be told no.
+
+The claim is the operating system's, taken on a `.lock` file beside the log and
+released however the process ends, so a crucible that crashed leaves no session
+stuck as busy. The file it was taken on stays where it is and is never mistaken
+for a session. Some network filesystems have no locks to take at all; there,
+`--continue` goes ahead without the check rather than refusing everything.
+
+## When recording stops
+
+A write to the log can fail — a full disk, most often — and the turn does not
+stop with it. One line says so, after the turn it happened in:
+
+```
+! this session has stopped being recorded: No space left on device (os error 28)
+```
+
+It is said once rather than under every turn from then on, which would bury the
+turns it is warning you about. What reached the disk before it is still there,
+and recording is not abandoned: a later write that succeeds still lands, on a
+line of its own so that a write which stopped part-way cannot have the next one
+welded onto it.
+
+What that leaves is read back under the rules above. An attempt that got nothing
+down costs nothing at all — the empty line it leaves is not a message and is not
+damage, and the replay reads past it. One that stopped in the middle of a line
+is damage where it sits.
 
 ## Where they are kept
 
@@ -62,7 +120,9 @@ do nothing.
 
 Each file is named for its session and ends in `.jsonl`. They are yours: reading
 one with `cat`, `jq` or a text editor is a supported thing to do, and deleting
-one is how you forget a session.
+one is how you forget a session. A `.jsonl.lock` beside one is where the claim
+above is taken; it holds nothing, and an empty one left by a crash is only a
+file.
 
 ### If you used crucible 0.0.2 or earlier
 

@@ -31,10 +31,13 @@ src/            the binary — wiring only, the sole place concrete types meet
   bin/          auxiliary binaries: bench probes, not shipped
 crates/
   crucible-core/       domain types + traits. Depends on nothing.
+  crucible-config/     configuration documents -> settings.     -> core
   crucible-provider/   wire protocols (Anthropic, OpenAI).      -> core
   crucible-tools/      read write edit bash grep glob.          -> core
   crucible-runner/     the turn loop, over traits only.         -> core
   crucible-tui/        inline renderer, prompt, transcript.     -> core
+schema/         the configuration schema, generated from the shape the parser
+                walks and checked in beside it
 scripts/        gates and benchmarks
 docs/           the published site. One directory per topic, `index.md` beside
                 the pages; a directory name is a public URL segment.
@@ -56,9 +59,12 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    never re-validate. Anything with domain meaning gets a newtype —
    `SessionId`, `WorkspacePath`, `ApiKey` — never a bare `String`.
 3. **Permission is an argument, not a question.** A function that mutates a file
-   or spawns a process takes a `Grant`. A `Grant` has a private field and is
-   minted only by the permission engine, so it cannot be forged and a `Deny`
-   cannot be passed off as an allow. Code without one cannot call the operation.
+   or spawns a process takes an `Approved`: the call itself, carried together
+   with the `Grant` that says a verdict was reached about *that* call. `Grant`
+   has a private field and is minted only by the permission engine, so it cannot
+   be forged, a `Deny` cannot be passed off as an allow, and proof reached about
+   one call cannot arrive beside another call's arguments. Code without one
+   cannot call the operation.
 4. **Secrets never surface.** Not in logs, errors, `Display`, `Debug`, session
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
@@ -96,7 +102,7 @@ column gets sent back in review.
 
 | Concept | Use | Never |
 | --- | --- | --- |
-| One prompt plus the exchange until the agent yields | **turn** | exchange, round, iteration, loop |
+| One prompt and everything that follows from it until the agent yields | **turn** | exchange, round, iteration, loop |
 | The ordered record of turns | **transcript** | history, conversation, messages, backlog |
 | A conversation bound to a working directory | **session** | chat, thread, context |
 | One piece of streamed output | **delta** | chunk, token, fragment |
@@ -104,7 +110,8 @@ column gets sent back in review.
 | A permission decision | **verdict** | approval, grant, decision |
 | An LLM backend adapter | **provider** | backend, client, vendor, model |
 | What drives turns to completion | **runner** | engine, orchestrator, driver, executor |
-| One record in the session log | **event** | entry, record, item |
+| One thing that happened, reported as it happens | **event** | entry, record, item |
+| One prompt, answer or tool result in a transcript, and one line of the session log | **message** | entry, record, item |
 
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.

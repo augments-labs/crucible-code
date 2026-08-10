@@ -6,6 +6,110 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A session another crucible has open is refused rather than continued.**
+  `--continue` in a second terminal in the same directory stops with `… is open
+  in another crucible`, having read nothing and changed nothing. Two crucibles
+  *starting* there are unaffected: they are two sessions, each recording its own
+  log.
+
+- **`crucible_tui::cut`, the display-column count the renderer itself uses.** It
+  says where a string reaches a given number of columns — a wide character
+  taking two, a combining mark none, a tab reaching its stop, and an emoji
+  presentation selector taking the column it widens by — so anything that
+  shortens a line and the tail that wraps it can no longer disagree about how
+  wide the same text is.
+
+### Changed
+
+- **A window resized during a redirected run flushes what is live.** `crucible >
+  out.txt` used to drop the rows still in the live region, losing that much of
+  the answer. They are written out instead, which puts a line break in the file
+  where the resize happened.
+
+### Fixed
+
+- **Damage in the middle of a session log stops `--continue` rather than
+  truncating the log to it.** A line this build cannot read with turns recorded
+  after it is refused and the file is left as it is. Damage at the end still
+  costs that line and nothing else.
+
+- **A write to the log that fails part-way through cannot weld two lines
+  together.** The next line written starts a line of its own, so a failed write
+  costs the line it was on rather than the one after it as well.
+
+- **A turn's tool calls are recorded before the tools run.** A turn that stopped
+  between the model asking for a tool and the result arriving left a log whose
+  last word was the prompt, so continuing it re-read files it had already
+  edited.
+
+- **An answer cut off mid-stream stays in the transcript.** Those deltas were on
+  screen already, and a transcript without them is one the user and the model
+  disagree about.
+
+- **A log whose first line was never finished is passed over.** It holds no
+  turns and names no workspace, and `--continue` used to append to it — after
+  which nothing could find the session at all.
+
+- **`write` takes an absolute path.** The directories a path needs are made by
+  walking its parents, and the walk began at the filesystem root, so every
+  absolute path was refused — including every path into a directory named by
+  `permissions.extraDirectories`, which can only be named absolutely.
+
+- **`glob` finds files in a directory reached through
+  `permissions.extraDirectories`.** It reported nothing there while `grep`
+  searched the same directory happily.
+
+- **`bash` output is bounded as it is read, not only when it is reported.** A
+  command producing gigabytes filled memory with bytes that were always going to
+  be discarded. What the model sees is unchanged: the two ends, and how much was
+  cut from between them.
+
+- **`grep` stops at a binary file.** A vendored font or `.so` that happens to be
+  valid UTF-8 was searched line by line, and those lines went back to the model
+  with NUL bytes in them.
+
+- **`read` has a ceiling on `limit`.** A large enough number pulled a whole
+  vendored bundle into the transcript in one call. The notice on a truncated
+  read already says how to ask for the next page.
+
+- **`su` and `doas` are treated as wrapper programs, like `sudo`.** A command
+  using one is asked about every time and no narrow rule covers it: `bash(su *)`
+  reads as a rule about `su` and would have authorised every program on the
+  machine.
+
+- **A keep-alive with no payload no longer fails the turn.** Some proxies send
+  one while the model is thinking; it was read as a payload that would not
+  parse, discarding the answer that had already arrived. Both wires.
+
+- **Tool call arguments are assembled onto the call they belong to.** Arguments
+  arriving under an index other than the open call's, and a call announced with
+  an id but no name, are refused on both wires instead of being folded into
+  whichever call was open — which is one tool running on another tool's
+  arguments.
+
+- **A resize that changes only the height is noticed.** The live region is
+  bounded by the height as much as by the width, and only the width was being
+  watched.
+
+- **Text is measured in display columns wherever it is wrapped or shortened.** An
+  emoji presentation selector counted as no column left a drawn row a column
+  short — one the terminal then wrapped itself, after which the next frame
+  erased the wrong lines. The binary's `!` notices were clipped by counting
+  characters instead: `日本語` came back at twice the width asked for, `⚠️` was
+  cut early enough to part a character from the selector that widens it, and the
+  ellipsis was added past the budget rather than taken out of it.
+
+- **`.crucible/config.local.json` keeps its permissions when `always` writes to
+  it.** The file is replaced by a rename, so one narrowed to `600` came back at
+  whatever the account creates a file as — on the file that says what may run
+  without being asked.
+
+- **A terminal that fails mid-turn no longer detaches the thread writing the
+  log.** The failure is held until the turn is over, so everything queued reaches
+  the disk before crucible exits.
+
 ## [0.0.7] - 2026-08-10
 
 ### Added
@@ -24,6 +128,34 @@ Notable changes to crucible. Format follows
   `crucible-v0.0.6-x86_64-unknown-linux-gnu.tar.gz`. One `SHA256SUMS` covers the
   release instead of a `.sha256` beside each archive. Anything that fetches a
   release by name needs updating.
+
+### Fixed
+
+- **`--continue` works on Windows.** Trimming the last line of a log needs a
+  handle that may rewrite the file, which an append handle is not granted there,
+  so continuing any session failed.
+
+- **A rule remembered on Windows matches the file it was minted from.** An
+  `always` answer about `src\main.rs` wrote a rule with the separator escaped as
+  a character it is not, so the same question came back next turn. Paths are
+  spelled with `/`, which is what the pattern language has.
+
+- **A rule naming an absolute path matches on Windows.** A resolved path carries
+  the extended-length spelling, `\\?\C:\...`, which `deny read(C:/Users/you/**)`
+  was never going to match. A rule that reads as protection and is none is worse
+  than no rule.
+
+- **`grep` and `glob` name a file the way a rule about it is written.** They
+  reported Windows paths with the separator a rule cannot carry, so a rule
+  written from what a search printed matched nothing.
+
+- **`permissions.extraDirectories` takes a Windows path.** An entry is judged
+  absolute by what the platform it runs on calls absolute, rather than by a
+  leading `/` that only some platforms use.
+
+- **A session log is born with the access control list that closes it.** The
+  list came down from the directory, so there is no moment in which a log exists
+  carrying what the user profile hands Administrators and SYSTEM.
 
 ## [0.0.6] - 2026-08-10
 
