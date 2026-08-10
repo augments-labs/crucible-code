@@ -166,9 +166,12 @@ mod tests {
         let err = Settings::read(&home(&scratch), scratch.root()).unwrap_err();
 
         // The whole path, because two of the three files are called
-        // `config.json` and one of them is somewhere else entirely.
+        // `config.json` and one of them is somewhere else entirely. Joined
+        // rather than written out, so this asks for the path the reader will be
+        // shown rather than for the separator Unix happens to use.
+        let named = Path::new(".crucible").join("config.json");
         let said = err.to_string();
-        assert!(said.contains(".crucible/config.json"), "got {said}");
+        assert!(said.contains(&named.display().to_string()), "got {said}");
         assert!(said.contains("providers"), "got {said}");
     }
 

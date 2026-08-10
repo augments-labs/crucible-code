@@ -156,21 +156,7 @@ fn absolute(from: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sample::Scratch;
-
-    /// An absolute path, spelled the way this platform spells one.
-    ///
-    /// Whether a variable names a home is decided by `is_absolute`, and a
-    /// leading slash is not enough for Windows — a path is absolute there only
-    /// with a drive or a share in front of it. A fixture hard-coding a Unix path
-    /// would be testing the wrong question on half the targets.
-    fn rooted(path: &str) -> String {
-        if cfg!(windows) {
-            format!(r"C:\{}", path.replace('/', r"\"))
-        } else {
-            format!("/{path}")
-        }
-    }
+    use crate::sample::{Scratch, rooted};
 
     /// An environment holding exactly these variables and nothing else.
     fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {

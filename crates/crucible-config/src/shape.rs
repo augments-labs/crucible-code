@@ -170,7 +170,14 @@ const PERMISSIONS: &[Field] = &[
         name: "extraDirectories",
         about: "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, so this belongs in .crucible/config.local.json",
         shape: Shape::List(&DIRECTORY),
-        examples: &["/home/you/src/shared-library"],
+        // One spelling per platform. What counts as absolute is a drive or a
+        // share on Windows and a leading slash everywhere else, and this schema
+        // is one file served to both — so a single Unix example would be handed
+        // to a Windows editor as a completion crucible then refuses.
+        examples: &[
+            "/home/you/src/shared-library",
+            r"C:\Users\you\src\shared-library",
+        ],
     },
 ];
 

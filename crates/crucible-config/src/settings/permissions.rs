@@ -69,7 +69,10 @@ mod tests {
         Ask, Command, Reach, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
     };
 
+    use serde_json::json;
+
     use crate::document::{Document, Origin};
+    use crate::sample::rooted;
     use crate::shape;
 
     use super::*;
@@ -165,12 +168,17 @@ mod tests {
 
     #[test]
     fn every_layers_directories_are_reachable_together() {
+        // Absolute, because the document refuses anything else — and spelled
+        // for this platform, because that is what absolute means.
+        let shared = rooted("opt/shared");
+        let vendor = rooted("srv/vendor");
+
         let user = Document::sample(
-            r#"{"permissions":{"extraDirectories":["/opt/shared"]}}"#,
+            &json!({ "permissions": { "extraDirectories": [&shared] } }).to_string(),
             Origin::User,
         );
         let local = Document::sample(
-            r#"{"permissions":{"extraDirectories":["/srv/vendor"]}}"#,
+            &json!({ "permissions": { "extraDirectories": [&vendor] } }).to_string(),
             Origin::ProjectLocal,
         );
 
@@ -181,7 +189,7 @@ mod tests {
         // so this is pinning the concatenation rather than a precedence.
         assert_eq!(
             settings.extra_directories().collect::<Vec<_>>(),
-            ["/opt/shared", "/srv/vendor"]
+            [shared, vendor]
         );
     }
 

@@ -108,7 +108,8 @@
           "description": "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, so this belongs in .crucible/config.local.json",
           "items": {
             "examples": [
-              "/home/you/src/shared-library"
+              "/home/you/src/shared-library",
+              "C:\\Users\\you\\src\\shared-library"
             ],
             "type": "string"
           },
