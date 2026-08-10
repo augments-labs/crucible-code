@@ -118,13 +118,21 @@ impl Tail {
         self.rows.push_back(Row::default());
     }
 
-    /// Puts one character on the current row, wrapping first if it will not fit.
+    /// Puts one character on the current row, wrapping first if it will not
+    /// fit, and dropping it if no row of this width could hold it.
     fn place(&mut self, character: char) {
         // Zero for combining marks, two for the wide scripts, and nothing at
         // all for a control character, which is dropped rather than drawn.
         let Some(advance) = width::advance(character) else {
             return;
         };
+
+        // Wider than the whole row is nowhere to put it: wrapping would only
+        // move the overflow onto a fresh row and count that row short, which is
+        // the row the terminal wraps itself. Dropped, so the count stays honest.
+        if advance > self.width {
+            return;
+        }
 
         if self.current_width() + advance > self.width {
             self.rows.push_back(Row::default());
@@ -146,6 +154,13 @@ impl Tail {
 
         if !width::widens(base) {
             self.place(EMOJI_PRESENTATION);
+            return;
+        }
+
+        // A row one column wide has no room for the pair anywhere. The base is
+        // already down and drawn as text; the selector only asked for a
+        // presentation, so it goes rather than the character it applies to.
+        if self.width < 2 {
             return;
         }
 
@@ -193,198 +208,4 @@ impl Tail {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// One column as text, two once the selector follows it. Spelled out
-    /// because a selector is invisible in a source file.
-    const WARNING: &str = "\u{26A0}\u{FE0F}";
-
-    /// Pushes and returns what overflowed, so a test reads as one call.
-    fn push(tail: &mut Tail, delta: &str) -> Vec<String> {
-        let mut overflow = Vec::new();
-        tail.push(delta, &mut overflow);
-        overflow
-    }
-
-    fn rows(tail: &Tail) -> Vec<&str> {
-        tail.rows().collect()
-    }
-
-    #[test]
-    fn text_shorter_than_the_width_stays_on_one_row() {
-        let mut tail = Tail::new(20, 5);
-        assert!(push(&mut tail, "hello").is_empty());
-        assert_eq!(rows(&tail), ["hello"]);
-    }
-
-    #[test]
-    fn a_delta_split_mid_word_still_lands_on_one_row() {
-        // Providers split wherever the socket did, so the tail must not treat a
-        // delta boundary as anything at all.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "hel");
-        push(&mut tail, "lo wor");
-        push(&mut tail, "ld");
-        assert_eq!(rows(&tail), ["hello world"]);
-    }
-
-    #[test]
-    fn a_newline_starts_a_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo");
-        assert_eq!(rows(&tail), ["one", "two"]);
-    }
-
-    #[test]
-    fn crlf_does_not_leave_a_blank_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\r\ntwo");
-        assert_eq!(rows(&tail), ["one", "two"]);
-    }
-
-    #[test]
-    fn text_wider_than_the_width_wraps() {
-        let mut tail = Tail::new(4, 5);
-        push(&mut tail, "abcdefghij");
-        assert_eq!(rows(&tail), ["abcd", "efgh", "ij"]);
-    }
-
-    #[test]
-    fn a_wide_character_takes_two_columns_when_wrapping() {
-        // The bug this catches is counting characters instead of columns: five
-        // of these fit in a five-column row only if each is one wide, and they
-        // are not.
-        let mut tail = Tail::new(5, 5);
-        push(&mut tail, "日本語です");
-        assert_eq!(rows(&tail), ["日本", "語で", "す"]);
-    }
-
-    #[test]
-    fn a_combining_mark_does_not_take_a_column() {
-        // "e" plus a combining acute is two chars and one column, so it must
-        // not push the row over the edge.
-        let mut tail = Tail::new(2, 5);
-        push(&mut tail, "e\u{301}x");
-        assert_eq!(rows(&tail), ["e\u{301}x"]);
-    }
-
-    #[test]
-    fn an_emoji_presentation_selector_takes_the_column_it_asks_for() {
-        // The base is one column alone and two once the selector follows, so
-        // three do not fit on a four-column row. Counted per character it is 45
-        // of them on an 80-column row the terminal lays out at 90.
-        let mut tail = Tail::new(4, 5);
-        push(&mut tail, &WARNING.repeat(3));
-
-        assert_eq!(rows(&tail), [WARNING.repeat(2), WARNING.to_owned()]);
-    }
-
-    #[test]
-    fn a_selector_arriving_in_the_next_delta_still_widens_the_pair() {
-        // Providers split wherever the socket did, so the row was measured
-        // before the selector turned up. The pair moves down together: one
-        // parted from its base stops being a selector at all.
-        let mut tail = Tail::new(3, 5);
-        push(&mut tail, "ab\u{26A0}");
-        push(&mut tail, "\u{FE0F}");
-
-        assert_eq!(rows(&tail), ["ab", WARNING]);
-    }
-
-    #[test]
-    fn an_escape_sequence_from_a_tool_cannot_move_the_cursor() {
-        // Tool output is not trusted to be plain text. A control character kept
-        // verbatim would move a cursor this renderer believes it is tracking,
-        // and the next frame would erase the wrong lines.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "a\x1b[2Jb");
-        assert_eq!(rows(&tail), ["a[2Jb"]);
-    }
-
-    #[test]
-    fn a_tab_advances_to_the_next_stop() {
-        let mut tail = Tail::new(40, 5);
-        push(&mut tail, "ab\tc");
-        assert_eq!(rows(&tail), ["ab      c"]);
-    }
-
-    #[test]
-    fn a_tab_past_the_edge_wraps_instead_of_overflowing_the_row() {
-        let mut tail = Tail::new(6, 5);
-        push(&mut tail, "abcde\tx");
-        assert_eq!(rows(&tail), ["abcde", "x"]);
-    }
-
-    #[test]
-    fn rows_past_the_bound_overflow_oldest_first() {
-        let mut tail = Tail::new(20, 2);
-        let out = push(&mut tail, "one\ntwo\nthree\nfour");
-
-        assert_eq!(out, ["one", "two"]);
-        assert_eq!(rows(&tail), ["three", "four"]);
-    }
-
-    #[test]
-    fn the_tail_never_grows_past_its_bound() {
-        // This is the property the whole type exists for: memory must not grow
-        // with how long the session has run.
-        let mut tail = Tail::new(20, 3);
-        let mut overflow = Vec::new();
-
-        for turn in 0..10_000 {
-            tail.push(&format!("line {turn}\n"), &mut overflow);
-            overflow.clear();
-            assert!(tail.len() <= 3, "tail grew to {} rows", tail.len());
-        }
-    }
-
-    #[test]
-    fn wrapped_rows_count_against_the_bound_too() {
-        // One logical line can be many display rows, so the bound has to be
-        // about rows or a single long paragraph would blow past it.
-        let mut tail = Tail::new(4, 2);
-        let out = push(&mut tail, "abcdefghijklmnop");
-
-        assert_eq!(out, ["abcd", "efgh"]);
-        assert_eq!(rows(&tail), ["ijkl", "mnop"]);
-    }
-
-    #[test]
-    fn the_row_the_cursor_sits_on_is_not_content() {
-        // Otherwise every answer ending in a newline settles a blank line.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo\n");
-
-        assert_eq!(rows(&tail), ["one", "two", ""]);
-        assert_eq!(tail.content().collect::<Vec<_>>(), ["one", "two"]);
-    }
-
-    #[test]
-    fn a_blank_line_somebody_wrote_is_content() {
-        // Only the *last* empty row is the cursor's. The rest are output.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\n\ntwo");
-
-        assert_eq!(tail.content().collect::<Vec<_>>(), ["one", "", "two"]);
-    }
-
-    #[test]
-    fn clearing_leaves_one_empty_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo");
-        tail.clear();
-
-        assert_eq!(rows(&tail), [""]);
-        assert!(tail.is_empty());
-    }
-
-    #[test]
-    fn a_zero_width_does_not_wrap_forever() {
-        // A terminal reports zero columns while a pane is being dragged, and a
-        // literal zero here would loop pushing empty rows.
-        let mut tail = Tail::new(0, 3);
-        push(&mut tail, "abc");
-        assert_eq!(rows(&tail), ["a", "b", "c"]);
-    }
-}
+mod tests;
