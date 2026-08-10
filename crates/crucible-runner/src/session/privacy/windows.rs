@@ -9,6 +9,11 @@
 //! by a longer route, and is the honest limit of what a file permission
 //! promises on either system.
 //!
+//! Inheritance downwards is the other half, and it is what the directory's
+//! entry is for. A file created below it is born admitting this account and
+//! nobody else, so there is no moment at which a log exists carrying the list
+//! the profile would have given it.
+//!
 //! Written rather than read first. The Unix side compares the mode and calls
 //! `chmod` only when it is wrong, because `chmod` fails outright on a filesystem
 //! carrying no modes. Reading a list back to compare it costs more than writing
@@ -31,41 +36,51 @@ use std::path::Path;
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
 use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, DACL_SECURITY_INFORMATION,
-    GetLengthSid, GetTokenInformation, InitializeAcl, PROTECTED_DACL_SECURITY_INFORMATION, PSID,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, GetLengthSid, GetTokenInformation, InitializeAcl,
+    OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSID, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Makes the sessions directory, out of every other account's reach.
+///
+/// Its entry is handed down, which is what makes a log born correct rather than
+/// corrected a moment after. See [`log`].
 pub(in crate::session) fn directory(path: &Path) -> Result<(), io::Error> {
     std::fs::create_dir_all(path)?;
 
-    narrow(path)
+    narrow(path, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)
 }
 
 /// Opens a log for appending, making it if it is not there, out of reach.
 pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
-    // Between these two calls the log carries what it inherited, which on Unix
-    // it never does — the mode is part of the call that creates it there. It
-    // costs nothing here: `directory` ran first and what it wrote admits this
-    // account alone, so a file that has not been narrowed yet is already behind
-    // a door that is shut.
+    // The list this account is admitted by is already on the file when the call
+    // above returns, because it came down from the directory. That matters for
+    // the gap between these two lines: a process killed inside it leaves a log
+    // whose list is right, rather than one carrying whatever the user profile
+    // hands Administrators and SYSTEM — kept forever, since a session nothing
+    // continues is never opened again to be repaired.
     let file = OpenOptions::new().create(true).append(true).open(path)?;
 
-    narrow(path)?;
+    // What is written here is that same entry, said outright rather than
+    // handed down. A list that is inherited is recomputed whenever the
+    // directory's is written again; one that is protected is the file's own and
+    // is left alone.
+    narrow(path, 0)?;
 
     Ok(file)
 }
 
-/// Puts one entry on `path`, for this account, inheriting nothing.
-fn narrow(path: &Path) -> Result<(), io::Error> {
+/// Puts one entry on `path`, for this account: inheriting nothing from above,
+/// and handed down to whatever `handed_down` names.
+fn narrow(path: &Path, handed_down: ACE_FLAGS) -> Result<(), io::Error> {
     let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
     name.push(0);
 
     let user = Sid::current()?;
-    let mut list = Acl::granting(user.as_psid())?;
+    let mut list = Acl::granting(user.as_psid(), handed_down)?;
 
     // SAFETY: `name` is nul-terminated and outlives the call, and `list` is an
     // initialized list whose header records the length actually allocated for
@@ -182,8 +197,9 @@ impl Drop for Token {
 struct Acl(Vec<u32>);
 
 impl Acl {
-    /// Full control for `sid`, and no other entry.
-    fn granting(sid: PSID) -> Result<Self, io::Error> {
+    /// Full control for `sid`, and no other entry, handed down as
+    /// `handed_down` says.
+    fn granting(sid: PSID, handed_down: ACE_FLAGS) -> Result<Self, io::Error> {
         // SAFETY: `sid` points into a token buffer this process owns and which
         // outlives this call.
         let identifier = unsafe { GetLengthSid(sid) };
@@ -207,7 +223,9 @@ impl Acl {
 
         // SAFETY: `list` was initialized above with room for exactly this one
         // entry and the identifier it carries.
-        if unsafe { AddAccessAllowedAce(list, ACL_REVISION, FILE_ALL_ACCESS, sid) } == 0 {
+        if unsafe { AddAccessAllowedAceEx(list, ACL_REVISION, handed_down, FILE_ALL_ACCESS, sid) }
+            == 0
+        {
             return Err(io::Error::last_os_error());
         }
 
