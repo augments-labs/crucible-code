@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crucible_core::Workspace;
 use ignore::WalkBuilder;
 
 /// A walk rooted at `from`, skipping what the workspace says to skip.
@@ -23,4 +24,17 @@ pub(crate) fn walk(from: &Path) -> WalkBuilder {
     walk.require_git(false);
 
     walk
+}
+
+/// How a file the walk reached is named back to the model.
+///
+/// Relative to the root where it is under it, and left absolute where it is
+/// not: a directory the workspace was widened to reach has no spelling
+/// relative to the root, and a hit dropped for want of one is a file the model
+/// is told does not exist. Here beside the walk for the same reason the walk is
+/// here — two tools that read the same tree may not name the same file two
+/// ways, because the name is what the model hands back as the next call's
+/// `path` and what somebody writes a deny rule about.
+pub(crate) fn named(workspace: &Workspace, reached: &Path) -> String {
+    crucible_core::written(reached.strip_prefix(workspace.root()).unwrap_or(reached))
 }

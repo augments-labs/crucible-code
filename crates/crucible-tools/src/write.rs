@@ -2,7 +2,9 @@
 
 use std::fs;
 
-use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{
+    Approved, PathError, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+};
 
 use crate::args::Args;
 use crate::target;
@@ -116,7 +118,15 @@ impl Write {
                     "{requested} is not valid text"
                 ))));
             };
-            if self.workspace.existing(step).is_ok() {
+
+            // A level that is already there is not one to make, and there are
+            // two ways of being there. `Ok` is one inside the tree. `Escapes`
+            // is one above it: an absolute path names every directory between
+            // the filesystem root and the workspace on the way down, and those
+            // exist without the workspace reaching them. Refusing that pair
+            // was refusing every absolute path — with a message naming `/`,
+            // which the caller never sent.
+            if let Ok(_) | Err(PathError::Escapes { .. }) = self.workspace.existing(step) {
                 continue;
             }
 

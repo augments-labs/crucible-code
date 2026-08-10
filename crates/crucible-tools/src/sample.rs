@@ -37,6 +37,24 @@ impl Sample {
         Workspace::open(&self.root).expect("the root exists")
     }
 
+    /// The same workspace, widened to reach a directory outside the root —
+    /// what `extraDirectories` does to the one the tools are given.
+    pub(crate) fn reaching(&self, directory: &str) -> Workspace {
+        self.workspace()
+            .reaching([directory])
+            .expect("a directory that is there")
+    }
+
+    /// A directory beside the workspace, made and returned as the text of a
+    /// call names it. The counterpart to [`Self::outside`], for the tests about
+    /// a directory the workspace was widened to reach on purpose rather than
+    /// one it must refuse.
+    pub(crate) fn beside(&self, name: &str) -> String {
+        let path = self.base.join(name);
+        fs::create_dir_all(&path).expect("a writable temporary directory");
+        crucible_core::written(&path)
+    }
+
     /// Writes a text file, creating the directories above it.
     pub(crate) fn write(&self, at: &str, text: &str) {
         self.write_bytes(at, text.as_bytes());

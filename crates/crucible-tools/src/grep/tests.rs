@@ -170,6 +170,39 @@ fn something_that_is_not_text_contributes_nothing() {
 }
 
 #[test]
+fn a_file_that_is_valid_text_and_still_binary_is_left_alone() {
+    // A NUL byte is valid UTF-8, so nothing about decoding stops this one — a
+    // checked-in font, `.so` or fixture would otherwise be searched byte for
+    // byte and its "lines" sent back to the model with NUL bytes inside them.
+    // The sniff `rg` does by default is what draws the line, and the budget is
+    // measured against `rg`.
+    let sample = Sample::new("grep-binary-text");
+    sample.write("one.txt", "needle\n");
+    sample.write_bytes("blob.bin", b"\x00\x00needle in the noise\x00\x00");
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    assert_eq!(output.text(), "one.txt:1:needle\n");
+}
+
+#[test]
+fn a_search_that_found_exactly_the_limit_does_not_claim_it_stopped_short() {
+    // Whether the answer was cut used to be read off `hits.len() >= limit`
+    // *after* the truncation, where "exactly this many exist" and "more exist
+    // and were cut" look the same. Telling the model to narrow a pattern that
+    // needed no narrowing costs it a turn to rediscover the same lines.
+    let sample = Sample::new("grep-exact");
+    sample.write("three.txt", &"needle\n".repeat(3));
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":3}"#);
+
+    assert_eq!(
+        output.text(),
+        "three.txt:1:needle\nthree.txt:2:needle\nthree.txt:3:needle\n"
+    );
+}
+
+#[test]
 fn a_file_a_deny_rule_names_is_never_searched() {
     // The call was decided about the directory, and a rule about a file below
     // it says nothing at that moment. The walk is where it has to be honoured,

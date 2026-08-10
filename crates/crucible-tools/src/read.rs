@@ -14,6 +14,16 @@ const NAME: &str = "read";
 /// How many lines one call answers with when it does not say.
 const LINES: usize = 2_000;
 
+/// The most lines a call can ask for, however large a number it sends.
+///
+/// `LINES` is a default and a caller can raise it; this it cannot. Without it a
+/// model told a file was truncated can ask for the rest by naming a number, and
+/// a vendored bundle comes back whole — one `String` the size of the file, into
+/// a transcript that is what the memory budget is measured on. The notice below
+/// already says how to ask for the next page, so nothing is unreachable; it just
+/// takes another call.
+const CEILING: usize = 10_000;
+
 /// Where a single line is cut. One minified bundle on one line would otherwise
 /// fill the whole answer with text nobody — model or user — can read.
 const WIDTH: usize = 2_000;
@@ -36,7 +46,7 @@ const SCHEMA: &str = r#"{
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many lines to return. Defaults to 2000."
+      "description": "How many lines to return. Defaults to 2000, and never more than 10000 however large a number is sent."
     }
   },
   "required": ["path"]
@@ -133,7 +143,7 @@ impl Tool for Read {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let from = args.count("offset", 1)?;
-        let limit = args.count("limit", LINES)?;
+        let limit = args.count("limit", LINES)?.min(CEILING);
 
         // A path outside the workspace, or one that is not there, is something
         // the model can correct by sending a different path.
@@ -211,6 +221,30 @@ mod tests {
         assert_eq!(
             output.text(),
             "     1\ta\n     2\tb\n\n[more follows: call read again with offset 3]"
+        );
+    }
+
+    #[test]
+    fn a_limit_larger_than_the_ceiling_is_the_ceiling() {
+        // The default is a default and the caller may raise it; this it may not.
+        // A model told a file was truncated would otherwise ask for the rest by
+        // naming a number, and a vendored bundle would come back whole.
+        let sample = Sample::new("read-ceiling");
+        sample.write("many.txt", &"x\n".repeat(CEILING + 5));
+
+        let output = read(&sample, r#"{"path":"many.txt","limit":1000000}"#);
+
+        assert_eq!(
+            output.text().lines().filter(|l| l.contains('\t')).count(),
+            CEILING
+        );
+        assert!(
+            output.text().ends_with(&format!(
+                "[more follows: call read again with offset {}]",
+                CEILING + 1
+            )),
+            "{}",
+            output.text()
         );
     }
 

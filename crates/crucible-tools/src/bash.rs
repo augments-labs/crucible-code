@@ -64,12 +64,40 @@ const SCHEMA: &str = r#"{
 }"#;
 
 /// Runs shell commands in the workspace root.
-#[derive(Debug)]
 pub struct Bash {
     workspace: Workspace,
     cancel: Cancel,
     /// Laid over what crucible itself was started with — see [`Bash::exporting`].
     env: Vec<(Box<str>, Box<str>)>,
+}
+
+impl std::fmt::Debug for Bash {
+    /// Hand-written because `env` holds configured *values*, and this tool holds
+    /// them because it is the one that has to hand them to a child.
+    /// `ANTHROPIC_API_KEY`, `GITHUB_TOKEN` and `NPM_TOKEN` are ordinary entries
+    /// there. A derive would put every one of them wherever a `{:?}` reaches —
+    /// a log line, an assertion message, a panic payload — so the redaction is
+    /// the type's, not a rule about who may print it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bash")
+            .field("workspace", &self.workspace)
+            .field("cancel", &self.cancel)
+            .field("env", &Exported(&self.env))
+            .finish()
+    }
+}
+
+/// The exported variables as `Debug` may show them: every name, and a marker
+/// where each value would be. Which name is set is what somebody reading this
+/// is looking for, and it is all they need.
+struct Exported<'a>(&'a [(Box<str>, Box<str>)]);
+
+impl std::fmt::Debug for Exported<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(name, _)| (name, "<redacted>")))
+            .finish()
+    }
 }
 
 impl Bash {
