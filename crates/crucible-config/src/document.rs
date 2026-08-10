@@ -1,8 +1,11 @@
 //! One configuration file, read and checked against the shape.
 
+use std::fmt;
+
 use crucible_core::Rules;
 use serde_json::Value;
 
+use crate::env;
 use crate::error::ConfigError;
 use crate::shape::DOCUMENT;
 
@@ -16,7 +19,7 @@ use check::{Reader, Spot};
 /// Carried by the document rather than decided by the reader, because one rule
 /// depends on it: the layer that travels with a clone may not carry `env`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
+pub(crate) enum Origin {
     /// The configuration file in the user's home directory.
     User,
     /// `.crucible/config.json` — checked in, and read by everyone who clones.
@@ -45,8 +48,8 @@ impl Origin {
 /// Holding one is the proof that every key in it is a key crucible has and
 /// every value is the kind of thing that key accepts, so the layers above only
 /// have to decide precedence.
-#[derive(Debug, Clone)]
-pub struct Document {
+#[derive(Clone)]
+pub(crate) struct Document {
     value: Value,
     origin: Origin,
 
@@ -54,6 +57,19 @@ pub struct Document {
     /// resolved: a rule that will not parse has to be reported with the file it
     /// is in, and by then nothing could say which file that was.
     rules: Rules,
+}
+
+impl fmt::Debug for Document {
+    /// Written by hand so the `env` block is redacted. In two of the three
+    /// layers a variable there may hold anything the user's commands need,
+    /// and a derived `Debug` is what would print it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Document")
+            .field("value", &env::Redacted(&self.value))
+            .field("origin", &self.origin)
+            .field("rules", &self.rules)
+            .finish()
+    }
 }
 
 impl Document {
@@ -68,7 +84,7 @@ impl Document {
     /// errors when it is JSON crucible does not understand, and
     /// [`ConfigError::BadRule`] or [`ConfigError::Relative`] when the
     /// permissions block holds text that is the right shape and says nothing.
-    pub fn parse(text: &str, file: &str, origin: Origin) -> Result<Self, ConfigError> {
+    pub(crate) fn parse(text: &str, file: &str, origin: Origin) -> Result<Self, ConfigError> {
         let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
             file: file.into(),
             line: source.line(),
@@ -146,5 +162,22 @@ mod tests {
         assert!(matches!(err, ConfigError::UnknownKey { .. }), "got {err:?}");
         assert!(said.contains("colour"), "got {said}");
         assert!(said.contains("output"), "got {said}");
+    }
+
+    #[test]
+    fn printing_a_document_names_a_variable_and_shows_nothing_of_its_value() {
+        // The layers git ignores are where a variable outside crucible's own
+        // namespace is allowed to live, so a document parsed from one holds
+        // whatever the user put there.
+        let document = Document::parse(
+            r#"{"env": {"TOKEN": "hunter2"}}"#,
+            ".crucible/config.local.json",
+            Origin::ProjectLocal,
+        )
+        .expect("a document the layer git ignores accepts");
+
+        let printed = format!("{document:?}");
+        assert!(printed.contains("TOKEN"), "got {printed}");
+        assert!(!printed.contains("hunter2"), "got {printed}");
     }
 }

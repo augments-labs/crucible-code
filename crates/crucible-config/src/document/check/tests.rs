@@ -135,8 +135,8 @@ fn someone_elses_variable_is_refused_in_the_file_that_travels_with_a_clone() {
     assert!(said.contains("config.local.json"), "got {said}");
 
     // And it must not quote what it refused. The whole point of refusing is
-    // that the value might be a secret; echoing it into an error string
-    // would put it exactly where G3 says it may never go.
+    // that the value might be a secret, and an error string is one of the
+    // places this workspace never writes one.
     assert!(!said.contains("hunter2"), "got {said}");
 }
 

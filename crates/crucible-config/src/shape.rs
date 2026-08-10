@@ -9,8 +9,8 @@
 //! other makes the disagreement unrepresentable instead.
 //!
 //! Adding a key is therefore an edit to this file and nowhere else. The schema
-//! regenerates, `scripts/check.sh` compares it against the checked-in copy, and
-//! the parser accepts the key without being told about it separately.
+//! regenerates, `cargo test` compares it against the checked-in copy, and the
+//! parser accepts the key without being told about it separately.
 
 pub(crate) mod schema;
 
