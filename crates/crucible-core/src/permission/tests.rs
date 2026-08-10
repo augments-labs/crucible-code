@@ -4,6 +4,7 @@ use crate::tool::ToolArgs;
 
 mod configuration;
 mod modes;
+mod walked;
 
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {

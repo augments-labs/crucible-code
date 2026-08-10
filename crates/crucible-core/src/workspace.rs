@@ -46,12 +46,26 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns [`PathError::Missing`] if the directory does not exist or
-    /// cannot be resolved.
+    /// [`PathError::Missing`] if the directory does not exist or cannot be
+    /// resolved, and [`PathError::NotText`] if it resolves to a name that is
+    /// not valid UTF-8.
     pub fn open(root: impl AsRef<Path>) -> Result<Self, PathError> {
-        Ok(Self {
-            roots: Roots::open(root.as_ref())?,
-        })
+        let roots = Roots::open(root.as_ref())?;
+
+        // The root is a path that also has to be text. A session log records it
+        // and compares the recorded spelling back to decide which log belongs
+        // to this directory, and a name with bytes that are not UTF-8 comes
+        // back through that trip as replacement characters — a root that never
+        // equals itself, and a `--continue` that reports no earlier session
+        // while the log sits in the directory. Refused here, once, so nothing
+        // downstream has to carry the question.
+        if roots.root().to_str().is_none() {
+            return Err(PathError::NotText {
+                resolved: written(roots.root()).into(),
+            });
+        }
+
+        Ok(Self { roots })
     }
 
     /// Widens the workspace to reach directories outside the root.

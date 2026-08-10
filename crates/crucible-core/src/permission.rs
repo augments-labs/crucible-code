@@ -132,9 +132,17 @@ impl Permission {
         // asked not to have it go through unwatched, and refusing is the only
         // answer left that respects that. No mode produces this arm — every one
         // of them allows a read — so it is only ever somebody's own rule.
+        //
+        // Spelled out rather than closed with a wildcard. This is the last step
+        // before a disposition becomes a verdict, so a sensitivity added later
+        // has to be decided about here rather than inheriting whatever the
+        // rules and the mode happened to say about it.
         match (sensitivity, stated) {
             (Sensitivity::ReadOnly { .. }, Disposition::Ask) => Disposition::Deny,
-            (_, settled) => settled,
+            (Sensitivity::ReadOnly { .. }, settled) => settled,
+            (Sensitivity::MutatesFile { .. } | Sensitivity::SpawnsProcess { .. }, settled) => {
+                settled
+            }
         }
     }
 
@@ -190,6 +198,13 @@ impl Permission {
     /// Matched on whole components of the resolved path, so a directory that
     /// merely ends in `.crucible` is somebody else's, and a symbolic link
     /// into the real file does not slip past.
+    ///
+    /// It is a check on the path and not on the file behind it, so a second
+    /// name for the same inode — a hard link, which resolving does not undo —
+    /// is not this file as far as this is concerned. Making one is what holds
+    /// that closed: no program `bash` can prove stays inside the workspace
+    /// creates a hard link, so a line that would is one somebody is asked
+    /// about, in every mode.
     fn own_configuration(target: &Target) -> bool {
         const DIRECTORY: &str = ".crucible";
         const FILES: [&str; 2] = ["config.json", "config.local.json"];

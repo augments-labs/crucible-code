@@ -256,6 +256,32 @@ fn the_root_still_names_the_directory_crucible_started_in() {
     assert!(f.workspace.existing("kept.txt").is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_root_whose_name_is_not_utf8_is_refused_at_the_door() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    // A directory unpacked from an archive written in some other encoding. The
+    // name is legal to the operating system and illegal as text, and the root
+    // is one of the few paths that has to be both: a session log writes it down
+    // and reads it back to find the session belonging to this directory. Left
+    // to resolve, every `--continue` here would say there is no earlier session
+    // while the log sits beside it — a failure reported as an absence, which is
+    // the kind nobody searches for.
+    let base = std::env::temp_dir().join(format!("crucible-ws-bytes-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let mut name = base.as_os_str().as_bytes().to_vec();
+    name.extend_from_slice(b"/caf\xe9");
+    let root = PathBuf::from(OsStr::from_bytes(&name));
+    fs::create_dir_all(&root).unwrap();
+
+    let err = Workspace::open(&root).unwrap_err();
+    assert!(matches!(err, PathError::NotText { .. }), "got {err:?}");
+
+    let _ = fs::remove_dir_all(&base);
+}
+
 #[test]
 fn a_relative_directory_cannot_be_reached() {
     let f = Fixture::new("relative");

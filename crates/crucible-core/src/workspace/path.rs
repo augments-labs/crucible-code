@@ -3,6 +3,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use super::written;
+
 /// A path proven to be inside the workspace.
 ///
 /// There is no public constructor: the only way to hold one is to have asked
@@ -32,7 +34,11 @@ impl AsRef<Path> for WorkspacePath {
 }
 
 impl fmt::Display for WorkspacePath {
+    /// Through [`written`] rather than `Path::display`. This is a resolved path
+    /// becoming text somebody reads, which is the one job that door exists for;
+    /// showing the spelling resolving happened to produce would put a second
+    /// name for the same file into whatever printed it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.display())
+        f.write_str(&written(&self.0))
     }
 }

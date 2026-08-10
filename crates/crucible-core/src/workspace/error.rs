@@ -47,4 +47,13 @@ pub enum PathError {
         /// The path as the caller wrote it.
         requested: Box<str>,
     },
+
+    /// The root resolves to a name that is not valid UTF-8, so it cannot be
+    /// written down and read back as the same directory.
+    #[error("{resolved} is not a directory name this can write down: it is not valid UTF-8")]
+    NotText {
+        /// The resolved path, spelled as closely as text allows — which is the
+        /// whole complaint, so it is the only thing there is to show.
+        resolved: Box<str>,
+    },
 }

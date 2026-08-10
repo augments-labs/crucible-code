@@ -1,12 +1,19 @@
 //! Cancellation.
 //!
-//! One flag, shared with whichever threads are working. Esc on the input
-//! thread sets it; the provider checks it between socket reads and a tool
-//! checks it between the steps of whatever it is doing.
+//! One flag, shared with whichever threads are working. The provider checks it
+//! between socket reads and a tool checks it between the steps of whatever it
+//! is doing.
 //!
 //! Nothing is killed. Each thread notices and returns, which is why a
 //! half-written file cannot happen: the write either did not start or ran to
 //! completion.
+//!
+//! What raises it is the half that is missing. `crucible` leaves standard input
+//! in cooked mode, so nothing in the binary calls [`Cancel::request`] and the
+//! only stop a user has is ending the process; the callers it has are the tests
+//! that pin each consumer. This is a seam waiting for a producer rather than a
+//! mechanism that works and goes unused, and a reader adding one should expect
+//! to find no keystroke handling to hang it off.
 //!
 //! It lives in core because [`crate::provider::Provider`] takes one, and core
 //! owns every type its own traits name.

@@ -73,18 +73,19 @@ impl Approved {
             return false;
         }
 
-        Target::walked(workspace, from, path).is_none_or(|reached| self.denied.names(&reached))
+        // How the path is written down comes from the very patterns that are
+        // about to read it, so a spelling this does not build is one none of
+        // them would have looked at. The two calls stay in one expression for
+        // that reason: `denied` decides the spelling and then decides what it
+        // means, and separating them is what would let a target be matched
+        // against a different set of denials than the one it was spelled for.
+        Target::walked(workspace, from, path, self.denied.wanted())
+            .is_none_or(|reached| self.denied.names(&reached))
     }
 
     /// The arguments a verdict was reached about.
     #[must_use]
     pub fn args(&self) -> &ToolArgs {
         &self.call.args
-    }
-
-    /// The call a verdict was reached about.
-    #[must_use]
-    pub fn call(&self) -> &ToolCall {
-        &self.call
     }
 }

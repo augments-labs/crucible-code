@@ -14,6 +14,7 @@ use globset::GlobMatcher;
 
 use crate::tool::ToolCall;
 
+use super::sensitivity::Wanted;
 use super::{Sensitivity, Target};
 
 mod matches;
@@ -130,6 +131,19 @@ impl Denials {
     /// Whether one of them names this path.
     pub(super) fn names(&self, target: &Target) -> bool {
         self.0.iter().any(|pattern| pattern.covers_path(target))
+    }
+
+    /// The spellings these patterns read between them.
+    ///
+    /// Asked once, so a walk writes each file it reaches down only the ways
+    /// something here is going to look at — the one cost that falls per entry
+    /// rather than per call. Answering [`Wanted::NEITHER`] is not a shortcut
+    /// past the check: the only pattern that reads nothing is the blanket,
+    /// which covers a path whatever it is spelled like.
+    pub(super) fn wanted(&self) -> Wanted {
+        self.0.iter().fold(Wanted::NEITHER, |so_far, pattern| {
+            so_far.and(pattern.reads())
+        })
     }
 
     /// Whether there is nothing here to check.

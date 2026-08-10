@@ -41,18 +41,76 @@ pub enum Sensitivity {
 
 /// The path a call acts on.
 ///
-/// Held in both spellings a rule might be written in: an absolute pattern is
+/// Held in the spellings a rule might be written in: an absolute pattern is
 /// matched against the resolved path, and a relative one against the path
 /// below the workspace root. A file in a directory the workspace merely
 /// reaches has no second spelling, so only an absolute pattern can name it.
+///
+/// Which of them a particular target holds is a [`Wanted`], because one of
+/// these is built per file a walk reaches rather than per call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target(Option<Named>);
 
-/// A path that resolved, in both spellings.
+/// A path that resolved, in the spellings something was going to read.
+///
+/// `None` in either field means nobody asked for that spelling, never that the
+/// path has none — and from here the two are indistinguishable. That is why
+/// the [`Wanted`] a target is built with comes from the very patterns that
+/// will read it, and why a target built with less than [`Wanted::BOTH`] goes
+/// straight to those patterns and is not kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Named {
-    absolute: Box<str>,
+    absolute: Option<Box<str>>,
     below_root: Option<Box<str>>,
+}
+
+/// Which spellings of a path are going to be read.
+///
+/// Writing a path down costs an allocation each way, and a walk pays it for
+/// every entry it reaches rather than once for the call it was decided about.
+/// What the patterns it must check will ask for is known before the walk
+/// starts, so it is answered once and carried in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Wanted {
+    absolute: bool,
+    below_root: bool,
+}
+
+impl Wanted {
+    /// Neither, which is what a pattern naming everything reads: it has
+    /// nothing to be misled about, so there is nothing to spell for it.
+    pub(super) const NEITHER: Self = Self {
+        absolute: false,
+        below_root: false,
+    };
+
+    /// The resolved path only.
+    pub(super) const ABSOLUTE: Self = Self {
+        absolute: true,
+        below_root: false,
+    };
+
+    /// The path below the workspace root only.
+    pub(super) const BELOW_ROOT: Self = Self {
+        absolute: false,
+        below_root: true,
+    };
+
+    /// Both, which is what the call itself needs: rules of either kind, the
+    /// line a prompt shows and the rule a "don't ask again" mints all read the
+    /// target, and that happens once per call.
+    pub(super) const BOTH: Self = Self {
+        absolute: true,
+        below_root: true,
+    };
+
+    /// Everything either of them reads.
+    pub(super) fn and(self, other: Self) -> Self {
+        Self {
+            absolute: self.absolute || other.absolute,
+            below_root: self.below_root || other.below_root,
+        }
+    }
 }
 
 impl Target {
@@ -62,7 +120,7 @@ impl Target {
     /// against is the one the workspace proved, never the text the model sent.
     #[must_use]
     pub fn resolved(workspace: &Workspace, path: &WorkspacePath) -> Self {
-        Self::spelled(workspace, path.as_path())
+        Self::spelled(workspace, path.as_path(), Wanted::BOTH)
     }
 
     /// The path a walk reached, from a root the workspace had already proved.
@@ -72,28 +130,46 @@ impl Target {
     /// root was — and is the path that will actually be opened, which is what
     /// a rule has to be matched against. A path that is not under that root
     /// came from somewhere this walk cannot vouch for, and gets nothing back.
-    pub(super) fn walked(workspace: &Workspace, from: &WorkspacePath, path: &Path) -> Option<Self> {
+    ///
+    /// This is the per-file call, so `wanted` is what keeps it from writing a
+    /// path down twice when only one spelling was going to be looked at. It
+    /// has to come from the same patterns the result is matched against: a
+    /// spelling left unbuilt reads back as a path no pattern names, and for a
+    /// denial that is a file that stops being checked.
+    pub(super) fn walked(
+        workspace: &Workspace,
+        from: &WorkspacePath,
+        path: &Path,
+        wanted: Wanted,
+    ) -> Option<Self> {
         path.starts_with(from.as_path())
-            .then(|| Self::spelled(workspace, path))
+            .then(|| Self::spelled(workspace, path, wanted))
     }
 
-    /// Both spellings of a path already known to be one the workspace reaches.
+    /// A path already known to be one the workspace reaches, spelled the ways
+    /// `wanted` asks for.
     ///
     /// Through [`written`] on the way, which is the same door a listing leaves
     /// by — the rule text and the line a search printed are meant to be one
     /// string rather than two that started out alike.
-    fn spelled(workspace: &Workspace, path: &Path) -> Self {
-        let below_root = path.strip_prefix(workspace.root()).ok().map(|below| {
-            let below: Box<str> = written(below).into();
+    fn spelled(workspace: &Workspace, path: &Path, wanted: Wanted) -> Self {
+        let absolute = wanted.absolute.then(|| written(path).into());
 
-            // The root strips to nothing, and nothing is neither a path a
-            // pattern can match nor a word a prompt can show. `.` is both, and
-            // it is what somebody would have typed.
-            if below.is_empty() { ".".into() } else { below }
-        });
+        let below_root = wanted
+            .below_root
+            .then(|| path.strip_prefix(workspace.root()).ok())
+            .flatten()
+            .map(|below| {
+                let below: Box<str> = written(below).into();
+
+                // The root strips to nothing, and nothing is neither a path a
+                // pattern can match nor a word a prompt can show. `.` is both,
+                // and it is what somebody would have typed.
+                if below.is_empty() { ".".into() } else { below }
+            });
 
         Self(Some(Named {
-            absolute: written(path).into(),
+            absolute,
             below_root,
         }))
     }
@@ -111,12 +187,14 @@ impl Target {
         Self(None)
     }
 
-    /// The resolved path, absolute.
+    /// The resolved path, absolute, when it was one of the spellings asked
+    /// for.
     pub(super) fn absolute(&self) -> Option<&str> {
-        self.0.as_ref().map(|named| &*named.absolute)
+        self.0.as_ref().and_then(|named| named.absolute.as_deref())
     }
 
-    /// The resolved path relative to the workspace root, when it is under it.
+    /// The resolved path relative to the workspace root, when it is under it
+    /// and was one of the spellings asked for.
     pub(super) fn below_root(&self) -> Option<&str> {
         self.0
             .as_ref()
@@ -131,7 +209,7 @@ impl Target {
     /// engine without a workspace proving it would be the model's own text.
     pub(crate) fn at(absolute: &str, below_root: Option<&str>) -> Self {
         Self(Some(Named {
-            absolute: absolute.into(),
+            absolute: Some(absolute.into()),
             below_root: below_root.map(Into::into),
         }))
     }
@@ -139,10 +217,12 @@ impl Target {
 
 impl fmt::Display for Target {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            // The shorter spelling is the one the user recognises, and the
-            // prompt is where recognition matters.
-            Some(named) => f.write_str(named.below_root.as_deref().unwrap_or(&named.absolute)),
+        // The shorter spelling is the one the user recognises, and the prompt
+        // is where recognition matters. Every target a prompt is given holds
+        // both, so the last arm is the path that did not resolve rather than
+        // one that was spelled sparingly.
+        match self.below_root().or_else(|| self.absolute()) {
+            Some(shown) => f.write_str(shown),
             None => f.write_str("a path it could not resolve"),
         }
     }

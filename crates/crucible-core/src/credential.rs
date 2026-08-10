@@ -54,6 +54,13 @@ impl ApiKey {
     /// variable *name*, never the value, so this is how a key enters the
     /// process.
     ///
+    /// Whitespace around the value is taken off rather than carried in. A key
+    /// pasted with a trailing space is still the key; sent with one it comes
+    /// back as a 401 naming nothing, and a trailing CRLF — what a key file
+    /// written on Windows leaves behind — is refused by the transport as an
+    /// illegal header value and reads as a network failure. Both are the
+    /// puzzling answer this lookup exists to turn into a sentence.
+    ///
     /// # Errors
     ///
     /// [`CredentialError::NotInEnvironment`] if `lookup` finds nothing or finds
@@ -62,8 +69,8 @@ impl ApiKey {
         variable: &str,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, CredentialError> {
-        match lookup(variable) {
-            Some(value) if !value.trim().is_empty() => Ok(Self(value)),
+        match lookup(variable).as_deref().map(str::trim) {
+            Some(value) if !value.is_empty() => Ok(Self(value.to_owned())),
             _ => Err(CredentialError::NotInEnvironment(variable.into())),
         }
     }
@@ -288,6 +295,21 @@ mod tests {
     fn a_present_variable_becomes_a_key_that_still_redacts() {
         let key = ApiKey::from_lookup("KEY", |_| Some(SECRET.to_owned())).unwrap();
         assert!(!format!("{key:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn a_variable_padded_by_a_paste_sends_the_key_and_not_the_padding() {
+        // The two shapes a key arrives padded in: a space from a paste, and a
+        // CRLF from a key file written on Windows. The header value has to be
+        // what a key set correctly would send, since the alternative is a 401
+        // or a rejected header that names neither the variable nor the space.
+        let mut padded = Outgoing::new();
+        let key = ApiKey::from_lookup("KEY", |_| Some(format!(" {SECRET} \r\n"))).unwrap();
+        HeaderKey::new(key, Header::bare("x-api-key"))
+            .authorize(&mut padded)
+            .unwrap();
+
+        assert_eq!(header(&padded, "x-api-key"), SECRET);
     }
 
     #[test]

@@ -102,9 +102,12 @@ impl FromStr for SessionId {
 
 /// Twenty-four bits of randomness, without a dependency.
 ///
-/// `RandomState` is seeded by the operating system and re-seeded on every
-/// construction, so two hashers built in the same millisecond disagree. That is
-/// the whole requirement: this suffix breaks ties, it does not identify.
+/// `RandomState` takes its keys from the operating system once per thread and
+/// advances one of them on every construction after that, so two hashers built
+/// in the same millisecond disagree. That is the whole requirement: this suffix
+/// breaks ties, it does not identify. Within one thread the sequence follows
+/// from the two keys it started with, so nothing may come to depend on a
+/// session name being unguessable.
 fn random_suffix() -> u32 {
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u8(0);

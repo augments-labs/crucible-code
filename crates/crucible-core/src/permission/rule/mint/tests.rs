@@ -147,6 +147,11 @@ fn a_minted_rule_covers_what_it_came_from_and_nothing_beside_it() {
     // The property the whole module is for, and the one place the escaping is
     // observable: a file may be named with the characters a glob reads, and a
     // rule minted from one must not have quietly become a pattern.
+    //
+    // The space cases are the reader's half of the same property: `parse`
+    // trims inside the brackets, so a space left plain at either end would be
+    // gone by the time the rule is read back and the rule would name the
+    // neighbour it is paired with here.
     let cases = [
         ("src/plain.rs", "src/plainer.rs"),
         ("src/a*.rs", "src/abc.rs"),
@@ -154,6 +159,8 @@ fn a_minted_rule_covers_what_it_came_from_and_nothing_beside_it() {
         ("src/a[xy].rs", "src/ax.rs"),
         ("src/a{x,y}.rs", "src/ax.rs"),
         ("src/a]b.rs", "src/ab.rs"),
+        (" secret.txt", "secret.txt"),
+        ("notes.txt ", "notes.txt"),
     ];
 
     for (shown, sibling) in cases.into_iter().chain(BACKSLASH) {
@@ -173,6 +180,22 @@ fn a_minted_rule_covers_what_it_came_from_and_nothing_beside_it() {
             "{text} covers {sibling} as well, so it is wider than the yes it came from"
         );
     }
+}
+
+#[test]
+fn a_file_whose_name_is_nothing_but_a_space_still_mints_a_rule_that_reads_back() {
+    // The degenerate end of the same case. Written plainly this is `edit( )`,
+    // and the reader trims the brackets empty and refuses the whole rule — a
+    // line crucible put into its own configuration that then stops it starting
+    // until somebody finds and deletes it.
+    let sensitivity = writing("/w/ ", Some(" "));
+    let text = minted("edit", &sensitivity).expect("a resolved file can be written down");
+
+    assert_eq!(text, "edit([ ])");
+    assert!(
+        covers(&text, "edit", &sensitivity),
+        "{text} does not cover the file it was minted from"
+    );
 }
 
 #[test]

@@ -106,9 +106,10 @@ pub struct ToolSchema {
 
 /// One piece of streamed output.
 ///
-/// Tool calls arrive in pieces: the name comes first, then the arguments in
-/// fragments, then a close. The runner assembles them, because every provider
-/// splits them differently and the assembly is the same either way.
+/// A tool call arrives across several: the name comes first, then the arguments
+/// spread over as many deltas as the provider chose to send, then a close. The
+/// runner assembles them, because every provider splits them differently and
+/// the assembly is the same either way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delta {
     /// Prose, to be shown as it arrives.

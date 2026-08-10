@@ -7,6 +7,7 @@
 
 use crate::tool::ToolCall;
 
+use super::super::sensitivity::Wanted;
 use super::super::{Command, Sensitivity, Target};
 use super::{Pattern, Rule};
 
@@ -91,6 +92,23 @@ impl Pattern {
                 absolute: false,
                 ..
             } => target.below_root().is_some_and(|at| path.is_match(at)),
+        }
+    }
+
+    /// Which spelling of a target [`Pattern::covers_path`] will ask for.
+    ///
+    /// Directly beside its only reason for existing, matching on the same
+    /// thing in the same order, because the two are one statement: a walk
+    /// spells each file it reaches only the ways this claims, so an arm above
+    /// that read a spelling this did not name would be a rule that quietly
+    /// stopped matching. A new variant stops the build in both.
+    pub(super) fn reads(&self) -> Wanted {
+        match self {
+            Self::Blanket => Wanted::NEITHER,
+            Self::Glob { absolute: true, .. } => Wanted::ABSOLUTE,
+            Self::Glob {
+                absolute: false, ..
+            } => Wanted::BELOW_ROOT,
         }
     }
 
