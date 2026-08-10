@@ -96,8 +96,8 @@ fn reader(body: ureq::Body) -> Box<dyn Read + Send> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::thread;
 
     use super::*;
@@ -112,17 +112,44 @@ mod tests {
 
         thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                // Read something first: writing to a peer that is still sending
-                // its request is how this becomes a broken pipe instead of a
-                // response.
-                let mut head = [0_u8; 1024];
-                let _ = stream.read(&mut head);
+                heard(&stream);
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
             }
         });
 
         format!("http://{address}/v1/messages")
+    }
+
+    /// Reads the whole request off `stream`, headers and body both.
+    ///
+    /// All of it, because of what closing a socket does to what is left. A close
+    /// with bytes still unread is a reset rather than a goodbye, and a reset
+    /// throws away what was already sent — so the client is told the connection
+    /// was aborted while the response it asked for sits unread in its own
+    /// buffer. Stopping at the headers leaves the body behind, which is the same
+    /// thing said a shorter way.
+    fn heard(stream: &TcpStream) {
+        let mut asked = BufReader::new(stream);
+        let mut line = String::new();
+        let mut body = 0;
+
+        while asked.read_line(&mut line).unwrap_or(0) > 0 {
+            if line.trim().is_empty() {
+                break;
+            }
+
+            // Lowered because a header name is case-insensitive, and which case
+            // a client picks is a detail of the client.
+            let said = line.to_ascii_lowercase();
+            if let Some(length) = said.strip_prefix("content-length:") {
+                body = length.trim().parse().unwrap_or(0);
+            }
+
+            line.clear();
+        }
+
+        let _ = asked.read_exact(&mut vec![0_u8; body]);
     }
 
     /// A response with the status and body a vendor would send.
