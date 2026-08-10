@@ -13,7 +13,7 @@
 
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 
 use crucible_core::{Cancel, Event, Minted, Mode, Post as _, Remember, Verdict, narrowest};
@@ -92,6 +92,12 @@ pub(crate) fn converse<T: Terminal>(
         }
     }
 
+    // The prompt the loop just broke at is still the last thing on its row, and
+    // nothing but this ends it. Without it, whatever comes next is drawn on top
+    // of `ask › ` — a report below, or the shell's own prompt once crucible is
+    // gone, which is every ordinary exit.
+    draw::ended(renderer)?;
+
     // The writer thread is usually still holding the last turn when the loop
     // ends, so the poll above cannot be relied on to have seen a failure
     // recorded during it. Draining here is what stops the one turn most likely
@@ -117,7 +123,11 @@ pub(crate) fn converse<T: Terminal>(
 ///
 /// The runner goes to the worker and comes back, which is what makes the
 /// transcript and the permission memory survive a turn without being shared
-/// between threads.
+/// between threads. It is also why a failure on this side is held to the end of
+/// the turn rather than returned where it happens: the worker owns the runner,
+/// the runner owns the session, and the session's log is finished by a thread
+/// its `Drop` waits for. Leaving early would drop the join handle and detach
+/// all three, and the process would exit over a log still being written.
 fn take<T: Terminal>(
     runner: Runner,
     renderer: &mut Renderer<T>,
@@ -125,8 +135,6 @@ fn take<T: Terminal>(
     input: &mut dyn BufRead,
     prompt: String,
 ) -> Result<Runner, Fatal> {
-    let style = terms.style;
-
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = channel();
@@ -151,33 +159,60 @@ fn take<T: Terminal>(
     // Ends when the worker drops both senders, which happens when the turn is
     // over. No sentinel event, and no way to leave the loop early and miss the
     // last delta.
+    let mut held = Ok(());
+
     for one in seen {
-        match one {
-            Seen::Turn(event) => draw::event(renderer, event, style)?,
-            Seen::Question { call, sensitivity } => {
-                // Minted once and used twice. What the question offers has to
-                // be the rule that gets written, or the user agreed to one
-                // thing and crucible wrote down another.
-                let rule = narrowest(&call, &sensitivity);
-
-                draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
-                let answer = verdict(read(input)?.as_deref(), rule.is_some());
-
-                // Before the answer goes back, so the file is written by the
-                // time the tool it allowed runs. `always` is only ever answered
-                // where a rule was minted, so the two arriving together is one
-                // fact twice rather than a case that has to be handled.
-                if let (Some(rule), Remember::Always) = (&rule, answer.1) {
-                    keep(renderer, &terms.remembering, rule, style)?;
-                }
-
-                // A worker that stopped waiting has already denied itself.
-                let _ = reply.send(answer);
-            }
+        if held.is_ok() {
+            held = shown(one, renderer, terms, input, &reply);
+        } else if matches!(one, Seen::Question { .. }) {
+            // Nothing is drawn and nothing is read once the terminal or the
+            // input has failed, but a question still has to be answered: the
+            // worker waits on the reply channel, and this loop waits on the
+            // worker. A refusal is what a drawing thread that has stopped
+            // already means, said out loud rather than by going quiet.
+            let _ = reply.send(verdict(None, false));
         }
     }
 
-    working.join().map_err(|_| Fatal::Lost)
+    let runner = working.join().map_err(|_| Fatal::Lost)?;
+    held.map(|()| runner)
+}
+
+/// Draws one thing the worker sent, and answers it if it was a question.
+fn shown<T: Terminal>(
+    one: Seen,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    input: &mut dyn BufRead,
+    reply: &Sender<Answer>,
+) -> Result<(), Fatal> {
+    let style = terms.style;
+
+    match one {
+        Seen::Turn(event) => draw::event(renderer, event, style)?,
+        Seen::Question { call, sensitivity } => {
+            // Minted once and used twice. What the question offers has to be
+            // the rule that gets written, or the user agreed to one thing and
+            // crucible wrote down another.
+            let rule = narrowest(&call, &sensitivity);
+
+            draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
+            let answer = verdict(read(input)?.as_deref(), rule.is_some());
+
+            // Before the answer goes back, so the file is written by the time
+            // the tool it allowed runs. `always` is only ever answered where a
+            // rule was minted, so the two arriving together is one fact twice
+            // rather than a case that has to be handled.
+            if let (Some(rule), Remember::Always) = (&rule, answer.1) {
+                keep(renderer, &terms.remembering, rule, style)?;
+            }
+
+            // A worker that stopped waiting has already denied itself.
+            let _ = reply.send(answer);
+        }
+    }
+
+    Ok(())
 }
 
 /// Writes one rule down, and says what happened either way.

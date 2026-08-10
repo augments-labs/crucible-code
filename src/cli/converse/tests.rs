@@ -2,6 +2,7 @@
 
 use std::cell::Cell;
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
 use crucible_core::{Delta, Mode, StopReason};
 use crucible_runner::{Model, Session, Tools};
@@ -272,6 +273,108 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
         written.contains("stopped being recorded"),
         "the drained failure never reached the terminal: {written}"
     );
+}
+
+/// A terminal that takes `left` writes and refuses everything after them, the
+/// way one whose window has been closed does.
+struct Breaking {
+    inner: Recording,
+    left: usize,
+}
+
+impl Terminal for Breaking {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+        }
+
+        self.left -= 1;
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
+/// A log the test can read back once the session has finished writing it.
+#[derive(Debug)]
+struct Kept(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Kept {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("a lock nothing panicked in")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
+    // The worker owns the runner, the runner owns the session, and the log is
+    // finished by a thread the session's `Drop` waits for — on whichever thread
+    // holds it. Returning the moment a write failed would drop the join handle
+    // and leave that thread running with the process on its way out, so the
+    // turn on screen when the window closed is the turn missing from the log.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::onto("/nowhere".into(), Kept(Arc::clone(&kept)));
+
+    let runner = Runner::new(
+        Box::new(Script::new(vec![saying("what the model said")])),
+        Tools::new(),
+        Model {
+            name: "script".into(),
+            max_tokens: 64,
+            system: None,
+        },
+        session,
+    );
+
+    // One write is the prompt mark, colour and all, which the loop makes before
+    // it reads. That leaves the first frame of the turn as what finds the
+    // terminal gone -- after the worker has been handed the runner.
+    let mut renderer = Renderer::new(Breaking {
+        inner: Recording::new(80, 24),
+        left: 1,
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem =
+        converse(runner, &mut renderer, &plain(), &mut input).expect_err("the terminal to fail");
+
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains("what the model said"),
+        "the turn never reached the log: {written:?}"
+    );
+}
+
+#[test]
+fn the_prompt_the_loop_ended_at_is_a_row_of_its_own() {
+    // The mark is written straight through the terminal so it can be left
+    // without a line ending while the user types after it, which leaves the
+    // renderer no row to settle. Unless the loop ends that row, the next thing
+    // drawn lands on top of it — a report below, or the shell's own prompt
+    // once crucible is gone.
+    let written = conversing(vec![], Tools::new(), "");
+
+    assert!(written.ends_with('\n'), "{written:?}");
 }
 
 #[test]

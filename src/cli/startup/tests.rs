@@ -71,6 +71,21 @@ fn a_provider_this_build_does_not_serve_reads_no_key_at_all() {
 }
 
 #[test]
+fn every_name_the_check_accepts_is_one_an_arm_can_build() {
+    // The check runs before the banner and the match runs after it. A name the
+    // first let through and the second had no arm for would be a run that
+    // announced its model and then said the provider does not exist.
+    for named in PROVIDERS {
+        served(named).expect("a check that agrees with the arm");
+        provider(named, &Settings::default(), &|_| Some("a-key".to_owned()))
+            .expect("an arm for every name the check accepts");
+    }
+
+    let problem = served("ollama").expect_err("this build has no such provider");
+    assert!(problem.to_string().contains("ollama"), "{problem}");
+}
+
+#[test]
 fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
     // An empty session written for a run that never happened is then the
     // newest one for this directory, so --continue would offer it instead

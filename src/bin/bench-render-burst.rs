@@ -2,9 +2,12 @@
 //!
 //! A model streaming at full speed hands the renderer a delta every few
 //! milliseconds, and every delta is a frame: wrap, rewind, erase, redraw. The
-//! budget says the renderer commits at least thirty of those a second, which is
-//! the rate below which streamed text stops looking like typing and starts
-//! looking like stalling.
+//! budget says at least thirty of those a second, which is the rate below which
+//! streamed text stops looking like typing and starts looking like stalling.
+//!
+//! Frames is what this counts and frames is what it reports. A frame is one
+//! `stream` call, and the renderer's other job -- writing a finished line to
+//! scrollback -- is a different operation that no part of this burst performs.
 //!
 //! Measured against a real file descriptor rather than an in-memory buffer, so
 //! the write and the flush are the syscalls they will be in production. The
@@ -202,7 +205,7 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
     // `println!` is denied workspace-wide, so the reading goes out through a
     // write whose failure is handled rather than panicked on inside a probe.
     let mut line = String::new();
-    let _ = write!(line, "{:.1} commits/s {LIMIT:.0}", burst.sustained);
+    let _ = write!(line, "{:.1} frames/s {LIMIT:.0}", burst.sustained);
     line.push('\n');
 
     io::stdout().write_all(line.as_bytes())?;
@@ -210,9 +213,22 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
     Ok(())
 }
 
+/// Says why no reading could be taken at all, on stderr, where
+/// `scripts/bench.sh` puts everything a human reads.
+///
+/// Without it an unopenable discard file, or a renderer that failed mid-burst,
+/// reaches the operator as an empty line on stdout — reported as malformed
+/// output, which is the one thing it is not.
+fn explain(problem: &ProbeError) -> Result<(), io::Error> {
+    let mut line = String::new();
+    let _ = writeln!(line, "    FAIL {problem}");
+
+    io::stderr().write_all(line.as_bytes())
+}
+
 /// Says why the burst failed, on stderr, where `scripts/bench.sh` puts
 /// everything a human reads. The one line on stdout stays the measurement.
-fn explain(burst: Burst) -> Result<(), ProbeError> {
+fn slowing(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();
     let _ = writeln!(
         line,
@@ -230,8 +246,12 @@ fn explain(burst: Burst) -> Result<(), ProbeError> {
 }
 
 fn main() -> ExitCode {
-    let Ok(burst) = measure() else {
-        return ExitCode::FAILURE;
+    let burst = match measure() {
+        Ok(burst) => burst,
+        Err(problem) => {
+            let _ = explain(&problem);
+            return ExitCode::FAILURE;
+        }
     };
 
     if report(burst).is_err() {
@@ -243,7 +263,7 @@ fn main() -> ExitCode {
     }
 
     if burst.sustained < burst.opening * SUSTAINED_FRACTION {
-        let _ = explain(burst);
+        let _ = slowing(burst);
         return ExitCode::FAILURE;
     }
 

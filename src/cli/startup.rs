@@ -17,7 +17,7 @@ use crucible_provider::{Anthropic, Https, OpenAi};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
-use super::Fatal;
+use super::{Fatal, PROVIDERS};
 
 /// The variables each key is read from. The *names* are what is configured
 /// here; a value never appears in this repository or in a session file.
@@ -113,6 +113,23 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     }
 
     Ok(runner)
+}
+
+/// Refuses a provider name this build has nothing for.
+///
+/// The name and nothing else: no key is looked up, no agent is built and no
+/// file is touched, which is what lets the caller run this before it draws
+/// anything. [`provider`] settles the same question again on its way past, so a
+/// name added to the list without an arm behind it still fails — later, and
+/// with the same sentence.
+pub(super) fn served(named: &str) -> Result<(), Fatal> {
+    if PROVIDERS.contains(&named) {
+        Ok(())
+    } else {
+        Err(Fatal::Provider {
+            named: named.into(),
+        })
+    }
 }
 
 /// The provider that serves the chosen model.

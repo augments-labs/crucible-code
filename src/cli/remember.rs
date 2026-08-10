@@ -61,6 +61,15 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
         fs::create_dir_all(directory)?;
     }
 
+    // What the file is held at now, before it is replaced. A rename puts a new
+    // file where the old one was rather than new bytes inside it, so whatever
+    // the user narrowed this to would be widened back to what the account
+    // creates a file as — and this is the file that says what may run without
+    // being asked about, so widening who can write to it is the last thing
+    // answering `always` should do. `None` where there is nothing there yet,
+    // which is the case the account's own default is right for.
+    let held = fs::metadata(file).map(|found| found.permissions()).ok();
+
     // Written beside the file and renamed over it. A write that stops part-way
     // through leaves half a document, and half a document is a file crucible
     // refuses to start from — so the failure would cost the user their whole
@@ -68,6 +77,11 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
     // crucibles in one checkout off each other's half-written file.
     let beside = directory.join(format!(".writing.{}", std::process::id()));
     fs::write(&beside, text)?;
+
+    if let Some(held) = held {
+        fs::set_permissions(&beside, held)?;
+    }
+
     fs::rename(&beside, file)
 }
 

@@ -6,11 +6,13 @@
 //! faults, the size of the binary itself — so this spawns `crucible` the way a
 //! shell does and reads its output.
 //!
-//! Two things the reading does not include, both stated rather than hidden:
-//! the child's output is a pipe, not a terminal, so the renderer takes its
-//! plain path and the escape sequences are not assembled; and the shell's own
-//! `fork` is not counted, only the `exec`. Both are small against a budget that
-//! is dominated by process start.
+//! Two things about what the reading covers, both stated rather than hidden.
+//! The child's output is a pipe, not a terminal, so the renderer takes its
+//! plain path and the escape sequences are not assembled — that much is left
+//! out. And the clock starts before `spawn`, which forks as well as execs, so
+//! the probe's own fork is inside the reading rather than outside it: the
+//! number is a little worse than the binary deserves, never better, which is
+//! the direction an error in a budget should run.
 
 use std::fs;
 use std::io::{self, Read as _};

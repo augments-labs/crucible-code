@@ -344,5 +344,27 @@ fn a_paused_turn_says_it_is_unfinished_rather_than_ending_quietly() {
 fn clipping_stops_at_a_character_not_a_byte() {
     // Slicing by byte here would panic on the first non-ASCII path a user
     // has, which is a crash on someone else's alphabet.
-    assert_eq!(clipped("héllo wörld", 5), "héllo…");
+    //
+    // Five columns asked for and five come back. The ellipsis stands in the
+    // row rather than beyond it, so the text it replaces gives one up — and a
+    // line already short enough owes nothing and is handed back whole.
+    assert_eq!(clipped("héllo wörld", 5), "héll…");
+    assert_eq!(clipped("héllo", 5), "héllo");
+}
+
+#[test]
+fn a_line_is_clipped_to_the_columns_it_takes_not_the_characters_it_holds() {
+    // A wide character takes two columns, and a narrow one takes two with the
+    // emoji presentation selector behind it. Counting characters keeps twice
+    // the row in the first case and half of it in the second, while the tail
+    // that wraps the result counts columns in both — which is the whole reason
+    // the counting is the renderer's rather than this file's.
+    assert_eq!(clipped("日本語のテキスト", 5), "日本…");
+
+    // One column as text, two once the selector follows it. Spelled out
+    // because a selector is invisible in a source file.
+    let warning = "\u{26A0}\u{FE0F}";
+    let three = format!("{warning}{warning}{warning}");
+
+    assert_eq!(clipped(three, 5), format!("{warning}{warning}…"));
 }

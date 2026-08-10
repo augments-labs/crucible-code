@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput, Workspace};
-use crucible_tui::{Renderer, Terminal, TerminalError};
+use crucible_tui::{Renderer, Terminal, TerminalError, cut};
 
 use super::remember::RememberError;
 use super::style::Style;
@@ -136,25 +136,45 @@ pub(crate) fn remembered<T: Terminal>(
 
 /// Writes something the user is expected to type after.
 ///
-/// Straight through the terminal rather than through `commit`, because what is
-/// wanted here is a line with no newline on the end.
+/// Through `prompt` rather than `commit`, because what is wanted here is a line
+/// with no newline on the end. `prompt` settles first and then writes verbatim,
+/// so the colour has to be in the text handed to it — which is the arrangement
+/// that makes it safe: escape bytes cost no column in a row no frame will move
+/// back over.
 pub(crate) fn mark<T: Terminal>(
     renderer: &mut Renderer<T>,
     text: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
-    renderer.settle()?;
-
-    let coloured = style.color();
-    let terminal = renderer.terminal();
-    if coloured {
-        terminal.write(DIM)?;
-        terminal.write(text)?;
-        terminal.write(PLAIN)?;
-    } else {
-        terminal.write(text)?;
+    if !style.color() {
+        return renderer.prompt(text);
     }
-    terminal.flush()
+
+    let mut marked = String::with_capacity(DIM.len() + text.len() + PLAIN.len());
+    marked.push_str(DIM);
+    marked.push_str(text);
+    marked.push_str(PLAIN);
+
+    renderer.prompt(&marked)
+}
+
+/// Ends the row a prompt mark was left on.
+///
+/// The mark carries no line ending while it is live, which is also what leaves
+/// the renderer no row to settle: nothing else can end it, so this does, the
+/// same way and for the same reason. A terminal gets the carriage return with
+/// it, as every other row written to one does; a pipe gets the byte on its own,
+/// because a pipe has no column to return to and the carriage return would end
+/// up in whatever kept the output.
+///
+/// Through the same door the mark went out of, since it is the same row: a
+/// verbatim write over a live region that has already been settled. The settle
+/// `prompt` does first has nothing left to do here, so the ending is all that
+/// reaches the terminal.
+pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
+    let ending = if renderer.is_terminal() { "\r\n" } else { "\n" };
+
+    renderer.prompt(ending)
 }
 
 /// The line for a call about to run.
@@ -273,24 +293,44 @@ fn kept(rule: &Minted, outcome: Result<&Path, &RememberError>, width: usize) -> 
     }
 }
 
-/// One line, at most `width` characters of it.
+/// One line, at most `width` display columns of it.
 ///
-/// Control characters become spaces: a newline inside JSON arguments would
-/// otherwise break the line in two, and the tail would be counting rows that
-/// the caller did not mean to write.
+/// Columns rather than characters, and counted by the renderer's own [`cut`]
+/// rather than here: a wide character takes two of them and a narrow one
+/// followed by the emoji presentation selector takes two between them, so a
+/// line measured by counting characters is a line clipped to the wrong place in
+/// either direction. Sharing the counting is what keeps this and the tail that
+/// wraps the result from disagreeing about how wide the same string is.
+///
+/// Control characters become spaces first, before anything is counted: a
+/// newline inside JSON arguments would otherwise break the line in two, and the
+/// tail would be counting rows that the caller did not mean to write. A space
+/// rather than nothing because that is what the row will show — [`cut`] drops
+/// what a terminal will not draw, and this has already decided to draw
+/// something.
 fn clipped(text: impl fmt::Display, width: usize) -> String {
-    let text = text.to_string();
-    let mut clipped: String = text
+    let mut line: String = text
+        .to_string()
         .trim()
         .chars()
-        .take(width)
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
 
-    if text.trim().chars().nth(width).is_some() {
-        clipped.push('…');
+    if cut(&line, width).is_none() {
+        return line;
     }
-    clipped
+
+    // The ellipsis is a column of the row rather than one past its end, so what
+    // is kept has to leave room for it — the reason for asking twice, since the
+    // first answer is also what says whether anything is owed at all. The offset
+    // falls on a character boundary and never between one and the selector that
+    // widens it, which is [`cut`]'s to guarantee and what this leans on.
+    if let Some(kept) = cut(&line, width.saturating_sub(1)) {
+        line.truncate(kept);
+    }
+
+    line.push('…');
+    line
 }
 
 #[cfg(test)]

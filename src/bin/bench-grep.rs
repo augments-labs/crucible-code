@@ -8,6 +8,12 @@
 //! The corpus is generated rather than taken from the repository: the budget
 //! must mean the same thing on a machine that has just cloned this and on one
 //! that has been building in it for a week.
+//!
+//! The search is timed twice, because a walk costs different things depending
+//! on whether anything was written about the tool. With no rules the check each
+//! walked file goes through answers on the spot; with rules it resolves that
+//! file's path first. Both are what somebody runs, so both are measured, and
+//! the ratio reported is whichever of the two is worse.
 
 use std::fmt::{self, Write as _};
 use std::fs;
@@ -17,8 +23,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Ask, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolId,
-    Verdict, Workspace,
+    Approved, Ask, Disposition, Mode, Permission, Remember, RuleError, Rules, Sensitivity, Settled,
+    Tool, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
 };
 use crucible_tools::Grep;
 
@@ -42,24 +48,46 @@ const PATTERN: &str = "fn assemble_widget";
 /// in it, and the fastest is the one that measures the code.
 const ROUNDS: usize = 5;
 
+/// Rules about `grep`, written the way a project writes them: a directory, a
+/// suffix, and one file by name.
+///
+/// None of them names the root the search starts from — a rule that did would
+/// forbid the call outright, and what is wanted is a call that runs with rules
+/// standing behind it. Three of the four name nothing in the corpus, which is
+/// the point: the cost being measured is asking about every walked file, not
+/// leaving some of them out.
+const DENIED: [&str; 4] = [
+    "grep(**/vendor/**)",
+    "grep(**/target/**)",
+    "grep(**/*.lock)",
+    "grep(crate7/src/part13.rs)",
+];
+
 fn main() -> Result<(), Problem> {
     let corpus = Corpus::build()?;
 
     // Warm the page cache once for each, so the first measured run is not the
     // one paying for every read.
-    ours(&corpus)?;
+    ours(&corpus, false)?;
+    ours(&corpus, true)?;
     theirs(&corpus)?;
 
-    let mine = fastest(ROUNDS, || ours(&corpus))?;
+    let open = fastest(ROUNDS, || ours(&corpus, false))?;
+    let ruled = fastest(ROUNDS, || ours(&corpus, true))?;
     let rg = fastest(ROUNDS, || theirs(&corpus))?;
 
-    let ratio = mine.as_secs_f64() / rg.as_secs_f64();
+    // The worse of the two against the budget. A figure taken on the cheaper
+    // path is a figure nobody with a rule written down is held to.
+    let ratio = (open.as_secs_f64() / rg.as_secs_f64()).max(ruled.as_secs_f64() / rg.as_secs_f64());
 
     writeln!(io::stdout(), "{ratio:.2} x {LIMIT}")?;
     writeln!(
         io::stderr(),
-        "         grep {:.1} ms, rg {:.1} ms, over {} files",
-        mine.as_secs_f64() * 1000.0,
+        "         grep {:.1} ms with no rules, {:.1} ms with {} rules, \
+         rg {:.1} ms, over {} files",
+        open.as_secs_f64() * 1000.0,
+        ruled.as_secs_f64() * 1000.0,
+        DENIED.len(),
         rg.as_secs_f64() * 1000.0,
         DIRS * FILES
     )?;
@@ -83,14 +111,18 @@ fn fastest(
     Ok(best)
 }
 
-/// One search through the tool, timed.
-fn ours(corpus: &Corpus) -> Result<Duration, Problem> {
+/// One search through the tool, timed, with rules standing behind it or not.
+fn ours(corpus: &Corpus, ruled: bool) -> Result<Duration, Problem> {
     let workspace = Workspace::open(corpus.path())?;
     let grep = Grep::new(workspace);
     let args = ToolArgs::new(format!(r#"{{"pattern":"{PATTERN}","limit":100000}}"#));
 
+    // Read outside the clock. What the two runs are being compared on is what a
+    // walk pays per file, and reading four patterns once is neither.
+    let mut engine = engine(ruled)?;
+
     let started = Instant::now();
-    let output = grep.run(approved(&grep, args)?)?;
+    let output = grep.run(approved(&grep, args, &mut engine)?)?;
     let took = started.elapsed();
 
     if output.is_failed() {
@@ -129,9 +161,29 @@ fn theirs(corpus: &Corpus) -> Result<Duration, Problem> {
     Ok(took)
 }
 
+/// The engine one run decides through: nothing written down, or the four rules
+/// above.
+///
+/// The difference is not cosmetic. A grant carrying no rule about the tool
+/// answers the walk's per-file question the moment it is asked; one carrying a
+/// rule has to work out what that file is called first, for every file the walk
+/// reaches. An empty set therefore never reaches that code at all.
+fn engine(written: bool) -> Result<Permission, Problem> {
+    if !written {
+        return Ok(Permission::new());
+    }
+
+    let mut rules = Rules::new();
+    for text in DENIED {
+        rules.add(Disposition::Deny, text)?;
+    }
+
+    Ok(Permission::with(Mode::default(), rules))
+}
+
 /// The call, permitted the only way one can be. A read is allowed without
 /// asking, so nothing is ever put to a user who is not there.
-fn approved(grep: &Grep, args: ToolArgs) -> Result<Approved, Problem> {
+fn approved(grep: &Grep, args: ToolArgs, engine: &mut Permission) -> Result<Approved, Problem> {
     struct Nobody;
 
     impl Ask for Nobody {
@@ -146,7 +198,7 @@ fn approved(grep: &Grep, args: ToolArgs) -> Result<Approved, Problem> {
         args,
     };
 
-    match Permission::new().decide(&call, &grep.sensitivity(&call.args), &mut Nobody) {
+    match engine.decide(&call, &grep.sensitivity(&call.args), &mut Nobody) {
         Settled::Approved(approved) => Ok(approved),
         Settled::Forbidden | Settled::Refused => Err(Problem::NoGrant),
     }
@@ -221,6 +273,9 @@ enum Problem {
 
     #[error("a read-only call was refused a grant")]
     NoGrant,
+
+    #[error("a rule this probe is written with could not be read: {0}")]
+    Rule(#[from] RuleError),
 
     #[error("the corpus could not be written: {0}")]
     Corpus(#[from] io::Error),

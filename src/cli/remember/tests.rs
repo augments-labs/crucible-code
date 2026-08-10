@@ -84,6 +84,30 @@ fn a_file_crucible_cannot_read_is_reported_rather_than_replaced() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_file_the_user_narrowed_is_still_narrow_after_a_rule_joins_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // A rename puts a new file where the old one was rather than new bytes
+    // inside it, so the mode comes from whatever made the new one. This file
+    // says what may run without being asked about, and widening who can write
+    // to it is not something answering `always` was asked to do.
+    let sample = Sample::new("remember-narrow");
+    let file = crucible_config::local(&sample.root());
+
+    remembering(&sample, "cargo test").expect("a tree crucible may write in");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("a tree with modes");
+
+    remembering(&sample, "git status").expect("a tree crucible may write in");
+
+    let mode = fs::metadata(&file)
+        .expect("the file is still there")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+}
+
 #[test]
 fn nothing_is_left_beside_the_file_it_wrote() {
     // Written beside and renamed over, so the directory holds one file rather

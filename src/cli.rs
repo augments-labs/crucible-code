@@ -1,9 +1,12 @@
 //! Argument parsing, and what the arguments and the files together decided.
 //!
-//! The command line is read here and resolved against the configuration; the
-//! concrete types those answers choose are built one module along, in
-//! [`startup`]. Everything below is reached as a trait object, which is what
-//! leaves every crate free of the others.
+//! The command line is read here and resolved against the configuration. What
+//! those answers choose is then built in two halves: the terminal, the renderer
+//! and the terms every turn runs under are put together here, because they are
+//! what a failure has to be reported through; the provider, the tools and the
+//! session are put together one module along, in [`startup`]. Everything below
+//! is reached as a trait object, which is what leaves every crate free of the
+//! others.
 //!
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
@@ -27,18 +30,23 @@ use clap::Parser;
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
 use crucible_runner::SessionError;
-use crucible_tui::{Renderer, SystemTerminal, Terminal, TerminalError, Title, TitleError};
+use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
-use crate::cli::startup::{Startup, assemble};
+use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
 
 /// The model asked when the command line does not name one.
 const MODEL: &str = "claude-sonnet-5";
 
-/// The providers this is built with, for the sentence a wrong name gets back.
-const PROVIDERS: &str = "anthropic, openai";
+/// The providers this is built with.
+///
+/// One list rather than two: the sentence a wrong name gets back is written
+/// from it, and so is the check that refuses the name before anything is drawn.
+/// [`startup::provider`] has one arm per entry, and adding a provider is an
+/// edit to both in the same commit.
+const PROVIDERS: [&str; 2] = ["anthropic", "openai"];
 
 /// The command-line surface.
 ///
@@ -88,6 +96,10 @@ struct Cli {
 /// Why crucible could not run, or could not carry on.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Fatal {
+    /// The directory crucible was started in could not be read.
+    #[error("the directory crucible was started in could not be read: {0}")]
+    Here(io::Error),
+
     /// The working directory is not one that can be worked in.
     #[error(transparent)]
     Workspace(#[from] PathError),
@@ -113,7 +125,7 @@ pub(crate) enum Fatal {
     Title(#[from] TitleError),
 
     /// The command line named a provider this is not built with.
-    #[error("no provider called {named}; this build has {PROVIDERS}")]
+    #[error("no provider called {named}; this build has {}", PROVIDERS.join(", "))]
     Provider {
         /// What was asked for.
         named: Box<str>,
@@ -144,7 +156,7 @@ pub(crate) fn start() -> ExitCode {
 
 /// Builds everything, then hands over to the loop.
 fn run(cli: &Cli) -> Result<(), Fatal> {
-    let here = std::env::current_dir().map_err(Fatal::Input)?;
+    let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
     let from = |name: &str| std::env::var(name).ok();
@@ -166,6 +178,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let choice =
         Choice::parse(cli.model.as_deref().unwrap_or_default()).ok_or(Fatal::Providerless)?;
     let model = wanted(&choice, &settings);
+
+    // The name on its own, here rather than in `assemble`, because the banner
+    // below names a model and the provider that would serve it: a run that
+    // cannot start should not first announce that it has. Only the name — the
+    // key, the agent and the session stay where they are, after the banner,
+    // since the first frame is measured to its first word.
+    served(&choice.provider)?;
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -193,7 +212,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         style: Style::resolve(
             settings.color(),
             settings.tool_detail(),
-            Terminal::is_terminal(renderer.terminal()),
+            renderer.is_terminal(),
             &from,
         ),
         mode,
