@@ -27,6 +27,13 @@ Implement `Tool`, and answer three questions in code rather than in a comment:
    and the only one: a shell reaches whatever the user can, so what bounds it is
    question 2 rather than the workspace.
 
+A `SpawnsProcess` also carries a `Reach`, which is a claim a mode is entitled to
+act on without asking. Answer `Anything` unless the tool proved otherwise, and
+prove it only from words the shell will not change before the program sees them.
+A `Reach::Workspace` that turns out to be wrong is a file changed outside the
+workspace with nobody asked, so widening what counts as proved is a security
+change and is reviewed as one.
+
 ## Grants
 
 A read mints its own grant without a prompt, but it still leaves through

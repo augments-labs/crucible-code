@@ -250,6 +250,28 @@ fn the_sensitivity_carries_what_the_call_will_run() {
 }
 
 #[test]
+fn the_sensitivity_says_when_a_command_was_proved_to_stay_inside() {
+    // What `allowEdits` reads. It is computed here rather than in the engine
+    // because only this tool can parse its own arguments, and only a workspace
+    // can say what is inside it.
+    let sample = Sample::new("bash-reach");
+    sample.write("src/a.rs", "");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"mkdir -p src/net"}"#));
+
+    assert_eq!(
+        sensitivity,
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                parts: Box::from([Box::from("mkdir -p src/net")]),
+                reach: Reach::Workspace,
+            }
+        }
+    );
+}
+
+#[test]
 fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     // `run` will refuse it, but a sensitivity is needed first, and the safe
     // answer to "what will this run" when the answer is unknown is everything.

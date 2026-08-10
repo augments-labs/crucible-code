@@ -1,14 +1,21 @@
 //! Which command lines a rule may be written about, and which ones nothing
 //! but a blanket covers.
 
-use crucible_core::Command;
+use crucible_core::{Command, Workspace};
 
 use super::read;
+
+/// Somewhere for a path to be resolved against. Which directory it is does not
+/// enter into these tests: how a line decomposes is a fact about the text, and
+/// the reach it carries is [`super::reach`]'s subject rather than this one's.
+fn anywhere() -> Workspace {
+    Workspace::open(std::env::temp_dir()).expect("a temporary directory")
+}
 
 /// The simple commands a line decomposes into, for the tests that are about
 /// which words a rule would be matched against.
 fn parts(line: &str) -> Vec<String> {
-    match read(line) {
+    match read(line, &anywhere()) {
         Command::Understood { parts, .. } => parts.iter().map(ToString::to_string).collect(),
         Command::Opaque(text) => panic!("{text} was expected to be readable"),
     }
@@ -16,7 +23,7 @@ fn parts(line: &str) -> Vec<String> {
 
 /// Whether a line is one no rule but a blanket may be written about.
 fn opaque(line: &str) -> bool {
-    matches!(read(line), Command::Opaque(_))
+    matches!(read(line, &anywhere()), Command::Opaque(_))
 }
 
 #[test]
