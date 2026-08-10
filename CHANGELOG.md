@@ -30,6 +30,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **`grep` keeps the matches it found in a file it could not finish reading.**
+  One line that is not text used to discard every match already found in that
+  file — often leaving `nothing matched`. The matches are reported, and a note
+  names the files the search stopped partway through, so a gap in the answer is
+  visible rather than silent. Files that could not be opened at all are named by
+  that note too, where before they were passed over without a word.
+
 - **A recursive delete is asked about even where it cannot leave the tree.**
   `rm -r` inside the workspace used to be allowed by the same reasoning that
   allows `rm` on one file. The flag that makes it recursive is now what puts it
