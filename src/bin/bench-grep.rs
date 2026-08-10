@@ -14,6 +14,11 @@
 //! walked file goes through answers on the spot; with rules it resolves that
 //! file's path first. Both are what somebody runs, so both are measured, and
 //! the ratio reported is whichever of the two is worse.
+//!
+//! Every side is timed many times and the fastest run of each is what the ratio
+//! divides. A search that took longer had something else on the machine in it,
+//! and the fastest run is the one that timed the code. The rounds interleave
+//! for the same reason: what a ratio must not do is move with the load.
 
 use std::fmt::{self, Write as _};
 use std::fs;
@@ -44,9 +49,21 @@ const LINES: usize = 120;
 /// rather than into printing.
 const PATTERN: &str = "fn assemble_widget";
 
-/// Measurements per tool. The smallest is kept: a slower run had interference
-/// in it, and the fastest is the one that measures the code.
-const ROUNDS: usize = 5;
+/// Rounds per side. The fastest of them is the measurement.
+///
+/// Thirty is where the reported ratio stops moving. Repeating this probe on one
+/// machine, the ratio varies by about a seventh of itself at ten rounds and a
+/// tenth at thirty, and the next tenth costs as much again — while the round
+/// that turns out to hold a side's fastest time lands past the fifteenth more
+/// often than not, so a smaller budget stops short of the floor rather than
+/// finding it early.
+///
+/// Keeping the fastest is also why no warm-up round is run and thrown away. A
+/// minimum already ignores a first run that paid for a cold page cache, without
+/// having to be told which run that was — and measured here the first run was
+/// not reliably the slow one, so discarding it deliberately would have been
+/// paying for a correction that had nothing to correct.
+const ROUNDS: usize = 30;
 
 /// Rules about `grep`, written the way a project writes them: a directory, a
 /// suffix, and one file by name.
@@ -65,30 +82,18 @@ const DENIED: [&str; 4] = [
 
 fn main() -> Result<(), Problem> {
     let corpus = Corpus::build()?;
-
-    // Warm the page cache once for each, so the first measured run is not the
-    // one paying for every read.
-    ours(&corpus, false)?;
-    ours(&corpus, true)?;
-    theirs(&corpus)?;
-
-    let open = fastest(ROUNDS, || ours(&corpus, false))?;
-    let ruled = fastest(ROUNDS, || ours(&corpus, true))?;
-    let rg = fastest(ROUNDS, || theirs(&corpus))?;
+    let (open, ruled, rg) = rounds(&corpus)?;
 
     // The worse of the two against the budget. A figure taken on the cheaper
     // path is a figure nobody with a rule written down is held to.
-    let ratio = (open.as_secs_f64() / rg.as_secs_f64()).max(ruled.as_secs_f64() / rg.as_secs_f64());
+    let ratio = open.ratio(rg).max(ruled.ratio(rg));
 
     writeln!(io::stdout(), "{ratio:.2} x {LIMIT}")?;
     writeln!(
         io::stderr(),
-        "         grep {:.1} ms with no rules, {:.1} ms with {} rules, \
-         rg {:.1} ms, over {} files",
-        open.as_secs_f64() * 1000.0,
-        ruled.as_secs_f64() * 1000.0,
+        "         grep {open} with no rules, {ruled} with {} rules, rg {rg}, \
+         best of {ROUNDS} interleaved rounds over {} files",
         DENIED.len(),
-        rg.as_secs_f64() * 1000.0,
         DIRS * FILES
     )?;
 
@@ -99,16 +104,71 @@ fn main() -> Result<(), Problem> {
     Ok(())
 }
 
-/// The shortest of `rounds` runs.
-fn fastest(
-    rounds: usize,
-    mut run: impl FnMut() -> Result<Duration, Problem>,
-) -> Result<Duration, Problem> {
-    let mut best = Duration::MAX;
-    for _ in 0..rounds {
-        best = best.min(run()?);
+/// Every side, `ROUNDS` times, a round at a time rather than a side at a time.
+///
+/// Interleaving is what makes comparing the fastest runs fair. Timing all of
+/// one side and then all of another puts the whole of one block of work between
+/// the two numbers the ratio divides, so whatever else the machine was doing
+/// during one block is charged to that side alone — and the ratio then moves
+/// with the load instead of with the code. A round that times all three sides
+/// in turn hands them the same machine, so interference lands on both sides of
+/// the division and mostly cancels: measured here, each side's fastest time
+/// varies across repeats of this probe several times as much as the ratio built
+/// out of them does.
+fn rounds(corpus: &Corpus) -> Result<(Spread, Spread, Spread), Problem> {
+    let mut open = Spread::new();
+    let mut ruled = Spread::new();
+    let mut rg = Spread::new();
+
+    for _ in 0..ROUNDS {
+        open.saw(ours(corpus, false)?);
+        ruled.saw(ours(corpus, true)?);
+        rg.saw(theirs(corpus)?);
     }
-    Ok(best)
+
+    Ok((open, ruled, rg))
+}
+
+/// What one side's rounds came to.
+///
+/// The fastest is the measurement. The slowest is carried alongside it because
+/// a red build is read by somebody who was not there: the two together say
+/// whether the machine was quiet while the number was taken, and a slowest
+/// several times the fastest is the first thing to suspect before the code.
+#[derive(Clone, Copy)]
+struct Spread {
+    fastest: Duration,
+    slowest: Duration,
+}
+
+impl Spread {
+    fn new() -> Self {
+        Self {
+            fastest: Duration::MAX,
+            slowest: Duration::ZERO,
+        }
+    }
+
+    fn saw(&mut self, took: Duration) {
+        self.fastest = self.fastest.min(took);
+        self.slowest = self.slowest.max(took);
+    }
+
+    /// How this side compares with another, fastest against fastest.
+    fn ratio(self, other: Self) -> f64 {
+        self.fastest.as_secs_f64() / other.fastest.as_secs_f64()
+    }
+}
+
+impl fmt::Display for Spread {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            out,
+            "{:.1} ms (slowest {:.1})",
+            self.fastest.as_secs_f64() * 1000.0,
+            self.slowest.as_secs_f64() * 1000.0
+        )
+    }
 }
 
 /// One search through the tool, timed, with rules standing behind it or not.
