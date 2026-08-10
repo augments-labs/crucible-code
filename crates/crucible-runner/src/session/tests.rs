@@ -171,14 +171,10 @@ fn continuing_a_session_appends_to_the_same_log() {
 #[test]
 fn the_newest_session_for_this_workspace_is_the_one_continued() {
     let sample = Sample::new("session-newest");
-    let workspace = sample.workspace().root().display().to_string();
 
     sample.plant(
         "0000000000001-000001",
-        &[
-            format!(r#"{{"format":1,"session":"old","workspace":"{workspace}"}}"#),
-            r#"{"user":"long ago"}"#.to_owned(),
-        ],
+        &[sample.header(1, "old"), r#"{"user":"long ago"}"#.to_owned()],
     );
     record(&sample, &[said("just now")]);
 

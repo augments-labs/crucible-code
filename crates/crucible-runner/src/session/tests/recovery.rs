@@ -11,12 +11,11 @@ use super::*;
 #[test]
 fn a_log_from_a_different_version_is_refused_rather_than_half_read() {
     let sample = Sample::new("session-foreign");
-    let workspace = sample.workspace().root().display().to_string();
 
     sample.plant(
         "0000000000002-000002",
         &[
-            format!(r#"{{"format":99,"session":"future","workspace":"{workspace}"}}"#),
+            sample.header(99, "future"),
             r#"{"utterance":"something this build has never heard of"}"#.to_owned(),
         ],
     );
@@ -50,11 +49,10 @@ fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session(
     // after it, and `--continue` hands back a transcript missing its middle
     // with nothing anywhere to say so.
     let sample = Sample::new("session-unreadable");
-    let workspace = sample.workspace().root().display().to_string();
     let path = sample.plant(
         "0000000000004-000004",
         &[
-            format!(r#"{{"format":1,"session":"damaged","workspace":"{workspace}"}}"#),
+            sample.header(1, "damaged"),
             r#"{"user":"before"}"#.to_owned(),
         ],
     );
@@ -76,12 +74,11 @@ fn a_line_that_is_not_a_message_stops_the_replay() {
     // transcript with a hole in it, which reads as the user contradicting
     // themselves.
     let sample = Sample::new("session-hole");
-    let workspace = sample.workspace().root().display().to_string();
 
     sample.plant(
         "0000000000003-000003",
         &[
-            format!(r#"{{"format":1,"session":"holed","workspace":"{workspace}"}}"#),
+            sample.header(1, "holed"),
             r#"{"user":"kept"}"#.to_owned(),
             r#"{"whatever":"not a message"}"#.to_owned(),
             r#"{"user":"never reached"}"#.to_owned(),
@@ -101,13 +98,9 @@ fn a_last_line_torn_mid_character_ends_the_log_rather_than_failing_it() {
     // line the replay already forgives; refusing to continue over it costs the
     // user every turn in the log, and the file says nothing followed.
     let sample = Sample::new("session-torn-character");
-    let workspace = sample.workspace().root().display().to_string();
     let path = sample.plant(
         "0000000000005-000005",
-        &[
-            format!(r#"{{"format":1,"session":"torn","workspace":"{workspace}"}}"#),
-            r#"{"user":"kept"}"#.to_owned(),
-        ],
+        &[sample.header(1, "torn"), r#"{"user":"kept"}"#.to_owned()],
     );
 
     // The first two bytes of a three-byte character, and then the power cut.
@@ -162,12 +155,11 @@ fn a_line_that_is_not_a_message_is_cut_off_rather_than_written_past() {
     // somewhere no replay will ever reach. Every turn of the continued session
     // would be recorded and none of it would come back.
     let sample = Sample::new("session-hole-continued");
-    let workspace = sample.workspace().root().display().to_string();
 
     sample.plant(
         "0000000000006-000006",
         &[
-            format!(r#"{{"format":1,"session":"holed","workspace":"{workspace}"}}"#),
+            sample.header(1, "holed"),
             r#"{"user":"kept"}"#.to_owned(),
             r#"{"whatever":"not a message"}"#.to_owned(),
         ],
