@@ -22,10 +22,12 @@ use std::thread::{self, JoinHandle};
 
 use crucible_core::{Message, SessionId, Transcript, Workspace};
 
+mod claim;
 mod privacy;
 mod replay;
 mod wire;
 
+use claim::{Claim, claim};
 use replay::{newest, replay};
 
 /// How many lines may be waiting to be written.
@@ -72,6 +74,13 @@ pub enum SessionError {
         /// Which file.
         at: Box<str>,
     },
+
+    /// The session asked for is still being written by another crucible.
+    #[error("{at} is open in another crucible")]
+    Busy {
+        /// Which file.
+        at: Box<str>,
+    },
 }
 
 /// Where the first write that failed is left for the main thread to find.
@@ -86,6 +95,13 @@ pub struct Session {
     /// Taken by whichever of [`Session::finish`] and `drop` comes first, both
     /// of which wait for the queue.
     writer: Option<JoinHandle<()>>,
+    /// What keeps another crucible from continuing a log this one is still
+    /// writing. `None` where the filesystem has no locks to take, and in a
+    /// session that records nothing — see [`claim`].
+    ///
+    /// Released after the queue has drained: [`Drop`] runs before a struct's
+    /// fields do, and joining the writer is the first thing it does.
+    claim: Option<Claim>,
     trouble: Trouble,
 }
 
@@ -111,7 +127,16 @@ impl Session {
             source,
         })?;
 
-        Ok(Self::writing(path, file))
+        // Nothing can be holding a log this run has just named, so there is
+        // nothing to refuse here. It is claimed so that a crucible started
+        // afterwards in the same directory finds this session open for as long
+        // as it is being written, rather than continuing it underneath.
+        let held = claim(&path).ok().flatten();
+
+        let mut session = Self::writing(path, file);
+        session.claim = held;
+
+        Ok(session)
     }
 
     /// Continues the newest session recorded for `workspace`, and hands back
@@ -137,6 +162,26 @@ impl Session {
         })?;
 
         let path = newest(directory, workspace)?;
+
+        // Before the log is read, and long before it is cut. A session another
+        // crucible still has open is a file that is still being appended to:
+        // continuing it cuts it back to what was read here, which deletes lines
+        // that process has already written and believes are there, and leaves
+        // two of them appending to one log. See [`claim`].
+        let held = match claim(&path) {
+            Ok(Some(held)) => Some(held),
+            Ok(None) => {
+                return Err(SessionError::Busy {
+                    at: path.display().to_string().into(),
+                });
+            }
+            // A filesystem with no locks cannot say a session is open either,
+            // and refusing every `--continue` there would cost more than the
+            // collision this guards against. What happens then is what happened
+            // before there was a claim to take.
+            Err(_) => None,
+        };
+
         let (transcript, settled_at) = replay(&path)?;
 
         // Before a single byte is appended, and before the handle that will
@@ -144,7 +189,10 @@ impl Session {
         // the next turn written straight onto the end of it. See [`replay`].
         shorten(&path, settled_at)?;
 
-        Ok((Self::writing(path.clone(), open(&path)?), transcript))
+        let mut session = Self::writing(path.clone(), open(&path)?);
+        session.claim = held;
+
+        Ok((session, transcript))
     }
 
     /// A session that records nothing, for a run that asked not to be kept.
@@ -154,6 +202,7 @@ impl Session {
             path: PathBuf::new(),
             to: None,
             writer: None,
+            claim: None,
             trouble: Trouble::default(),
         }
     }
@@ -231,6 +280,7 @@ impl Session {
             path,
             to: Some(to),
             writer: Some(writer),
+            claim: None,
             trouble,
         }
     }
@@ -256,11 +306,26 @@ impl Drop for Session {
 /// A failure is recorded once and the loop goes on, because the senders are
 /// not waiting for an answer: stopping here would fill the queue and block the
 /// turn instead of losing a log nobody can write anyway.
+///
+/// Going on is what the newline is for. A line reaches the file as its bytes
+/// and then the newline that ends it, so a write that fails can stop between
+/// the two and leave a line with nothing after it — and the next line, appended
+/// straight onto that, makes one line that is neither message in the middle of
+/// the log. Starting the line after a failure with a newline of its own is what
+/// keeps the damage to the line that took it. Nothing was recorded where an
+/// empty line lands, which is why the replay reads past one.
 fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, trouble: &Trouble) {
+    let mut torn = false;
+
     for line in lines {
-        let Err(problem) = writeln!(sink, "{line}") else {
+        let ended = if torn { "\n" } else { "" };
+
+        let Err(problem) = writeln!(sink, "{ended}{line}") else {
+            torn = false;
             continue;
         };
+
+        torn = true;
 
         if let Ok(mut held) = trouble.lock() {
             held.get_or_insert_with(|| problem.to_string().into());

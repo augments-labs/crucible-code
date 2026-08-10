@@ -2,11 +2,12 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crucible_core::{Message, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
 use serde_json::Value;
 
-use super::{Session, SessionError};
+use super::{Session, SessionError, wire};
 use crate::sample::Sample;
 
 fn said(text: &str) -> Message {
@@ -81,6 +82,75 @@ impl std::io::Write for Blocked {
             std::io::ErrorKind::StorageFull,
             "no space left on device",
         ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_line_a_failed_write_cut_short_is_ended_before_the_next_one_starts() {
+    // A line reaches the file as its bytes and then the newline that ends it,
+    // so a disk that fills between the two leaves a line with nothing after it.
+    // Written straight onto, the next message makes one line that is neither —
+    // damage in the middle of the log, which costs every turn recorded after it
+    // rather than the one the disk cost.
+    let written = Written::default();
+    let session = Session::writing(
+        PathBuf::from("filled.jsonl"),
+        Filling {
+            written: Arc::clone(&written),
+            writes: 0,
+            // The newline of the first line, and nothing else.
+            fails_at: 2,
+        },
+    );
+
+    session.append(&said("the line the disk cut short"));
+    session.append(&said("the one after it"));
+    assert!(session.finish().is_some(), "the failure is still reported");
+
+    let log = String::from_utf8(written.lock().expect("the writer is gone").clone())
+        .expect("a log of text");
+    let lines: Vec<&str> = log.lines().collect();
+
+    assert_eq!(lines.len(), 2, "{log}");
+    assert!(
+        lines.iter().all(|line| wire::message(line).is_some()),
+        "{log}"
+    );
+}
+
+/// What a log kept, shared with the test that reads it back.
+type Written = Arc<Mutex<Vec<u8>>>;
+
+/// A log that stops taking bytes part way through a line and then works again
+/// — a disk that filled up and was freed while the session went on.
+struct Filling {
+    written: Written,
+    writes: usize,
+    /// Which write fails. Counted from one, and only one of them does.
+    fails_at: usize,
+}
+
+impl std::io::Write for Filling {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.writes += 1;
+
+        if self.writes == self.fails_at {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "no space left on device",
+            ));
+        }
+
+        self.written
+            .lock()
+            .expect("the test is holding it")
+            .extend_from_slice(bytes);
+
+        Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {

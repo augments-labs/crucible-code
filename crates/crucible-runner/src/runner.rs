@@ -8,8 +8,8 @@
 //! what decides whether the session continues.
 
 use crucible_core::{
-    Ask, Cancel, Delta, Event, Message, Permission, Post, Provider, Request, StopReason, ToolCall,
-    Transcript, TurnError, TurnId,
+    Ask, Cancel, Delta, DeltaStream, Event, Message, Permission, Post, Provider, Request,
+    StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
 use crate::session::Session;
@@ -188,6 +188,19 @@ impl Runner {
                 events.post(Event::ToolRequested { call: call.clone() });
             }
 
+            // Recorded before they run, because running them is what changes
+            // the tree: a turn that ends part way through a round would
+            // otherwise leave a log whose last word is the prompt, and a
+            // continued session that reads files it has already edited. A log
+            // ending on a call nothing answered is the shape the replay already
+            // drops on the way back in. The calls are cloned because the round
+            // needs them too — one round's worth, which is what the turn holds
+            // either way and does not grow with the transcript.
+            self.record(Message::Agent {
+                text,
+                calls: calls.clone(),
+            });
+
             let (results, went) = Work {
                 tools: &self.tools,
                 permission: &mut self.permission,
@@ -197,7 +210,6 @@ impl Runner {
             }
             .round(&calls);
 
-            self.record(Message::Agent { text, calls });
             self.record(Message::ToolResults(results));
 
             match went {
@@ -221,10 +233,36 @@ impl Runner {
     }
 
     /// One request, read to the end.
-    fn listen(&self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
+    ///
+    /// An answer that breaks off part way is recorded before the failure
+    /// leaves: those deltas were posted as they arrived, so the user has
+    /// already read them, and a transcript that does not hold them is one the
+    /// user and the model disagree about — the next prompt would follow the
+    /// last one with nothing in between. Calls the model never finished asking
+    /// for go no further, the same as when it stops early.
+    fn listen(&mut self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
         let mut answer = Answer::new(self.provider.name());
 
+        if let Err(problem) = Self::hear(stream.as_mut(), &mut answer, events) {
+            let (text, _) = answer.finish();
+            self.record(Message::Agent {
+                text,
+                calls: Vec::new(),
+            });
+
+            return Err(problem);
+        }
+
+        Ok(answer)
+    }
+
+    /// Reads deltas into `answer` until the stream ends.
+    fn hear(
+        stream: &mut dyn DeltaStream,
+        answer: &mut Answer,
+        events: &dyn Post,
+    ) -> Result<(), TurnError> {
         while let Some(delta) = stream.next() {
             match delta? {
                 Delta::Text(text) => {
@@ -237,7 +275,7 @@ impl Runner {
             }
         }
 
-        Ok(answer)
+        Ok(())
     }
 
     /// What to send this round.

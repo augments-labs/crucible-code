@@ -67,6 +67,16 @@ fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
         .read_line(&mut first)
         .map_err(trouble)?;
 
+    // A first line the process never finished is a log with nothing whole in
+    // it: the header is written before a session can record anything, so one
+    // that stopped there holds no turns. Read as a header it would be worse
+    // than useless — the next turn would be appended onto the header itself,
+    // and the welded line names no workspace, so from then on nothing could
+    // find the session at all.
+    if !first.ends_with('\n') {
+        return Ok(false);
+    }
+
     let Some(opening) = wire::opening(first.trim_end()) else {
         return Ok(false);
     };
@@ -91,12 +101,12 @@ fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
 /// ended when the process did leaves a half-written last line, and a prefix of
 /// the transcript is a transcript; one with a hole in it is not.
 ///
-/// A line the process finished writing and this build still cannot read is a
-/// different thing, and fails outright: treating damage in the middle as the
-/// end of the log would drop every turn after it and hand back a transcript
-/// missing its middle with nothing to say so. The two are told apart by the
-/// newline, which is the one thing a process killed mid-write cannot have got
-/// round to.
+/// A line this build cannot read with more of the log after it is a different
+/// thing, and fails outright: treating damage in the middle as the end would
+/// hand back a transcript missing its middle with nothing to say so, and the
+/// caller cuts the file to what was read — so every turn recorded after the
+/// damage would leave the disk as well. What tells the two apart is whether
+/// anything follows, because the end of a log is also the end of its file.
 ///
 /// The offset is what the caller must cut the file to before appending, and it
 /// is the reason this returns one at all: everything from there on is a
@@ -130,15 +140,31 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
             break;
         }
 
-        let Ok(text) = str::from_utf8(&raw) else {
+        let whole = str::from_utf8(&raw).ok().map(str::trim_end);
+
+        // A line with nothing in it is neither a message nor damage: it is what
+        // the writer lays down to end a line a failed write may have cut short,
+        // before starting the next one. Nothing was recorded there, so nothing
+        // is missing.
+        if whole == Some("") {
+            through += read as u64;
+            continue;
+        }
+
+        let Some(message) = whole.and_then(wire::message) else {
+            // Where the damage sits is what decides what to do about it. At the
+            // end of the file it is where the log stops, and what came before
+            // is still a transcript. With turns recorded after it, stopping
+            // here would drop every one of them — from the transcript handed
+            // back, and from the file the caller cuts to match.
+            if log.fill_buf().map_err(trouble)?.is_empty() {
+                break;
+            }
+
             return Err(trouble(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "a line that is not text, with the log continuing past it",
+                "a line that is not a message, with the log continuing past it",
             )));
-        };
-
-        let Some(message) = wire::message(text.trim_end()) else {
-            break;
         };
 
         transcript.push(message);
