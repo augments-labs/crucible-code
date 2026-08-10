@@ -30,6 +30,19 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A recursive delete is asked about even where it cannot leave the tree.**
+  `rm -r` inside the workspace used to be allowed by the same reasoning that
+  allows `rm` on one file. The flag that makes it recursive is now what puts it
+  in front of you.
+
+- **A narrow terminal no longer draws over the line above.** A tail one or two
+  columns wide could emit a row wider than itself, and the renderer moves back
+  over the width it counted. Anything that cannot fit in a row is dropped.
+
+- **A permission rule that could not be saved leaves nothing behind.** When
+  replacing the file failed, a `.writing.<pid>` copy of the whole document
+  stayed in `.crucible`. It is removed; the error you see is unchanged.
+
 - **Damage in the middle of a session log stops `--continue` rather than
   truncating the log to it.** A line this build cannot read with turns recorded
   after it is refused and the file is left as it is. Damage at the end still
