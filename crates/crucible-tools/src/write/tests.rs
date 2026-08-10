@@ -60,7 +60,7 @@ fn the_directories_above_a_new_file_are_made() {
 #[test]
 fn a_path_outside_the_workspace_is_refused_without_writing_it() {
     let sample = Sample::new("write-escape");
-    let outside = format!("{}/../outside/secret.txt", sample.root().display());
+    let outside = format!("{}/../outside/secret.txt", sample.named());
 
     let output = write(
         &sample,

@@ -37,4 +37,4 @@ pub use permission::{
 pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
-pub use workspace::{PathError, Workspace, WorkspacePath};
+pub use workspace::{PathError, Workspace, WorkspacePath, written};

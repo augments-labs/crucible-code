@@ -56,12 +56,23 @@ impl Sample {
     pub(crate) fn outside(&self, name: &str, text: &str) -> String {
         let path = self.base.join("outside").join(name);
         fs::write(&path, text).expect("a writable temporary directory");
-        path.display().to_string()
+        crucible_core::written(&path)
     }
 
     /// The workspace root, for the tests that need an absolute path into it.
     pub(crate) fn root(&self) -> &PathBuf {
         &self.root
+    }
+
+    /// The workspace root as the text of a call names it.
+    ///
+    /// Spelled the way [`Self::outside`] is, and for a reason that is about the
+    /// test rather than about paths: this goes into a JSON string literal, and a
+    /// backslash is what JSON escapes with. A Windows path dropped into one is
+    /// not a path but a parse error a few characters in, so the tool refuses the
+    /// arguments and never reaches the refusal the test is about.
+    pub(crate) fn named(&self) -> String {
+        crucible_core::written(&self.root)
     }
 }
 

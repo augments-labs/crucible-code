@@ -163,11 +163,11 @@ impl Grep {
         path: &Path,
         limit: usize,
     ) -> Vec<Hit> {
-        let shown = path
-            .strip_prefix(self.workspace.root())
-            .unwrap_or(path)
-            .display()
-            .to_string();
+        // Spelled the way a rule about it is, because a hit is read by something
+        // that hands the name straight back — as the `path` of the next call, or
+        // as the file somebody writes a deny rule about.
+        let shown =
+            crucible_core::written(path.strip_prefix(self.workspace.root()).unwrap_or(path));
 
         let mut hits = Vec::new();
         let found = searcher.search_path(
