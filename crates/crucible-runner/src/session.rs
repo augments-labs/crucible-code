@@ -139,17 +139,12 @@ impl Session {
         let path = newest(directory, workspace)?;
         let (transcript, settled_at) = replay(&path)?;
 
-        let file = open(&path)?;
-        // Before a single byte is appended: the log is opened for append, so
-        // whatever `replay` stopped at would otherwise have the next turn
-        // written straight onto the end of it. See [`replay`].
-        file.set_len(settled_at)
-            .map_err(|source| SessionError::Log {
-                at: path.display().to_string().into(),
-                source,
-            })?;
+        // Before a single byte is appended, and before the handle that will
+        // append them exists: whatever `replay` stopped at would otherwise have
+        // the next turn written straight onto the end of it. See [`replay`].
+        shorten(&path, settled_at)?;
 
-        Ok((Self::writing(path.clone(), file), transcript))
+        Ok((Self::writing(path.clone(), open(&path)?), transcript))
     }
 
     /// A session that records nothing, for a run that asked not to be kept.
@@ -284,6 +279,29 @@ fn open(path: &Path) -> Result<File, SessionError> {
         at: path.display().to_string().into(),
         source,
     })
+}
+
+/// Cuts a log back to `bytes`, through a handle opened for that and nothing
+/// else.
+///
+/// Its own handle because of what appending is. On Windows a handle opened for
+/// append is granted the right to add to a file and not the right to change
+/// what is already in it — the two are separate rights, and shortening a file
+/// needs the second one. So the log is shortened through a handle that may
+/// write it, which is closed again before the one that may only append is
+/// opened.
+fn shorten(path: &Path, bytes: u64) -> Result<(), SessionError> {
+    let trouble = |source| SessionError::Log {
+        at: path.display().to_string().into(),
+        source,
+    };
+
+    File::options()
+        .write(true)
+        .open(path)
+        .map_err(trouble)?
+        .set_len(bytes)
+        .map_err(trouble)
 }
 
 #[cfg(test)]

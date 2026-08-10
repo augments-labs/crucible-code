@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crucible_core::{Message, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+use serde_json::Value;
 
 use super::{Session, SessionError};
 use crate::sample::Sample;
@@ -109,9 +110,21 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
     let written = fs::read_to_string(path).expect("the log");
     let header = written.lines().next().expect("a header");
 
-    assert!(header.contains(r#""format":1"#), "{header}");
-    assert!(
-        header.contains(&sample.workspace().root().display().to_string()),
+    // Read back as what it is rather than searched as text. A path is written
+    // into JSON escaped, so on a platform whose separator is the escape
+    // character a substring check compares the two spellings of the same path
+    // and reports the difference as a missing workspace.
+    let header: Value = serde_json::from_str(header).expect("a header line of JSON");
+    let root = sample.workspace().root().display().to_string();
+
+    assert_eq!(
+        header.get("format").and_then(Value::as_u64),
+        Some(1),
+        "{header}"
+    );
+    assert_eq!(
+        header.get("workspace").and_then(Value::as_str),
+        Some(root.as_str()),
         "{header}"
     );
 }
