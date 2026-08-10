@@ -101,10 +101,23 @@ fn a_rule_minted_from_a_file_the_workspace_resolved_covers_that_file() {
     let path = workspace
         .existing("src/main.rs")
         .expect("a file inside the workspace");
-    let sensitivity = Sensitivity::MutatesFile {
-        target: Target::resolved(&workspace, &path),
-    };
+    let target = Target::resolved(&workspace, &path);
 
+    // The other spelling, which a file in an extra directory has only, so no
+    // rule about one can be written any other way. Resolving a path on Windows
+    // returns it extended-length — `\\?\C:\...` — and a rule somebody wrote as
+    // `C:/...` is matched against whatever this holds.
+    let absolute = target.absolute().expect("a resolved path").to_owned();
+    assert!(
+        !absolute.starts_with("//?/"),
+        "{absolute} keeps the prefix resolving put on it"
+    );
+    assert!(
+        !absolute.contains('\\'),
+        "{absolute} keeps a separator a pattern reads as an escape"
+    );
+
+    let sensitivity = Sensitivity::MutatesFile { target };
     let text = minted("edit", &sensitivity).expect("a resolved file can be written down");
     assert!(
         covers(&text, "edit", &sensitivity),

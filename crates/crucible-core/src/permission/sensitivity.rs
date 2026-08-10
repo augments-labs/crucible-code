@@ -39,31 +39,44 @@ pub enum Sensitivity {
     },
 }
 
-/// A path with the separator a rule is written with.
+/// A path spelled the way a rule about it is written.
 ///
-/// `/` on every platform, because that is the separator the pattern language
-/// has: a matcher normalises a candidate to it before comparing, and a rule
-/// minted from a path keeps whatever the path was spelled with. So a Windows
-/// path left alone would mint `src[\]main.rs` — the backslash escaped as the
-/// literal character it is not — and that rule would never match again.
-/// Somebody would answer "always" and be asked the same question next turn.
+/// Two things separate the two on Windows, and either alone leaves a rule that
+/// cannot match. The separator is one: `/` is what the pattern language has, a
+/// matcher normalises a candidate to it before comparing, and a path left as it
+/// arrived mints `src[\]main.rs` — the backslash escaped as the literal
+/// character it is not. Somebody would answer "always" and be asked the same
+/// question next turn.
 ///
-/// Converted once, here, because the rule text and the text the prompt showed
-/// are meant to be one string rather than two that started out alike.
+/// The prefix is the other. Resolving a path yields the extended-length
+/// spelling, `\\?\C:\...`, which nobody writes and nobody would recognise their
+/// own project in. `deny read(C:/Users/you/.ssh/**)` is an absolute pattern, it
+/// would be matched against `//?/C:/...`, and a rule that reads as protection
+/// and is not is worse than no rule. Taken off a plain drive path only: the
+/// short spelling of `\\?\UNC\server\share` is not a prefix of it, and a deny
+/// that stopped matching because this rewrote a path is the same failure from
+/// the other side.
+///
+/// Spelled once, here, because the rule text and the text the prompt showed are
+/// meant to be one string rather than two that started out alike.
 #[cfg(windows)]
-fn separated(path: &str) -> std::borrow::Cow<'_, str> {
-    if path.contains('\\') {
-        std::borrow::Cow::Owned(path.replace('\\', "/"))
-    } else {
-        std::borrow::Cow::Borrowed(path)
-    }
+fn written(path: &str) -> String {
+    let plain = path.strip_prefix(r"\\?\").filter(|rest| {
+        let mut ahead = rest.chars();
+        matches!(
+            (ahead.next(), ahead.next(), ahead.next()),
+            (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic()
+        )
+    });
+
+    plain.unwrap_or(path).replace('\\', "/")
 }
 
-/// A path with the separator a rule is written with, which is the one it
-/// already has. A backslash here is a character in a filename, not a
+/// A path spelled the way a rule about it is written, which is the way it
+/// already is. A backslash here is a character in a filename rather than a
 /// separator, and a rule minted from such a file has to keep it.
 #[cfg(not(windows))]
-fn separated(path: &str) -> &str {
+fn written(path: &str) -> &str {
     path
 }
 
@@ -108,7 +121,7 @@ impl Target {
     /// Both spellings of a path already known to be one the workspace reaches.
     fn spelled(workspace: &Workspace, path: &Path) -> Self {
         let below_root = path.strip_prefix(workspace.root()).ok().map(|below| {
-            let below: Box<str> = separated(&below.to_string_lossy()).into();
+            let below: Box<str> = written(&below.to_string_lossy()).into();
 
             // The root strips to nothing, and nothing is neither a path a
             // pattern can match nor a word a prompt can show. `.` is both, and
@@ -117,7 +130,7 @@ impl Target {
         });
 
         Self(Some(Named {
-            absolute: separated(&path.to_string_lossy()).into(),
+            absolute: written(&path.to_string_lossy()).into(),
             below_root,
         }))
     }
