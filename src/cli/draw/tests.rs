@@ -1,6 +1,8 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError};
+use crucible_core::{
+    Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError, Workspace,
+};
 use crucible_tui::Recording;
 
 use super::*;

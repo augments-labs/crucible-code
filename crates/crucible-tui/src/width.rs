@@ -65,6 +65,30 @@ pub(crate) fn tab_stop(column: usize) -> usize {
 /// is one row.
 #[must_use]
 pub fn cut(text: &str, columns: usize) -> Option<usize> {
+    walk(text, columns).1
+}
+
+/// How many display columns one row of `text` costs.
+///
+/// The same walk as [`cut`] rather than a second count of the same string: a
+/// component that pads a row out to a width and the tail that then measures the
+/// result have to agree about how wide it already was, and two walks are two
+/// answers waiting to differ.
+///
+/// One row, so a newline ends the count as it ends a row. Escape sequences cost
+/// nothing, which is what lets a row be measured after the palette has coloured
+/// it as well as before.
+#[must_use]
+pub fn columns(text: &str) -> usize {
+    walk(text, usize::MAX).0
+}
+
+/// The one walk both questions are answered from: how many columns were
+/// counted, and where the row left `ceiling` behind if it did.
+///
+/// The count is the whole row's only when nothing was cut, which is the only
+/// case that asks for it — a caller passing a real ceiling wants the offset.
+fn walk(text: &str, ceiling: usize) -> (usize, Option<usize>) {
     let mut column = 0;
     // The last character counted and where it starts, so a selector that will
     // not fit can take its base down with it.
@@ -80,7 +104,7 @@ pub fn cut(text: &str, columns: usize) -> Option<usize> {
 
         let base = last.map(|(_, character)| character);
         let step = match character {
-            '\n' => return Some(offset),
+            '\n' => return (column, Some(offset)),
             '\t' => tab_stop(column).saturating_sub(column),
             EMOJI_PRESENTATION if widens(base) => 1,
             _ => match advance(character) {
@@ -89,18 +113,19 @@ pub fn cut(text: &str, columns: usize) -> Option<usize> {
             },
         };
 
-        if column + step > columns {
-            return match (character, last) {
-                (EMOJI_PRESENTATION, Some((at, _))) => Some(at),
-                _ => Some(offset),
+        if column + step > ceiling {
+            let at = match (character, last) {
+                (EMOJI_PRESENTATION, Some((at, _))) => at,
+                _ => offset,
             };
+            return (column, Some(at));
         }
 
         column += step;
         last = Some((offset, character));
     }
 
-    None
+    (column, None)
 }
 
 #[cfg(test)]
@@ -178,5 +203,36 @@ mod tests {
     #[test]
     fn a_newline_is_a_cut_because_what_is_kept_is_one_row() {
         assert_eq!(cut("one\ntwo", 40), Some(3));
+    }
+
+    #[test]
+    fn what_a_row_costs_is_what_a_cut_at_that_width_would_leave_uncut() {
+        // The two answers come from one walk, and this is the property that
+        // says so: a row padded to its own measured width is a row the tail
+        // will not wrap. Anything that costs more than it counted is a row the
+        // terminal breaks somewhere this process did not predict.
+        for text in [
+            "hello",
+            "日本語",
+            "e\u{301}x",
+            &WARNING.repeat(3),
+            "ab\tcd",
+            "a\u{7f}bc",
+            "\x1b[31mred\x1b[0m",
+            "",
+        ] {
+            let wide = columns(text);
+            assert_eq!(cut(text, wide), None, "{text:?} is wider than {wide}");
+            assert!(
+                wide == 0 || cut(text, wide - 1).is_some(),
+                "{text:?} fits in {} columns, so {wide} was an overcount",
+                wide - 1
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_stops_being_counted_where_it_stops_being_a_row() {
+        assert_eq!(columns("one\ntwo"), 3);
     }
 }

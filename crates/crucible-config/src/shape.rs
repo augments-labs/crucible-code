@@ -103,14 +103,27 @@ pub(crate) const COLOR: &[&str] = &["auto", "always", "never"];
 /// Every answer `output.toolDetail` accepts.
 pub(crate) const TOOL_DETAIL: &[&str] = &["compact", "full"];
 
-/// How much of a tool call one line shows, and whether anything is dimmed.
+/// Every answer `output.glyphs` accepts.
+///
+/// Asked rather than detected. A terminal that draws a box-drawing character as
+/// a hollow square has a font missing it, and a font is not something a program
+/// can interrogate over a pipe — so this is the answer, not a fallback for one.
+pub(crate) const GLYPHS: &[&str] = &["unicode", "ascii"];
+
+/// What the terminal is drawn with, and how much of a line it gets.
 const OUTPUT: &[Field] = &[
     Field {
         name: "color",
-        about: "Whether to dim the prompt: auto follows the terminal and NO_COLOR, always and never override it",
+        about: "Whether to write colour: auto follows the terminal and NO_COLOR, always and never override it",
         shape: Shape::Choice(COLOR),
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.
+        examples: &[],
+    },
+    Field {
+        name: "glyphs",
+        about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
+        shape: Shape::Choice(GLYPHS),
         examples: &[],
     },
     Field {

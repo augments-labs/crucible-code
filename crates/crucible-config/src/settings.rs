@@ -22,7 +22,7 @@ mod permissions;
 mod variables;
 
 pub use layers::local;
-pub use output::{Color, ToolDetail};
+pub use output::{Color, Glyphs, ToolDetail};
 pub use variables::ClearScreen;
 
 pub(crate) use variables::refused;

@@ -8,6 +8,16 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A session opens with a welcome screen rather than two lines.** The release,
+  the model and the working directory sit beside what the prompt reacts to. It
+  fits itself to the terminal: two columns at eighty and above, one below that,
+  and no frame at all under forty-six.
+
+- **`output.glyphs` picks the characters crucible draws with.** `ascii` for a
+  terminal whose font has no box drawing, where borders would otherwise show as
+  hollow squares. `unicode` is the default and nothing detects it — a missing
+  glyph is invisible to the program, so it is asked for.
+
 - **`CRUCIBLE_CODE_CLEAR_SCREEN` empties the terminal before crucible draws.**
   Set it to `true` in `env`, or in the shell, to start from a bare screen and an
   empty scrollback. Off by default and ignored when output is redirected; a

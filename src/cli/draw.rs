@@ -8,30 +8,19 @@
 use std::fmt;
 use std::path::Path;
 
-use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput, Workspace};
+use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput};
 use crucible_tui::{Renderer, Terminal, TerminalError, cut};
 
 use super::remember::RememberError;
 use super::style::Style;
 
+mod opening;
+
+pub(crate) use opening::opening;
+
 /// Dim, then back. Only for text that is written once and never redrawn.
 const DIM: &str = "\x1b[2m";
 const PLAIN: &str = "\x1b[0m";
-
-/// The two lines a session opens with.
-///
-/// The root is there because every tool path is relative to it, and a user who
-/// started crucible in the wrong directory should find out before the first
-/// tool call rather than after it.
-pub(crate) fn opening<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    model: &str,
-    workspace: &Workspace,
-) -> Result<(), TerminalError> {
-    renderer.commit(&format!("crucible {} · {model}", env!("CARGO_PKG_VERSION")))?;
-    renderer.commit(&workspace.root().display().to_string())?;
-    renderer.commit("")
-}
 
 /// Draws one event.
 pub(crate) fn event<T: Terminal>(

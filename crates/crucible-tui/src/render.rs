@@ -11,6 +11,8 @@
 //! construction rather than by care. The sequences themselves live in
 //! [`frame`]; this module decides when a frame happens.
 
+use crate::color::Palette;
+use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 
 mod frame;
@@ -96,6 +98,40 @@ impl<T: Terminal> Renderer<T> {
         // rows leave a tail.
         self.finished.push("\n", &mut self.overflow);
         self.draw()
+    }
+
+    /// Writes rows crucible composed itself, in colour, above everything after
+    /// them.
+    ///
+    /// The counterpart to [`Renderer::commit`], and separate from it for one
+    /// reason: a committed line is text that came from somewhere else, so it
+    /// goes through the same wrap and the same escape-dropping as streamed
+    /// output — a colour code in a tool result is bytes an untrusted string put
+    /// there. A [`Row`] is not text that arrived; it is spans this program
+    /// built, whose colour the palette decides here, at the last moment.
+    ///
+    /// Not wrapped either, and it does not need to be: a component is given the
+    /// width and returns rows that fit it. Nothing is ever redrawn over these,
+    /// so no frame is counting the columns they cost.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn present(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
+        self.settle()?;
+
+        let terminal = self.terminal.is_terminal();
+        let mut painted = String::new();
+
+        self.frame.plain();
+        for row in rows {
+            painted.clear();
+            row.paint_into(palette, &mut painted);
+            self.frame.settled(&painted, terminal);
+        }
+
+        self.terminal.write(self.frame.as_str())?;
+        self.terminal.flush()
     }
 
     /// Ends the live region, leaving what it held in scrollback.

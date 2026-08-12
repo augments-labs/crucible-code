@@ -107,8 +107,15 @@ means nothing to anyone else who clones the repository.
 
 | Key | Answers | Means |
 | --- | --- | --- |
-| `color` | `auto`, `always`, `never` | Whether to dim the prompt. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
+| `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
+| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
+
+`glyphs` is asked rather than detected. A hollow square where a border should be
+is a font missing that character, and nothing about that reaches crucible — the
+bytes arrived, the encoding was right, and the gap is in a font this program
+cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
+font has no box drawing rather than a fallback crucible guesses its way into.
 
 ### `env`
 
@@ -275,7 +282,7 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, toolDetail
+crucible has at line 3, column 5 — accepted here: color, glyphs, toolDetail
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

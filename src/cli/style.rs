@@ -1,11 +1,12 @@
 //! What the `output` block and the terminal together decided.
 //!
-//! Resolved once, at startup, into two plain answers the drawing can read
-//! without asking anything: whether to write colour, and how much of a line to
-//! show. Neither question may be asked per event — one is a syscall and the
-//! other is a file.
+//! Resolved once, at startup, into plain answers the drawing can read without
+//! asking anything: whether to write colour and how much of it, which
+//! characters to draw with, and how much of a line to show. None of those may
+//! be asked per event — two are syscalls and the third is a file.
 
-use crucible_config::{Color, ToolDetail};
+use crucible_config::{Color, Glyphs as Configured, ToolDetail};
+use crucible_tui::{Glyphs, Palette};
 
 /// How much of a tool's arguments a compact line shows.
 const ARGS: usize = 56;
@@ -26,18 +27,23 @@ const NO_COLOR: &str = "NO_COLOR";
 pub(crate) struct Style {
     /// Whether an escape sequence is written at all.
     color: bool,
+    /// What a slot is worth on this terminal, once colour is on at all.
+    palette: Palette,
+    /// Which characters crucible's own interface is drawn with.
+    glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
 }
 
 impl Style {
-    /// Settles both questions, from the files, the terminal and the environment.
+    /// Settles every question, from the files, the terminal and the environment.
     ///
     /// `terminal` is whether output is going to a terminal rather than a pipe;
     /// `from` reads the environment, as a parameter because writing to the real
     /// one is `unsafe` in edition 2024 and this workspace forbids it.
     pub(crate) fn resolve(
         color: Option<Color>,
+        glyphs: Option<Configured>,
         detail: Option<ToolDetail>,
         terminal: bool,
         from: &dyn Fn(&str) -> Option<String>,
@@ -54,6 +60,14 @@ impl Style {
 
         Self {
             color,
+            // Whether, then how much: the answer above is the veto, and the
+            // ladder below it only decides how far up a terminal that is having
+            // colour at all can go.
+            palette: Palette::resolve(color, from),
+            glyphs: match glyphs.unwrap_or(Configured::Unicode) {
+                Configured::Unicode => Glyphs::Unicode,
+                Configured::Ascii => Glyphs::Ascii,
+            },
             detail: detail.unwrap_or(ToolDetail::Compact),
         }
     }
@@ -61,6 +75,16 @@ impl Style {
     /// Whether the prompt mark is dimmed.
     pub(crate) fn color(self) -> bool {
         self.color
+    }
+
+    /// What a component's slots are worth here.
+    pub(crate) fn palette(self) -> Palette {
+        self.palette
+    }
+
+    /// Which characters a component draws with.
+    pub(crate) fn glyphs(self) -> Glyphs {
+        self.glyphs
     }
 
     /// How much of a tool's arguments to show, in a terminal this wide.
@@ -92,7 +116,7 @@ impl Style {
     /// What a test uses when the drawing is not the thing being tested: a
     /// terminal, nothing configured, nothing in the environment.
     pub(crate) fn plain() -> Self {
-        Self::resolve(None, None, true, &|_| None)
+        Self::resolve(None, None, None, true, &|_| None)
     }
 }
 
@@ -117,7 +141,7 @@ mod tests {
     /// The style a run with nothing configured and nothing in the environment
     /// gets, on a terminal or not.
     fn plain(terminal: bool) -> Style {
-        Style::resolve(None, None, terminal, &environment(&[]))
+        Style::resolve(None, None, None, terminal, &environment(&[]))
     }
 
     #[test]
@@ -131,7 +155,7 @@ mod tests {
 
     #[test]
     fn no_color_turns_it_off_on_a_terminal_that_would_otherwise_have_it() {
-        let style = Style::resolve(None, None, true, &environment(&[(NO_COLOR, "1")]));
+        let style = Style::resolve(None, None, None, true, &environment(&[(NO_COLOR, "1")]));
 
         assert!(!style.color());
     }
@@ -141,7 +165,7 @@ mod tests {
         // The convention is that the variable's presence is the signal, but an
         // empty value is what a shell leaves behind when somebody unsets it the
         // wrong way, and reading that as "no colour" surprises them.
-        let style = Style::resolve(None, None, true, &environment(&[(NO_COLOR, "")]));
+        let style = Style::resolve(None, None, None, true, &environment(&[(NO_COLOR, "")]));
 
         assert!(style.color());
     }
@@ -152,10 +176,44 @@ mod tests {
 
         // `always` on a pipe, with NO_COLOR set: the file said colour, and both
         // of the things it overrides are saying no.
-        assert!(Style::resolve(Some(Color::Always), None, false, &shouting).color());
+        assert!(Style::resolve(Some(Color::Always), None, None, false, &shouting).color());
 
         // `never` on a terminal with nothing else objecting.
-        assert!(!Style::resolve(Some(Color::Never), None, true, &environment(&[])).color());
+        assert!(!Style::resolve(Some(Color::Never), None, None, true, &environment(&[])).color());
+    }
+
+    #[test]
+    fn a_run_that_named_no_font_is_drawn_with_the_characters_the_design_uses() {
+        // Unicode is the answer rather than a platform guess: a font missing a
+        // box-drawing glyph is invisible to this process, so ascii is something
+        // a reader who sees hollow squares asks for, and never something that is
+        // inferred from what operating system they are on.
+        assert_eq!(plain(true).glyphs(), Glyphs::Unicode);
+        assert_eq!(plain(false).glyphs(), Glyphs::Unicode);
+
+        let asked = Style::resolve(None, Some(Configured::Ascii), None, true, &environment(&[]));
+        assert_eq!(asked.glyphs(), Glyphs::Ascii);
+    }
+
+    #[test]
+    fn the_palette_is_off_wherever_the_answer_about_colour_was_no() {
+        // One veto, not two. Whether colour is written at all is settled above,
+        // and the ladder only decides how far a terminal already having it goes
+        // -- so a run with colour off cannot have a palette that writes any.
+        assert!(!plain(false).palette().writes_color());
+
+        let shouting = environment(&[(NO_COLOR, "1"), ("COLORTERM", "truecolor")]);
+        assert!(
+            !Style::resolve(None, None, None, true, &shouting)
+                .palette()
+                .writes_color()
+        );
+
+        // And a run that overrode its way back on gets the depth its terminal
+        // announced, even though nothing here is a terminal.
+        let captured = environment(&[("COLORTERM", "truecolor")]);
+        let style = Style::resolve(Some(Color::Always), None, None, false, &captured);
+        assert!(style.palette().writes_color());
     }
 
     #[test]
@@ -168,7 +226,7 @@ mod tests {
 
     #[test]
     fn full_shows_as_much_as_the_terminal_is_wide() {
-        let style = Style::resolve(None, Some(ToolDetail::Full), true, &environment(&[]));
+        let style = Style::resolve(None, None, Some(ToolDetail::Full), true, &environment(&[]));
 
         assert_eq!(style.args(200), 200);
         assert_eq!(style.output(200), 200);
@@ -180,7 +238,7 @@ mod tests {
         // rows it drew so it can move back over them. Compact is a ceiling on a
         // wide terminal and the window is the ceiling on a narrow one.
         for detail in [ToolDetail::Compact, ToolDetail::Full] {
-            let style = Style::resolve(None, Some(detail), true, &environment(&[]));
+            let style = Style::resolve(None, None, Some(detail), true, &environment(&[]));
 
             assert_eq!(style.args(20), 20, "{detail:?}");
             assert_eq!(style.output(20), 20, "{detail:?}");

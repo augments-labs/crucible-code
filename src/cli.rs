@@ -221,6 +221,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let terms = Terms {
         style: Style::resolve(
             settings.color(),
+            settings.glyphs(),
             settings.tool_detail(),
             renderer.is_terminal(),
             &from,
@@ -234,7 +235,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         remembering: crucible_config::local(workspace.root()),
     };
 
-    draw::opening(&mut renderer, &model, &workspace)?;
+    // No sessions yet: reading them is a directory walk, and the startup path is
+    // budgeted at twenty milliseconds. The component draws the heading and says
+    // there are none, which is what it draws for a directory nobody has worked
+    // in either.
+    draw::opening(&mut renderer, &model, &workspace, &[], terms.style)?;
 
     let runner = assemble(&Startup {
         provider: &choice.provider,
