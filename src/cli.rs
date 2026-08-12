@@ -53,21 +53,35 @@ const PROVIDERS: [Served; 2] = [
     Served {
         name: "anthropic",
         model: "claude-sonnet-5",
+        key: "ANTHROPIC_API_KEY",
     },
     Served {
         name: "openai",
         model: "gpt-5.6-terra",
+        key: "OPENAI_API_KEY",
     },
 ];
 
-/// A provider this build has an arm for, and the model it answers with.
+/// A provider this build has an arm for, the model it answers with, and where
+/// its key is read from.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Served {
     /// What `--model provider/…` and `providers.<name>` call it.
     pub(crate) name: &'static str,
     /// What to ask it for when neither the flag nor a file named a model.
     pub(crate) model: &'static str,
+    /// The variable its key is read from, unless `apiKeyEnv` names another.
+    /// The *name* is what is written here; the value is read once, in
+    /// [`startup::provider`], and goes no further than the header it signs.
+    pub(crate) key: &'static str,
 }
+
+/// The provider an unqualified model name is served by, and the one a machine
+/// holding no key — or every key — lands on.
+///
+/// Named rather than taken from the head of the list, so reordering the entries
+/// above cannot quietly move where a bare `crucible` sends its first turn.
+const FALLBACK: &str = "anthropic";
 
 /// The provider names, for the sentence a name outside them gets back.
 fn names() -> String {
@@ -95,10 +109,11 @@ changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
 claude-sonnet-5, or openai/gpt-5.6-terra. Unqualified names go to Anthropic. \
-Left off, or given as a provider and a bare slash, the model comes from your \
-configuration, and failing that from the one this build pairs with that \
-provider. The key is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, or from \
-whichever variable that provider's apiKeyEnv names.
+Left off, the provider is whichever of ANTHROPIC_API_KEY and OPENAI_API_KEY \
+your machine holds, and Anthropic when it holds both or neither. Left off, or \
+given as a provider and a bare slash, the model comes from your configuration, \
+and failing that from the one this build pairs with that provider. The key is \
+read from that provider's variable, or from whichever one its apiKeyEnv names.
 
 crucible keeps its own files in ~/.crucible, and reads config.json there, then \
 .crucible/config.json and .crucible/config.local.json in the directory it was \
@@ -204,10 +219,14 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // to reach. Once, here, and never again — nothing in a turn may widen it.
     let workspace = workspace.reaching(settings.extra_directories())?;
 
-    // An absent flag parses as "the default provider, no model named", so the
-    // resolution below has one path through it rather than two.
-    let choice =
-        Choice::parse(cli.model.as_deref().unwrap_or_default()).ok_or(Fatal::Providerless)?;
+    // A flag that is present names a provider, even when it names one by saying
+    // a bare model name and letting the unqualified form answer. A flag left off
+    // names nothing at all, and then the only evidence on the machine is which
+    // key is set.
+    let choice = match cli.model.as_deref() {
+        Some(named) => Choice::parse(named).ok_or(Fatal::Providerless)?,
+        None => Choice::serving(keyed(&settings, &from)),
+    };
 
     // The name on its own, here rather than in `assemble`, because the banner
     // below names a model and the provider that would serve it: a run that
@@ -302,6 +321,38 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     drop(held);
     outcome
+}
+
+/// Which provider to ask when nothing named one.
+///
+/// `crucible` on its own says nothing about which provider is wanted, so the
+/// only evidence there is is which key the machine holds. Somebody who has
+/// exported one key has set up one provider, and answering them with a refusal
+/// about the *other* provider's variable names a thing they never meant to set.
+///
+/// Where the file says `apiKeyEnv`, that is the variable looked for: a key is
+/// configured by the name of the variable holding it, and this reads the name
+/// rather than the value — nothing here learns what any key is.
+///
+/// Several keys, or none, is [`FALLBACK`]. That is not a guess about which was
+/// meant; it is the same answer for the same machine every run, rather than one
+/// that turns on which variables a shell happened to export.
+///
+/// A variable exported empty counts as held. It is not a key — the lookup that
+/// reads one refuses a blank — but it is still the provider that was being set
+/// up, and the refusal that follows names the variable already in the shell
+/// rather than one the user has never typed.
+fn keyed(settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> &'static str {
+    let mut held = PROVIDERS
+        .into_iter()
+        .filter(|one| from(settings.api_key_env(one.name).unwrap_or(one.key)).is_some());
+
+    let first = held.next();
+
+    match (first, held.next()) {
+        (Some(one), None) => one.name,
+        _ => FALLBACK,
+    }
 }
 
 /// Which model to ask for, once the command line and the files have both spoken.

@@ -10,11 +10,12 @@
 //!
 //! Only the provider half is required. A flag that names no model is asking for
 //! whichever model was configured for that provider, which is what makes
-//! `--model openai/` a way to say "the one I set at home" — and what lets the
-//! flag be left off entirely.
+//! `--model openai/` a way to say "the one I set at home".
+//!
+//! The flag left off is not read here at all. There is nothing to parse, and
+//! what settles it — which key the machine holds — is the caller's to look up.
 
-/// The provider used when the name is not qualified.
-const DEFAULT: &str = "anthropic";
+use super::FALLBACK;
 
 /// A provider and a model, as the command line named them.
 #[derive(Debug, PartialEq, Eq)]
@@ -26,7 +27,20 @@ pub(crate) struct Choice {
 }
 
 impl Choice {
-    /// Reads `provider/model`, a bare model name served by the default, or a
+    /// The choice a provider settled elsewhere makes: that provider, and no
+    /// model named.
+    ///
+    /// What the flag being left off resolves to, once the caller has read which
+    /// key the machine holds. The model is left open on purpose, so it falls
+    /// through the configuration the same way `--model openai/` does.
+    pub(crate) fn serving(provider: &str) -> Self {
+        Self {
+            provider: provider.into(),
+            model: None,
+        }
+    }
+
+    /// Reads `provider/model`, a bare model name served by the fallback, or a
     /// provider with no model after it.
     ///
     /// `None` only when the provider half is empty, which is the one thing
@@ -34,14 +48,14 @@ impl Choice {
     /// nothing, and the refusal that comes back from resolving it would
     /// describe the request rather than the flag that was typed wrong.
     ///
-    /// An empty string is what the flag being left off looks like, and it
-    /// parses: the default provider, no model named.
+    /// An empty string parses: the fallback provider, no model named. That is
+    /// `--model ""` and nothing else — a flag left off never reaches here.
     pub(crate) fn parse(named: &str) -> Option<Self> {
         // The first slash, so that a name containing one — which the vendors
         // serving other companies' models use — stays intact.
         let (provider, model) = named
             .split_once('/')
-            .map_or((DEFAULT, named.trim()), |(provider, model)| {
+            .map_or((FALLBACK, named.trim()), |(provider, model)| {
                 (provider.trim(), model.trim())
             });
 
@@ -70,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_name_is_served_by_the_default() {
+    fn a_bare_name_is_served_by_the_fallback() {
         assert_eq!(
             parsed("claude-sonnet-5"),
             ("anthropic".to_owned(), "claude-sonnet-5".to_owned())
@@ -116,15 +130,27 @@ mod tests {
     }
 
     #[test]
-    fn the_flag_left_off_is_the_default_provider_and_no_model() {
-        // What `run` hands over when there is no `--model` at all, so that one
-        // path resolves the choice rather than two.
+    fn a_flag_naming_nothing_at_all_is_the_fallback_provider_and_no_model() {
+        // `--model ""`, which is a flag that was typed. A flag left off does not
+        // come through here: nothing was named, so there is nothing to read, and
+        // which key the machine holds settles it instead.
         for named in ["", "   "] {
             let choice = Choice::parse(named).unwrap_or_else(|| panic!("{named:?} did not parse"));
 
-            assert_eq!(&*choice.provider, DEFAULT, "{named:?}");
+            assert_eq!(&*choice.provider, FALLBACK, "{named:?}");
             assert_eq!(choice.model, None, "{named:?}");
         }
+    }
+
+    #[test]
+    fn a_provider_settled_elsewhere_leaves_the_model_to_the_configuration() {
+        // What the flag left off resolves to. The model stays open so it falls
+        // through the same rungs `--model openai/` does, rather than being
+        // decided here by a caller that only knew which key was set.
+        let choice = Choice::serving("openai");
+
+        assert_eq!(&*choice.provider, "openai");
+        assert_eq!(choice.model, None);
     }
 
     #[test]

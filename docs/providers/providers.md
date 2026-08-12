@@ -6,7 +6,7 @@
 crucible --model claude-sonnet-5      # anthropic, because nothing said otherwise
 crucible --model openai/gpt-5.6-terra # openai
 crucible --model openai/              # openai, asking for the model it is configured with
-crucible                              # anthropic, the same way
+crucible                              # the provider whose key this machine holds
 ```
 
 An unqualified name goes to Anthropic. Only the **first** slash divides the two
@@ -22,6 +22,13 @@ provider:
 | --- | --- |
 | `anthropic` | `claude-sonnet-5` |
 | `openai` | `gpt-5.6-terra` |
+
+With `--model` left off, nothing has named a provider at all, so the one your
+machine holds a key for is the one asked. Exactly one of the variables in
+[Keys](#keys) set is that provider; both set, or neither, is `anthropic` — the
+same answer for the same machine every run, rather than one that turns on which
+variables a shell exported. A provider pointed at another variable by
+`apiKeyEnv` is looked for under that name.
 
 Naming a provider this build does not have is a startup failure that says which
 ones it has:

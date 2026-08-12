@@ -19,11 +19,6 @@ use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
 use super::{Fatal, PROVIDERS, Served};
 
-/// The variables each key is read from. The *names* are what is configured
-/// here; a value never appears in this repository or in a session file.
-const ANTHROPIC_KEY: &str = "ANTHROPIC_API_KEY";
-const OPENAI_KEY: &str = "OPENAI_API_KEY";
-
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
 
@@ -147,29 +142,26 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 ///
 /// Which variable holds the key is configuration, so a file may name a
 /// different one — somebody with a work key and a personal key has two
-/// variables and one of them is not the vendor's usual name. The *value* stays
-/// where it always was: read once, here, and applied to a header.
+/// variables and one of them is not the vendor's usual name. Failing that it is
+/// the vendor's usual name, written beside the provider in `PROVIDERS`. The
+/// *value* stays where it always was: read once, here, and applied to a header.
 fn provider(
     named: &str,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
-    let variable = settings.api_key_env(named);
+    let variable = settings.api_key_env(named).unwrap_or(served(named)?.key);
 
     match named {
         // Two protocols, one credential kind pointed at different headers.
         // Authentication is a separate axis, and this is what that buys.
         "anthropic" => Ok(Box::new(Anthropic::new(
-            key(
-                variable.unwrap_or(ANTHROPIC_KEY),
-                Header::bare("x-api-key"),
-                from,
-            )?,
+            key(variable, Header::bare("x-api-key"), from)?,
             Box::new(Https::new()),
         ))),
 
         "openai" => Ok(Box::new(OpenAi::new(
-            key(variable.unwrap_or(OPENAI_KEY), Header::bearer(), from)?,
+            key(variable, Header::bearer(), from)?,
             Box::new(Https::new()),
         ))),
 

@@ -22,7 +22,7 @@ fn each_provider_reads_the_key_belonging_to_it() {
 
     assert_eq!(anthropic.name(), "anthropic");
     assert_eq!(openai.name(), "openai");
-    assert_eq!(read.into_inner(), [ANTHROPIC_KEY, OPENAI_KEY]);
+    assert_eq!(read.into_inner(), PROVIDERS.map(|one| one.key));
 }
 
 #[test]
