@@ -126,8 +126,11 @@ A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 A call that failed is marked `✗`.
 
-<kbd>Ctrl-C</kbd> throws away a line you are part-way through; pressing it again
-on an empty box leaves, and so does <kbd>Ctrl-D</kbd>.
+<kbd>Ctrl-C</kbd> throws away a line you are part-way through. Against an empty box
+it offers to leave — `press ctrl-c again to leave`, under the mode — and a second
+press within two seconds takes the offer. Any other key first takes it back, so a
+session is never ended by one stray keystroke. <kbd>Ctrl-D</kbd> on an empty box
+leaves at once.
 
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them
@@ -183,6 +186,12 @@ so the box and the mode under it stay where they are. The list closes as soon as
 the line becomes something else — a path, a sentence, a command with a word
 after it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only
 taken for a command where it could not be anything else.
+
+One row of the open list is marked, and that row is what <kbd>Enter</kbd> runs —
+so a command runs from the letters that name it, without the rest being typed.
+The mark starts on the first row the filter left, or on the command whose name
+you have typed in full where that is one of them, and <kbd>↑</kbd> and
+<kbd>↓</kbd> move it. It stops at either end rather than running round.
 
 ## When an answer stops early
 

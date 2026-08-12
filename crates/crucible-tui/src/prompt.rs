@@ -61,31 +61,49 @@ pub struct Prompt<'a> {
     /// What is said quietly after it — the keys that change the mode. Nothing
     /// is drawn in its place when there is none.
     pub hint: &'a str,
+    /// A row under the status, for something waiting on the very next key.
+    ///
+    /// `None` in the ordinary state, and then the component is the height it
+    /// has always been. It takes a row of its own rather than sitting after the
+    /// mode because the two are not the same kind of fact: the mode is true
+    /// until somebody changes it, and this is true until the next keystroke.
+    pub asking: Option<&'a str>,
 }
 
 impl Prompt<'_> {
     /// The component, drawn for a terminal `columns` wide.
     ///
-    /// Exactly four rows where there is a frame and two where there is not.
-    /// Fixed either way: a box that grew a row as a line got longer would push
-    /// everything above it up the screen on a keystroke.
+    /// Four rows where there is a frame and two where there is not, and one
+    /// more than that while something is asking. Fixed against the line either
+    /// way: a box that grew a row as a line got longer would push everything
+    /// above it up the screen on a keystroke, where this grows on the keystroke
+    /// that put the question there.
     #[must_use]
     pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
-        if columns < FRAMED_AT {
-            return vec![self.bare(columns, glyphs), self.status(columns)];
+        let mut rows = if columns < FRAMED_AT {
+            vec![self.bare(columns, glyphs), self.status(columns)]
+        } else {
+            let bar = glyphs.horizontal();
+            let (open, opened) = glyphs.top();
+            let (close, closed) = glyphs.bottom();
+            let across = bar.repeat(columns.saturating_sub(2));
+
+            vec![
+                Row::new().then(self.tone, format!("{open}{across}{opened}")),
+                self.typed(columns, glyphs),
+                Row::new().then(self.tone, format!("{close}{across}{closed}")),
+                self.status(columns),
+            ]
+        };
+
+        // Clipped rather than dropped when it does not fit. Unlike the keys
+        // after the mode, half of this still says which key is waiting, and the
+        // row is only on screen because somebody has just pressed it.
+        if let Some(asking) = self.asking {
+            rows.push(Row::new().then(Slot::Quiet, width::clip(asking, columns)));
         }
 
-        let bar = glyphs.horizontal();
-        let (open, opened) = glyphs.top();
-        let (close, closed) = glyphs.bottom();
-        let across = bar.repeat(columns.saturating_sub(2));
-
-        vec![
-            Row::new().then(self.tone, format!("{open}{across}{opened}")),
-            self.typed(columns, glyphs),
-            Row::new().then(self.tone, format!("{close}{across}{closed}")),
-            self.status(columns),
-        ]
+        rows
     }
 
     /// Where the cursor goes, counted from the top of what [`Prompt::rows`]

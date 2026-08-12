@@ -29,6 +29,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         mode: MODE,
         tone: Slot::Accent,
         hint: HINT,
+        asking: None,
     }
 }
 
@@ -287,6 +288,62 @@ fn the_status_row_is_not_padded_out_to_the_width() {
 
     assert!(status.len() < 80);
     assert!(!status.ends_with(' '), "{status:?}");
+}
+
+#[test]
+fn a_question_takes_a_row_of_its_own_under_the_status_and_starts_at_the_left() {
+    // Under rather than beside: the mode holds until somebody changes it and
+    // this holds until the next keystroke, so a row shared between the two
+    // would have one of them read as the other.
+    const ASKING: &str = "press ctrl-c again to leave";
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let asked = Prompt {
+            asking: Some(ASKING),
+            ..typed("")
+        };
+        let rows = drawn(&asked, 80, glyphs);
+
+        assert_eq!(rows.len(), 5, "{rows:?}");
+        assert!(
+            rows.get(3).is_some_and(|status| status.starts_with(MODE)),
+            "the status row moved: {rows:?}"
+        );
+        assert_eq!(rows.get(4).map(String::as_str), Some(ASKING));
+    }
+}
+
+#[test]
+fn nothing_asking_takes_no_row_at_all() {
+    // The ordinary state, and the one every other test here is drawn in: the
+    // component is the height it has always been, so the box does not sit a row
+    // higher for the whole session.
+    assert_eq!(drawn(&typed(""), 80, Glyphs::Unicode).len(), 4);
+    assert_eq!(drawn(&typed(""), 10, Glyphs::Unicode).len(), 2);
+}
+
+#[test]
+fn a_question_is_clipped_to_the_width_rather_than_dropped() {
+    // Unlike the keys after the mode: half of this still names the key that is
+    // waiting, and the row is only there because somebody has just pressed it.
+    const ASKING: &str = "press ctrl-c again to leave";
+
+    let asked = Prompt {
+        asking: Some(ASKING),
+        ..typed("")
+    };
+
+    for columns in WIDTHS {
+        let rows = asked.rows(columns, Glyphs::Unicode);
+        let last = rows.last().expect("a row the component drew");
+
+        assert!(last.columns() <= columns, "at {columns}: {:?}", last.text());
+        assert!(
+            ASKING.starts_with(&last.text()),
+            "at {columns}: {:?}",
+            last.text()
+        );
+    }
 }
 
 #[test]
