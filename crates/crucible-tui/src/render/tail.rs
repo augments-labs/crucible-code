@@ -15,6 +15,7 @@
 
 use std::collections::VecDeque;
 
+use crate::escape::Escapes;
 use crate::width::{self, EMOJI_PRESENTATION};
 
 /// The wrapped, bounded live region.
@@ -26,6 +27,14 @@ pub(crate) struct Tail {
     width: usize,
     /// The most rows that may stay live. Beyond this, the oldest overflow.
     bound: usize,
+    /// How far into an escape sequence the stream is.
+    ///
+    /// Kept here rather than made fresh per delta: a delta is a piece of the
+    /// wire, not a piece of the output, so a sequence arrives split as often as
+    /// not. Started again each time, the half after the split would be drawn as
+    /// text and counted as columns — which is the bug this exists to stop,
+    /// reappearing only under streaming.
+    escapes: Escapes,
 }
 
 /// One display row, with its width kept alongside so appending stays O(1).
@@ -46,6 +55,7 @@ impl Tail {
             rows: VecDeque::from([Row::default()]),
             width: width.max(1),
             bound: bound.max(1),
+            escapes: Escapes::default(),
         }
     }
 
@@ -55,6 +65,14 @@ impl Tail {
     /// pushes nothing out of the tail allocates nothing.
     pub(crate) fn push(&mut self, delta: &str, overflow: &mut Vec<String>) {
         for character in delta.chars() {
+            // Instruction rather than text: neither drawn nor counted. What
+            // reaches a tail is output this process did not write, and a
+            // sequence from there could move the cursor out of the region this
+            // renderer believes it owns.
+            if self.escapes.holds(character) {
+                continue;
+            }
+
             match character {
                 // A newline ends the row wherever it is.
                 '\n' => self.rows.push_back(Row::default()),
@@ -116,6 +134,9 @@ impl Tail {
     pub(crate) fn clear(&mut self) {
         self.rows.clear();
         self.rows.push_back(Row::default());
+        // A turn that ended mid-sequence ended mid-sequence. Carrying that into
+        // the next one would swallow the start of the next answer.
+        self.escapes = Escapes::default();
     }
 
     /// Puts one character on the current row, wrapping first if it will not

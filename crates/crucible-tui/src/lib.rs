@@ -17,6 +17,7 @@
 //! text, so it never names a domain type, calls a tool or asks a provider for
 //! anything.
 
+mod escape;
 mod render;
 mod terminal;
 mod title;

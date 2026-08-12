@@ -100,12 +100,35 @@ fn a_selector_arriving_in_the_next_delta_still_widens_the_pair() {
 
 #[test]
 fn an_escape_sequence_from_a_tool_cannot_move_the_cursor() {
-    // Tool output is not trusted to be plain text. A control character kept
-    // verbatim would move a cursor this renderer believes it is tracking,
-    // and the next frame would erase the wrong lines.
+    // Tool output is not trusted to be plain text. A sequence kept verbatim
+    // would move a cursor this renderer believes it is tracking, and the next
+    // frame would erase the wrong lines. Dropping only the escape byte is not
+    // enough either: the parameters are printable, so `[2J` would be drawn and
+    // the row counted three columns wider than the terminal shows it.
     let mut tail = Tail::new(20, 5);
     push(&mut tail, "a\x1b[2Jb");
-    assert_eq!(rows(&tail), ["a[2Jb"]);
+    assert_eq!(rows(&tail), ["ab"]);
+}
+
+#[test]
+fn a_sequence_split_across_two_deltas_is_still_dropped_whole() {
+    // A delta is a piece of the wire rather than a piece of the output, so a
+    // sequence arrives cut as often as not.
+    let mut tail = Tail::new(20, 5);
+    push(&mut tail, "a\x1b[38;5");
+    push(&mut tail, ";214mb");
+
+    assert_eq!(rows(&tail), ["ab"]);
+}
+
+#[test]
+fn a_turn_that_ended_mid_sequence_does_not_swallow_the_next_one() {
+    let mut tail = Tail::new(20, 5);
+    push(&mut tail, "a\x1b[38");
+    tail.clear();
+    push(&mut tail, "next answer");
+
+    assert_eq!(rows(&tail), ["next answer"]);
 }
 
 #[test]

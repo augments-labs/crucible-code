@@ -6,8 +6,15 @@
 //! somewhere else rather than agree with it, so this is the only module that
 //! names `unicode-width`, the tail asks it what a character costs, and [`cut`]
 //! is how a caller outside this crate asks the same question the tail asks.
+//!
+//! What is *not* text is [`crate::escape`]'s to recognise. Width and escapes are
+//! two questions and this module answers only the first, but every walk over a
+//! string has to ask both — a sequence is instruction, so it takes no columns
+//! and reaches no screen.
 
 use unicode_width::UnicodeWidthChar;
+
+use crate::escape::Escapes;
 
 /// How far a tab advances, matching what terminals do.
 const TAB_STOP: usize = 8;
@@ -52,16 +59,25 @@ pub(crate) fn tab_stop(column: usize) -> usize {
 /// it stays the caller's. The offset never falls inside a character, and never
 /// between a character and the selector that widens it: parted from its base a
 /// selector stops asking for anything, and the base would then draw narrow
-/// where a column had already been counted for it. A newline is a cut too,
-/// because what is kept is one row.
+/// where a column had already been counted for it. It never falls inside an
+/// escape sequence either — a sequence costs nothing, so the walk is never
+/// stopped part way through one. A newline is a cut too, because what is kept
+/// is one row.
 #[must_use]
 pub fn cut(text: &str, columns: usize) -> Option<usize> {
     let mut column = 0;
     // The last character counted and where it starts, so a selector that will
     // not fit can take its base down with it.
     let mut last: Option<(usize, char)> = None;
+    // One string is one walk, so the machine starts fresh and is dropped with
+    // it. The tail keeps its own across deltas; this has no across.
+    let mut escapes = Escapes::default();
 
     for (offset, character) in text.char_indices() {
+        if escapes.holds(character) {
+            continue;
+        }
+
         let base = last.map(|(_, character)| character);
         let step = match character {
             '\n' => return Some(offset),
@@ -145,7 +161,18 @@ mod tests {
     fn a_control_character_is_not_counted() {
         // Dropped by the tail rather than drawn, so it costs no column here
         // either -- and it is not a base a selector could widen.
-        assert_eq!(cut("a\x1b\x1bbc", 3), None);
+        assert_eq!(cut("a\u{7f}\u{7f}bc", 3), None);
+    }
+
+    #[test]
+    fn an_escape_sequence_costs_no_columns_at_all() {
+        // Counting its parameters is what put `[2J` on screen and made the row
+        // three columns wider than the terminal ever drew.
+        assert_eq!(cut("\x1b[31mred\x1b[0m", 3), None);
+        assert_eq!(
+            cut("\x1b[31mred\x1b[0m!", 3),
+            Some("\x1b[31mred\x1b[0m".len())
+        );
     }
 
     #[test]
