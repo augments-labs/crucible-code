@@ -17,10 +17,11 @@ use crate::editor::Key;
 
 /// What arrived while the prompt was waiting.
 ///
-/// Two of these are keys the editor has no business seeing. A line is a line
-/// whatever mode the session is in, and the editor stays what its own module
-/// says it is — a string and an offset — rather than growing a case for every
-/// key that acts on something around it.
+/// Four of these are keys the editor has no business seeing: they act on what
+/// is drawn around the line rather than on the line. A line is a line whatever
+/// mode the session is in and whatever is listed above it, and the editor stays
+/// what its own module says it is — a string and an offset — rather than
+/// growing a case for every key that acts on something beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pressed {
     /// A key the editor knows what to do with.
@@ -29,6 +30,10 @@ pub enum Pressed {
     Cycle,
     /// Escape: back out of whatever is waiting to be agreed to.
     Escape,
+    /// The up arrow: back one row through whatever is listed above the box.
+    Up,
+    /// The down arrow: on one row through it.
+    Down,
     /// The window changed size, so whatever is live was laid out for a width
     /// the terminal no longer has.
     Resized,
@@ -91,6 +96,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // alongside it is not a second case.
         KeyCode::BackTab => Pressed::Cycle,
         KeyCode::Esc => Pressed::Escape,
+
+        // The line is one row, so up and down are never about it. What they
+        // move through is whatever the line has opened above the box.
+        KeyCode::Up => Pressed::Up,
+        KeyCode::Down => Pressed::Down,
 
         KeyCode::Char(typed) => Pressed::Key(Key::Char(typed)),
         KeyCode::Backspace => Pressed::Key(Key::Backspace),
@@ -168,6 +178,14 @@ mod tests {
         // one that does is not sending a different key.
         let shifted = Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
         assert_eq!(meaning(&shifted), Pressed::Cycle);
+    }
+
+    #[test]
+    fn the_arrows_that_move_down_a_list_are_not_keys_the_editor_sees() {
+        // A line is one row. Up and down could only mean the line if there
+        // were a second one, and what is above the box is not the line.
+        assert_eq!(meaning(&press(KeyCode::Up)), Pressed::Up);
+        assert_eq!(meaning(&press(KeyCode::Down)), Pressed::Down);
     }
 
     #[test]

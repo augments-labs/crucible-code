@@ -187,6 +187,12 @@ the line becomes something else — a path, a sentence, a command with a word
 after it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only
 taken for a command where it could not be anything else.
 
+One row of the open list is marked, and that row is what <kbd>Enter</kbd> runs —
+so a command runs from the letters that name it, without the rest being typed.
+The mark starts on the first row the filter left, or on the command whose name
+you have typed in full where that is one of them, and <kbd>↑</kbd> and
+<kbd>↓</kbd> move it. It stops at either end rather than running round.
+
 ## When an answer stops early
 
 An answer can end for a reason other than the model having finished. When it

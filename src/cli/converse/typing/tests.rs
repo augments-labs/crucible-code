@@ -37,6 +37,20 @@ fn settled(mode: Mode) -> Says {
     saying(&engine(mode), None, Glyphs::Unicode)
 }
 
+/// The same, with the offer to leave standing under it.
+fn leaving(mode: Mode) -> Says {
+    Says {
+        asking: Some(LEAVING),
+        ..settled(mode)
+    }
+}
+
+/// The list `said` opens, pointing where it points before an arrow has moved
+/// anything.
+fn listing(said: &str) -> Opened {
+    Opened::filtered(said, Glyphs::Unicode)
+}
+
 /// An editor with `said` typed into it and the cursor left at the end.
 fn typed(said: &str) -> Editor {
     let mut editor = Editor::new();
@@ -88,7 +102,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &Opened::default(),
     )
     .expect("the box to be drawn");
 
@@ -110,7 +124,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &Opened::default(),
     )
     .expect("the box to be drawn");
 
@@ -131,7 +145,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &Opened::default(),
     )
     .expect("the box to be drawn");
 
@@ -149,12 +163,18 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &editor,
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &Opened::default(),
     )
     .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
 
-    let asked = said(&mut renderer, &mut editor, Style::plain()).expect("the line to be taken");
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &Opened::default(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
 
     assert!(matches!(asked, Asked::Said(line) if line == "hi"));
 
@@ -181,7 +201,13 @@ fn the_editor_is_empty_afterwards_and_ready_for_the_next_line() {
     let mut renderer = drawing();
     let mut editor = typed("hi");
 
-    said(&mut renderer, &mut editor, Style::plain()).expect("the line to be taken");
+    said(
+        &mut renderer,
+        &mut editor,
+        &Opened::default(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
 
     assert!(editor.is_empty());
 }
@@ -277,13 +303,16 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &listing("/m"),
     )
     .expect("the box to be drawn");
 
     let written = renderer.terminal().written();
     let listed = written.find("/model").expect("the list");
-    let boxed = written.find("› /m").expect("the box");
+
+    // The wall is what says this is the box rather than the marked row of the
+    // list, which now carries a caret of its own.
+    let boxed = written.find("│ › /m").expect("the box");
 
     assert!(listed < boxed, "the list is under the box: {written:?}");
 }
@@ -302,7 +331,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
         &typed("/m"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &listing("/m"),
     )
     .expect("the box to be drawn");
 
@@ -319,7 +348,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
-        None,
+        &Opened::default(),
     )
     .expect("the box to be drawn");
 
@@ -340,8 +369,8 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &mut renderer,
         &Editor::new(),
         Style::plain(),
-        &settled(Mode::Ask),
-        Some(LEAVING),
+        &leaving(Mode::Ask),
+        &Opened::default(),
     )
     .expect("the box to be drawn");
 
@@ -382,12 +411,135 @@ fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
 
     for room in 0..every {
         assert!(
-            opened("/", 60, room, Glyphs::Unicode).is_empty(),
+            listing("/").rows(60, room, Glyphs::Unicode).is_empty(),
             "a list of {every} opened with room for {room}"
         );
     }
 
-    assert!(!opened("/", 60, every, Glyphs::Unicode).is_empty());
+    assert!(!listing("/").rows(60, every, Glyphs::Unicode).is_empty());
+}
+
+#[test]
+fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
+    // What a list being chosen from is for. A half-typed name names no
+    // command, so a line that showed the command and then rejected it would be
+    // right and wrong about the same thing on the same screen.
+    let mut renderer = drawing();
+    let mut editor = typed("/resu");
+
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &listing("/resu"),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+
+    assert!(matches!(asked, Asked::Said(line) if line == "/resume"));
+}
+
+#[test]
+fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
+    // Nothing filtered means nothing to point at, and a line the list has no
+    // opinion about is the line.
+    let mut renderer = drawing();
+    let mut editor = typed("what does /resume do");
+
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &listing("what does /resume do"),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+
+    assert!(matches!(asked, Asked::Said(line) if line == "what does /resume do"));
+}
+
+#[test]
+fn the_row_return_takes_is_the_same_rule_for_every_command_there_is() {
+    // No command is a case of its own. The list is one list, the mark is one
+    // field on it, and both are built by walking the array every command is
+    // declared in — so one added later is filtered, marked and runnable
+    // without anybody coming back here.
+    for one in command::filtering("/", Glyphs::Unicode) {
+        // Typed in full it is that command, however many longer names begin
+        // with the same letters.
+        assert_eq!(listing(one.name).chosen(), Some(one.name), "{}", one.name);
+
+        // Typed as far as the letters that could only be it, the mark is
+        // already there and return finishes the name.
+        for cut in 1..one.name.len() {
+            let Some(said) = one.name.get(..cut) else {
+                continue;
+            };
+
+            let open = listing(said);
+
+            if open.shown.len() == 1 {
+                assert_eq!(open.chosen(), Some(one.name), "{said}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_line_naming_a_command_outright_points_at_it_and_not_at_the_longer_one() {
+    // `/mode` is a prefix of `/model`, so the first row the filter left is the
+    // wrong row: return on a name typed in full would run a different command
+    // that merely starts the same way.
+    assert_eq!(listing("/mode").chosen(), Some("/mode"));
+
+    // One letter short of it, the first is all there is to go on.
+    assert_eq!(listing("/mod").chosen(), Some("/model"));
+}
+
+#[test]
+fn the_arrows_move_the_mark_and_stop_at_both_ends_of_the_list() {
+    // Stopping rather than running round to the other end. A list is short
+    // enough to read whole, and what the key returns is what says whether the
+    // frame it would cost is worth drawing.
+    let mut open = listing("/m");
+
+    assert_eq!(open.chosen(), Some("/model"));
+    assert!(!open.up(), "the top row moved back off the list");
+
+    assert!(open.down());
+    assert_eq!(open.chosen(), Some("/mode"));
+    assert!(!open.down(), "the last row moved on past the end");
+
+    assert!(open.up());
+    assert_eq!(open.chosen(), Some("/model"));
+}
+
+#[test]
+fn a_line_with_no_list_open_has_no_row_for_an_arrow_to_move_to() {
+    let mut open = Opened::default();
+
+    assert!(!open.up());
+    assert!(!open.down());
+    assert_eq!(open.chosen(), None);
+}
+
+#[test]
+fn the_row_return_would_run_is_the_marked_one_in_the_list_on_screen() {
+    // The mark and the row return takes are one fact, read off one field. Two
+    // of them would be a list pointing at one command and a key running
+    // another.
+    let mut open = listing("/m");
+    open.down();
+
+    let text: Vec<String> = open
+        .rows(60, 10, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    let passed = text.first().expect("a row the mark has left");
+    let chosen = text.get(1).expect("the row it moved to");
+
+    assert!(passed.starts_with("  /model"), "{passed:?}");
+    assert!(chosen.starts_with("› /mode"), "{chosen:?}");
 }
 
 #[test]
