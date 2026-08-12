@@ -88,8 +88,8 @@ crucible
 Unqualified names go to Anthropic.
 
 ```bash
-crucible --model openai/gpt-5.2    # reads OPENAI_API_KEY
-crucible --continue                # carry on this directory's last session
+crucible --model openai/gpt-5.6-terra   # reads OPENAI_API_KEY
+crucible --continue                     # carry on this directory's last session
 ```
 
 Reading never asks. Anything that changes a file or starts a process does:

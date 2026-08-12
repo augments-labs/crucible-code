@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A model named nowhere is now the one that provider serves.** The fallback
+  was one Claude name for every provider, so `--model openai/` with nothing
+  configured asked OpenAI for a model OpenAI does not have. `anthropic` falls
+  back to `claude-sonnet-5` and `openai` to `gpt-5.6-terra`. A run that named a
+  model, or configured one, is unaffected.
+
 - **<kbd>Enter</kbd> runs the command the open list is pointing at, rather than
   the letters typed.** One row is marked and <kbd>↑</kbd> and <kbd>↓</kbd> move
   the mark, so any command runs from the letters that name it without the rest
