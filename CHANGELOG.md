@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **<kbd>Ctrl-C</kbd> against an empty prompt no longer ends the session on its
+  own.** The first press says `press ctrl-c again to leave` under the mode; a
+  second one within two seconds leaves. Any other key in between takes the offer
+  back. A line being typed is still thrown away by the first press, as before.
+
 ## [0.0.8] - 2026-08-12
 
 ### Added

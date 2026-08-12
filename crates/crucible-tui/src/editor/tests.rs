@@ -185,14 +185,28 @@ fn taking_a_line_leaves_an_empty_one_ready() {
 fn interrupt_throws_away_a_line_before_it_ends_anything() {
     // The key is how a half-typed command is called off, so it must not be the
     // key that runs one. The first press empties, and only the second -- now
-    // against an empty line -- leaves.
+    // against an empty line -- is aimed anywhere else.
     let mut editor = typed("rm -rf /");
 
     assert_eq!(editor.press(Key::Interrupt), Typed::Changed);
     assert!(editor.is_empty());
     assert_eq!(editor.column(), 0);
 
-    assert_eq!(editor.press(Key::Interrupt), Typed::Ended);
+    assert_eq!(editor.press(Key::Interrupt), Typed::Interrupted);
+}
+
+#[test]
+fn interrupt_against_an_empty_line_reports_the_press_rather_than_ending() {
+    // The difference between this and the end of input is the whole reason the
+    // two are separate variants. Ctrl-D says what it means once; Ctrl-C is the
+    // key somebody hits at a turn that has already finished, and a session it
+    // ended on its own would be one nobody asked to end. What to do about that
+    // needs a clock, which is above here.
+    let mut editor = Editor::new();
+
+    assert_eq!(editor.press(Key::Interrupt), Typed::Interrupted);
+    assert_eq!(editor.press(Key::Interrupt), Typed::Interrupted);
+    assert!(editor.is_empty(), "nothing was typed by either press");
 }
 
 #[test]

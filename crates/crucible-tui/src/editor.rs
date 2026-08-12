@@ -60,6 +60,10 @@ pub enum Typed {
     Ignored,
     /// The line is finished and is waiting in the editor to be taken.
     Submitted,
+    /// Ctrl-C arrived with no line to abandon, so what is left to abandon is
+    /// the session. Whether that is what it does is the caller's: this says
+    /// what the key found, and the caller is the one holding a clock.
+    Interrupted,
     /// The session is over.
     Ended,
 }
@@ -234,15 +238,21 @@ impl Editor {
         }
     }
 
-    /// Abandons the line, or the session if there is no line to abandon.
+    /// Abandons the line, or says there was none to abandon.
     ///
     /// The two halves of what a terminal does with Ctrl-C, kept: a line being
-    /// typed is thrown away, and pressing it again — now against an empty line
-    /// — leaves. Nothing is submitted either way, so a command half-typed
-    /// cannot be run by the key that was meant to call it off.
+    /// typed is thrown away, and pressing it against an empty one is aimed at
+    /// the session instead. Nothing is submitted either way, so a command
+    /// half-typed cannot be run by the key that was meant to call it off.
+    ///
+    /// What the second half *does* is not settled here. Ending a session is one
+    /// keystroke away from clearing a line, and the difference between the two
+    /// is whether anything had been typed — which is not a difference somebody
+    /// reaching for the key can see. So this reports the press and the caller
+    /// decides, having the clock that tells one press from two.
     fn interrupt(&mut self) -> Typed {
         if self.said.is_empty() {
-            return Typed::Ended;
+            return Typed::Interrupted;
         }
 
         self.clear();
