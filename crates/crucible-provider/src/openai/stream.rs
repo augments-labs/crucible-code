@@ -1,15 +1,17 @@
 //! One response, as deltas.
 //!
-//! The read half of the provider: chunks in through [`super::wire`], deltas
+//! The read half of the provider: events in through [`super::wire`], deltas
 //! out. It exists apart from the request because it outlives it — the request
 //! is over in a round trip, and this is what runs for as long as the model is
 //! talking.
 //!
-//! A queue sits between the two because one chunk can mean several deltas, and
-//! the caller asks for them one at a time. Everything a chunk yielded is
-//! delivered before another chunk is read, including after the user cancels:
-//! those deltas are already off the socket, and dropping them would lose part
-//! of an answer that had arrived.
+//! A queue sits between the two because the parser answers with however many
+//! deltas an event meant and the caller asks for them one at a time. This
+//! endpoint narrates finely enough that the answer is at most one, and the queue
+//! is what keeps that a fact about the wire rather than an assumption in the
+//! loop. Everything an event yielded is delivered before another is read,
+//! including after the user cancels: those deltas are already off the socket,
+//! and dropping them would lose part of an answer that had arrived.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -17,6 +19,7 @@ use std::io::{BufReader, Read};
 
 use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
 
+use crate::openai::wire::Open;
 use crate::openai::{NAME, wire};
 use crate::sse::Events;
 
@@ -24,15 +27,15 @@ use crate::sse::Events;
 pub(super) struct Stream {
     events: Events<BufReader<Box<dyn Read + Send>>>,
     cancel: Cancel,
-    /// Deltas the last chunk yielded, not yet asked for.
+    /// Deltas the last event yielded, not yet asked for.
     pending: VecDeque<Delta>,
-    /// Which tool call is open, by the index its vendor gave it.
+    /// Which tool call is open, by the item id its vendor gave it.
     ///
-    /// Here rather than in the parser because a call is opened in one chunk and
+    /// Here rather than in the parser because a call is opened in one event and
     /// its arguments arrive in the ones after it. A parser that forgets between
-    /// chunks cannot tell a fragment of the open call from a fragment of
+    /// events cannot tell a fragment of the open call from a fragment of
     /// another one, and hands both to the same call.
-    open: Option<i64>,
+    open: Open,
     /// Whether the model said why it stopped.
     stopped: bool,
     /// Whether there is nothing further to read.
@@ -46,13 +49,13 @@ impl Stream {
             events: Events::new(BufReader::new(body)),
             cancel,
             pending: VecDeque::new(),
-            open: None,
+            open: Open::default(),
             stopped: false,
             finished: false,
         }
     }
 
-    /// What to deliver when the chunks run out.
+    /// What to deliver when the events run out.
     ///
     /// A response that stops arriving part-way through looks exactly like a
     /// finished one from here — same silence, no error. Saying so is the
@@ -74,7 +77,7 @@ impl Stream {
     /// Stops delivering, and reports why.
     ///
     /// What was queued goes with it: the response is over, and handing out the
-    /// rest of a chunk after saying the stream failed reorders the answer.
+    /// rest of an event after saying the stream failed reorders the answer.
     fn fail(&mut self, problem: ProviderError) -> Result<Delta, ProviderError> {
         self.finished = true;
         self.pending.clear();
@@ -105,7 +108,7 @@ impl DeltaStream for Stream {
                 return None;
             }
 
-            // Between chunks rather than during one: the read below blocks
+            // Between events rather than during one: the read below blocks
             // until the provider says something.
             if self.cancel.requested() {
                 self.finished = true;

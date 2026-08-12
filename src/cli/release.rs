@@ -81,11 +81,29 @@ pub(crate) fn refresh(home: &Path) {
     thread::Builder::new()
         .name("release".to_owned())
         .spawn(move || {
-            if let Some(version) = asked() {
-                remember(&into, &version);
-            }
+            // An answer that never came is still an answer asked for, and the
+            // file is what records that: a machine with no network would
+            // otherwise open a socket on every start for ever. What was already
+            // known is written again rather than replaced — a release that
+            // exists does not stop existing because the network was down, and
+            // this release stands in only where nothing was known at all.
+            let version = asked().unwrap_or_else(|| known(&into));
+
+            remember(&into, &version);
         })
         .ok();
+}
+
+/// The release already written down, or this one where nothing is.
+fn known(at: &Path) -> Box<str> {
+    let said = std::fs::read_to_string(at).unwrap_or_default();
+    let version = said.lines().next().unwrap_or_default().trim();
+
+    if version.is_empty() {
+        return env!("CARGO_PKG_VERSION").into();
+    }
+
+    version.into()
 }
 
 /// Whether the answer on disk is old enough to be worth asking again.
@@ -258,6 +276,26 @@ mod tests {
         remember(&scratch.0.join(REMEMBERED), "0.0.9");
 
         assert!(!stale(&scratch.0), "a file written now is not stale");
+    }
+
+    #[test]
+    fn a_release_already_known_survives_a_question_that_could_not_be_asked() {
+        // A machine that went offline for a day would otherwise be told the
+        // release it is behind no longer exists.
+        let scratch = Scratch::new("offline");
+        remember(&scratch.0.join(REMEMBERED), "9.9.9");
+
+        assert_eq!(&*known(&scratch.0.join(REMEMBERED)), "9.9.9");
+    }
+
+    #[test]
+    fn a_machine_that_has_never_heard_an_answer_stands_on_this_release() {
+        let scratch = Scratch::new("unheard");
+
+        assert_eq!(
+            &*known(&scratch.0.join(REMEMBERED)),
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]

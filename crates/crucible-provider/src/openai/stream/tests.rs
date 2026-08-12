@@ -1,4 +1,4 @@
-//! What a whole response does, chunk after chunk.
+//! What a whole response does, event after event.
 //!
 //! Separate from the stream next door only because it reached the per-file cap.
 //! Everything here is about `Stream` and the queue under it.
@@ -9,11 +9,26 @@ use super::*;
 
 /// A complete answer, as the API streams one.
 pub(in crate::openai) const ANSWER: &str = concat!(
-    "data: {\"id\":\"chatcmpl_1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
-    "data: {\"id\":\"chatcmpl_1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl_1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", world\"},\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl_1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-    "data: [DONE]\n\n",
+    "event: response.created\n",
+    "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n",
+    "event: response.output_item.added\n",
+    "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+    "event: response.output_text.delta\n",
+    "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Hello\"}\n\n",
+    "event: response.output_text.delta\n",
+    "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\", world\"}\n\n",
+    "event: response.completed\n",
+    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello, world\"}]}]}}\n\n",
+);
+
+/// One tool call, opened and filled in and finished.
+const CALLED: &str = concat!(
+    "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"\"}}\n\n",
+    "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\"}\n\n",
+    "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"\\\"a.rs\\\"}\"}\n\n",
+    "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}\n\n",
+    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}\n\n",
+    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}]}}\n\n",
 );
 
 /// A stream over recorded bytes.
@@ -49,14 +64,7 @@ fn an_answer_arrives_as_text_and_a_stop() {
 
 #[test]
 fn a_tool_call_arrives_named_and_then_in_fragments() {
-    let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a.rs\\\"}\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-        "data: [DONE]\n\n",
-    );
-    let mut stream = reading(body, &Cancel::new());
+    let mut stream = reading(CALLED, &Cancel::new());
 
     assert_eq!(
         deltas(&mut stream),
@@ -74,16 +82,16 @@ fn a_tool_call_arrives_named_and_then_in_fragments() {
 
 #[test]
 fn a_second_call_takes_the_fragments_that_follow_it() {
-    // The ordinary shape of two calls: each is opened and then filled in
-    // before the next one starts, and the index every fragment carries is
-    // the one just opened.
+    // The ordinary shape of two calls: each is opened, filled in and finished
+    // before the next one starts.
     let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"glob\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"{\\\"pattern\\\":\\\"*.rs\\\"}\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-        "data: [DONE]\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"\"}}\n\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}\n\n",
+        "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"glob\",\"arguments\":\"\"}}\n\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"delta\":\"{\\\"pattern\\\":\\\"*.rs\\\"}\"}\n\n",
+        "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"*.rs\\\"}\"}}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\"},{\"type\":\"function_call\",\"call_id\":\"call_2\"}]}}\n\n",
     );
     let mut stream = reading(body, &Cancel::new());
 
@@ -107,15 +115,13 @@ fn a_second_call_takes_the_fragments_that_follow_it() {
 
 #[test]
 fn arguments_for_a_call_the_response_no_longer_has_open_are_refused() {
-    // A fragment names its call by an index and nothing else, and the
-    // runner assembles it onto whichever call was opened last. A server
-    // that goes back to an earlier index is where that is visibly wrong —
-    // and which call is open is not something one chunk can see, so this is
-    // the guard that has to outlive one.
+    // Which call is open is not something one event can see, so this is the
+    // guard that has to outlive one. Assembled anyway, the fragment would run
+    // one tool on another tool's arguments.
     let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"glob\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"\"}}\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"glob\",\"arguments\":\"\"}}\n\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}\n\n",
     );
     let mut stream = reading(body, &Cancel::new());
 
@@ -146,7 +152,7 @@ fn arguments_for_a_call_the_response_no_longer_has_open_are_refused() {
 #[test]
 fn a_heartbeat_with_no_payload_does_not_end_the_turn() {
     // A proxy's keep-alive can be spelled any way it likes and can arrive
-    // with no data line at all. Read as a chunk it is empty rather than
+    // with no data line at all. Read as an event it is empty rather than
     // JSON, which would fail the turn and discard the answer so far.
     let mut stream = reading(&format!("event: keep-alive\n\n{ANSWER}"), &Cancel::new());
 
@@ -161,19 +167,31 @@ fn a_heartbeat_with_no_payload_does_not_end_the_turn() {
 }
 
 #[test]
-fn a_chunk_worth_several_deltas_is_delivered_one_at_a_time() {
+fn an_event_worth_several_deltas_is_delivered_one_at_a_time() {
     // The queue is the only part of this file the other protocol does not
-    // need, so it is the part worth watching.
+    // need, so it is the part worth watching. One event opens the call and
+    // the next finishes it with the whole of its arguments.
     let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"!\"},\"finish_reason\":\"stop\"}]}\n\n",
-        "data: [DONE]\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"clock\",\"arguments\":\"\"}}\n\n",
+        "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"clock\",\"arguments\":\"{}\"}}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\"}]}}\n\n",
     );
     let mut stream = reading(body, &Cancel::new());
 
-    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("!".into()));
     assert_eq!(
         stream.next().unwrap().unwrap(),
-        Delta::Stopped(StopReason::Yielded)
+        Delta::ToolStarted {
+            id: ToolId::new("call_1"),
+            name: "clock".into(),
+        }
+    );
+    assert_eq!(
+        stream.next().unwrap().unwrap(),
+        Delta::ToolArgs("{}".into())
+    );
+    assert_eq!(
+        stream.next().unwrap().unwrap(),
+        Delta::Stopped(StopReason::WantsTools)
     );
     assert!(stream.next().is_none());
 }
@@ -181,8 +199,8 @@ fn a_chunk_worth_several_deltas_is_delivered_one_at_a_time() {
 #[test]
 fn a_failure_reported_mid_stream_stops_the_stream() {
     let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-        "data: {\"error\":{\"type\":\"server_error\",\"message\":\"The server had an error\"}}\n\n",
+        "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Hel\"}\n\n",
+        "data: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"The server had an error\"}\n\n",
     );
     let mut stream = reading(body, &Cancel::new());
 
@@ -203,7 +221,7 @@ fn a_failure_reported_mid_stream_stops_the_stream() {
 fn a_response_that_stops_arriving_is_a_failure_and_not_a_finished_turn() {
     // Half an answer and then silence looks identical to a complete one
     // from the socket's side. Only the missing stop reason says otherwise.
-    let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"}}]}\n\n";
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n";
     let mut stream = reading(body, &Cancel::new());
 
     assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
@@ -242,32 +260,22 @@ fn cancelling_mid_answer_stops_the_stream_rather_than_failing_it() {
 }
 
 #[test]
-fn what_a_chunk_already_yielded_survives_the_cancel_that_follows_it() {
-    // The deltas are off the socket and in the queue by the time the user
-    // asks to stop, so dropping them loses part of an answer that had
-    // already arrived — and a tool call lost this way leaves the transcript
-    // holding arguments for a call it never opened.
-    let body = concat!(
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"one moment\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
-        "data: [DONE]\n\n",
-    );
+fn a_call_cancelled_between_its_name_and_its_arguments_is_not_left_half_open() {
+    // The transcript would otherwise hold a call with no arguments, and the
+    // next turn would send the model a call it never finished making. The stop
+    // is what closes it.
     let cancel = Cancel::new();
-    let mut stream = reading(body, &cancel);
-
-    assert_eq!(
-        stream.next().unwrap().unwrap(),
-        Delta::Text("one moment".into())
-    );
-    cancel.request();
+    let mut stream = reading(CALLED, &cancel);
 
     assert_eq!(
         stream.next().unwrap().unwrap(),
         Delta::ToolStarted {
             id: ToolId::new("call_1"),
             name: "read".into(),
-        },
-        "the queue was thrown away instead of drained"
+        }
     );
+    cancel.request();
+
     assert_eq!(
         stream.next().unwrap().unwrap(),
         Delta::Stopped(StopReason::Cancelled)

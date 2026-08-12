@@ -113,7 +113,25 @@ provider.
 ## What differs between them
 
 Nothing you have to think about. The two protocols disagree about where the
-system prompt goes, whether tool arguments are an object or text, whether a
-turn's tool results are one message or several, how a failed result is marked,
-what the token ceiling field is called, and how a stream ends. All of that is
-handled inside the provider; the same session behaves the same way on either.
+system prompt goes, whether a transcript is a list of messages or a flat list of
+items, whether a tool call belongs to the message that made it, whether a tool is
+declared nested or flat, how a failed result is marked, and how a stream ends.
+All of that is handled inside the provider; the same session behaves the same way
+on either.
+
+One difference is worth knowing about because it decides which OpenAI models
+work at all. crucible talks to OpenAI over `/v1/responses` rather than
+`/v1/chat/completions`, because a model that reasons before answering refuses
+function tools on the older endpoint — and a harness whose whole purpose is
+calling tools cannot answer that by telling the model not to think. The cost is
+that other vendors serving an "OpenAI-compatible" API implement the older
+endpoint and not this one, so `openai` means OpenAI here rather than anything
+that speaks its shape.
+
+Two consequences you can see:
+
+- Nothing is retained by the vendor. Requests are sent with `store` off, so a
+  response is not kept for later retrieval.
+- No token ceiling is sent. On that endpoint one number bounds the reasoning and
+  the visible answer together, so a figure chosen for an answer is one the model
+  can spend entirely on thinking; the model's own ceiling applies instead.
