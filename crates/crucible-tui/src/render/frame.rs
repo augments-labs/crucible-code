@@ -148,6 +148,28 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_never_paints_a_ground_of_its_own() {
+        // The ground behind every row belongs to the terminal, and it stays
+        // that way by nothing here ever setting one -- not by this process
+        // working out what theirs is. A fill added to make a row line up would
+        // be the edit this test is here to stop.
+        let mut frame = Frame::new();
+        frame
+            .rewind(3)
+            .settled("done", true)
+            .live(["one", "two"].into_iter())
+            .break_row();
+
+        for painted in ["\x1b[48;", "\x1b[40m", "\x1b[47m", "\x1b[107m"] {
+            assert!(
+                !frame.as_str().contains(painted),
+                "a frame contained {painted:?}: {:?}",
+                frame.as_str()
+            );
+        }
+    }
+
+    #[test]
     fn live_rows_end_without_a_line_ending() {
         // A trailing newline would leave the cursor one row below the tail, and
         // the next rewind would erase the wrong lines.

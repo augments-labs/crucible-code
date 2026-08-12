@@ -17,12 +17,14 @@
 //! text, so it never names a domain type, calls a tool or asks a provider for
 //! anything.
 
+mod color;
 mod escape;
 mod render;
 mod terminal;
 mod title;
 mod width;
 
+pub use color::{Palette, Slot};
 pub use render::Renderer;
 pub use terminal::system::SystemTerminal;
 pub use terminal::{Recording, Size, Terminal, TerminalError};

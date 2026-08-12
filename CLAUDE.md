@@ -68,9 +68,15 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
 4. **Secrets never surface.** Not in logs, errors, `Display`, `Debug`, session
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
-5. **Clean-room.** No code, prompt text, UI string or asset copied or adapted
-   from Claude Code, jcode, opencode, codex or any other harness, except my own code.
-   This repo is public; this is a legal boundary.
+5. **Ideas travel; expression does not.** What another harness *does* is free to
+   learn from — its features, its documentation, its behaviour under your own
+   hands. What it *wrote* is not: no code, prompt text, UI string, help text,
+   error message, ASCII art, icon or palette is copied or adapted from any other
+   harness, and a permissive licence does not change that. My own prior code is
+   mine to reuse. Its *source and prompt files* stay closed as well — a narrower
+   rule with its own reason: the claim at the top of this file is that crucible
+   is clean-room, and access is the one thing that cannot be given back.
+   `.claude/skills/clean-room` holds the procedure and the worked cases.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
