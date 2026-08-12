@@ -24,10 +24,12 @@ use crucible_core::{Message, SessionId, Transcript, Workspace};
 
 mod claim;
 mod privacy;
+mod recent;
 mod replay;
 mod wire;
 
 use claim::{Claim, claim};
+pub use recent::{Recorded, recent};
 use replay::{newest, replay};
 
 /// How many lines may be waiting to be written.

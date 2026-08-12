@@ -27,7 +27,7 @@ const MORE: &str = "/resume for more";
 
 /// How many sessions a column holds. More than this and the list stops being
 /// something the eye takes in at once, which is the only job it has.
-const SHOWN: usize = 3;
+pub(super) const SHOWN: usize = 3;
 
 /// The heading over what the prompt itself reacts to.
 const TIPS: &str = "Tips";

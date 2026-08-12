@@ -16,11 +16,17 @@ use crucible_core::{Message, SessionId, Transcript, Workspace};
 
 use super::{SUFFIX, SessionError, wire};
 
-/// The newest log recorded for `workspace`.
+/// Every session log in `directory`, oldest first.
 ///
-/// Session identifiers sort by start time as text, so the newest is found by
-/// name and only the first line of each candidate is read.
-pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf, SessionError> {
+/// Session identifiers sort by start time as text, so this is time order and
+/// nothing has to be opened to put it in that order. Anything else in the
+/// directory is left out here rather than failing later: the name is the only
+/// thing that says a file is a log at all.
+///
+/// # Errors
+///
+/// [`SessionError::Directory`] when the directory cannot be read.
+pub(super) fn logs(directory: &Path) -> Result<Vec<PathBuf>, SessionError> {
     let mut logs = Vec::new();
 
     let entries = std::fs::read_dir(directory).map_err(|source| SessionError::Directory {
@@ -40,8 +46,16 @@ pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf,
     }
 
     logs.sort_unstable();
+    Ok(logs)
+}
 
-    for path in logs.into_iter().rev() {
+/// The newest log recorded for `workspace`.
+///
+/// Only the first line of each candidate is read, newest first, so a directory
+/// full of other directories' sessions costs a header apiece rather than a
+/// replay apiece.
+pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf, SessionError> {
+    for path in logs(directory)?.into_iter().rev() {
         if belongs(&path, workspace)? {
             return Ok(path);
         }

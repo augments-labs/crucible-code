@@ -3,6 +3,22 @@
 A session is a conversation bound to a working directory. Every session is
 written to a file as it happens, so it survives the terminal it was held in.
 
+## What was worked on here
+
+The screen crucible opens with lists the last few sessions started in the
+current directory, newest first, each one showing what it was first asked and
+how long ago it began. A directory nobody has worked in says so instead.
+
+The list is short on purpose, and so is the work behind it: crucible reads the
+names in its sessions directory to put them in order — a session's name carries
+the time it started — and opens only the newest handful of files it finds
+there. A machine that has held crucible for a year opens the same number as one
+that installed it this morning.
+
+Only sessions that were asked something appear. Starting crucible and leaving
+without typing records a file with no turns in it, and there is no row to draw
+for one.
+
 ## Continuing
 
 ```bash

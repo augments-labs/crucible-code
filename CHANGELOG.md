@@ -13,6 +13,12 @@ Notable changes to crucible. Format follows
   fits itself to the terminal: two columns at eighty and above, one below that,
   and no frame at all under forty-six.
 
+- **The welcome screen lists what was worked on in this directory.** The last
+  few sessions started here, newest first, each with what it was first asked and
+  how long ago it began. Reading them costs the same on a machine that has held
+  crucible for a year as on one that installed it today: the names give the
+  order, and only the newest few files are opened.
+
 - **`output.glyphs` picks the characters crucible draws with.** `ascii` for a
   terminal whose font has no box drawing, where borders would otherwise show as
   hollow squares. `unicode` is the default and nothing detects it — a missing

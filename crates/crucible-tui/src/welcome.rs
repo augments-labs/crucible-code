@@ -65,6 +65,16 @@ pub struct Welcome<'a> {
 }
 
 impl Welcome<'_> {
+    /// How many sessions to read before drawing any.
+    ///
+    /// One more than are drawn. The extra is never shown: it is the difference
+    /// between a list that happens to have three things in it and a list that
+    /// had to stop at three, and the second one owes the reader a way to reach
+    /// the rest. Reading it is what keeps that from being a guess — and reading
+    /// only it is what keeps a directory with a thousand sessions in it costing
+    /// what a directory with four does.
+    pub const WANTED: usize = parts::SHOWN + 1;
+
     /// The component, drawn for a terminal `columns` wide.
     ///
     /// Every row is exactly that wide wherever there is a frame to hold, and

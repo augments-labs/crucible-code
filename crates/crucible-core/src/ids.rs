@@ -9,7 +9,7 @@ use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Why a string could not become an identifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -47,6 +47,26 @@ impl SessionId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// When the session it names began.
+    ///
+    /// Out of the name rather than off the file, because they answer different
+    /// questions: a log's modification time is when the session last said
+    /// something, and this is when it started. Naming a directory's sessions by
+    /// the second is also a read of the directory that never opens anything.
+    ///
+    /// The epoch stands in for a name whose timestamp is too large to be an
+    /// instant this machine can hold. Nothing can construct one — the field is
+    /// thirteen digits of milliseconds — but a file name can be anything
+    /// somebody typed, and a date is not worth a panic.
+    #[must_use]
+    pub fn started(&self) -> SystemTime {
+        self.0
+            .split_once('-')
+            .and_then(|(millis, _)| millis.parse().ok())
+            .and_then(|millis| UNIX_EPOCH.checked_add(Duration::from_millis(millis)))
+            .unwrap_or(UNIX_EPOCH)
     }
 
     /// Splitting this out is what makes minting testable: the caller supplies
@@ -177,8 +197,6 @@ impl fmt::Display for ToolId {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
 
     #[test]
@@ -198,6 +216,25 @@ mod tests {
     fn the_timestamp_is_padded_so_text_order_is_time_order() {
         let id = SessionId::at(UNIX_EPOCH + Duration::from_millis(7), 0xabc);
         assert_eq!(id.as_str(), "0000000000007-000abc");
+    }
+
+    #[test]
+    fn an_id_says_when_the_session_it_names_started() {
+        let started = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        let id = SessionId::at(started, 0xabc);
+
+        assert_eq!(id.started(), started);
+    }
+
+    #[test]
+    fn a_name_holding_a_date_no_machine_can_hold_is_not_a_crash() {
+        // Nothing crucible writes looks like this: the timestamp is thirteen
+        // digits of milliseconds. A file name is whatever somebody typed,
+        // though, and the parse that accepts it is deliberately loose about
+        // how many digits are in front of the dash.
+        let absurd: SessionId = "99999999999999999999-000abc".parse().expect("the shape");
+
+        assert_eq!(absurd.started(), UNIX_EPOCH);
     }
 
     #[test]

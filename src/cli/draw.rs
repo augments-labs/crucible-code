@@ -15,6 +15,7 @@ use super::remember::RememberError;
 use super::style::Style;
 
 mod opening;
+mod when;
 
 pub(crate) use opening::opening;
 

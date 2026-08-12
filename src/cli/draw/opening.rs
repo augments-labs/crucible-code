@@ -5,10 +5,15 @@
 //! model, the directory — and to hand the renderer the terminal's answers about
 //! colour and glyphs, both settled once at startup.
 
+use std::time::SystemTime;
+
 use crucible_core::Workspace;
+use crucible_runner::Recorded;
 use crucible_tui::{Recent, Renderer, Terminal, TerminalError, Welcome};
 
 use crate::cli::style::Style;
+
+use super::when;
 
 /// Draws the welcome and leaves a row under it.
 ///
@@ -25,10 +30,28 @@ pub(crate) fn opening<T: Terminal>(
     renderer: &mut Renderer<T>,
     model: &str,
     workspace: &Workspace,
-    sessions: &[Recent<'_>],
+    sessions: &[Recorded],
     style: Style,
 ) -> Result<(), TerminalError> {
     let root = workspace.root().display().to_string();
+
+    // The clock is read once, here, rather than per row: four rows drawn
+    // against four different instants would be four sessions dated from four
+    // different nows, and this is the only place that has one to read.
+    let now = SystemTime::now();
+    let when: Vec<String> = sessions
+        .iter()
+        .map(|session| when::ago(session.started(), now))
+        .collect();
+
+    let recent: Vec<Recent<'_>> = sessions
+        .iter()
+        .zip(&when)
+        .map(|(session, when)| Recent {
+            title: session.asked(),
+            when,
+        })
+        .collect();
 
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
@@ -38,7 +61,7 @@ pub(crate) fn opening<T: Terminal>(
         // would be the one thing on this screen that is not true.
         effort: None,
         root: &root,
-        sessions,
+        sessions: &recent,
     };
 
     renderer.present(
@@ -50,6 +73,10 @@ pub(crate) fn opening<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use crucible_core::Message;
+    use crucible_runner::Session;
     use crucible_tui::Recording;
 
     use super::*;
@@ -58,6 +85,17 @@ mod tests {
     /// to a pipe standing in for one.
     fn opened(columns: usize, terminal: bool) -> String {
         let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+
+        drawn(columns, terminal, &workspace, &[])
+    }
+
+    /// The same, for a directory that has been worked in.
+    fn drawn(
+        columns: usize,
+        terminal: bool,
+        workspace: &Workspace,
+        sessions: &[Recorded],
+    ) -> String {
         let recording = if terminal {
             Recording::new(columns, 24)
         } else {
@@ -68,13 +106,41 @@ mod tests {
         opening(
             &mut renderer,
             "claude-sonnet-5",
-            &workspace,
-            &[],
+            workspace,
+            sessions,
             Style::plain(),
         )
         .expect("the opening to draw");
 
         renderer.terminal().written().to_string()
+    }
+
+    /// A workspace and a sessions directory of their own, deleted with it.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let base = std::env::temp_dir()
+                .join(format!("crucible-opening-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(base.join("work")).expect("a temporary directory");
+
+            Self(base)
+        }
+
+        fn workspace(&self) -> Workspace {
+            Workspace::open(self.0.join("work")).expect("the directory exists")
+        }
+
+        fn logs(&self) -> PathBuf {
+            self.0.join("logs")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -91,9 +157,32 @@ mod tests {
             "{screen}"
         );
 
-        // Nothing has happened in this directory, and this release cannot yet
-        // find out otherwise.
+        // A directory nobody has worked in. The heading stays either way: its
+        // absence would be a different thing than its emptiness.
         assert!(screen.contains("No recent sessions"), "{screen}");
+    }
+
+    #[test]
+    fn a_directory_that_has_been_worked_in_says_what_was_worked_on() {
+        // Through a real session log, written by the thing that writes them:
+        // what is being checked is that the wiring hands the component the
+        // sessions rather than the empty list it was given for a release.
+        let scratch = Scratch::new("worked");
+        let workspace = scratch.workspace();
+
+        let session = Session::start(&scratch.logs(), &workspace).expect("a new session");
+        session.append(&Message::User("count the columns in the tail".into()));
+        // Dropping is what waits for the queue, so the file is whole after it.
+        drop(session);
+
+        let sessions = crucible_runner::recent(&scratch.logs(), &workspace, Welcome::WANTED);
+        assert_eq!(sessions.len(), 1, "the session that was just recorded");
+
+        let screen = drawn(80, true, &workspace, &sessions);
+
+        assert!(screen.contains("count the columns in the tail"), "{screen}");
+        assert!(screen.contains("just now"), "{screen}");
+        assert!(!screen.contains("No recent sessions"), "{screen}");
     }
 
     #[test]

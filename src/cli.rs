@@ -30,7 +30,7 @@ use clap::Parser;
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
 use crucible_runner::SessionError;
-use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError};
+use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
@@ -235,11 +235,15 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         remembering: crucible_config::local(workspace.root()),
     };
 
-    // No sessions yet: reading them is a directory walk, and the startup path is
-    // budgeted at twenty milliseconds. The component draws the heading and says
-    // there are none, which is what it draws for a directory nobody has worked
-    // in either.
-    draw::opening(&mut renderer, &model, &workspace, &[], terms.style)?;
+    // What was worked on here before. This is on the startup path, which is
+    // budgeted at twenty milliseconds, so it is bounded at both ends: the
+    // component says how many rows it can use, and the scan reads names to
+    // put a directory in time order and opens only the newest few files it
+    // finds there. A directory nobody has worked in costs one read and draws
+    // the heading with nothing under it.
+    let sessions = crucible_runner::recent(home.sessions(), &workspace, Welcome::WANTED);
+
+    draw::opening(&mut renderer, &model, &workspace, &sessions, terms.style)?;
 
     let runner = assemble(&Startup {
         provider: &choice.provider,
