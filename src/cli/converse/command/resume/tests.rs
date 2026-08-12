@@ -4,6 +4,8 @@
 //! as text: what `/resume` picks up has to be what a session leaves behind, and
 //! a fixture written by hand is a second opinion about that.
 
+use std::time::Duration;
+
 use crucible_core::{Cancel, Message};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tui::{Recording, Renderer};
@@ -51,16 +53,45 @@ fn terms(sample: &Sample) -> Terms {
     }
 }
 
-/// Where on the list the session that was asked `wanted` sits, as `/resume`
-/// would be told it.
-fn at(sample: &Sample, wanted: &str) -> String {
-    let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
-    let found = listed
-        .iter()
-        .position(|session| session.asked() == wanted)
-        .expect("the session is on the list");
+/// How long the list is given to hold every session that belongs on it.
+///
+/// Generous, because it is only ever waited out by a failure: what is being
+/// waited for is a queue draining, which takes no time at all on a machine that
+/// is working, and the wait is what turns "took a moment longer than the test
+/// expected" into a pass rather than into a report about `/resume`.
+const SETTLING: Duration = Duration::from_secs(5);
 
-    (found + 1).to_string()
+/// Where on the list the session that was asked `wanted` sits, as `/resume`
+/// would be told it — once the list holds all `of` of them.
+///
+/// A session reaches the list when its first prompt reaches its log, and the
+/// session in hand is written to by the thread that owns its queue. So a
+/// position read while one of them is still missing is a position that names a
+/// different row by the time `/resume` reads the list for itself: the one still
+/// arriving is the newest, and it arrives at the top.
+fn at(sample: &Sample, wanted: &str, of: usize) -> String {
+    let since = std::time::Instant::now();
+
+    loop {
+        let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
+
+        if listed.len() == of {
+            let found = listed
+                .iter()
+                .position(|session| session.asked() == wanted)
+                .expect("the session is on the list");
+
+            return (found + 1).to_string();
+        }
+
+        assert!(
+            since.elapsed() < SETTLING,
+            "{} of {of} sessions reached the list",
+            listed.len()
+        );
+
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 /// Runs `/resume {said}` against `runner`, and says what reached the terminal.
@@ -196,10 +227,11 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
         .append(&Message::User("said in passing".into()));
 
     // Asked for by where it is on the list rather than by a number written
-    // here: the session being left is being written to as this runs, so
-    // whether it has reached the list yet is a race, and only its position
-    // is.
-    let written = resuming(&at(&sample, "the one picked up"), &sample, &mut runner);
+    // here, and asked once both sessions are on it. The session being left is
+    // being written to as this runs, so a number written here would name
+    // whichever row that log had reached by then — and the row it reaches is
+    // the first one, which is this session asking to resume itself.
+    let written = resuming(&at(&sample, "the one picked up", 2), &sample, &mut runner);
 
     assert_ne!(runner.session().path(), left, "{written}");
 
