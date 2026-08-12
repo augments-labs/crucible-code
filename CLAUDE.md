@@ -75,15 +75,25 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
 4. **Secrets never surface.** Not in logs, errors, `Display`, `Debug`, session
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
-5. **Ideas travel; expression does not.** What another harness *does* is free to
-   learn from — its features, its documentation, its behaviour under your own
-   hands. What it *wrote* is not: no code, prompt text, UI string, help text,
-   error message, ASCII art, icon or palette is copied or adapted from any other
-   harness, and a permissive licence does not change that. My own prior code is
-   mine to reuse. Its *source and prompt files* stay closed as well — a narrower
-   rule with its own reason: the claim at the top of this file is that crucible
-   is clean-room, and access is the one thing that cannot be given back.
-   `.claude/skills/clean-room` holds the procedure and the worked cases.
+5. **Ideas travel; a body of expression does not.** What another harness *does*
+   is free to learn from — its features, its documentation, its behaviour under
+   your own hands. What it *wrote* is not: its code, its prompt text, its help
+   and error pages as written, its art and its palette are not copied or
+   adapted, and a permissive licence does not change that. My own prior code is
+   mine to reuse.
+
+   A short functional string is not a body of expression, and this rule stops
+   short of it. `press ctrl+c again to exit`, the name of a key, the name of a
+   command: copyright does not reach a phrase that short, there is only so much
+   room to say the thing, and a reader made to relearn what every other terminal
+   already taught them is paying for our scruple. Where the words are forced,
+   use the words. Where there is a choice worth making, crucible makes its own —
+   that is taste rather than law, and it is the weaker of the two claims.
+
+   Its *source and prompt files* stay closed as well, for a reason of its own:
+   the claim at the top of this file is that crucible is clean-room, and access
+   is the one thing that cannot be given back. `.claude/skills/clean-room` holds
+   the procedure and the worked cases.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
