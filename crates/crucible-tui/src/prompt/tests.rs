@@ -12,6 +12,12 @@ const MODE: &str = "ask before edits";
 /// What is said quietly after it.
 const HINT: &str = "(shift+tab to cycle)";
 
+/// How many rows of line the tests give a box, unless one is about the ceiling.
+///
+/// Generous, so that every line below is drawn whole and the assertions are
+/// about the wrapping rather than about what the ceiling took away.
+const ROOM: usize = 8;
+
 /// Lines worth drawing at every width: nothing, something short, something far
 /// longer than any box, and something that is two columns per character.
 const SAID: [&str; 4] = [
@@ -30,7 +36,15 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         tone: Slot::Accent,
         hint: HINT,
         asking: None,
+        room: ROOM,
     }
+}
+
+/// How many rows of a drawn component the line itself took.
+fn lines(prompt: &Prompt<'_>, columns: usize) -> usize {
+    let chrome = if columns < FRAMED_AT { 1 } else { 3 };
+
+    prompt.rows(columns, Glyphs::Unicode).len() - chrome
 }
 
 /// The same, with the cursor at the end of what was typed.
@@ -59,7 +73,7 @@ fn colourful() -> Palette {
 }
 
 #[test]
-fn a_framed_terminal_gets_four_rows_and_the_box_ends_at_its_last_column() {
+fn every_row_of_a_framed_box_ends_at_its_last_column() {
     // The property the component is built to hold. A row past the last column
     // is one the terminal wraps itself, which leaves the cursor a row below
     // where the next frame expects it -- so the next frame erases somebody
@@ -68,9 +82,9 @@ fn a_framed_terminal_gets_four_rows_and_the_box_ends_at_its_last_column() {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             for said in SAID {
                 let rows = typed(said).rows(columns, glyphs);
-                assert_eq!(rows.len(), 4, "{glyphs:?} at {columns}");
+                let framed = rows.len() - 1;
 
-                for row in rows.iter().take(3) {
+                for row in rows.iter().take(framed) {
                     assert_eq!(
                         row.columns(),
                         columns,
@@ -103,18 +117,54 @@ fn nothing_is_ever_drawn_past_the_last_column() {
 }
 
 #[test]
-fn the_box_is_the_same_height_however_long_the_line_is() {
-    // A box that grew a row as the line got longer would push everything above
-    // it up the screen on a keystroke, and the reader would be typing into
-    // something that moves.
-    for columns in [FRAMED_AT, 40, 80] {
-        let heights: Vec<usize> = SAID
-            .iter()
-            .map(|said| typed(said).rows(columns, Glyphs::Unicode).len())
-            .collect();
+fn the_box_grows_a_row_for_every_row_the_line_takes() {
+    // A prompt is written and read at the same time. Scrolled sideways instead,
+    // a paragraph being written is a paragraph nobody can see.
+    let said = "abcdefghijklmnopqrstuvwxyz";
 
-        assert_eq!(heights, vec![4; SAID.len()], "at {columns}");
-    }
+    // Eighteen columns inside the frame at this width, so twenty-six characters
+    // are two rows.
+    assert_eq!(lines(&typed(said), FRAMED_AT), 2);
+    assert_eq!(lines(&typed(""), FRAMED_AT), 1);
+
+    // And wider, where the same line fits on one.
+    assert_eq!(lines(&typed(said), 80), 1);
+}
+
+#[test]
+fn a_line_that_exactly_fills_a_row_takes_the_next_one_as_well() {
+    // The cursor after the last character would otherwise stand on the padding
+    // beside the border, which is not where the next character appears.
+    let filling = "a".repeat(inner(FRAMED_AT));
+
+    assert_eq!(lines(&typed(&filling), FRAMED_AT), 2);
+    assert_eq!(typed(&filling).caret(FRAMED_AT).column, FRAMED);
+}
+
+#[test]
+fn the_box_stops_growing_at_the_room_it_was_given() {
+    // The region is taken back by moving the cursor up over it, so a box taller
+    // than the screen is one that could not be taken back at all.
+    let said = "a".repeat(1000);
+    let capped = Prompt {
+        room: 3,
+        ..typed(&said)
+    };
+
+    assert_eq!(lines(&capped, FRAMED_AT), 3);
+}
+
+#[test]
+fn how_much_room_a_window_gives_a_box_is_about_half_of_it() {
+    // Enough to write a paragraph in, and never so much that what the prompt is
+    // a reply to is pushed off the screen.
+    assert_eq!(Prompt::room(24), 9);
+    assert_eq!(Prompt::room(48), 21);
+
+    // And never nothing, however short the window is: a box with no row to type
+    // on is not a box.
+    assert_eq!(Prompt::room(6), 1);
+    assert_eq!(Prompt::room(1), 1);
 }
 
 #[test]
@@ -215,31 +265,58 @@ fn the_cursor_is_never_left_standing_on_the_border() {
 }
 
 #[test]
-fn a_line_longer_than_the_box_is_windowed_onto_its_end() {
-    // Windowed rather than wrapped: the box is a fixed number of rows, and a
-    // wrap would need another one. Eighteen columns inside the frame at this
-    // width, one of them held back so the cursor is not on the edge.
+fn a_line_longer_than_the_box_wraps_onto_the_next_row() {
+    // Eighteen columns inside the frame at this width. The rows under the first
+    // are indented to match it, so a line that wrapped reads as one line.
     let said = "abcdefghijklmnopqrstuvwxyz";
+    let rows = drawn(&typed(said), FRAMED_AT, Glyphs::Unicode);
 
     assert_eq!(
-        row(&typed(said), FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
-        "│ › jklmnopqrstuvwxyz  │"
+        rows.get(FRAMED_ROW).map(String::as_str),
+        Some("│ › abcdefghijklmnopqr │")
     );
-    assert_eq!(typed(said).caret(FRAMED_AT).column, FRAMED + 17);
+    assert_eq!(
+        rows.get(FRAMED_ROW + 1).map(String::as_str),
+        Some("│   stuvwxyz           │")
+    );
+    assert_eq!(
+        typed(said).caret(FRAMED_AT),
+        Caret {
+            row: FRAMED_ROW + 1,
+            column: FRAMED + 8,
+        }
+    );
 }
 
 #[test]
 fn the_window_follows_the_cursor_back_up_the_line() {
     // Worked out from the cursor every time rather than remembered: a kept
     // scroll position is a second piece of state the line can get out of step
-    // with.
+    // with. With one row of room the cursor at the start brings the first row
+    // back into view.
     let said = "abcdefghijklmnopqrstuvwxyz";
+    let capped = Prompt {
+        room: 1,
+        ..typing(said, 0)
+    };
 
     assert_eq!(
-        row(&typing(said, 0), FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
+        row(&capped, FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
         "│ › abcdefghijklmnopqr │"
     );
-    assert_eq!(typing(said, 0).caret(FRAMED_AT).column, FRAMED);
+    assert_eq!(capped.caret(FRAMED_AT).column, FRAMED);
+
+    // And the cursor at the end of it scrolls the first row back under the top
+    // edge.
+    let capped = Prompt {
+        room: 1,
+        ..typed(said)
+    };
+
+    assert_eq!(
+        row(&capped, FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
+        "│ › stuvwxyz           │"
+    );
 }
 
 #[test]
@@ -253,9 +330,15 @@ fn a_window_never_cuts_a_wide_character_in_half() {
         for column in 0..=width::columns(said) {
             let typed = typing(said, column);
             let rows = typed.rows(columns, Glyphs::Unicode);
-            let line = rows.get(FRAMED_ROW).map(Row::columns);
+            let framed = rows.len() - 1;
 
-            assert_eq!(line, Some(columns), "at {columns}, cursor at {column}");
+            for (at, row) in rows.iter().enumerate().take(framed) {
+                assert_eq!(
+                    row.columns(),
+                    columns,
+                    "at {columns}, cursor at {column}, row {at}"
+                );
+            }
         }
     }
 }
@@ -390,4 +473,67 @@ fn a_line_that_was_committed_keeps_the_mark_and_is_not_clipped() {
         Prompt::committed(said, Glyphs::Ascii).text(),
         format!("> {said}")
     );
+}
+
+#[test]
+fn a_click_on_the_line_says_how_far_into_it_the_pointer_was() {
+    // Counted from the top left of the rows, which is what a caller that knows
+    // where it drew the component can work out from where the mouse was.
+    let said = "abcdefghijklmnopqrstuvwxyz";
+    let prompt = typed(said);
+
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED), Some(0));
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5), Some(5));
+
+    // The second row of the same line carries on where the first left off.
+    assert_eq!(
+        prompt.clicked(FRAMED_AT, FRAMED_ROW + 1, FRAMED + 3),
+        Some(21)
+    );
+}
+
+#[test]
+fn a_click_past_the_end_of_a_row_lands_where_the_line_ends() {
+    // Which is where the eye reads a line as ending, and what every other
+    // terminal does with the same click.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, FRAMED + 40), Some(5));
+}
+
+#[test]
+fn a_click_anywhere_but_the_line_moves_nothing() {
+    // The border, the status row, and anything drawn above the box. Moving the
+    // cursor to the nearest place that is inside would answer a click nobody
+    // aimed at the line.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, 0, FRAMED + 1), None);
+    assert_eq!(prompt.clicked(80, FRAMED_ROW + 1, FRAMED + 1), None);
+    assert_eq!(prompt.clicked(80, FRAMED_ROW + 2, FRAMED + 1), None);
+}
+
+#[test]
+fn a_click_left_of_the_mark_lands_at_the_start_of_the_row() {
+    // On the border or on the mark itself, which is the one part of the row
+    // that is chrome rather than line.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 0), Some(0));
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 2), Some(0));
+}
+
+#[test]
+fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
+    // The two are separate calls and lay the same component out. A click read
+    // against a box drawn any other way lands somewhere nobody pointed at.
+    for said in SAID {
+        for column in 0..=width::columns(said) {
+            let prompt = typing(said, column);
+            let caret = prompt.caret(FRAMED_AT);
+            let back = prompt.clicked(FRAMED_AT, caret.row, caret.column);
+
+            assert_eq!(back, Some(column), "{said:?} at {column}");
+        }
+    }
 }

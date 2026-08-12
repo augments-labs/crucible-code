@@ -204,16 +204,17 @@ fn take<T: Terminal>(
     let relay = Relay::new(post);
     let running = terms.cancel.clone();
 
-    // The mode stands under the turn, where it stands under the box the rest of
-    // the time. A turn is the longest a session goes without a prompt on
-    // screen, and it is the stretch the mode is deciding things over: what a
-    // tool call arriving in the middle of it costs is exactly which mode is in
-    // force, and reading that off the screen must not mean remembering it.
+    // The box stands under the turn, where it stands under the prompt the rest
+    // of the time, and the mode stands under the box. A turn is the longest a
+    // session goes without a prompt on screen, and it is the stretch the mode is
+    // deciding things over: what a tool call arriving in the middle of it costs
+    // is exactly which mode is in force, and reading that off the screen must
+    // not mean remembering it.
     //
     // Read here because the runner is about to leave, and nothing changes the
     // mode while it is away. Drawn below rather than here, where a failure would
     // be a turn that never ran.
-    let standing = mode::standing(runner.mode(), renderer.columns());
+    let standing = typing::working(runner.mode(), renderer.columns(), terms.style.glyphs());
 
     let working = thread::spawn(move || {
         let mut runner = runner;
@@ -231,7 +232,7 @@ fn take<T: Terminal>(
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
     let mut held = renderer
-        .under(&[standing], terms.style.palette())
+        .under(&standing, terms.style.palette())
         .map_err(Fatal::from);
 
     // Ends when the worker drops both senders, which happens when the turn is
@@ -251,9 +252,9 @@ fn take<T: Terminal>(
         }
     }
 
-    // The turn is over, so the row that stood under it is. What comes back next
-    // is the box, and the box carries the mode itself -- left standing, it
-    // would be the same fact twice with a blank row between them.
+    // The turn is over, so what stood under it is taken back. What comes back
+    // next is the same box, live this time, and the two on screen together
+    // would be one box drawn twice.
     if held.is_ok() {
         held = renderer
             .under(&[], terms.style.palette())

@@ -116,6 +116,26 @@ impl Editor {
         width::columns(self.before())
     }
 
+    /// Puts the cursor `column` display columns into the line.
+    ///
+    /// What a click on the box comes to. Past the end of the line is the end of
+    /// the line, which is where the eye reads a line as ending — and the offset
+    /// can only land on a character boundary, so a click on the far half of a
+    /// wide glyph puts the cursor in front of it rather than inside it.
+    ///
+    /// [`Typed::Ignored`] where the cursor was already there, so a click that
+    /// moved nothing costs no frame.
+    pub fn place(&mut self, column: usize) -> Typed {
+        let at = width::cut(&self.said, column).unwrap_or(self.said.len());
+
+        if at == self.at {
+            return Typed::Ignored;
+        }
+
+        self.at = at;
+        Typed::Changed
+    }
+
     /// Takes the line, leaving an empty one behind.
     ///
     /// What [`Typed::Submitted`] is followed by. The editor is reusable

@@ -21,10 +21,11 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
+use crucible_core::Mode;
 use crucible_runner::Runner;
 use crucible_tui::{
-    Editor, Glyphs, Listed, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed,
-    pressed,
+    Caret, Editor, Glyphs, Listed, Menu, Mouse, Pressed, Prompt, Raw, Renderer, Row, Slot,
+    Terminal, Typed, caret, pressed,
 };
 
 use crate::cli::Fatal;
@@ -82,6 +83,11 @@ pub(crate) fn ask<T: Terminal>(
         return Ok(Asked::Untyped);
     };
 
+    // Held beside raw mode and dropped with it, so the terminal is only
+    // reporting clicks while there is a box to click into. A `?` below leaves
+    // by the same door.
+    let _mouse = Mouse::watch()?;
+
     let glyphs = style.glyphs();
     let mut editor = Editor::new();
 
@@ -97,7 +103,7 @@ pub(crate) fn ask<T: Terminal>(
     // presses in a row rather than two with a session between them.
     let mut leaving: Option<Instant> = None;
 
-    draw(renderer, &editor, style, &says, &open)?;
+    let mut shown = draw(renderer, &editor, style, &says, &open)?;
 
     loop {
         let arrived = pressed()?;
@@ -113,14 +119,25 @@ pub(crate) fn ask<T: Terminal>(
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                draw(renderer, &editor, style, &says, &open)?;
+                shown = draw(renderer, &editor, style, &says, &open)?;
             }
 
             // Nothing is standing, so there is nothing to back out of — except
             // the offer above, which is on screen and has just been taken back.
             Pressed::Escape | Pressed::Ignored => {
                 if offered.is_some() {
-                    draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, &editor, style, &says, &open)?;
+                }
+            }
+
+            // The arrows walk the line one place at a time; this is the same
+            // move made in one go. A click that landed anywhere but on the line
+            // moves nothing, which is the same as a key that moved nothing.
+            Pressed::Clicked { row, column } => {
+                let moved = placed(renderer, &mut editor, &says, shown, (row, column));
+
+                if moved || offered.is_some() {
+                    shown = draw(renderer, &editor, style, &says, &open)?;
                 }
             }
 
@@ -128,12 +145,12 @@ pub(crate) fn ask<T: Terminal>(
             // open, or at the end it is already on, the key costs no frame.
             Pressed::Up => {
                 if open.up() || offered.is_some() {
-                    draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, &editor, style, &says, &open)?;
                 }
             }
             Pressed::Down => {
                 if open.down() || offered.is_some() {
-                    draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, &editor, style, &says, &open)?;
                 }
             }
 
@@ -144,7 +161,7 @@ pub(crate) fn ask<T: Terminal>(
                 runner.cycle();
 
                 says = saying(runner);
-                draw(renderer, &editor, style, &says, &open)?;
+                shown = draw(renderer, &editor, style, &says, &open)?;
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -153,12 +170,12 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => {
                     if offered.is_some() {
-                        draw(renderer, &editor, style, &says, &open)?;
+                        shown = draw(renderer, &editor, style, &says, &open)?;
                     }
                 }
                 Typed::Changed => {
                     open = Opened::filtered(editor.text(), glyphs);
-                    draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, &editor, style, &says, &open)?;
                 }
                 Typed::Submitted => return said(renderer, &mut editor, &open, style),
 
@@ -174,7 +191,7 @@ pub(crate) fn ask<T: Terminal>(
 
                     leaving = Some(Instant::now());
                     says.asking = Some(LEAVING);
-                    draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, &editor, style, &says, &open)?;
                 }
 
                 Typed::Ended => {
@@ -214,6 +231,31 @@ struct Says {
     asking: Option<&'static str>,
 }
 
+/// The box as it stands under a turn, with nothing being typed into it.
+///
+/// The same component in the same place rather than a row standing in for it.
+/// A turn is the longest a session goes without a prompt on screen, and a box
+/// that vanished for it would take the one fixed thing off the screen exactly
+/// when output is scrolling past — so what a session looks like would depend on
+/// whether it happened to be working.
+///
+/// No keys are offered after the mode. Nothing is reading them while a turn
+/// runs, and a key printed beside the thing it does not act on is worse than
+/// saying only what is true.
+pub(super) fn working(mode: Mode, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    Prompt {
+        said: "",
+        column: 0,
+        mode: mode.sentence(),
+        tone: tone(mode),
+        hint: "",
+        asking: None,
+        // One row, because there is no line in it to grow for.
+        room: 1,
+    }
+    .rows(columns, glyphs)
+}
+
 /// The row for the mode the box is showing.
 fn saying(runner: &Runner) -> Says {
     let mode = runner.mode();
@@ -238,17 +280,9 @@ fn draw<T: Terminal>(
     style: Style,
     says: &Says,
     open: &Opened,
-) -> Result<(), Fatal> {
+) -> Result<Shown, Fatal> {
     let columns = renderer.columns();
-
-    let prompt = Prompt {
-        said: editor.text(),
-        column: editor.column(),
-        mode: says.mode.as_ref(),
-        tone: says.tone,
-        hint: says.keys,
-        asking: says.asking,
-    };
+    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
     let mut boxed = prompt.rows(columns, style.glyphs());
     let mut caret = prompt.caret(columns);
@@ -258,11 +292,78 @@ fn draw<T: Terminal>(
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
     let mut rows = open.rows(columns, room, style.glyphs());
-    caret.row += rows.len();
+    let above = rows.len();
+    caret.row += above;
     rows.append(&mut boxed);
 
     renderer.live(&rows, caret, style.palette())?;
-    Ok(())
+    Ok(Shown { caret, above })
+}
+
+/// The box as it is being typed into.
+///
+/// One place the fields are named, because [`draw`] and the click that follows
+/// it have to lay the same component out: a click read against a box drawn any
+/// other way lands somewhere nobody pointed at.
+fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
+    Prompt {
+        said: editor.text(),
+        column: editor.column(),
+        mode: says.mode.as_ref(),
+        tone: says.tone,
+        hint: says.keys,
+        asking: says.asking,
+        room,
+    }
+}
+
+/// Where the last frame put things, for reading a click against.
+#[derive(Debug, Clone, Copy)]
+struct Shown {
+    /// Where the cursor was left, counted from the top of the live region.
+    caret: Caret,
+    /// How many rows of that region sit above the box.
+    above: usize,
+}
+
+/// Moves the cursor to where the pointer was, and says whether it moved.
+///
+/// crucible draws inline, so it does not know which row of the screen it is on.
+/// What it does know is that the terminal's cursor is parked on the caret, and
+/// the caret's row inside the region was worked out when the region was drawn —
+/// so asking the terminal where its cursor is turns one into the other. The
+/// question costs a round trip and is asked once per click, never per frame.
+///
+/// Nothing happens where any step of that does not answer: a terminal that will
+/// not report its cursor, a click above the box or below it, a click on the
+/// border. Leaving the cursor where it is is the right answer to a click that
+/// did not land on the line, and a click is not worth failing a session over.
+fn placed<T: Terminal>(
+    renderer: &Renderer<T>,
+    editor: &mut Editor,
+    says: &Says,
+    shown: Shown,
+    at: (usize, usize),
+) -> bool {
+    let (row, column) = at;
+
+    let Ok((where_row, _)) = caret() else {
+        return false;
+    };
+
+    let Some(top) = where_row.checked_sub(shown.caret.row) else {
+        return false;
+    };
+    let Some(at) = row.checked_sub(top + shown.above) else {
+        return false;
+    };
+
+    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
+    let Some(into) = prompt.clicked(renderer.columns(), at, column) else {
+        return false;
+    };
+
+    editor.place(into) == Typed::Changed
 }
 
 /// The command list a line has open above the box, and the row of it that
