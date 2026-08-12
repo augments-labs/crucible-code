@@ -54,7 +54,7 @@ impl Drop for Claim {
 /// because a `--continue` that refuses where it worked yesterday costs more
 /// than the collision it would be guarding against.
 pub(super) fn claim(log: &Path) -> Result<Option<Claim>, io::Error> {
-    let held = privacy::log(&beside(log))?;
+    let held = privacy::mark(&beside(log))?;
 
     match held.try_lock() {
         Ok(()) => Ok(Some(Claim { held })),
@@ -81,4 +81,51 @@ fn beside(log: &Path) -> PathBuf {
     mark.push(MARK);
 
     PathBuf::from(mark)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claim;
+    use crate::sample::Sample;
+
+    /// The three answers, told apart.
+    ///
+    /// `continuing` reads them as refuse, take, and carry on regardless — that
+    /// last one because a filesystem with no locks cannot say a session is open
+    /// either, and refusing every `--continue` there would cost more than the
+    /// collision it guards against. Which means an attempt that fails for any
+    /// other reason is read as a filesystem with no locks, and the guard is
+    /// gone with nothing said. So this asserts on all three arms and names what
+    /// went wrong in the one that has no business happening here: a temporary
+    /// directory on the machine running the tests has locks.
+    #[test]
+    fn a_log_this_process_is_already_holding_is_reported_held_rather_than_claimed_again() {
+        let sample = Sample::new("claim-twice");
+        let log = sample.logs().join("1786713045000-3f9c2a.jsonl");
+
+        let held = match claim(&log) {
+            Ok(Some(held)) => held,
+            Ok(None) => panic!("a log nothing is holding was reported as held"),
+            Err(problem) => panic!("the claim could not be attempted: {problem:?}"),
+        };
+
+        match claim(&log) {
+            Ok(None) => {}
+            Ok(Some(_)) => panic!("one log was claimed by two"),
+            Err(problem) => panic!("the second claim could not be attempted: {problem:?}"),
+        }
+
+        // Handed back when the session ends, which is what lets the log be
+        // continued afterwards rather than being busy for as long as the file
+        // is there.
+        drop(held);
+
+        match claim(&log) {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("a log that was given back is still held"),
+            Err(problem) => {
+                panic!("the claim after it was given back could not be attempted: {problem:?}")
+            }
+        }
+    }
 }

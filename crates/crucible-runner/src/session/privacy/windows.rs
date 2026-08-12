@@ -73,6 +73,31 @@ pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
     Ok(file)
 }
 
+/// Opens the mark beside a log, making it if it is not there, out of reach.
+///
+/// Given the same list as the log beside it: it is named for a session and sits
+/// in the same directory, so what it gives away by existing is what the log
+/// gives away.
+///
+/// Opened to read and write rather than to append, which is the one way it
+/// differs from [`log`]. Nothing is ever written through the handle, and the
+/// access is not for writing — `LockFileEx` takes a lock only on a handle
+/// carrying `GENERIC_READ` or `GENERIC_WRITE`, and a handle opened to append
+/// carries neither. Asked for a lock, it fails with something that is not the
+/// refusal a held file gives, so the caller reads it as a filesystem that
+/// cannot lock at all and continues over a session that is still open.
+pub(in crate::session) fn mark(path: &Path) -> Result<File, io::Error> {
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+
+    narrow(path, 0)?;
+
+    Ok(file)
+}
+
 /// Puts one entry on `path`, for this account: inheriting nothing from above,
 /// and handed down to whatever `handed_down` names.
 fn narrow(path: &Path, handed_down: ACE_FLAGS) -> Result<(), io::Error> {

@@ -154,8 +154,20 @@ mod list {
         let held = fs::read_to_string(&path).expect("the log this account just wrote");
         assert!(held.contains("hello"), "log holds {held}");
 
-        let entries = fs::read_dir(sample.logs()).expect("the directory this account just made");
-        assert_eq!(entries.count(), 1);
+        // The log is found in the listing, rather than the listing being
+        // counted. A session leaves the mark that claims it beside the log, and
+        // how many files a session leaves belongs to the claim rather than to
+        // this — what is being checked here is that the account which made the
+        // directory can still read what is in it.
+        let wanted = path.file_name().expect("a log is a file").to_owned();
+        let listed = fs::read_dir(sample.logs()).expect("the directory this account just made");
+
+        assert!(
+            listed
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name() == wanted),
+            "the log is not in the directory it was written to"
+        );
     }
 
     #[test]

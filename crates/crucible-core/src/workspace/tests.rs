@@ -271,10 +271,22 @@ fn a_root_whose_name_is_not_utf8_is_refused_at_the_door() {
     // the kind nobody searches for.
     let base = std::env::temp_dir().join(format!("crucible-ws-bytes-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).expect("a writable temporary directory");
+
     let mut name = base.as_os_str().as_bytes().to_vec();
     name.extend_from_slice(b"/caf\xe9");
     let root = PathBuf::from(OsStr::from_bytes(&name));
-    fs::create_dir_all(&root).unwrap();
+
+    // Not every filesystem will hold a name like that. macOS refuses one
+    // outright, and there the case is answered a layer below rather than left
+    // to `Workspace::open` — a root that is not text cannot be made, so it
+    // cannot be opened either. The directory above it was made a moment ago
+    // under a name that is text, so a refusal here is about the name and not
+    // about the place.
+    if fs::create_dir(&root).is_err() {
+        let _ = fs::remove_dir_all(&base);
+        return;
+    }
 
     let err = Workspace::open(&root).unwrap_err();
     assert!(matches!(err, PathError::NotText { .. }), "got {err:?}");
