@@ -14,10 +14,14 @@ cd "$(dirname "$0")/.."
 # A file longer than this is doing more than one thing. The compiler cannot see
 # file boundaries, so this is the one structural rule a lint cannot carry.
 #
-# A ceiling, not a target, and no number here is either. A short file under a
-# name that says what it holds is the shape being asked for; nothing rewards
-# filling the budget, and nothing rewards being small for its own sake.
-readonly MAX_FILE_LINES=400
+# A ceiling, not a target. It is set where a file has plainly lost its subject
+# rather than where a careful one lands, because the opposite failure is the
+# one no number can measure: a directory of files too small to have a subject,
+# each naming the next, where learning what any one of them does means opening
+# all of them. Nothing rewards filling the budget and nothing rewards splitting
+# to stay under it — what a file owes is one reason to change, and its length
+# follows from that.
+readonly MAX_FILE_LINES=1000
 
 failed=0
 

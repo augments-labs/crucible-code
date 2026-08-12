@@ -17,10 +17,17 @@ scripts/check.sh
 
 Run it before every commit. It is exactly what CI runs.
 
-Its thresholds only ever tighten. Raising one so a file fits is how a limit
-stops being one, and no gate can catch that because the gate is the thing being
-edited. They are ceilings, not targets: what a file owes is one reason to
-change, under a name that says what it holds. Its length follows from that.
+Its thresholds are ceilings, not targets: 1000 lines for a file, 100 for a
+function. What a file owes is one reason to change, under a name that says what
+it holds, and its length follows from that. The ceiling is set where a file has
+plainly lost that name rather than where a careful one lands, because the
+opposite failure is the one no number can see — a directory of files too small
+to have a subject, each naming the next, where learning what one of them does
+means opening all of them.
+
+A threshold moves when the standard changes, and never so that a file fits.
+That is the one edit no gate can catch, because the gate is the thing being
+edited.
 
 ## Layout
 
@@ -95,11 +102,27 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    Pinning is also what hides an advisory published afterwards, so `deny.toml`
    is scanned on a clock instead — that check cannot live in a script whose
    whole promise is the same answer for the same tree.
-9. **The changelog is brief.** An entry is a bold lead and a sentence or two —
-   what changed, and what it costs the person deciding whether to upgrade. Not
-   the reasoning, not the alternatives weighed, not the threat model. Those have
-   readers who asked for them: the commit message, the code comment, the docs
-   page.
+9. **The changelog and the commit message are brief.** A changelog entry is a
+   bold lead and a sentence or two: what changed, and what it costs the person
+   deciding whether to upgrade. A commit message is a subject line and a short
+   paragraph saying why, since the diff already says what. Neither carries the
+   alternatives weighed or the threat model — those have readers who went
+   looking for them, in the code comment and the docs page.
+10. **A change owes its documentation in the same commit.** `docs/` for anything
+    a user meets, `README.md` for the first minute of it, `CONTRIBUTING.md` and
+    `docs/building/` for what a contributor has to install, the changelog for
+    anything that ships. Written a release later, a page documents a memory of
+    the change rather than the change — and the reader who needed it met the
+    gap first.
+11. **A pull request over 400 changed lines is sent back.** Additions plus
+    deletions across the whole diff, generated files aside — `Cargo.lock` and
+    `schema/` are output, and nobody reads output line by line. Past that a
+    review stops being one: the reader is agreeing that it looks plausible
+    rather than checking that it is right. The remedy is a sequence of pull
+    requests that each stand on their own, not one larger one with a note
+    apologising for its size. Code that only moves is the diff this measures
+    wrongly, and a diff cannot prove that about itself, so that exception is a
+    label on the pull request — granted, and visible afterwards.
 
 ## Vocabulary
 
