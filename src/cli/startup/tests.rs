@@ -75,10 +75,12 @@ fn every_name_the_check_accepts_is_one_an_arm_can_build() {
     // The check runs before the banner and the match runs after it. A name the
     // first let through and the second had no arm for would be a run that
     // announced its model and then said the provider does not exist.
-    for named in PROVIDERS {
-        served(named).expect("a check that agrees with the arm");
-        provider(named, &Settings::default(), &|_| Some("a-key".to_owned()))
-            .expect("an arm for every name the check accepts");
+    for one in PROVIDERS {
+        served(one.name).expect("a check that agrees with the arm");
+        provider(one.name, &Settings::default(), &|_| {
+            Some("a-key".to_owned())
+        })
+        .expect("an arm for every name the check accepts");
     }
 
     let problem = served("ollama").expect_err("this build has no such provider");
@@ -95,7 +97,7 @@ fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
 
     let Err(problem) = assemble(&Startup {
         provider: "nowhere",
-        model: "gpt-5.2",
+        model: "gpt-5.6-terra",
         resuming: false,
         mode: Mode::Ask,
         settings: &Settings::default(),
@@ -127,7 +129,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
         provider: "openai",
-        model: "gpt-5.2",
+        model: "gpt-5.6-terra",
         resuming: false,
         mode: Mode::Ask,
         settings: &Settings::default(),

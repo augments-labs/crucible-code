@@ -37,16 +37,42 @@ use crate::cli::converse::Terms;
 use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
 
-/// The model asked when the command line does not name one.
-const MODEL: &str = "claude-sonnet-5";
-
-/// The providers this is built with.
+/// The providers this is built with, and what each is asked for when nothing
+/// else names a model.
 ///
-/// One list rather than two: the sentence a wrong name gets back is written
-/// from it, and so is the check that refuses the name before anything is drawn.
+/// One list rather than three: the sentence a wrong name gets back is written
+/// from it, so is the check that refuses the name before anything is drawn, and
+/// so is the model a run lands on with no flag and no configuration.
 /// [`startup::provider`] has one arm per entry, and adding a provider is an
 /// edit to both in the same commit.
-const PROVIDERS: [&str; 2] = ["anthropic", "openai"];
+///
+/// The model belongs to the provider rather than to the build. One name for all
+/// of them is a name only one of them serves, and the other finds that out
+/// after the key has been read and the request sent.
+const PROVIDERS: [Served; 2] = [
+    Served {
+        name: "anthropic",
+        model: "claude-sonnet-5",
+    },
+    Served {
+        name: "openai",
+        model: "gpt-5.6-terra",
+    },
+];
+
+/// A provider this build has an arm for, and the model it answers with.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Served {
+    /// What `--model provider/…` and `providers.<name>` call it.
+    pub(crate) name: &'static str,
+    /// What to ask it for when neither the flag nor a file named a model.
+    pub(crate) model: &'static str,
+}
+
+/// The provider names, for the sentence a name outside them gets back.
+fn names() -> String {
+    PROVIDERS.map(|one| one.name).join(", ")
+}
 
 /// The command-line surface.
 ///
@@ -68,10 +94,11 @@ edits and runs things in the current directory, and asks before anything that \
 changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
-claude-sonnet-5, or openai/gpt-5.2. Unqualified names go to Anthropic. Left \
-off, or given as a provider and a bare slash, the model comes from your \
-configuration. The key is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, or \
-from whichever variable that provider's apiKeyEnv names.
+claude-sonnet-5, or openai/gpt-5.6-terra. Unqualified names go to Anthropic. \
+Left off, or given as a provider and a bare slash, the model comes from your \
+configuration, and failing that from the one this build pairs with that \
+provider. The key is read from ANTHROPIC_API_KEY or OPENAI_API_KEY, or from \
+whichever variable that provider's apiKeyEnv names.
 
 crucible keeps its own files in ~/.crucible, and reads config.json there, then \
 .crucible/config.json and .crucible/config.local.json in the directory it was \
@@ -88,7 +115,7 @@ struct Cli {
     r#continue: bool,
 
     /// The model to ask, optionally as provider/model. Defaults to what your
-    /// configuration says, then to claude-sonnet-5.
+    /// configuration says, then to the one this build pairs with that provider.
     #[arg(short, long)]
     model: Option<String>,
 }
@@ -129,14 +156,14 @@ pub(crate) enum Fatal {
     Raw(#[from] RawError),
 
     /// The command line named a provider this is not built with.
-    #[error("no provider called {named}; this build has {}", PROVIDERS.join(", "))]
+    #[error("no provider called {named}; this build has {}", names())]
     Provider {
         /// What was asked for.
         named: Box<str>,
     },
 
     /// The command line put nothing before the slash.
-    #[error("--model needs a provider before the slash, as in --model openai/gpt-5.2")]
+    #[error("--model needs a provider before the slash, as in --model openai/gpt-5.6-terra")]
     Providerless,
 
     /// Standard input could not be read.
@@ -181,14 +208,18 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // resolution below has one path through it rather than two.
     let choice =
         Choice::parse(cli.model.as_deref().unwrap_or_default()).ok_or(Fatal::Providerless)?;
-    let model = wanted(&choice, &settings);
 
     // The name on its own, here rather than in `assemble`, because the banner
     // below names a model and the provider that would serve it: a run that
     // cannot start should not first announce that it has. Only the name — the
     // key, the agent and the session stay where they are, after the banner,
     // since the first frame is measured to its first word.
-    served(&choice.provider)?;
+    //
+    // What it found comes back rather than being thrown away, because the model
+    // to fall back on is a fact about the provider this proved. Looking the name
+    // up twice is what would let the two answers be about different providers.
+    let serving = served(&choice.provider)?;
+    let model = wanted(&choice, &settings, serving);
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -275,17 +306,21 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
 /// Which model to ask for, once the command line and the files have both spoken.
 ///
-/// The flag, then the configuration for that provider, then the name this is
-/// built with. `--model openai/` naming a provider and no model is what makes
-/// the middle rung reachable: without it every way of choosing a provider names
-/// a model in the same breath, and `providers.openai.model` could never be the
-/// answer to anything.
-fn wanted(choice: &Choice, settings: &Settings) -> Box<str> {
+/// The flag, then the configuration for that provider, then the name that
+/// provider is built with. `--model openai/` naming a provider and no model is
+/// what makes the middle rung reachable: without it every way of choosing a
+/// provider names a model in the same breath, and `providers.openai.model`
+/// could never be the answer to anything.
+///
+/// The bottom rung is `serving` rather than a name of its own, so every rung is
+/// about the provider the run is going to. A rung that was not would send one
+/// vendor another vendor's model name.
+fn wanted(choice: &Choice, settings: &Settings, serving: Served) -> Box<str> {
     choice
         .model
         .clone()
         .or_else(|| settings.model(&choice.provider).map(Into::into))
-        .unwrap_or_else(|| MODEL.into())
+        .unwrap_or_else(|| serving.model.into())
 }
 
 /// Writes a fatal error where the user will see it.
