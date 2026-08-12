@@ -29,7 +29,7 @@ mod recent;
 mod replay;
 mod wire;
 
-use claim::{Claim, claim};
+use claim::{Claim, Claimed, claim};
 use log::{Trouble, open, shorten};
 pub use recent::{Recorded, recent};
 use replay::{belongs, newest, replay};
@@ -59,6 +59,16 @@ pub enum SessionError {
     /// One session file could not be opened or read.
     #[error("could not read the session log {at}: {source}")]
     Log {
+        /// Which file.
+        at: Box<str>,
+        /// What the operating system said.
+        source: io::Error,
+    },
+
+    /// The mark that says a session is open could not be made, so whether
+    /// anything holds the log was never established.
+    #[error("could not claim the session log {at}: {source}")]
+    Claim {
         /// Which file.
         at: Box<str>,
         /// What the operating system said.
@@ -144,7 +154,16 @@ impl Session {
         // nothing to refuse here. It is claimed so that a crucible started
         // afterwards in the same directory finds this session open for as long
         // as it is being written, rather than continuing it underneath.
-        let held = claim(&path).ok().flatten();
+        //
+        // A mark that cannot be made stops the session, unlike the two answers
+        // below it. It goes beside a log this call has just written a line to,
+        // in a directory this call has just made, so the failure is that
+        // directory rather than anything about locks — and the next line to be
+        // recorded would meet it too.
+        let held = match claimed(&path)? {
+            Claimed::Taken(held) => Some(held),
+            Claimed::Busy | Claimed::Lockless => None,
+        };
 
         let mut session = Self::writing(path, file);
         session.claim = held;
@@ -226,9 +245,9 @@ impl Session {
         // continuing it cuts it back to what was read here, which deletes lines
         // that process has already written and believes are there, and leaves
         // two of them appending to one log. See [`claim`].
-        let held = match claim(path) {
-            Ok(Some(held)) => Some(held),
-            Ok(None) => {
+        let held = match claimed(path)? {
+            Claimed::Taken(held) => Some(held),
+            Claimed::Busy => {
                 return Err(SessionError::Busy {
                     at: path.display().to_string().into(),
                 });
@@ -237,7 +256,7 @@ impl Session {
             // and refusing every `--continue` there would cost more than the
             // collision this guards against. What happens then is what happened
             // before there was a claim to take.
-            Err(_) => None,
+            Claimed::Lockless => None,
         };
 
         let (transcript, settled_at) = replay(path)?;
@@ -373,6 +392,18 @@ impl Session {
             trouble,
         }
     }
+}
+
+/// Claims `log`, with the one thing that is not an answer about it named as an
+/// error.
+///
+/// Both ways into a session go through here, so neither of them can be the one
+/// that reads a claim it could not attempt as a claim it attempted.
+fn claimed(log: &Path) -> Result<Claimed, SessionError> {
+    claim(log).map_err(|source| SessionError::Claim {
+        at: log.display().to_string().into(),
+        source,
+    })
 }
 
 impl Drop for Session {

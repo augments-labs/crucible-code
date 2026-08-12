@@ -42,25 +42,44 @@ impl Drop for Claim {
     }
 }
 
-/// Claims `log` for this process.
+/// What claiming a log came back with.
 ///
-/// `Ok(None)` is a log another crucible has open.
+/// Three answers rather than two, because the two that hold no claim are not
+/// the same answer and call for opposite decisions: one refuses the session and
+/// the other carries on without a guard.
+#[derive(Debug)]
+pub(super) enum Claimed {
+    /// This process holds the log.
+    Taken(Claim),
+    /// Another crucible holds it.
+    Busy,
+    /// There was no lock to take. Some network filesystems have none.
+    Lockless,
+}
+
+/// Claims `log` for this process.
 ///
 /// # Errors
 ///
-/// When the mark cannot be made, or when the filesystem holding it has no locks
-/// to take — some network filesystems have none. That is not the same answer as
-/// "another crucible has it", and the caller decides what to do with it,
-/// because a `--continue` that refuses where it worked yesterday costs more
-/// than the collision it would be guarding against.
-pub(super) fn claim(log: &Path) -> Result<Option<Claim>, io::Error> {
+/// When the mark beside the log cannot be made. That is not one of the three
+/// answers above and must not be read as one: the lock was never reached, so
+/// nothing was asked about the log and nothing was learned about it. Read as
+/// [`Claimed::Lockless`] — the answer it most resembles, being the other one
+/// with no claim in it — a directory that had gone read-only would take the
+/// guard away with nothing said, which is the failure the guard exists for.
+pub(super) fn claim(log: &Path) -> Result<Claimed, io::Error> {
     let held = privacy::mark(&beside(log))?;
 
-    match held.try_lock() {
-        Ok(()) => Ok(Some(Claim { held })),
-        Err(TryLockError::WouldBlock) => Ok(None),
-        Err(TryLockError::Error(problem)) => Err(problem),
-    }
+    Ok(match held.try_lock() {
+        Ok(()) => Claimed::Taken(Claim { held }),
+        Err(TryLockError::WouldBlock) => Claimed::Busy,
+        // Every other way the attempt itself can fail is read as the filesystem
+        // having none to take. Which numbers mean exactly that differs by
+        // platform and by mount, and the alternative is a list of them that is
+        // wrong on the first filesystem nobody tested on — where being wrong
+        // means refusing every `--continue` there for good.
+        Err(TryLockError::Error(_)) => Claimed::Lockless,
+    })
 }
 
 /// Where the mark for `log` lives.
@@ -85,47 +104,54 @@ fn beside(log: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::claim;
+    use super::{Claimed, claim};
     use crate::sample::Sample;
 
-    /// The three answers, told apart.
+    /// Taken, busy, and taken again once it was handed back.
     ///
-    /// `continuing` reads them as refuse, take, and carry on regardless — that
-    /// last one because a filesystem with no locks cannot say a session is open
-    /// either, and refusing every `--continue` there would cost more than the
-    /// collision it guards against. Which means an attempt that fails for any
-    /// other reason is read as a filesystem with no locks, and the guard is
-    /// gone with nothing said. So this asserts on all three arms and names what
-    /// went wrong in the one that has no business happening here: a temporary
-    /// directory on the machine running the tests has locks.
+    /// Asserted as the exact answer each time rather than as "some claim came
+    /// back", because the third answer carries on regardless: a run where every
+    /// claim came back [`Claimed::Lockless`] would have no guard at all, and a
+    /// test that only asked whether one was held would pass through it. A
+    /// temporary directory on the machine running the tests has locks.
     #[test]
     fn a_log_this_process_is_already_holding_is_reported_held_rather_than_claimed_again() {
         let sample = Sample::new("claim-twice");
         let log = sample.logs().join("1786713045000-3f9c2a.jsonl");
 
         let held = match claim(&log) {
-            Ok(Some(held)) => held,
-            Ok(None) => panic!("a log nothing is holding was reported as held"),
-            Err(problem) => panic!("the claim could not be attempted: {problem:?}"),
+            Ok(Claimed::Taken(held)) => held,
+            other => panic!("a log nothing is holding was not claimed: {other:?}"),
         };
 
-        match claim(&log) {
-            Ok(None) => {}
-            Ok(Some(_)) => panic!("one log was claimed by two"),
-            Err(problem) => panic!("the second claim could not be attempted: {problem:?}"),
-        }
+        assert!(
+            matches!(claim(&log), Ok(Claimed::Busy)),
+            "one log was claimed by two"
+        );
 
         // Handed back when the session ends, which is what lets the log be
         // continued afterwards rather than being busy for as long as the file
         // is there.
         drop(held);
 
-        match claim(&log) {
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("a log that was given back is still held"),
-            Err(problem) => {
-                panic!("the claim after it was given back could not be attempted: {problem:?}")
-            }
-        }
+        assert!(
+            matches!(claim(&log), Ok(Claimed::Taken(_))),
+            "a log that was given back is still held"
+        );
+    }
+
+    #[test]
+    fn a_claim_that_could_not_be_attempted_is_not_a_filesystem_with_no_locks() {
+        // The mark sits beside the log, so a directory that is not there is a
+        // mark that cannot be made — and the lock is never reached. Answered as
+        // one of the three, this would be answered as the one that carries on,
+        // and `--continue` would go past a guard that had never run.
+        let sample = Sample::new("claim-nowhere");
+        let log = sample
+            .logs()
+            .join("gone")
+            .join("1786713045000-3f9c2a.jsonl");
+
+        assert!(claim(&log).is_err(), "a mark was made where nothing exists");
     }
 }

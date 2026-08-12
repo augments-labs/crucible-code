@@ -787,6 +787,38 @@ fn a_session_another_crucible_still_has_open_is_not_continued_over() {
 }
 
 #[test]
+fn a_claim_that_could_not_be_attempted_stops_the_session_rather_than_being_read_as_none() {
+    // The guard is gone either way; what differs is whether anything says so.
+    // Read as the filesystem having none to take — the other answer with no
+    // claim in it — this is `--continue` cutting the log back and appending to
+    // it with no idea whether another crucible is doing the same, and neither
+    // of them noticing until the transcript comes back interleaved.
+    //
+    // A directory where the mark goes is a mark that cannot be made, on every
+    // platform, and the log beside it is untouched and perfectly readable.
+    let sample = Sample::new("session-unclaimable");
+    let log = record(&sample, &[said("the session before it")]);
+    let mark = PathBuf::from(format!("{}.lock", log.display()));
+
+    fs::remove_file(&mark).expect("the mark the session made");
+    fs::create_dir(&mark).expect("something in its place");
+
+    let problem = Session::resume(&sample.logs(), &sample.workspace())
+        .expect_err("a claim that could not be attempted");
+
+    assert!(matches!(problem, SessionError::Claim { .. }), "{problem}");
+
+    // Nothing was read and nothing was cut: the order is claim first, and a log
+    // that stopped a session is a log the next crucible can still continue.
+    fs::remove_dir(&mark).expect("the directory in the way");
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session, now it can be");
+
+    assert_eq!(transcript.messages(), &[said("the session before it")]);
+}
+
+#[test]
 fn a_call_nothing_answered_is_cut_off_rather_than_left_for_the_next_replay() {
     // The unanswered call is dropped from the transcript handed back, but the
     // line is still on disk. Appending after it puts the unanswered question in
