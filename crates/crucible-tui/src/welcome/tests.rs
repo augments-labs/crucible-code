@@ -101,8 +101,8 @@ fn eighty_columns_draws_the_identity_beside_what_happened_here() {
 ╭─ crucible v0.0.8 ────────────────────────────────────────────────────────────╮
 │                                  │ Recent sessions                           │
 │  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │
-│  █   █▄▄ █  █ █   █ █▄▄ █   █▄▄  │ 1  a search that stops partway     2h ago │
-│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄▄ █▄▄ █▄▄  │ 2  rule replacement on windows  yesterday │
+│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ 1  a search that stops partway     2h ago │
+│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │ 2  rule replacement on windows  yesterday │
 │                                  │ 3  column counting in the tail     3d ago │
 │  claude-sonnet-5                 │                                           │
 │                                  │ ───────────────────────────────────────── │

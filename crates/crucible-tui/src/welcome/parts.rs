@@ -9,10 +9,7 @@ use crate::row::Row;
 use crate::width;
 
 use super::{Recent, Welcome, fit};
-use crate::glyphs::Glyphs;
-
-/// The name, as letters, for every form that is not drawing it as art.
-const WORDMARK: &str = "CRUCIBLE";
+use crate::glyphs::{Glyphs, WORDMARK};
 
 /// The heading over what happened in this directory before.
 const SESSIONS: &str = "Recent sessions";

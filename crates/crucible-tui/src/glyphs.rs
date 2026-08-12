@@ -11,15 +11,26 @@
 //! rather than inside one: the welcome and the prompt draw the same corner, and
 //! a terminal that shows a hollow square for it shows one in both places.
 
+/// The name, as letters.
+///
+/// Beside the art rather than beside the component that prints it, because the
+/// art spells this and a test below reads it back to prove that it still does.
+pub(crate) const WORDMARK: &str = "CRUCIBLE";
+
 /// The wordmark, drawn from half blocks.
 ///
 /// crucible's own, drawn for this program. Every row is the same width, which
 /// the welcome's own tests are what keep true — a row a column short leans the
 /// whole mark, and a row a column long pushes it through the frame beside it.
+///
+/// Three columns to a letter and a blank column between them, which is what the
+/// test below splits on to read back what this spells. `B` closes on the right
+/// where `E` is open, and that one column is the whole difference between the
+/// two: it is the column that was missing.
 const ART: [&str; 3] = [
     "▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄",
-    "█   █▄▄ █  █ █   █ █▄▄ █   █▄▄",
-    "▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄▄ █▄▄ █▄▄",
+    "█   █▄▄ █  █ █   █ █▄█ █   █▄▄",
+    "▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄",
 ];
 
 /// Which characters a component draws its frame and its marks with.
@@ -106,6 +117,57 @@ impl Glyphs {
         match self {
             Self::Unicode => Some(&ART),
             Self::Ascii => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wordmark split into the letters it is made of, one string each.
+    ///
+    /// The columns blank in every row are what part one letter from the next,
+    /// which is the same thing the eye reads them by.
+    fn letters() -> Vec<String> {
+        let rows: Vec<Vec<char>> = ART.iter().map(|row| row.chars().collect()).collect();
+        let wide = rows.iter().map(Vec::len).max().unwrap_or_default();
+
+        let columns: Vec<String> = (0..wide)
+            .map(|at| {
+                rows.iter()
+                    .map(|row| row.get(at).copied().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+
+        columns
+            .split(|column| column.chars().all(char::is_whitespace))
+            .filter(|letter| !letter.is_empty())
+            .map(|letter| letter.join("/"))
+            .collect()
+    }
+
+    #[test]
+    fn no_two_letters_of_the_wordmark_are_drawn_the_same() {
+        // The defect this catches: `B` was drawn as a second `E`, so the first
+        // thing on screen spelled the program's name wrong. Letters that are
+        // the same letter are drawn alike; letters that are not, are not — and
+        // the wordmark is the one place where spelling is a picture, so nothing
+        // about widths or colours can see this go wrong.
+        let name: Vec<char> = WORDMARK.chars().collect();
+        let drawn = letters();
+
+        assert_eq!(drawn.len(), name.len(), "{drawn:?}");
+
+        for (letter, art) in name.iter().zip(&drawn) {
+            for (other, theirs) in name.iter().zip(&drawn) {
+                assert_eq!(
+                    art == theirs,
+                    letter == other,
+                    "{letter} is {art}, {other} is {theirs}"
+                );
+            }
         }
     }
 }
