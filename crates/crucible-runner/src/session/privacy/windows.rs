@@ -87,10 +87,15 @@ pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
 /// refusal a held file gives, so the caller reads it as a filesystem that
 /// cannot lock at all and continues over a session that is still open.
 pub(in crate::session) fn mark(path: &Path) -> Result<File, io::Error> {
+    // Never truncated. A mark holds nothing, so there is nothing in one to
+    // lose — but the mark another crucible is holding this instant is a file
+    // this call opens, and a call that opens it is not a call that should be
+    // able to write to it at all.
     let file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .open(path)?;
 
     narrow(path, 0)?;

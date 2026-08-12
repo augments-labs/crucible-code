@@ -51,10 +51,15 @@ pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
 /// call Windows takes a lock with refuses a handle opened only to append, and a
 /// mark that cannot be locked is a claim that is never taken.
 pub(in crate::session) fn mark(path: &Path) -> Result<File, io::Error> {
+    // Never truncated. A mark holds nothing, so there is nothing in one to
+    // lose — but the mark another crucible is holding this instant is a file
+    // this call opens, and a call that opens it is not a call that should be
+    // able to write to it at all.
     let file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .mode(LOG)
         .open(path)?;
 
