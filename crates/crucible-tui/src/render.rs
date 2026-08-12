@@ -11,7 +11,8 @@
 //! construction rather than by care. The sequences themselves live in
 //! [`frame`]; this module decides when a frame happens.
 
-use crate::color::{Palette, Slot};
+use crate::color::Palette;
+use crate::markdown::Markdown;
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 
@@ -61,6 +62,17 @@ pub struct Renderer<T: Terminal> {
     /// Painted when they are set rather than once per frame. What they say
     /// changes when the session changes, and a turn is a great many frames.
     footing: Vec<String>,
+    /// Reads the markers out of the model's markdown and says what each run is.
+    ///
+    /// Held here rather than made fresh per delta, for the reason the tail holds
+    /// its escape state: a delta is a piece of the wire, so a fence arrives
+    /// split across two of them as often as not.
+    markdown: Markdown,
+    /// The palette this run resolved, for the slots the scan above hands back.
+    ///
+    /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
+    /// renderer nobody told showing the answer exactly as it arrived.
+    palette: Palette,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -90,32 +102,62 @@ impl<T: Terminal> Renderer<T> {
             overflow: Vec::new(),
             painted: Vec::new(),
             footing: Vec::new(),
+            markdown: Markdown::default(),
+            palette: Palette::plain(),
         }
     }
 
+    /// Tells this renderer which palette the run resolved.
+    ///
+    /// Said once, at startup, because it is settled once: the configuration,
+    /// the environment and `is_terminal` have already agreed between them. It
+    /// is what decides whether the model's markdown is read at all — a run with
+    /// no colour in it keeps every marker the model wrote, since dropping one
+    /// there would take the emphasis away and put nothing in its place.
+    pub fn wears(&mut self, palette: Palette) {
+        self.palette = palette;
+    }
+
     /// Appends streamed output and puts a frame on screen.
+    ///
+    /// The markers in the model's markdown are read here rather than drawn: a
+    /// heading, a run of code or a phrase under emphasis is recognised, its
+    /// marker is dropped, and the run it covered is written wearing a slot. The
+    /// tone belongs to the row rather than to the text, so it costs no column
+    /// and the answer wraps where the same answer would have wrapped plain.
+    ///
+    /// One frame per delta however many slots it turned out to hold. A slot
+    /// changes between two pieces of one delta, and a frame per change would be
+    /// several frames for one piece of the wire.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
-        self.tail.push(delta, &mut self.overflow);
-        self.draw()
-    }
+        // Nowhere to put a slot is nowhere to put a marker either. A redirected
+        // run, `NO_COLOR`, `--color never`: the answer arrives as the model
+        // wrote it, which is markdown, and a file of markdown is worth more
+        // than a file it has been taken out of.
+        if !self.palette.writes_color() {
+            self.tail.push(delta, &mut self.overflow);
+            return self.draw();
+        }
 
-    /// Writes everything streamed after this in `slot`.
-    ///
-    /// For the part of an answer crucible has read something about — a heading,
-    /// a run of code — where [`Renderer::commit`] is for a line it composed
-    /// itself. The colour belongs to the slot rather than to the text, so it
-    /// costs no column and the wrap is the wrap the same answer would have had
-    /// plain.
-    ///
-    /// Nothing is drawn: a slot changes between two pieces of the same delta,
-    /// and a frame per change would be several frames per delta. The next
-    /// [`Renderer::stream`] puts the result on screen.
-    pub fn wear(&mut self, slot: Slot, palette: Palette) {
-        self.tail.wear(slot, palette);
+        let Self {
+            markdown,
+            tail,
+            overflow,
+            palette,
+            ..
+        } = self;
+        let palette = *palette;
+
+        markdown.read(delta, &mut |slot, text| {
+            tail.wear(slot, palette);
+            tail.push(text, overflow);
+        });
+
+        self.draw()
     }
 
     /// Writes a line that is finished and will never be redrawn.
@@ -259,6 +301,11 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn settle(&mut self) -> Result<(), TerminalError> {
+        // The markers belong to the message that is ending. A fence the model
+        // opened and never closed would otherwise read the tool result under it
+        // as code, and the whole of the next answer after that.
+        self.markdown = Markdown::default();
+
         if !self.terminal.is_terminal() {
             return self.settle_plain();
         }

@@ -3,7 +3,7 @@
 use unicode_width::UnicodeWidthStr;
 
 use super::*;
-use crate::color::Palette;
+use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::Recording;
 
@@ -544,4 +544,73 @@ fn a_redirected_run_draws_no_live_region_at_all() {
 
     assert_eq!(render.terminal.written(), "");
     assert_eq!(render.terminal.flushes(), 0);
+}
+
+/// A palette that writes every hue it has, without an environment to say so.
+fn colourful() -> Palette {
+    Palette::resolve(true, &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
+
+#[test]
+fn a_run_with_colour_in_it_reads_the_markers_out_of_the_answer() {
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.wears(colourful());
+
+    render.stream("a **loud** word").unwrap();
+    render.settle().unwrap();
+
+    // The markers are gone and the word wears the slot in their place.
+    let written = render.terminal.written();
+    let read = format!(
+        "a {}loud{} word",
+        colourful().open(Slot::Strong),
+        colourful().close()
+    );
+
+    assert!(written.contains(&read), "{written:?}");
+}
+
+#[test]
+fn a_slot_costs_the_answer_the_columns_it_would_have_taken_plain() {
+    // Two renderers of the same width, the same words, one of them told a
+    // palette. A slot that cost a column would wrap one and not the other.
+    let mut plain = Renderer::new(Recording::new(12, 24));
+    let mut coloured = Renderer::new(Recording::new(12, 24));
+    coloured.wears(colourful());
+
+    plain.stream("the loud word\n").unwrap();
+    coloured.stream("the **loud** word\n").unwrap();
+
+    assert_eq!(plain.drawn, coloured.drawn);
+}
+
+#[test]
+fn a_run_with_no_colour_in_it_keeps_every_marker_the_model_wrote() {
+    // Dropping one here would take the emphasis away and put nothing in its
+    // place. A file of markdown is worth more than a file it was taken out of.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.stream("a **loud** word\n").unwrap();
+    render.settle().unwrap();
+
+    assert_eq!(render.terminal.written(), "a **loud** word\n");
+}
+
+#[test]
+fn a_fence_the_model_never_closed_does_not_reach_the_next_message() {
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.wears(colourful());
+
+    render.stream("```rust\nlet it = 1;\n").unwrap();
+    render.settle().unwrap();
+    render.stream("plain again").unwrap();
+
+    let written = render.terminal.written();
+    let tail = written.split("let it = 1;").last().unwrap_or_default();
+    assert!(
+        !tail.contains(colourful().open(Slot::Quiet)),
+        "the fence ended with the message: {tail:?}"
+    );
 }

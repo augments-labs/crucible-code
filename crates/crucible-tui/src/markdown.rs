@@ -76,7 +76,7 @@ enum Inside {
 
 /// Reads markdown out of a stream of deltas.
 #[derive(Debug, Default)]
-pub struct Markdown {
+pub(crate) struct Markdown {
     /// A run of markers whose meaning the next character decides.
     held: Option<Held>,
     /// Something other than a space has arrived on this line.
@@ -95,7 +95,7 @@ impl Markdown {
     /// Runs rather than characters: the text between two markers is one call,
     /// so a delta with no markers in it is one call for the whole delta.
     /// Markers themselves are never handed on.
-    pub fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
+    pub(crate) fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
