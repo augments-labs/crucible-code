@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The welcome screen spells the program's name.** The `B` of the wordmark was
+  drawn as a second `E`, so the first thing on screen read `CRUCIELE`. Nothing
+  else moved: the mark is the same three rows and the same width.
+
 - **`crucible` with no `--model` now asks the provider whose key you hold.** It
   went to Anthropic whatever the machine had, so a session set up with only
   `OPENAI_API_KEY` ran against a provider there was nothing to authenticate
