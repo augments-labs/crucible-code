@@ -12,6 +12,11 @@ fn serving(named: &str) -> Served {
     served(named).expect("a provider this build has")
 }
 
+/// A machine holding these variables and no others.
+fn holding<'a>(set: &'a [&'a str]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |name| set.contains(&name).then(|| "a-key".to_owned())
+}
+
 #[test]
 fn the_flag_names_the_model_over_anything_a_file_says() {
     let sample = Sample::new("model-flag");
@@ -60,6 +65,42 @@ fn a_model_named_nowhere_at_all_is_the_one_that_provider_is_built_with() {
 
         assert_eq!(&*asked, one.model, "{}", one.name);
     }
+}
+
+#[test]
+fn a_run_that_named_no_provider_goes_to_the_one_whose_key_is_set() {
+    // The defect: `crucible` on a machine holding only OPENAI_API_KEY opened on
+    // an Anthropic model, so the provider the session ran against was the one
+    // there was nothing to authenticate with.
+    for one in PROVIDERS {
+        assert_eq!(
+            keyed(&Settings::default(), &holding(&[one.key])),
+            one.name,
+            "{}",
+            one.key
+        );
+    }
+}
+
+#[test]
+fn a_machine_holding_every_key_or_none_answers_the_same_way_every_run() {
+    // Neither says which provider was meant, and an answer read off whichever
+    // variable came first would move between two runs of the same command.
+    let every = PROVIDERS.map(|one| one.key);
+
+    assert_eq!(keyed(&Settings::default(), &holding(&every)), FALLBACK);
+    assert_eq!(keyed(&Settings::default(), &holding(&[])), FALLBACK);
+}
+
+#[test]
+fn the_variable_a_key_is_looked_for_in_is_the_one_the_configuration_names() {
+    // A key kept under another name is still that provider's key. Reading only
+    // the vendor's usual name would miss it and land on the other provider.
+    let sample = Sample::new("keyed-variable");
+    let settings =
+        sample.settings(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
+
+    assert_eq!(keyed(&settings, &holding(&["WORK_OPENAI_KEY"])), "openai");
 }
 
 #[test]

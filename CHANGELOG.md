@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **`crucible` with no `--model` now asks the provider whose key you hold.** It
+  went to Anthropic whatever the machine had, so a session set up with only
+  `OPENAI_API_KEY` ran against a provider there was nothing to authenticate
+  with. Exactly one key set picks that provider; both set, or neither, is
+  Anthropic as before.
+
 - **A model named nowhere is now the one that provider serves.** The fallback
   was one Claude name for every provider, so `--model openai/` with nothing
   configured asked OpenAI for a model OpenAI does not have. `anthropic` falls
