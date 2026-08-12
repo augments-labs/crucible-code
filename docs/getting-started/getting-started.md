@@ -126,8 +126,11 @@ A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 A call that failed is marked `✗`.
 
-<kbd>Ctrl-C</kbd> throws away a line you are part-way through; pressing it again
-on an empty box leaves, and so does <kbd>Ctrl-D</kbd>.
+<kbd>Ctrl-C</kbd> throws away a line you are part-way through. Against an empty box
+it offers to leave — `press ctrl-c again to leave`, under the mode — and a second
+press within two seconds takes the offer. Any other key first takes it back, so a
+session is never ended by one stray keystroke. <kbd>Ctrl-D</kbd> on an empty box
+leaves at once.
 
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them

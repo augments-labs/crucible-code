@@ -88,6 +88,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -109,6 +110,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -129,6 +131,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -141,7 +144,14 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
     let mut renderer = drawing();
     let mut editor = typed("hi");
 
-    draw(&mut renderer, &editor, Style::plain(), &settled(Mode::Ask)).expect("the box to be drawn");
+    draw(
+        &mut renderer,
+        &editor,
+        Style::plain(),
+        &settled(Mode::Ask),
+        None,
+    )
+    .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
 
     let asked = said(&mut renderer, &mut editor, Style::plain()).expect("the line to be taken");
@@ -267,6 +277,7 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -291,6 +302,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
         &typed("/m"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -307,6 +319,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         &settled(Mode::Ask),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -314,6 +327,50 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         !renderer.terminal().written().contains("/model"),
         "a list opened over a line that is not a command"
     );
+}
+
+#[test]
+fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
+    // Below the bottom row and at the left of it, so nothing that was on screen
+    // moves or is covered: the box, the line in it and the mode are all exactly
+    // where they were on the keystroke before.
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &Editor::new(),
+        Style::plain(),
+        &settled(Mode::Ask),
+        Some(LEAVING),
+    )
+    .expect("the box to be drawn");
+
+    let written = renderer.terminal().written();
+    let mode = written.find("ask mode on").expect("the mode");
+    let offer = written.find(LEAVING).expect("the offer");
+
+    assert!(mode < offer, "the offer went above the mode: {written:?}");
+    assert!(
+        written.contains(&format!("\r\n{LEAVING}")),
+        "the offer is indented: {written:?}"
+    );
+}
+
+#[test]
+fn a_second_interrupt_leaves_only_while_the_first_is_still_recent() {
+    // The press this rules out is a Ctrl-C aimed at a turn that had already
+    // finished. The terminal sends it here instead, and a session ended by one
+    // stray key is a session nobody asked to end -- so the pair has to read as
+    // one gesture, and two presses a minute apart do not.
+    let first = Instant::now();
+
+    assert!(!together(None, first), "one press is not a pair");
+    assert!(together(Some(first), first + TOGETHER / 2));
+
+    // The window is the time the second press has, so a press at the end of it
+    // is a press that arrived after.
+    assert!(!together(Some(first), first + TOGETHER));
+    assert!(!together(Some(first), first + TOGETHER * 30));
 }
 
 #[test]

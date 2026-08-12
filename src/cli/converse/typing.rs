@@ -19,6 +19,7 @@
 //! being typed, so there is one copy of it and no lock over it.
 
 use std::borrow::Cow;
+use std::time::{Duration, Instant};
 
 use crucible_core::Mode;
 use crucible_runner::Runner;
@@ -39,11 +40,29 @@ use super::mode::tone;
 /// by being the only way anybody finds out the row is a control at all.
 const CYCLE: &str = "(shift+tab to cycle)";
 
+/// What the row under the status says once Ctrl-C has been pressed against an
+/// empty line.
+///
+/// On screen from the first press rather than after the window has lapsed. The
+/// press is the moment somebody is asking to leave, so it is the moment worth
+/// answering — and by the time waiting too long could be noticed, the thing to
+/// say would be that the offer had already gone.
+const LEAVING: &str = "press ctrl-c again to leave";
+
+/// How long the second press has to arrive in.
+///
+/// Long enough to be a pair of presses somebody meant and short enough that it
+/// cannot span a thought. What it is defending against is a Ctrl-C aimed at a
+/// turn that had already finished: the terminal sends the key here instead, and
+/// a session ended by it is one nobody asked to end.
+const TOGETHER: Duration = Duration::from_secs(2);
+
 /// What reading a prompt produced.
 pub(crate) enum Asked {
     /// A line was typed and finished.
     Said(String),
-    /// The session is over: Ctrl-D on an empty line, or Ctrl-C against one.
+    /// The session is over: Ctrl-D on an empty line, or Ctrl-C twice against
+    /// one.
     Ended,
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
@@ -71,7 +90,12 @@ pub(crate) fn ask<T: Terminal>(
     let mut proposed: Option<Mode> = None;
     let mut says = saying(runner, proposed, glyphs);
 
-    draw(renderer, &editor, style, &says)?;
+    // When Ctrl-C was last pressed against an empty line, if it is still the
+    // last key pressed. Taken by every other key, so the pair has to be two
+    // presses in a row rather than two with a session between them.
+    let mut leaving: Option<Instant> = None;
+
+    draw(renderer, &editor, style, &says, None)?;
 
     loop {
         let arrived = pressed()?;
@@ -93,9 +117,13 @@ pub(crate) fn ask<T: Terminal>(
             }
 
             says = saying(runner, proposed, glyphs);
-            draw(renderer, &editor, style, &says)?;
+            draw(renderer, &editor, style, &says, None)?;
             continue;
         }
+
+        // Whatever arrived, the offer to leave was made to the key after the
+        // one that made it, and this is that key.
+        let offered = leaving.take();
 
         match arrived {
             // Redrawn rather than re-wrapped: the box was laid out for a width
@@ -103,11 +131,16 @@ pub(crate) fn ask<T: Terminal>(
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                draw(renderer, &editor, style, &says)?;
+                draw(renderer, &editor, style, &says, None)?;
             }
 
-            // Nothing is standing, so there is nothing to back out of.
-            Pressed::Escape | Pressed::Ignored => {}
+            // Nothing is standing, so there is nothing to back out of — except
+            // the offer above, which is on screen and has just been taken back.
+            Pressed::Escape | Pressed::Ignored => {
+                if offered.is_some() {
+                    draw(renderer, &editor, style, &says, None)?;
+                }
+            }
 
             // Stepping the mode on. One that has to be agreed to goes on screen
             // first and is entered by the key that agrees to it; every other
@@ -122,15 +155,35 @@ pub(crate) fn ask<T: Terminal>(
                 }
 
                 says = saying(runner, proposed, glyphs);
-                draw(renderer, &editor, style, &says)?;
+                draw(renderer, &editor, style, &says, None)?;
             }
 
             Pressed::Key(key) => match editor.press(key) {
-                // A key that moved nothing costs no frame. An arrow held down
-                // against the end of a line is what that saves.
-                Typed::Ignored => {}
-                Typed::Changed => draw(renderer, &editor, style, &says)?,
+                // A key that moved nothing costs no frame, unless the offer
+                // above is on screen and now stale. An arrow held down against
+                // the end of a line is what the first half of that saves.
+                Typed::Ignored => {
+                    if offered.is_some() {
+                        draw(renderer, &editor, style, &says, None)?;
+                    }
+                }
+                Typed::Changed => draw(renderer, &editor, style, &says, None)?,
                 Typed::Submitted => return said(renderer, &mut editor, style),
+
+                // Ctrl-C against a line with nothing on it. The first press
+                // says what a second one would do; the second does it, so long
+                // as it is the very next key and soon enough to be one gesture
+                // with the first.
+                Typed::Interrupted => {
+                    if together(offered, Instant::now()) {
+                        renderer.settle()?;
+                        return Ok(Asked::Ended);
+                    }
+
+                    leaving = Some(Instant::now());
+                    draw(renderer, &editor, style, &says, Some(LEAVING))?;
+                }
+
                 Typed::Ended => {
                     renderer.settle()?;
                     return Ok(Asked::Ended);
@@ -138,6 +191,16 @@ pub(crate) fn ask<T: Terminal>(
             },
         }
     }
+}
+
+/// Whether a press at `now` is the second half of the one `offered`.
+///
+/// The clock is an argument rather than read here, which is what lets the
+/// window be tested at all: the case worth pinning is the press that arrived
+/// too late, and waiting for it in a test would put [`TOGETHER`] into how long
+/// the suite takes.
+fn together(offered: Option<Instant>, now: Instant) -> bool {
+    offered.is_some_and(|since| now.duration_since(since) < TOGETHER)
 }
 
 /// What the row under the box says, and the colour the box says it in.
@@ -219,6 +282,7 @@ fn draw<T: Terminal>(
     editor: &Editor,
     style: Style,
     says: &Says,
+    asking: Option<&str>,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
 
@@ -228,6 +292,7 @@ fn draw<T: Terminal>(
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: says.keys,
+        asking,
     };
 
     let mut boxed = prompt.rows(columns, style.glyphs());
