@@ -136,6 +136,13 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
 - **Open sets are traits, closed sets are enums.** Providers and tools are open —
   adding one must not edit `core`. Events, verdicts and errors are core-owned
   enums *because* a new variant should break every `match`.
+- **The schema has a second home, and it does not follow this one.**
+  `schema/crucible-code-schema.json` is generated from the parser and gated, so
+  it is always right here; SchemaStore serves its own copy, and nothing in this
+  repository can make that one move. A release that changes the file owes a pull
+  request against `SchemaStore/schemastore`, raised from the fork
+  `NjoyimPeguy/schemastore`, which already exists — `RELEASING.md` has the
+  commands and the formatter their gate insists on.
 - **Rendering is inline today, and that is a mechanism rather than a law.**
   Scrollback belongs to the terminal, which is what keeps rendering free as a
   transcript grows. A full-screen renderer would move that job into this

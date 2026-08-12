@@ -156,9 +156,14 @@ changelog describe the binary people actually download.
    follow: a release that adds a key leaves every editor pointed at the
    published URL marking it red, and a release that removes one leaves them
    completing a key crucible now refuses. Open a pull request against
-   [SchemaStore/schemastore](https://github.com/SchemaStore/schemastore)
-   replacing `src/schemas/json/crucible-code-schema.json` with the file this tag
-   ships, and run their formatter and their gate over it before committing:
+   [SchemaStore/schemastore](https://github.com/SchemaStore/schemastore),
+   raised from the fork
+   [NjoyimPeguy/schemastore](https://github.com/NjoyimPeguy/schemastore) — it is
+   already there, and a second one is a second place for a release to be half
+   done. Branch off *their* `master` rather than the fork's, which is however
+   stale it was left, and replace
+   `src/schemas/json/crucible-code-schema.json` with the file this tag ships.
+   Run their formatter and their gate over it before committing:
 
    ```bash
    npm clean-install
