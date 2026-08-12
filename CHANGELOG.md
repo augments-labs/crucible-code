@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **`CRUCIBLE_CODE_CLEAR_SCREEN` empties the terminal before crucible draws.**
+  Set it to `true` in `env`, or in the shell, to start from a bare screen and an
+  empty scrollback. Off by default and ignored when output is redirected; a
+  value that is not `1`, `true`, `0` or `false` is refused, naming the file and
+  the line.
+
 - **A session another crucible has open is refused rather than continued.**
   `--continue` in a second terminal in the same directory stops with `… is open
   in another crucible`, having read nothing and changed nothing. Two crucibles

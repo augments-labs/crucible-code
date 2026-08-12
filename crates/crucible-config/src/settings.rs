@@ -19,9 +19,13 @@ use crate::shape::{DOCUMENT, Shape};
 mod layers;
 mod output;
 mod permissions;
+mod variables;
 
 pub use layers::local;
 pub use output::{Color, ToolDetail};
+pub use variables::ClearScreen;
+
+pub(crate) use variables::refused;
 
 /// What every layer together says a setting is.
 ///

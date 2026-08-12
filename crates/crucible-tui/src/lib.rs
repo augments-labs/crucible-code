@@ -17,6 +17,7 @@
 //! text, so it never names a domain type, calls a tool or asks a provider for
 //! anything.
 
+mod clear;
 mod color;
 mod escape;
 mod render;
@@ -24,6 +25,7 @@ mod terminal;
 mod title;
 mod width;
 
+pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
 pub use render::Renderer;
 pub use terminal::system::SystemTerminal;

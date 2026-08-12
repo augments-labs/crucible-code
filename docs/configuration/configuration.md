@@ -169,6 +169,37 @@ line 3, column 5 — crucible reads it before it opens any configuration file,
 because it is what says where the files are. Set it in your shell instead
 ```
 
+## `CRUCIBLE_CODE_CLEAR_SCREEN`
+
+Empties the terminal — the screen and the scrollback above it — before crucible
+draws its first row. Off unless you ask for it, because crucible draws inline:
+what is already on the screen is your own work, and the terminal's scrollback is
+yours to keep.
+
+```json
+{ "env": { "CRUCIBLE_CODE_CLEAR_SCREEN": "true" } }
+```
+
+Written in `env` like any other variable, so it layers like one: a project can
+set it for everybody who clones the repository, your home directory can set it
+for every project, and the environment you start crucible in beats both.
+
+```console
+$ CRUCIBLE_CODE_CLEAR_SCREEN=0 crucible
+```
+
+`1` and `true` mean yes, `0` and `false` mean no, in any capitalisation.
+Anything else is refused rather than read as `false`:
+
+```
+crucible: .crucible/config.json: env CRUCIBLE_CODE_CLEAR_SCREEN at line 3,
+column 5 is not set to an answer crucible takes — accepted here: 1, true, 0,
+false
+```
+
+A run whose output is redirected is never cleared. A pipe has no screen, so the
+sequence would be escape bytes at the top of your file.
+
 ## How layers combine
 
 A **scalar** takes the nearest layer that set it. An **object** is merged key by

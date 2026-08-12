@@ -54,5 +54,5 @@ mod shape;
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::allowing;
-pub use settings::{Color, Settings, ToolDetail, local};
+pub use settings::{ClearScreen, Color, Settings, ToolDetail, local};
 pub use shape::schema::schema;

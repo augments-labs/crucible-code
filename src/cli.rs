@@ -197,7 +197,17 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // renderer holds the lock for its whole life, and the title borrows the
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set()?;
-    let mut renderer = Renderer::new(SystemTerminal::stdout());
+
+    // Before the renderer exists, which is the only moment this is reachable:
+    // `Renderer` takes the terminal by value, so a clear cannot be mistaken for
+    // a frame later and the rules about what a frame may write stay as strict
+    // as they are. Off unless asked for — crucible draws inline, so the rows
+    // already on screen are somebody's own work.
+    let mut terminal = SystemTerminal::stdout();
+    if settings.clear_screen(&from)?.wanted() {
+        crucible_tui::clear(&mut terminal)?;
+    }
+    let mut renderer = Renderer::new(terminal);
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
