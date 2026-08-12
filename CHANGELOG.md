@@ -48,12 +48,19 @@ Notable changes to crucible. Format follows
   *starting* there are unaffected: they are two sessions, each recording its own
   log.
 
-- **`crucible_tui::cut`, the display-column count the renderer itself uses.** It
-  says where a string reaches a given number of columns — a wide character
-  taking two, a combining mark none, a tab reaching its stop, and an emoji
-  presentation selector taking the column it widens by — so anything that
-  shortens a line and the tail that wraps it can no longer disagree about how
-  wide the same text is.
+- **Commands: `/help`, `/model`, `/mode` and `/exit`.** Typing `/` opens the
+  list above the box, filtered as you type, so the box and the mode under it
+  stay where they are. `/mode allowEdits` names a mode outright instead of
+  stepping to it. A command is answered without asking the provider and does not
+  enter the transcript; a line that only looks like one — `/etc/hosts is wrong`
+  — is still a prompt.
+
+- **`crucible_tui::cut` and `crucible_tui::clip`, the display-column count the
+  renderer itself uses.** `cut` says where a string reaches a given number of
+  columns — a wide character taking two, a combining mark none, a tab reaching
+  its stop, and an emoji presentation selector taking the column it widens by —
+  and `clip` returns that much of it. Anything composing a row of its own now
+  measures it the way the tail that wraps it does.
 
 ### Changed
 

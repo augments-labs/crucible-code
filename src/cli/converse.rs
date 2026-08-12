@@ -27,8 +27,11 @@ use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use command::Ran;
 use typing::Asked;
 
+mod command;
+mod mode;
 mod typing;
 
 /// What the user types after, where there is no box to type into.
@@ -107,6 +110,17 @@ pub(crate) fn converse<T: Terminal>(
                 said
             }
         };
+
+        // Before the turn, because a command is not one: it is answered here,
+        // on this thread, and costs the provider nothing. Nothing of it reaches
+        // the transcript either — what the model is told about a session is
+        // what was said to it, and `/help` was not.
+        if let Some(wanted) = command::wanted(&prompt) {
+            match command::run(wanted, renderer, &mut runner, style)? {
+                Ran::Again => continue,
+                Ran::Leave => break,
+            }
+        }
 
         if prompt.trim().is_empty() {
             continue;

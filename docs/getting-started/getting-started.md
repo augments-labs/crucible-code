@@ -84,12 +84,13 @@ cd ~/code/my-project
 crucible
 ```
 
-It opens with the version, the model, and the root it is standing on:
+It opens with a card naming the release, the model it is asking, and the root it
+is standing on, beside the last few sessions started in this directory. The card
+fits itself to the terminal: two columns at eighty and above, one below that,
+and under forty-six there is no frame at all — just what it is, what it is
+asking, and where. Under the card is the box:
 
 ```
-crucible <version> · claude-sonnet-5
-/home/you/code/my-project
-
 ╭────────────────────────────────────────────────────────────╮
 │ ›                                                          │
 ╰────────────────────────────────────────────────────────────╯
@@ -131,6 +132,25 @@ on an empty box leaves, and so does <kbd>Ctrl-D</kbd>.
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them
 instead.
+
+## Commands
+
+A line starting with `/` is a command rather than a prompt. It is answered here,
+costs the provider nothing, and is not part of what the model is told about the
+session.
+
+| Command | What it does |
+| --- | --- |
+| `/help` | Lists these |
+| `/model` | The model this session is asking |
+| `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/exit` | Ends the session |
+
+Typing `/` opens the list above the box, filtered to what has been typed so far,
+so the box and the mode under it stay where they are. The list closes as soon as
+the line becomes something else — a path, a sentence, a command with a word
+after it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only
+taken for a command where it could not be anything else.
 
 ## When an answer stops early
 

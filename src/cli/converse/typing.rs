@@ -23,11 +23,14 @@ use std::borrow::Cow;
 use crucible_core::Mode;
 use crucible_runner::Runner;
 use crucible_tui::{
-    Editor, Glyphs, Key, Pressed, Prompt, Raw, Renderer, Slot, Terminal, Typed, pressed,
+    Editor, Glyphs, Key, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed, pressed,
 };
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
+
+use super::command;
+use super::mode::tone;
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -205,21 +208,12 @@ const fn agreed_first(mode: Mode) -> bool {
     }
 }
 
-/// The colour a mode's border and its sentence are drawn in.
-///
-/// A ramp: the quiet state is quiet, and the border only starts pulling the eye
-/// as the mode gets more permissive. Not red at the top of it — red is what a
-/// denial and a failed tool call are already spelled in, and full access is a
-/// choice somebody made rather than something that went wrong.
-const fn tone(mode: Mode) -> Slot {
-    match mode {
-        Mode::Ask => Slot::Quiet,
-        Mode::AllowEdits => Slot::AllowEdits,
-        Mode::FullAccess => Slot::FullAccess,
-    }
-}
-
 /// Puts the box on screen with the cursor where the line was typed to.
+///
+/// The box is the last rows of the region and the list, when there is one, is
+/// the first. Drawn in that order for the reason the list opens upwards at all:
+/// the box and the row under it are what the eye is resting on, and rows added
+/// above them leave both exactly where they were.
 fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
@@ -236,9 +230,40 @@ fn draw<T: Terminal>(
         hint: says.keys,
     };
 
-    let rows = prompt.rows(columns, style.glyphs());
-    renderer.live(&rows, prompt.caret(columns), style.palette())?;
+    let mut boxed = prompt.rows(columns, style.glyphs());
+    let mut caret = prompt.caret(columns);
+
+    // What is left for a list once the box and the blank row that keeps it off
+    // the box have taken theirs.
+    let room = renderer.rows().saturating_sub(boxed.len() + 1);
+
+    let mut rows = opened(editor.text(), columns, room, style.glyphs());
+    caret.row += rows.len();
+    rows.append(&mut boxed);
+
+    renderer.live(&rows, caret, style.palette())?;
     Ok(())
+}
+
+/// The command list to open above the box, and the blank row under it.
+///
+/// Empty in the ordinary case, where the line is a prompt: nothing is
+/// allocated, and the region is the rows the box has always been.
+///
+/// A list with no room for it is not opened. The live region is taken back by
+/// moving the cursor up over it, so one taller than the screen is one whose top
+/// has already scrolled beyond reach — the next rewind would move back over
+/// rows the terminal has taken. Drawing what fits instead would be worse than
+/// drawing nothing: a list cut off at the top reads as the whole list.
+fn opened(said: &str, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+    let shown = command::filtering(said, glyphs);
+    if shown.is_empty() || shown.len() > room {
+        return Vec::new();
+    }
+
+    let mut rows = Menu { shown: &shown }.rows(columns);
+    rows.push(Row::new());
+    rows
 }
 
 /// Takes the finished line, leaving it in the record where the box was.

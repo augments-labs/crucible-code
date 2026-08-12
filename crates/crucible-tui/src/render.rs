@@ -320,6 +320,18 @@ impl<T: Terminal> Renderer<T> {
         self.size.columns
     }
 
+    /// How tall it was when this last looked.
+    ///
+    /// Held for the same reason the width is, and read for one thing: a live
+    /// region taller than the screen is one whose top has scrolled out of
+    /// reach, so the next rewind would move back over rows the terminal has
+    /// already taken. A component that can grow asks how much room there is
+    /// before it does.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.size.rows
+    }
+
     /// One frame, assembled by [`screen`].
     fn draw(&mut self) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {

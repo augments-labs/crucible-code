@@ -12,6 +12,7 @@ use super::*;
 use crate::cli::fake::Script;
 
 mod asked;
+mod commanded;
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.

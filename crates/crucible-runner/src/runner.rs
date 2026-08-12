@@ -118,6 +118,20 @@ impl Runner {
         self.permission.cycle()
     }
 
+    /// Puts the mode where the user named, rather than stepping to it.
+    ///
+    /// Reachable at the same moment [`Runner::cycle`] is and for the same
+    /// reason.
+    pub fn switch(&mut self, mode: Mode) {
+        self.permission.switch(mode);
+    }
+
+    /// The model this session is asking, as the provider spells it.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model.name
+    }
+
     /// Hands the session out, for the caller that is finished driving turns.
     ///
     /// The loop ends owning the runner, and closing a session properly means

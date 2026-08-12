@@ -108,6 +108,17 @@ impl Permission {
         self.mode
     }
 
+    /// Puts that mode where it is, for a user who named the one they want
+    /// rather than stepping to it.
+    ///
+    /// The same change [`Permission::cycle`] makes and under the same
+    /// conditions — a prompt is being typed, no turn is running, nothing else
+    /// about the session moves. Naming one is not a second way to change the
+    /// mode, it is a shorter way to reach the same one.
+    pub fn switch(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
     /// Decides one call, asking the user if that is what it comes to.
     pub fn decide(
         &mut self,

@@ -164,7 +164,7 @@ impl Prompt<'_> {
     /// not holding an edge up, and trailing spaces on it would be bytes written
     /// every keystroke to draw nothing.
     fn status(&self, columns: usize) -> Row {
-        let mut row = Row::new().then(self.tone, clip(self.mode, columns));
+        let mut row = Row::new().then(self.tone, width::clip(self.mode, columns));
 
         // A hint that does not fit whole is not drawn at all. Half of the keys
         // to press is not half as useful as all of them — it is a fragment
@@ -190,7 +190,7 @@ impl Prompt<'_> {
     /// the box exactly would put the cursor on the border.
     fn window(&self, inner: usize) -> (&str, usize) {
         let start = self.column.saturating_sub(inner.saturating_sub(1));
-        let mut gone = clip(self.said, start);
+        let mut gone = width::clip(self.said, start);
 
         // A wide character lying across the start of the window is skipped
         // whole rather than kept. Half of one cannot be drawn, and the half
@@ -198,13 +198,13 @@ impl Prompt<'_> {
         // box has room for -- which is the row, and only that row, closing a
         // column early.
         if width::columns(gone) < start {
-            gone = clip(self.said, start + 1);
+            gone = width::clip(self.said, start + 1);
         }
 
         let rest = self.said.get(gone.len()..).unwrap_or_default();
 
         (
-            clip(rest, inner),
+            width::clip(rest, inner),
             self.column.saturating_sub(width::columns(gone)),
         )
     }
@@ -223,18 +223,6 @@ fn inner(columns: usize) -> usize {
     };
 
     columns.saturating_sub(chrome)
-}
-
-/// `text` with at most `columns` display columns of it kept.
-///
-/// Columns rather than characters, and cut where this crate's own walk says to:
-/// a cut that split a wide character would leave the row a column short of
-/// where the border was drawn.
-fn clip(text: &str, columns: usize) -> &str {
-    match width::cut(text, columns) {
-        Some(at) => text.get(..at).unwrap_or_default(),
-        None => text,
-    }
 }
 
 #[cfg(test)]

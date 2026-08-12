@@ -3,7 +3,8 @@
 A session runs in one mode, set by `permissions.mode` in
 [configuration](../configuration/configuration.md): `ask`, `allowEdits` or
 `fullAccess`. Nothing set means `ask`. That is where a session starts rather
-than what it stays at — <kbd>Shift-Tab</kbd> steps it while you type.
+than what it stays at — <kbd>Shift-Tab</kbd> steps it while you type, and
+`/mode` names one outright.
 
 A mode decides exactly one thing: what happens to a call no
 [rule](rules.md) mentions. It is never a way around the engine — every call
@@ -73,6 +74,18 @@ answered by stepping again.
 
 A step changes one thing and no others. The rules you wrote hold exactly as
 they did, and anything already allowed for the session stays allowed.
+
+## Naming the one you want
+
+`/mode allowEdits` puts the session in that mode outright, spelled the way
+[configuration](../configuration/configuration.md) spells it. It is the same
+change under the same conditions — between turns, nothing else about the
+session moving — and it is not agreed to first: typing the name of a mode is
+not something anybody does by accident.
+
+`/mode` on its own says which one is in force and lists the three to choose
+from. A word that names none of them is refused, and the session stays where it
+was.
 
 ## When nobody can answer
 

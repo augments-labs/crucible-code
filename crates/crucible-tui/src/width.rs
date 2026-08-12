@@ -68,6 +68,20 @@ pub fn cut(text: &str, columns: usize) -> Option<usize> {
     walk(text, columns).1
 }
 
+/// `text` with at most `columns` display columns of it kept.
+///
+/// [`cut`] with the offset already applied, for a caller that wants the text
+/// rather than the place it stops. Every component in this crate that lays a
+/// row out ends up wanting exactly this, and so does anything outside it
+/// composing rows of its own — one row is one row wherever it was built.
+#[must_use]
+pub fn clip(text: &str, columns: usize) -> &str {
+    match cut(text, columns) {
+        Some(at) => text.get(..at).unwrap_or_default(),
+        None => text,
+    }
+}
+
 /// How many display columns one row of `text` costs.
 ///
 /// The same walk as [`cut`] rather than a second count of the same string: a

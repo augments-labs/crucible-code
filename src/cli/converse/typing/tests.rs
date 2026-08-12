@@ -259,6 +259,79 @@ fn the_only_step_that_is_agreed_to_first_is_the_one_that_stops_asking() {
 }
 
 #[test]
+fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &typed("/m"),
+        Style::plain(),
+        &settled(Mode::Ask),
+    )
+    .expect("the box to be drawn");
+
+    let written = renderer.terminal().written();
+    let listed = written.find("/model").expect("the list");
+    let boxed = written.find("› /m").expect("the box");
+
+    assert!(listed < boxed, "the list is under the box: {written:?}");
+}
+
+#[test]
+fn the_box_stays_where_it_was_while_the_list_is_open() {
+    // The whole reason it opens upwards. The cursor is parked by counting back
+    // from the bottom of the region, so rows added above the box leave the same
+    // two below the line — the box and the row under it are exactly where they
+    // were on the keystroke before, and the mode is neither covered nor pushed
+    // down the screen.
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &typed("/m"),
+        Style::plain(),
+        &settled(Mode::Ask),
+    )
+    .expect("the box to be drawn");
+
+    let written = renderer.terminal().written();
+    assert!(written.ends_with("\x1b[2A\x1b[7G"), "{written:?}");
+}
+
+#[test]
+fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &typed("hi"),
+        Style::plain(),
+        &settled(Mode::Ask),
+    )
+    .expect("the box to be drawn");
+
+    assert!(
+        !renderer.terminal().written().contains("/model"),
+        "a list opened over a line that is not a command"
+    );
+}
+
+#[test]
+fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
+    // Cut off at the top it would read as the whole list, and the rewind that
+    // takes the region back would reach over rows the terminal has already
+    // taken. Neither is worth the rows it would have shown.
+    for room in 0..4 {
+        assert!(
+            opened("/", 60, room, Glyphs::Unicode).is_empty(),
+            "a list of four opened with room for {room}"
+        );
+    }
+
+    assert!(!opened("/", 60, 4, Glyphs::Unicode).is_empty());
+}
+
+#[test]
 fn no_two_modes_are_drawn_in_the_same_colour() {
     // The colour is the part read before the sentence is, and two modes
     // sharing one would make the border say less than nothing — it would say
