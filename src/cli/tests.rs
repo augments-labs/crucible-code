@@ -17,6 +17,19 @@ fn holding<'a>(set: &'a [&'a str]) -> impl Fn(&str) -> Option<String> + 'a {
     move |name| set.contains(&name).then(|| "a-key".to_owned())
 }
 
+/// The same, for a machine where what a variable holds is the point.
+///
+/// A name and a value rather than a name, because a variable exported blank is
+/// set and holds no key, and which of those two facts wins is what the tests
+/// below are about.
+fn exported<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |name| {
+        set.iter()
+            .find(|(exported, _)| *exported == name)
+            .map(|(_, value)| (*value).to_owned())
+    }
+}
+
 #[test]
 fn the_flag_names_the_model_over_anything_a_file_says() {
     let sample = Sample::new("model-flag");
@@ -90,6 +103,63 @@ fn a_machine_holding_every_key_or_none_answers_the_same_way_every_run() {
 
     assert_eq!(keyed(&Settings::default(), &holding(&every)), FALLBACK);
     assert_eq!(keyed(&Settings::default(), &holding(&[])), FALLBACK);
+}
+
+#[test]
+fn a_variable_exported_blank_loses_to_one_that_holds_a_key() {
+    // The defect, and the shell it happens in: `ANTHROPIC_API_KEY=` is how a
+    // machine turns that provider off, and it counted as a key held. A session
+    // set up with a real OPENAI_API_KEY beside it opened on a Claude and then
+    // refused over the variable holding nothing. Both ways round, so the tie is
+    // not being broken towards either provider, and every spelling of blank.
+    for blank in ["", " ", "\n"] {
+        for one in PROVIDERS {
+            let machine: Vec<(&str, &str)> = PROVIDERS
+                .iter()
+                .map(|other| {
+                    (
+                        other.key,
+                        if other.name == one.name {
+                            "a-key"
+                        } else {
+                            blank
+                        },
+                    )
+                })
+                .collect();
+
+            assert_eq!(
+                keyed(&Settings::default(), &exported(&machine)),
+                one.name,
+                "{} against {blank:?}",
+                one.key
+            );
+        }
+    }
+}
+
+#[test]
+fn a_machine_whose_only_variable_is_blank_is_still_that_provider() {
+    // Nothing holds a key, so the blank one is the only evidence there is. The
+    // refusal that follows names the variable already in the shell rather than
+    // one the user has never typed.
+    for one in PROVIDERS {
+        assert_eq!(
+            keyed(&Settings::default(), &exported(&[(one.key, "")])),
+            one.name,
+            "{}",
+            one.key
+        );
+    }
+}
+
+#[test]
+fn every_variable_exported_blank_answers_the_same_way_every_run() {
+    // No key anywhere and nothing to tell the two apart, which is the machine
+    // that has never been set up at all.
+    let machine: Vec<(&str, &str)> = PROVIDERS.iter().map(|one| (one.key, "")).collect();
+
+    assert_eq!(keyed(&Settings::default(), &exported(&machine)), FALLBACK);
 }
 
 #[test]

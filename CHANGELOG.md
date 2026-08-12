@@ -23,6 +23,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A variable exported empty no longer outvotes the key beside it.**
+  `ANTHROPIC_API_KEY=` is how a shell turns that provider off, and crucible
+  counted it as a key held — so a machine with a real `OPENAI_API_KEY` beside it
+  opened on `claude-sonnet-5` and then refused to start over the variable
+  holding nothing. Only a variable holding a key picks the provider now. Where
+  none does, a blank one still names itself in the refusal, as before.
+
 - **A session claim that could not be attempted no longer reads as a filesystem
   with no locks.** Where the `.lock` file beside a log could not be made at all,
   `--continue` went ahead as though the check had run and found nothing, which

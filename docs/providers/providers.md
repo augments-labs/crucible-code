@@ -25,10 +25,15 @@ provider:
 
 With `--model` left off, nothing has named a provider at all, so the one your
 machine holds a key for is the one asked. Exactly one of the variables in
-[Keys](#keys) set is that provider; both set, or neither, is `anthropic` — the
-same answer for the same machine every run, rather than one that turns on which
-variables a shell exported. A provider pointed at another variable by
-`apiKeyEnv` is looked for under that name.
+[Keys](#keys) *holding a key* is that provider; both holding one, or neither, is
+`anthropic` — the same answer for the same machine every run, rather than one
+that turns on which variables a shell exported. A provider pointed at another
+variable by `apiKeyEnv` is looked for under that name.
+
+A variable exported empty holds no key, so it does not compete: a shell carrying
+`ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. Where nothing
+holds a key it still counts as the provider you were setting up, so the refusal
+that follows names the variable already in your shell.
 
 Naming a provider this build does not have is a startup failure that says which
 ones it has:
