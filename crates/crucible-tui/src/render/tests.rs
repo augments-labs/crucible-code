@@ -403,6 +403,136 @@ fn ending_a_live_region_takes_every_row_of_it_off_the_screen() {
     assert_eq!(render.parked, 0);
 }
 
+// Rows that stand under the tail: on screen for as long as the turn writing
+// above them, and in the record afterwards nowhere at all.
+
+/// What a turn stands under itself: one row, saying which mode it is running
+/// in.
+fn standing() -> Vec<Row> {
+    vec![Row::plain("ask mode on")]
+}
+
+#[test]
+fn a_standing_row_is_drawn_under_every_delta_that_arrives() {
+    // The tail, the row under it, and then back up onto the row the next delta
+    // appends to -- eleven columns along, where "the answer" stopped.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.terminal.take();
+
+    render.stream("the answer").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!("{}the answer\r\nask mode on\x1b[1A\x1b[11G", rewind(1))
+    );
+}
+
+#[test]
+fn a_line_committed_under_a_standing_row_still_lands_above_it() {
+    // A tool call arrives in the middle of a turn and belongs to the record, so
+    // it goes to scrollback -- above the row that is standing, not through it.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.terminal.take();
+
+    render.commit("$ cargo build").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!(
+            "{}$ cargo build\r\n\r\nask mode on\x1b[1A\x1b[1G",
+            rewind(1)
+        )
+    );
+}
+
+#[test]
+fn a_standing_row_never_reaches_the_record() {
+    // It says which mode the turn ran in, which is not something the turn said.
+    // Settled once a frame it would be most of the session's scrollback.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.stream("one").unwrap();
+    render.stream(" two").unwrap();
+    render.terminal.take();
+
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!("{}one two\r\n", rewind(1))
+    );
+    assert_eq!(render.drawn, 0);
+    assert_eq!(render.parked, 0);
+}
+
+#[test]
+fn a_standing_row_comes_back_after_a_question_was_asked_in_the_middle_of_a_turn() {
+    // The question settles the region to write itself, which takes the row off
+    // the screen. The turn is still running, so the next delta puts it back.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.stream("about to run").unwrap();
+    render.settle().unwrap();
+    render.terminal.take();
+
+    render.stream("carrying on").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!("{}carrying on\r\nask mode on\x1b[1A\x1b[12G", rewind(0))
+    );
+}
+
+#[test]
+fn taking_a_standing_row_back_leaves_the_tail_where_it_was() {
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.stream("the answer").unwrap();
+    render.terminal.take();
+
+    render.under(&[], Palette::plain()).unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!("{}the answer", rewind(1))
+    );
+    assert_eq!(render.drawn, 1);
+    assert_eq!(render.parked, 0);
+}
+
+#[test]
+fn a_prompt_drawn_over_a_standing_row_takes_it_off_the_screen() {
+    // Two claims on the bottom of the screen, and the box carries the mode
+    // itself. A rewind that stopped short of the row would leave it under the
+    // box, saying the same thing a second time.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.terminal.take();
+
+    let (rows, caret) = region();
+    render.live(&rows, caret, Palette::plain()).unwrap();
+
+    let written = render.terminal.written();
+    assert!(written.starts_with(&rewind(1)), "{written:?}");
+    assert_eq!(written.matches("ask mode on").count(), 0, "{written:?}");
+}
+
+#[test]
+fn a_redirected_run_stands_nothing_under_anything() {
+    // The reason a live region is not drawn into a pipe: there is no bottom row
+    // to hold something at, and the escapes that would hold it there end up in
+    // whatever kept the output.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.under(&standing(), Palette::plain()).unwrap();
+    render.stream("the answer\n").unwrap();
+    render.settle().unwrap();
+
+    assert_eq!(render.terminal.written(), "the answer\n");
+}
+
 #[test]
 fn a_redirected_run_draws_no_live_region_at_all() {
     // There is no cursor to park in a pipe, and the escapes that would park
