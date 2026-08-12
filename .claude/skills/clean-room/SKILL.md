@@ -2,9 +2,9 @@
 name: clean-room
 description: >-
   What you may read while writing crucible and what you may not. Use before
-  looking at another coding agent for reference, before copying a prompt, a UI
-  string, an escape sequence or an asset, and whenever a change reproduces
-  another tool's behaviour closely.
+  looking at another coding agent for reference, before reusing a prompt, a
+  help page or an asset, and whenever a change reproduces another tool's
+  behaviour closely. It also says which strings are too short to be in scope.
 ---
 
 # Clean room
@@ -40,17 +40,39 @@ So the rule is not "do not look". It is:
 
 ## Do not reproduce
 
-No code, prompt text, system prompt, tool description, UI string, help text,
-error message, ASCII art, icon or colour palette from any other harness —
-whether it reaches you from a repository, a decompiled binary, a leaked dump, a
-screenshot, or a blog post quoting it verbatim.
+No code, prompt text, system prompt, tool description, help or documentation
+page, ASCII art, icon or colour palette from any other harness — whether it
+reaches you from a repository, a decompiled binary, a leaked dump, a screenshot,
+or a blog post quoting it verbatim.
 
 Adapting counts. Renaming the variables in someone else's prompt is still their
-prompt; paraphrasing someone else's error message is still their error message.
+prompt; reordering the paragraphs of someone else's help page is still their
+help page.
 
 A permissive licence does not change this. oh-my-pi is MIT and would let you
 copy with attribution. crucible still does not, because what is at stake is the
 claim at the top of `CLAUDE.md`, not a licence obligation.
+
+## Short functional strings are not in scope
+
+`press ctrl+c again to exit`. `no such file`. `1 file changed`. The name of a
+key, a flag or a command. These are outside the rule, and were never really
+inside it: copyright does not reach a phrase that short, there is only so much
+room to say what a keystroke does, and the check nobody can run is whether two
+programs arrived at eight obvious words separately.
+
+The cost of pretending otherwise falls on the reader. Somebody who has used a
+terminal for twenty years knows what `press ctrl+c again to exit` means, and
+making them read our paraphrase of it buys nothing but our own scruple.
+
+So: where the words are forced, use the words. Where there is a choice worth
+making — a welcome screen, an error that has to explain something, anything long
+enough to have a voice — crucible makes its own. That second half is taste
+rather than law, and taste loses to the reader when the two disagree.
+
+The boundary is length and function together. Eight words naming a keystroke is
+a fact. A paragraph explaining why a permission was refused is writing, and
+writing is what the section above is about.
 
 ## Source and prompt files stay closed
 
@@ -76,6 +98,8 @@ open the tab.
 | "Claude Code writes `ESC ]0;…BEL` for its tab title — may I?" | Yes. That is OSC 0 from the terminal spec; every program that sets a title emits it. The *string inside it* must be crucible's own. |
 | "May I match its keybindings?" | Yes for conventions the terminal already owns — Ctrl-C, Ctrl-D, arrow history. No for a scheme that is recognisably one product's design. |
 | "May I use the same crate it uses?" | Yes. A public crate is a public crate. |
+| "It prints `press ctrl+c again to exit`. May I?" | Yes. Eight words naming a keystroke is a fact about the keystroke, not somebody's writing. |
+| "It has a paragraph explaining why a tool was refused. May I?" | No. That is long enough to have a voice, and the voice is theirs. |
 | "It is MIT — may I vendor one function?" | No. The licence permits it; the claim at the top of `CLAUDE.md` does not. |
 | "I want the same welcome banner shape." | No. Draw crucible's own. |
 | "Their docs name a feature well. May I use that name?" | A common noun, yes — `checkpoint`, `subagent`, `resume` are the vocabulary of the problem. A coined phrase that is recognisably theirs, no. |
@@ -94,6 +118,10 @@ What is fatal is finding out afterwards.
 
 Terminal agents converge because terminals constrain them. A prompt line, a
 streaming transcript, a permission question and a tool result block are the
-shape of the problem, not anybody's invention. Convergent solutions are fine.
-Convergent *text* is not — write every user-visible string as if the reader has
-never used another agent.
+shape of the problem, not anybody's invention. Convergent solutions are fine,
+and so is convergent phrasing where the phrase is forced — a keystroke has one
+obvious sentence and every terminal that mentions it lands near the same words.
+
+Where there is room to choose, choose. A welcome screen, a refusal that has to
+explain itself, anything the reader spends more than a glance on: write it as
+crucible would, not as a memory of another agent.
