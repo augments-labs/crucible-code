@@ -169,9 +169,26 @@ impl Runner {
     }
 
     /// The model this session is asking, as the provider spells it.
+    ///
+    /// Empty where nothing has chosen one. That is a session that can do
+    /// everything except take a turn, and the caller is what refuses the turn —
+    /// this crate is handed a name and does not decide which names are real.
     #[must_use]
     pub fn model(&self) -> &str {
         &self.model.name
+    }
+
+    /// Asks a different model from the next turn on.
+    ///
+    /// The provider is not changed and cannot be: which vendor is being written
+    /// to was settled by which credential the wiring resolved, and a name that
+    /// vendor does not serve comes back as its own refusal rather than as a
+    /// silent redirection to one that does.
+    ///
+    /// Reachable between turns, where [`Runner::switch`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub fn ask(&mut self, model: &str) {
+        self.model.name = model.into();
     }
 
     /// Hands the session out, for the caller that is finished driving turns.

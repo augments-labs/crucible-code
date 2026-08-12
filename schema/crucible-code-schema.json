@@ -170,6 +170,27 @@
         }
       },
       "type": "object"
+    },
+    "updates": {
+      "additionalProperties": false,
+      "description": "Whether crucible finds out that a newer release exists",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "check": {
+          "description": "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
+          "enum": [
+            "auto",
+            "never"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
     }
   },
   "title": "crucible configuration",

@@ -134,6 +134,21 @@ const OUTPUT: &[Field] = &[
     },
 ];
 
+/// Every answer `updates.check` accepts.
+pub(crate) const UPDATE_CHECK: &[&str] = &["auto", "never"];
+
+/// Whether crucible finds out that it is out of date.
+///
+/// A key rather than a fact about the build, because asking means reaching a
+/// server crucible was not asked to reach. `never` is the answer for a machine
+/// where that is not wanted, and it is the whole of what turns it off.
+const UPDATES: &[Field] = &[Field {
+    name: "check",
+    about: "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
+    shape: Shape::Choice(UPDATE_CHECK),
+    examples: &[],
+}];
+
 /// Every answer `permissions.mode` accepts.
 ///
 /// Spelled the way [`crucible_core::Mode`] spells it, so what the prompt line
@@ -218,6 +233,12 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "permissions",
         about: "What runs without being put to you, what is refused outright, and where tools may reach",
         shape: Shape::Fields(PERMISSIONS),
+        examples: &[],
+    },
+    Field {
+        name: "updates",
+        about: "Whether crucible finds out that a newer release exists",
+        shape: Shape::Fields(UPDATES),
         examples: &[],
     },
 ]);

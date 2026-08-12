@@ -29,6 +29,12 @@ fn plain() -> Terms {
         cancel: Cancel::new(),
         remembering: crucible_config::local(&unwritten),
 
+        // A provider, so `/model` has a name to write its answer under, and a
+        // file inside the same absent tree so nothing a test types reaches a
+        // configuration anybody keeps.
+        provider: Some("anthropic"),
+        choosing: unwritten.join("config.json"),
+
         // The same tree, equally absent: a loop these terms drive has no
         // sessions to list and none to pick up. What `/resume` does with ones
         // that are there is proved where they are recorded.

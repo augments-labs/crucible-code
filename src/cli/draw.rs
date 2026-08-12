@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput};
-use crucible_tui::{Renderer, Terminal, TerminalError, cut};
+use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, cut, fold};
 
 use super::remember::RememberError;
 use super::style::Style;
@@ -17,7 +17,7 @@ use super::style::Style;
 mod opening;
 pub(crate) mod when;
 
-pub(crate) use opening::opening;
+pub(crate) use opening::{Opening, opening};
 
 /// Dim, then back. Only for text that is written once and never redrawn.
 const DIM: &str = "\x1b[2m";
@@ -68,6 +68,28 @@ pub(crate) fn event<T: Terminal>(
             renderer.commit(&format!("! {}", clipped(error, style.output(columns))))
         }
     }
+}
+
+/// Says that there is nothing to ask, where a prompt was typed anyway.
+///
+/// The same words the session opened with, and drawn the same way: bold and in
+/// the accent, wrapped rather than clipped because the half that says what to
+/// do about it is the second half. A blank row on each side, so it reads as an
+/// answer to what was just typed rather than as the start of a turn.
+pub(crate) fn unconfigured<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: &str,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let columns = renderer.columns();
+    let rows: Vec<Row> = fold(said, columns)
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Strong, row))
+        .collect();
+
+    renderer.commit("")?;
+    renderer.present(&rows, style.palette())?;
+    renderer.commit("")
 }
 
 /// Says that the session log stopped recording.

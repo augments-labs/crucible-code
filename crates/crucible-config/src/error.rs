@@ -271,20 +271,23 @@ pub enum ConfigError {
         accepted: Accepted,
     },
 
-    /// A file a rule could not be added to without rewriting the rest of it.
+    /// A file an answer could not be written into without rewriting the rest of
+    /// it.
     ///
     /// The file is somebody's to edit, so the answer to not understanding its
     /// shape is to say what to type rather than to replace it with something
     /// crucible does understand.
     #[error(
-        "{file}: crucible could not add a rule to this file without rewriting \
-         what is already in it. Add {rule} to permissions.allow by hand"
+        "{file}: crucible could not change this file without rewriting what is \
+         already in it. Put {written} at {at} by hand"
     )]
     Unspliceable {
         /// The file, as the user would name it.
         file: Box<str>,
-        /// The rule that was to be written, so it can be pasted.
-        rule: Box<str>,
+        /// Where in the document the answer belongs, dotted.
+        at: Box<str>,
+        /// The answer, written the way JSON would hold it, so it can be pasted.
+        written: Box<str>,
     },
 
     /// The environment says nowhere to keep crucible's own files.

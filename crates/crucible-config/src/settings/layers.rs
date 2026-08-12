@@ -72,6 +72,18 @@ pub fn local(workspace: &Path) -> PathBuf {
     workspace.join(PROJECT).join(LOCAL)
 }
 
+/// Where this machine keeps the settings that follow the person rather than the
+/// checkout.
+///
+/// The other layer crucible itself writes to, and named here for the same
+/// reason: which file a model chosen at the prompt lands in is the same fact as
+/// which file it is read back from, and two answers to it would be a choice
+/// written where nothing looks.
+#[must_use]
+pub fn user(home: &Home) -> PathBuf {
+    home.path().join(FILE)
+}
+
 /// The three files, in the order they merge: furthest first.
 fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
     let project = workspace.join(PROJECT);

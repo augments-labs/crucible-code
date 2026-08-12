@@ -142,7 +142,7 @@ fn help_answers_with_a_name_and_what_it_does() {
         art(&listing(60, Glyphs::Unicode)),
         [
             "/help     what these are",
-            "/model    which model answers",
+            "/model    which model answers, or set one",
             "/mode     ask · allowEdits · fullAccess",
             "/resume   pick up an earlier session here",
             "/clear    forget what has been said",
@@ -157,7 +157,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
         art(&listing(60, Glyphs::Ascii)),
         [
             "/help     what these are",
-            "/model    which model answers",
+            "/model    which model answers, or set one",
             "/mode     ask, allowEdits, fullAccess",
             "/resume   pick up an earlier session here",
             "/clear    forget what has been said",

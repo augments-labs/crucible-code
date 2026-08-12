@@ -169,6 +169,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+# `cargo run` has six targets to choose between — this one and the five bench
+# probes under `src/bin/`, which cargo compiles as binaries of this package
+# whether or not a release ships them. Without this key it refuses to choose and
+# asks for `--bin`, which is a question about this repository's layout put to
+# somebody who only wanted to start crucible.
+default-run = "crucible"
+
 # One shipped binary. The short `cru` name is a symlink created by the
 # installer, not a second target — a second `[[bin]]` would compile and ship
 # the same code twice. Auxiliary binaries under `src/bin/` are bench probes and
@@ -188,6 +195,11 @@ crucible-provider.workspace = true
 crucible-runner.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
+# One answer to read: GitHub names the newest release in a JSON body, and the
+# release check here is the only thing in this package that reads a wire format
+# at all. Already in the workspace for the session log and the configuration
+# documents, so this is the same version compiled once.
+serde_json.workspace = true
 thiserror.workspace = true
 
 # The same runner, with the seam that lets a test hand it a log which fails on

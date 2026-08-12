@@ -9,13 +9,38 @@ use std::time::SystemTime;
 
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
-use crucible_tui::{Recent, Renderer, Terminal, TerminalError, Welcome};
+use crucible_tui::{Notice, Recent, Renderer, Terminal, TerminalError, Welcome};
 
+use crate::cli::NOTHING_TO_ASK;
+use crate::cli::release::Newer;
 use crate::cli::style::Style;
 
 use super::when;
 
-/// Draws the welcome and leaves a row under it.
+/// What stands where the model's name goes when nothing has chosen one.
+///
+/// The row is drawn either way. A welcome that simply left it out would look
+/// like a session with a model, seen at a narrow width.
+const UNCHOSEN: &str = "no model selected";
+
+/// Everything the opening says that it cannot work out for itself.
+///
+/// A struct rather than six parameters, because four of them are `&str`-shaped
+/// and a call with four of those in a row is one nobody can read.
+pub(crate) struct Opening<'a> {
+    /// The model this session will ask, or `None` where nothing chose one.
+    pub(crate) model: Option<&'a str>,
+    /// The directory being worked in.
+    pub(crate) workspace: &'a Workspace,
+    /// What was worked on here before, newest first.
+    pub(crate) sessions: &'a [Recorded],
+    /// A release newer than this one, where this machine has heard of one.
+    pub(crate) update: Option<&'a Newer>,
+    /// Whether to write colour, and what to draw with.
+    pub(crate) style: Style,
+}
+
+/// Draws the welcome, whatever has to be said under it, and leaves a row.
 ///
 /// The root is drawn because every tool path is relative to it, and a user who
 /// started crucible in the wrong directory should find out before the first
@@ -24,27 +49,32 @@ use super::when;
 /// Through [`Renderer::present`] rather than `commit`: these are rows crucible
 /// composed itself, so their colour is decided here by the palette rather than
 /// arriving as escape bytes inside a string. The blank row afterwards is the
-/// one thing the component does not draw — it says how wide it is, not what
+/// one thing a component does not draw — it says how wide it is, not what
 /// follows it.
+///
+/// The order under the welcome is the order of what the reader can act on. A
+/// release they do not have yet is a fact about the program and comes first; a
+/// session that cannot take a turn is a fact about this run and sits nearest
+/// the prompt where the answer gets typed.
 pub(crate) fn opening<T: Terminal>(
     renderer: &mut Renderer<T>,
-    model: &str,
-    workspace: &Workspace,
-    sessions: &[Recorded],
-    style: Style,
+    opening: &Opening<'_>,
 ) -> Result<(), TerminalError> {
-    let root = workspace.root().display().to_string();
+    let root = opening.workspace.root().display().to_string();
+    let style = opening.style;
 
     // The clock is read once, here, rather than per row: four rows drawn
     // against four different instants would be four sessions dated from four
     // different nows, and this is the only place that has one to read.
     let now = SystemTime::now();
-    let when: Vec<String> = sessions
+    let when: Vec<String> = opening
+        .sessions
         .iter()
         .map(|session| when::ago(session.started(), now))
         .collect();
 
-    let recent: Vec<Recent<'_>> = sessions
+    let recent: Vec<Recent<'_>> = opening
+        .sessions
         .iter()
         .zip(&when)
         .map(|(session, when)| Recent {
@@ -55,7 +85,7 @@ pub(crate) fn opening<T: Terminal>(
 
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
-        model,
+        model: opening.model.unwrap_or(UNCHOSEN),
         // Nothing crucible asks for yet. A line saying how hard the model is
         // being asked to think, drawn where no such request is being made,
         // would be the one thing on this screen that is not true.
@@ -64,11 +94,34 @@ pub(crate) fn opening<T: Terminal>(
         sessions: &recent,
     };
 
-    renderer.present(
-        &welcome.rows(renderer.columns(), style.glyphs()),
-        style.palette(),
-    )?;
-    renderer.commit("")
+    let columns = renderer.columns();
+    renderer.present(&welcome.rows(columns, style.glyphs()), style.palette())?;
+    renderer.commit("")?;
+
+    if let Some(newer) = opening.update {
+        let said = format!(
+            "New version {} is available. Download it from",
+            newer.version
+        );
+        let notice = Notice {
+            heading: "Update Available",
+            said: &said,
+            named: Some(&newer.from),
+        };
+
+        renderer.present(&notice.rows(columns, style.glyphs()), style.palette())?;
+        renderer.commit("")?;
+    }
+
+    // Bold and in the accent, which is the loudest this program gets, and not a
+    // notice between rules like the one above it: the rules are what say a
+    // block is about the release rather than about this run, and this one is
+    // about exactly this run.
+    if opening.model.is_none() {
+        super::unconfigured(renderer, NOTHING_TO_ASK, style)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -96,6 +149,21 @@ mod tests {
         workspace: &Workspace,
         sessions: &[Recorded],
     ) -> String {
+        shown(
+            columns,
+            terminal,
+            &Opening {
+                model: Some("claude-sonnet-5"),
+                workspace,
+                sessions,
+                update: None,
+                style: Style::plain(),
+            },
+        )
+    }
+
+    /// Whatever the opening was given, as it reaches the terminal.
+    fn shown(columns: usize, terminal: bool, opening: &Opening<'_>) -> String {
         let recording = if terminal {
             Recording::new(columns, 24)
         } else {
@@ -103,14 +171,7 @@ mod tests {
         };
         let mut renderer = Renderer::new(recording);
 
-        opening(
-            &mut renderer,
-            "claude-sonnet-5",
-            workspace,
-            sessions,
-            Style::plain(),
-        )
-        .expect("the opening to draw");
+        super::opening(&mut renderer, opening).expect("the opening to draw");
 
         renderer.terminal().written().to_string()
     }
@@ -218,6 +279,73 @@ mod tests {
                 assert!(!screen.contains(upward), "{columns}: {screen:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_session_with_nothing_to_ask_says_so_under_the_welcome() {
+        // The one screen somebody with a fresh install sees. It has to say both
+        // halves — how to authenticate, and how to choose — because neither on
+        // its own gets them to a turn.
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                model: None,
+                workspace: &workspace,
+                sessions: &[],
+                update: None,
+                style: Style::plain(),
+            },
+        );
+
+        assert!(screen.contains("No models available"), "{screen}");
+        assert!(screen.contains("/model"), "{screen}");
+        assert!(screen.contains(UNCHOSEN), "{screen}");
+    }
+
+    #[test]
+    fn a_session_that_can_take_a_turn_says_nothing_about_setting_one_up() {
+        let screen = opened(80, false);
+
+        assert!(!screen.contains("No models available"), "{screen}");
+    }
+
+    #[test]
+    fn a_newer_release_is_the_first_thing_under_the_welcome() {
+        // Above the warning on purpose: a release is a fact about the program
+        // and the warning is a fact about this run, so the one that is acted on
+        // at the prompt sits nearest the prompt.
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let newer = Newer {
+            version: "9.9.9".into(),
+            from: "https://example.test/releases".into(),
+        };
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                model: None,
+                workspace: &workspace,
+                sessions: &[],
+                update: Some(&newer),
+                style: Style::plain(),
+            },
+        );
+
+        let update = screen.find("Update Available").expect("the heading");
+        let warning = screen.find("No models available").expect("the warning");
+
+        assert!(screen.contains("New version 9.9.9"), "{screen}");
+        assert!(screen.contains("https://example.test/releases"), "{screen}");
+        assert!(update < warning, "{screen}");
+    }
+
+    #[test]
+    fn a_release_nobody_has_heard_of_draws_nothing_at_all() {
+        let screen = opened(80, false);
+
+        assert!(!screen.contains("Update Available"), "{screen}");
     }
 
     #[test]

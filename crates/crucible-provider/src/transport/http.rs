@@ -52,6 +52,35 @@ impl Https {
     }
 }
 
+impl Https {
+    /// Fetches `url`, for the caller asking a question of a server rather than
+    /// of a model.
+    ///
+    /// Inherent rather than a second method on [`Transport`]: that port is what
+    /// a provider sends through, and one method is the whole of what a provider
+    /// needs. Widening it would make every fake in this workspace implement a
+    /// verb no provider uses.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError`] if the request could not be sent. A response with a
+    /// status the caller dislikes is not an error.
+    pub fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, TransportError> {
+        let mut request = self.agent.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        match request.call() {
+            Ok(response) => Ok(Response {
+                status: response.status().as_u16(),
+                body: reader(response.into_body()),
+            }),
+            Err(problem) => Err(TransportError::Unreachable(problem.to_string().into())),
+        }
+    }
+}
+
 impl Default for Https {
     fn default() -> Self {
         Self::new()

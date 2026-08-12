@@ -3,37 +3,65 @@
 `--model` takes a model name, optionally qualified by the provider serving it.
 
 ```bash
-crucible --model claude-sonnet-5      # anthropic, because nothing said otherwise
+crucible --model claude-sonnet-5      # the provider whose key this machine holds
 crucible --model openai/gpt-5.6-terra # openai
 crucible --model openai/              # openai, asking for the model it is configured with
-crucible                              # the provider whose key this machine holds
+crucible                              # both halves left to the machine and your configuration
 ```
 
-An unqualified name goes to Anthropic. Only the **first** slash divides the two
-halves, so a model name that contains slashes of its own stays intact:
-`openai/meta/llama-4` asks the `openai` provider for `meta/llama-4`.
+Only the **first** slash divides the two halves, so a model name that contains
+slashes of its own stays intact: `openai/meta/llama-4` asks the `openai`
+provider for `meta/llama-4`.
 
-A provider and a bare slash names the provider and leaves the model to your
-[configuration](../configuration/configuration.md) — `providers.openai.model`. With nothing
-configured for it either, the model is the one this build pairs with that
-provider:
+## Which provider
 
-| Provider | Model |
-| --- | --- |
-| `anthropic` | `claude-sonnet-5` |
-| `openai` | `gpt-5.6-terra` |
-
-With `--model` left off, nothing has named a provider at all, so the one your
-machine holds a key for is the one asked. Exactly one of the variables in
-[Keys](#keys) *holding a key* is that provider; both holding one, or neither, is
-`anthropic` — the same answer for the same machine every run, rather than one
-that turns on which variables a shell exported. A provider pointed at another
-variable by `apiKeyEnv` is looked for under that name.
+Nothing but the qualified form names a provider outright. Everything else is
+settled by which key this machine holds, and by nothing else — **no provider is
+written into the build**. Exactly one of the variables in [Keys](#keys) holding
+a key is the provider asked, whatever model name you went on to type. That is
+what stops a machine set up for one vendor from sending a turn to the other.
 
 A variable exported empty holds no key, so it does not compete: a shell carrying
-`ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. Where nothing
-holds a key it still counts as the provider you were setting up, so the refusal
-that follows names the variable already in your shell.
+`ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. A provider
+pointed at another variable by `apiKeyEnv` is looked for under that name.
+
+Two keys and nothing choosing between them is a question rather than a coin
+toss:
+
+```
+crucible: more than one provider holds a key (ANTHROPIC_API_KEY, OPENAI_API_KEY),
+so which to ask is not decided; qualify the name as --model provider/model, or
+set providers.<name>.model for one of them
+```
+
+A model already chosen for exactly one of them — which is what `/model` writes
+down — answers it, so this is asked once and not every run.
+
+## Which model
+
+There is **no model built in**, and none of these rungs is a guess:
+
+1. `--model`, where it names one.
+2. `providers.<name>.model` in your
+   [configuration](../configuration/configuration.md), for the provider being
+   asked. A provider and a bare slash — `--model openai/` — is how you reach
+   this rung with the flag present.
+3. Nothing. crucible starts anyway and says so under the welcome:
+
+```
+Warning: No models available. Use /login or set an API key environment
+variable. Then use /model to select a model.
+```
+
+Everything except taking a turn works in that state, which is what leaves
+somewhere to type the answer. `/model <name>` asks for that model from the next
+turn on and writes it to `~/.crucible/config.json` under the provider this run
+is set up for, so the next run starts with it. `/model` on its own says which
+model is being asked.
+
+A model belongs to the provider serving it. crucible never writes a name under
+one provider and sends it to another — the pairing is settled once, from the key
+that was found, and the model rungs above are all read for that same provider.
 
 Naming a provider this build does not have is a startup failure that says which
 ones it has:

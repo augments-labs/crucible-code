@@ -30,14 +30,27 @@ fn exported<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String
     }
 }
 
+/// Which provider a flagless run on this machine lands on.
+fn lands(
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<Served>, Fatal> {
+    chosen(&Choice::default(), settings, from)
+}
+
 #[test]
 fn the_flag_names_the_model_over_anything_a_file_says() {
     let sample = Sample::new("model-flag");
     let settings = sample.settings(r#"{"providers": {"anthropic": {"model": "from-a-file"}}}"#);
 
     assert_eq!(
-        &*wanted(&choice("claude-opus-5"), &settings, serving("anthropic")),
-        "claude-opus-5"
+        wanted(
+            &choice("claude-opus-5"),
+            &settings,
+            Some(serving("anthropic"))
+        )
+        .as_deref(),
+        Some("claude-opus-5")
     );
 }
 
@@ -53,30 +66,49 @@ fn a_provider_with_no_model_after_it_takes_the_one_configured_for_it() {
     );
 
     assert_eq!(
-        &*wanted(&choice("openai/"), &settings, serving("openai")),
-        "gpt-5.6"
+        wanted(&choice("openai/"), &settings, Some(serving("openai"))).as_deref(),
+        Some("gpt-5.6")
     );
-
-    // And the default provider, which is what an absent flag resolves to.
     assert_eq!(
-        &*wanted(&choice(""), &settings, serving("anthropic")),
-        "claude-opus-5"
+        wanted(&Choice::default(), &settings, Some(serving("anthropic"))).as_deref(),
+        Some("claude-opus-5")
     );
 }
 
 #[test]
-fn a_model_named_nowhere_at_all_is_the_one_that_provider_is_built_with() {
-    // The rung that used to be one name for every provider, which made an
-    // openai run ask openai for a Claude. It is read from the same array the
-    // provider was found in, so a provider added later cannot be given one.
+fn a_model_named_nowhere_at_all_is_no_model() {
+    // The rung that used to be a name written into this build. It sent whatever
+    // model this binary was compiled with to whichever provider the key
+    // belonged to, which is the pairing nobody asked for. There is no such rung
+    // now, and the session says so rather than guessing.
     for one in PROVIDERS {
         let asked = wanted(
             &choice(&format!("{}/", one.name)),
             &Settings::default(),
-            one,
+            Some(one),
         );
 
-        assert_eq!(&*asked, one.model, "{}", one.name);
+        assert_eq!(asked, None, "{}", one.name);
+    }
+}
+
+#[test]
+fn a_model_configured_as_nothing_at_all_is_no_model() {
+    // A key written and left empty is a file that says nothing rather than one
+    // that asks for a model called "". Sent as it stands it would reach a
+    // vendor as a request for a model with no name.
+    let sample = Sample::new("model-blank");
+
+    for blank in ["", "   "] {
+        let settings = sample.settings(&format!(
+            r#"{{"providers": {{"anthropic": {{"model": "{blank}"}}}}}}"#
+        ));
+
+        assert_eq!(
+            wanted(&Choice::default(), &settings, Some(serving("anthropic"))),
+            None,
+            "{blank:?}"
+        );
     }
 }
 
@@ -86,32 +118,91 @@ fn a_run_that_named_no_provider_goes_to_the_one_whose_key_is_set() {
     // an Anthropic model, so the provider the session ran against was the one
     // there was nothing to authenticate with.
     for one in PROVIDERS {
-        assert_eq!(
-            keyed(&Settings::default(), &holding(&[one.key])),
-            one.name,
-            "{}",
-            one.key
-        );
+        let found = lands(&Settings::default(), &holding(&[one.key])).expect("one key, no doubt");
+
+        assert_eq!(found.map(|found| found.name), Some(one.name), "{}", one.key);
     }
 }
 
 #[test]
-fn a_machine_holding_every_key_or_none_answers_the_same_way_every_run() {
-    // Neither says which provider was meant, and an answer read off whichever
-    // variable came first would move between two runs of the same command.
-    let every = PROVIDERS.map(|one| one.key);
+fn a_bare_model_name_goes_to_the_provider_whose_key_is_set_and_never_to_a_fallback() {
+    // The same defect from the other side, and the one the user met:
+    // `--model gpt-5.6-terra` with only OPENAI_API_KEY exported went to
+    // Anthropic, because an unqualified name had a provider written into the
+    // parser. A name is now served by whoever this machine can authenticate to.
+    for one in PROVIDERS {
+        let found = chosen(
+            &choice("a-model-name"),
+            &Settings::default(),
+            &holding(&[one.key]),
+        )
+        .expect("one key, no doubt");
 
-    assert_eq!(keyed(&Settings::default(), &holding(&every)), FALLBACK);
-    assert_eq!(keyed(&Settings::default(), &holding(&[])), FALLBACK);
+        assert_eq!(found.map(|found| found.name), Some(one.name), "{}", one.key);
+    }
 }
 
 #[test]
-fn a_variable_exported_blank_loses_to_one_that_holds_a_key() {
-    // The defect, and the shell it happens in: `ANTHROPIC_API_KEY=` is how a
-    // machine turns that provider off, and it counted as a key held. A session
-    // set up with a real OPENAI_API_KEY beside it opened on a Claude and then
-    // refused over the variable holding nothing. Both ways round, so the tie is
-    // not being broken towards either provider, and every spelling of blank.
+fn a_machine_holding_no_key_at_all_has_no_provider() {
+    // Not a fallback and not a refusal to start: there is nothing to ask, and
+    // the session opens saying so with the prompt still there to set one up
+    // from.
+    assert!(
+        lands(&Settings::default(), &holding(&[]))
+            .expect("no key is not an error")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_machine_holding_every_key_and_choosing_none_is_asked_which() {
+    // Two providers set up and nothing choosing between them. Picking one would
+    // send the turn to a vendor over a coin toss, and the sentence back names
+    // both variables so the answer is a flag away.
+    let every = PROVIDERS.map(|one| one.key);
+
+    let problem = lands(&Settings::default(), &holding(&every)).expect_err("two keys, no choice");
+
+    let said = problem.to_string();
+    for one in PROVIDERS {
+        assert!(said.contains(one.key), "{said}");
+    }
+}
+
+#[test]
+fn a_machine_holding_every_key_takes_the_provider_a_model_was_chosen_for() {
+    // What `/model` writes down is an answer to this question, so the run after
+    // it does not ask again.
+    let sample = Sample::new("model-decides");
+    let settings = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
+    let every = PROVIDERS.map(|one| one.key);
+
+    let found = lands(&settings, &holding(&every)).expect("the file chose");
+
+    assert_eq!(found.map(|found| found.name), Some("openai"));
+}
+
+#[test]
+fn a_model_named_on_the_flag_does_not_let_a_file_settle_the_provider() {
+    // The file's answer is a choice of *model*, and the flag has already
+    // overruled it. Reading it to pick the provider would send the name that
+    // was typed to the vendor named beside a name that was not.
+    let sample = Sample::new("model-overruled");
+    let settings = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
+    let every = PROVIDERS.map(|one| one.key);
+
+    assert!(
+        chosen(&choice("claude-opus-5"), &settings, &holding(&every)).is_err(),
+        "the flag named a model, so the file cannot say who serves it"
+    );
+}
+
+#[test]
+fn a_variable_exported_blank_holds_no_key() {
+    // The shell it happens in: `ANTHROPIC_API_KEY=` is how a machine turns that
+    // provider off, and it used to count as a key held. Both ways round, so
+    // nothing is being tilted towards either provider, and every spelling of
+    // blank.
     for blank in ["", " ", "\n"] {
         for one in PROVIDERS {
             let machine: Vec<(&str, &str)> = PROVIDERS
@@ -128,9 +219,11 @@ fn a_variable_exported_blank_loses_to_one_that_holds_a_key() {
                 })
                 .collect();
 
+            let found = lands(&Settings::default(), &exported(&machine)).expect("one real key");
+
             assert_eq!(
-                keyed(&Settings::default(), &exported(&machine)),
-                one.name,
+                found.map(|found| found.name),
+                Some(one.name),
                 "{} against {blank:?}",
                 one.key
             );
@@ -139,48 +232,37 @@ fn a_variable_exported_blank_loses_to_one_that_holds_a_key() {
 }
 
 #[test]
-fn a_machine_whose_only_variable_is_blank_is_still_that_provider() {
-    // Nothing holds a key, so the blank one is the only evidence there is. The
-    // refusal that follows names the variable already in the shell rather than
-    // one the user has never typed.
-    for one in PROVIDERS {
-        assert_eq!(
-            keyed(&Settings::default(), &exported(&[(one.key, "")])),
-            one.name,
-            "{}",
-            one.key
-        );
-    }
-}
-
-#[test]
-fn every_variable_exported_blank_answers_the_same_way_every_run() {
-    // No key anywhere and nothing to tell the two apart, which is the machine
-    // that has never been set up at all.
+fn a_machine_whose_every_variable_is_blank_has_nothing_set_up() {
     let machine: Vec<(&str, &str)> = PROVIDERS.iter().map(|one| (one.key, "")).collect();
 
-    assert_eq!(keyed(&Settings::default(), &exported(&machine)), FALLBACK);
+    assert!(
+        lands(&Settings::default(), &exported(&machine))
+            .expect("blank is not a key")
+            .is_none()
+    );
 }
 
 #[test]
 fn the_variable_a_key_is_looked_for_in_is_the_one_the_configuration_names() {
     // A key kept under another name is still that provider's key. Reading only
-    // the vendor's usual name would miss it and land on the other provider.
+    // the vendor's usual name would miss it and leave the machine looking as
+    // though nothing were set up.
     let sample = Sample::new("keyed-variable");
     let settings =
         sample.settings(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
 
-    assert_eq!(keyed(&settings, &holding(&["WORK_OPENAI_KEY"])), "openai");
+    let found = lands(&settings, &holding(&["WORK_OPENAI_KEY"])).expect("one key");
+
+    assert_eq!(found.map(|found| found.name), Some("openai"));
 }
 
 #[test]
 fn a_model_configured_for_another_provider_is_not_configured_for_this_one() {
     let sample = Sample::new("model-elsewhere");
     let elsewhere = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
-    let anthropic = serving("anthropic");
 
     assert_eq!(
-        &*wanted(&choice(""), &elsewhere, anthropic),
-        anthropic.model
+        wanted(&Choice::default(), &elsewhere, Some(serving("anthropic"))),
+        None
     );
 }

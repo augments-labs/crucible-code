@@ -54,6 +54,14 @@ pub(crate) struct Terms {
     pub(crate) cancel: Cancel,
     /// The file an answer of `always` writes its rule into.
     pub(crate) remembering: PathBuf,
+    /// Which provider this session is set up to ask, where a key was found for
+    /// one. `/model` writes its answer under this name, and where there is none
+    /// there is no name to write it under.
+    pub(crate) provider: Option<&'static str>,
+    /// The file at home that `/model` writes its answer into. A model is a fact
+    /// about who is running crucible rather than about the checkout, so it is
+    /// not the file beside `remembering`.
+    pub(crate) choosing: PathBuf,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -128,6 +136,17 @@ pub(crate) fn converse<T: Terminal>(
         }
 
         if prompt.trim().is_empty() {
+            continue;
+        }
+
+        // Before the turn and not inside it, because a turn with no model is
+        // not a turn: the prompt would be recorded, a request would go out
+        // naming nothing, and the vendor's refusal would describe a model name
+        // that was never typed. `/model` is what changes this answer, so it is
+        // said again here rather than only under the welcome the session opened
+        // with — by now that has scrolled away.
+        if runner.model().is_empty() {
+            draw::unconfigured(renderer, super::NOTHING_TO_ASK, style)?;
             continue;
         }
 

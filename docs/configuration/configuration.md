@@ -59,11 +59,11 @@ crucible at another variable also points it away from the usual one: with
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
 ```
 
-That model is reached by naming the provider and no model — `crucible --model
-openai/`. A bare `crucible` uses `anthropic`, so it takes
-`providers.anthropic.model`, and falls back to `claude-sonnet-5` if nothing set
-one. Each provider has its own fallback, so `--model openai/` with nothing
-configured asks for `gpt-5.6-terra` rather than a model openai does not serve. See [Providers and models](../providers/providers.md).
+There is no model built in, so this is where a bare `crucible` gets one. It is
+read for the provider whose key this machine holds, and `/model <name>` writes
+it here for you. With nothing set here and nothing on the command line, crucible
+starts and asks rather than picking a model on your behalf. See
+[Providers and models](../providers/providers.md).
 
 ### `permissions`
 
@@ -117,6 +117,27 @@ is a font missing that character, and nothing about that reaches crucible — th
 bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
+
+### `updates`
+
+| Key | Means |
+| --- | --- |
+| `check` | `auto` to find out when a newer release exists, `never` to leave the network alone. |
+
+```json
+{ "updates": { "check": "never" } }
+```
+
+`auto` is the default and is the only thing crucible reaches the network for
+besides a turn. At most once a day, on a thread of its own, it asks GitHub which
+release is newest and writes the answer to `~/.crucible/release`; nothing waits
+for it, so the answer is drawn under the welcome the *next* time you start. No
+part of your session, your directory or your configuration is sent — the request
+is a plain GET for the repository's latest release, carrying a user agent that
+names crucible and its version.
+
+`never` stops the asking. crucible then never contacts GitHub, and never says
+anything about releases.
 
 ### `env`
 

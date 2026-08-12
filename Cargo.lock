@@ -224,6 +224,7 @@ dependencies = [
  "crucible-runner",
  "crucible-tools",
  "crucible-tui",
+ "serde_json",
  "thiserror",
 ]
 

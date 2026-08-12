@@ -19,10 +19,12 @@ use crate::shape::{DOCUMENT, Shape};
 mod layers;
 mod output;
 mod permissions;
+mod updates;
 mod variables;
 
-pub use layers::local;
+pub use layers::{local, user};
 pub use output::{Color, Glyphs, ToolDetail};
+pub use updates::Updates;
 pub use variables::ClearScreen;
 
 pub(crate) use variables::refused;

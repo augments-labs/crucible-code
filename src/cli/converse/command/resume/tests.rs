@@ -48,6 +48,8 @@ fn terms(sample: &Sample) -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         remembering: sample.root().join("unwritten.json"),
+        provider: Some("anthropic"),
+        choosing: sample.root().join("unwritten-home.json"),
         sessions: sample.logs(),
         workspace: sample.workspace(),
     }

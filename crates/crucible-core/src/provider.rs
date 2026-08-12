@@ -78,6 +78,15 @@ pub enum ProviderError {
     /// The user cancelled mid-stream.
     #[error("{0}: cancelled")]
     Cancelled(&'static str),
+
+    /// There is nothing set up to send the turn to.
+    ///
+    /// No provider is named, because that is the whole of the problem: no
+    /// credential was found for any of them. It reaches the user as a failed
+    /// turn rather than as a refusal to start, so that the session is still
+    /// there to set one up in.
+    #[error("{0}")]
+    Unconfigured(Box<str>),
 }
 
 /// One turn's worth of input to a model.

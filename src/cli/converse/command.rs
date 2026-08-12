@@ -23,8 +23,8 @@ use crucible_core::Mode;
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
 
-use crate::cli::Fatal;
 use crate::cli::style::Style;
+use crate::cli::{Fatal, NOTHING_TO_ASK, remember};
 
 use super::{Terms, mode};
 
@@ -104,7 +104,7 @@ impl Command {
     const fn says(self, glyphs: Glyphs) -> &'static str {
         match self {
             Self::Help => "what these are",
-            Self::Model => "which model answers",
+            Self::Model => "which model answers, or set one",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -222,11 +222,10 @@ fn answer<T: Terminal>(
             ..
         } => renderer.present(&listing(columns, glyphs), style.palette())?,
 
-        // A model name is read from configuration, so it is text that arrived.
         Wanted::Known {
             command: Command::Model,
-            ..
-        } => renderer.commit(runner.model())?,
+            rest,
+        } => asked(rest, renderer, runner, terms)?,
 
         Wanted::Known {
             command: Command::Mode,
@@ -247,6 +246,71 @@ fn answer<T: Terminal>(
             renderer.commit(&format!("! no such command: {word}"))?;
             renderer.commit("")?;
             renderer.present(&listing(columns, glyphs), style.palette())?;
+        }
+    }
+
+    Ok(())
+}
+
+/// `/model`: which model is being asked, or the one named, from the next turn
+/// on and from the next run on.
+///
+/// Written down as well as switched, because the answer to "which model" is the
+/// same answer every time this directory is opened and asking it once a session
+/// is asking it for ever. It goes to the file at home under the provider this
+/// run is set up for — a model belongs to the vendor that serves it, and a name
+/// written under the wrong one is the mismatch this release exists to stop.
+///
+/// A failure to write does not undo the switch. What is lost is the part that
+/// outlives the process, and the line drawn says so, which is the same bargain
+/// an answer of `always` is on.
+fn asked<T: Terminal>(
+    said: &str,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let style = terms.style;
+
+    if said.is_empty() {
+        // Read from configuration or off the command line either way, so it
+        // goes out the way arrived text goes out.
+        return match runner.model() {
+            "" => renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from),
+            name => renderer.commit(name).map_err(Fatal::from),
+        };
+    }
+
+    // Nothing holds a key, so there is no provider to write the name under and
+    // no vendor to send it to. Answering "chosen" here would be a session that
+    // says it is set up and refuses every turn.
+    let Some(provider) = terms.provider else {
+        return renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from);
+    };
+
+    runner.ask(said);
+    renderer.commit(&format!("{provider}/{said}"))?;
+
+    match remember::choosing(&terms.choosing, provider, said) {
+        Ok(()) => renderer.present(
+            &[Row::new().then(
+                Slot::Quiet,
+                clip(
+                    &format!("written to {}", terms.choosing.display()),
+                    renderer.columns(),
+                ),
+            )],
+            style.palette(),
+        )?,
+        Err(problem) => {
+            renderer.commit(&format!("! {problem}"))?;
+            renderer.present(
+                &[Row::new().then(
+                    Slot::Quiet,
+                    clip("asked for this session only", renderer.columns()),
+                )],
+                style.palette(),
+            )?;
         }
     }
 
