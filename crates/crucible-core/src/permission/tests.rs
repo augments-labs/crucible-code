@@ -1,10 +1,12 @@
+//! What the engine decides, asked over rules and modes the test put in force.
+
+use std::fs;
+use std::path::Path;
+
 use super::*;
 use crate::ids::ToolId;
 use crate::tool::ToolArgs;
-
-mod configuration;
-mod modes;
-mod walked;
+use crate::workspace::{Workspace, WorkspacePath, written};
 
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {
@@ -355,5 +357,449 @@ fn the_question_names_what_is_about_to_happen() {
     assert_eq!(
         running(&["git add .", "git commit"]).to_string(),
         "run git add ., then git commit"
+    );
+}
+
+// The one refusal that precedes rules and modes: no tool writes the files
+// the engine is configured from.
+
+#[test]
+fn no_mode_lets_a_tool_write_the_permission_configuration() {
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        let mut permission = with(mode, &[]);
+        let mut answer = Answer::once(Verdict::Allow);
+
+        assert!(
+            matches!(
+                permission.decide(
+                    &call("write"),
+                    &writing(".crucible/config.json"),
+                    &mut answer
+                ),
+                Settled::Forbidden
+            ),
+            "{mode} let the permission configuration be written"
+        );
+        assert_eq!(answer.asked, 0, "no answer could make this allowed");
+    }
+}
+
+#[test]
+fn no_rule_lets_a_tool_write_the_permission_configuration() {
+    // The refusal comes before the rules, because the rules are what a write
+    // here would rewrite. Both files feed the same engine on the next start,
+    // so both are covered.
+    let mut permission = with(Mode::Ask, &[(Disposition::Allow, "write(**)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    for file in [".crucible/config.json", ".crucible/config.local.json"] {
+        assert!(
+            matches!(
+                permission.decide(&call("write"), &writing(file), &mut answer),
+                Settled::Forbidden
+            ),
+            "{file} was written under an allow rule"
+        );
+    }
+    assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn the_configuration_is_covered_wherever_the_crucible_directory_is() {
+    // The home file has no spelling below the workspace root, and a directory
+    // deeper in the tree is what a session started there would read. The match
+    // is on the resolved path's own components, so both are the same case.
+    let mut permission = with(Mode::FullAccess, &[]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    let home = Sensitivity::MutatesFile {
+        target: Target::at("/home/somebody/.crucible/config.json", None),
+    };
+    assert!(matches!(
+        permission.decide(&call("write"), &home, &mut answer),
+        Settled::Forbidden
+    ));
+
+    assert!(matches!(
+        permission.decide(
+            &call("write"),
+            &writing("tools/agent/.crucible/config.local.json"),
+            &mut answer
+        ),
+        Settled::Forbidden
+    ));
+}
+
+#[test]
+fn only_the_configuration_itself_is_refused() {
+    // The neighbours stay ordinary: a directory that merely ends in
+    // `.crucible`, another file inside the real one, and reading the
+    // configuration, which is how every session starts.
+    let mut permission = with(Mode::FullAccess, &[]);
+    let mut answer = Answer::once(Verdict::Deny);
+
+    assert!(
+        permission
+            .decide(
+                &call("write"),
+                &writing("x.crucible/config.json"),
+                &mut answer
+            )
+            .ran()
+    );
+    assert!(
+        permission
+            .decide(
+                &call("write"),
+                &writing(".crucible/notes.json"),
+                &mut answer
+            )
+            .ran()
+    );
+    assert!(
+        permission
+            .decide(
+                &call("read"),
+                &reading(".crucible/config.json"),
+                &mut answer
+            )
+            .ran()
+    );
+}
+
+// The arm no rule matched, which is the only thing a mode decides — and the
+// two ways a mode is spelled for the person it is decided in front of.
+//
+// Each of these is a promise made in a word somebody typed once and then
+// stopped thinking about, so the shape worth testing is the boundary: what
+// `allowEdits` covers, and what it still stops at.
+
+/// A command something read closely enough to say it stays inside.
+fn confined(parts: &[&str]) -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: Command::Understood {
+            parts: parts.iter().map(|part| (*part).into()).collect(),
+            reach: Reach::Workspace,
+        },
+    }
+}
+
+#[test]
+fn a_read_is_allowed_without_asking_in_every_mode() {
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        let mut permission = with(mode, &[]);
+        let mut answer = Answer::once(Verdict::Deny);
+
+        assert!(
+            permission
+                .decide(&call("read"), &reading("src/a.rs"), &mut answer)
+                .ran(),
+            "{mode} must allow a read"
+        );
+        assert_eq!(answer.asked, 0, "{mode} must not prompt for a read");
+    }
+}
+
+#[test]
+fn a_deny_rule_holds_under_full_access() {
+    let mut permission = with(Mode::FullAccess, &[(Disposition::Deny, "bash(curl *)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(matches!(
+        permission.decide(
+            &call("bash"),
+            &running(&["curl http://example.invalid"]),
+            &mut answer
+        ),
+        Settled::Forbidden
+    ));
+    assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn an_ask_rule_holds_under_full_access() {
+    let mut permission = with(Mode::FullAccess, &[(Disposition::Ask, "bash(git push *)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(&call("bash"), &running(&["git push --force"]), &mut answer)
+            .ran()
+    );
+    assert_eq!(
+        answer.asked, 1,
+        "a mode decides the arm no rule matched, and nothing else"
+    );
+}
+
+#[test]
+fn allow_edits_writes_without_asking_but_still_asks_before_running_anything() {
+    let mut permission = with(Mode::AllowEdits, &[]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(&call("write"), &writing("src/a.rs"), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 0);
+
+    assert!(
+        permission
+            .decide(&call("bash"), &running(&["ls"]), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 1);
+}
+
+#[test]
+fn allow_edits_runs_a_command_that_reaches_no_further_than_an_edit() {
+    // The promise is about the workspace, not about which tool did it. A
+    // `mkdir` proved to land inside changes exactly what `write` may change,
+    // and asking about one while waving the other through is a distinction the
+    // person who typed `allowEdits` did not make.
+    let mut permission = with(Mode::AllowEdits, &[]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(&call("bash"), &confined(&["mkdir src/net"]), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn ask_still_asks_about_a_command_confined_to_the_workspace() {
+    // `ask` means ask. The reach is what `allowEdits` reads, and no other mode
+    // is entitled to quietly start reading it too.
+    let mut permission = with(Mode::Ask, &[]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(&call("bash"), &confined(&["mkdir src/net"]), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 1);
+}
+
+#[test]
+fn a_deny_rule_beats_a_command_confined_to_the_workspace() {
+    // Staying inside the workspace is what stops a question being asked, never
+    // what overrules the answer somebody wrote down in advance.
+    let mut permission = with(Mode::AllowEdits, &[(Disposition::Deny, "bash(rm *)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(matches!(
+        permission.decide(&call("bash"), &confined(&["rm -rf build"]), &mut answer),
+        Settled::Forbidden
+    ));
+    assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn full_access_asks_about_nothing() {
+    let mut permission = with(Mode::FullAccess, &[]);
+    let mut answer = Answer::once(Verdict::Deny);
+
+    assert!(
+        permission
+            .decide(&call("bash"), &running(&["rm -rf build"]), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn the_ring_goes_one_way_and_closes() {
+    // One key steps it, so there is no end to reach and no direction to
+    // choose. Three presses from anywhere is where you started.
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        assert_eq!(mode.next().next().next(), mode, "{mode}");
+        assert_ne!(mode.next(), mode, "{mode}");
+    }
+
+    // In the order they are written, which is least permissive first.
+    assert_eq!(Mode::Ask.next(), Mode::AllowEdits);
+    assert_eq!(Mode::AllowEdits.next(), Mode::FullAccess);
+}
+
+#[test]
+fn a_mode_is_spelled_one_way_to_type_and_another_way_to_read() {
+    // The row under the box is read while the mode is in force; the
+    // configuration file is typed. Neither string is the other's shortening.
+    assert_eq!(Mode::Ask.to_string(), "ask");
+    assert_eq!(Mode::Ask.sentence(), "ask mode on");
+
+    assert_eq!(Mode::AllowEdits.to_string(), "allowEdits");
+    assert_eq!(Mode::AllowEdits.sentence(), "allow edits on");
+
+    assert_eq!(Mode::FullAccess.to_string(), "fullAccess");
+    assert_eq!(Mode::FullAccess.sentence(), "full access mode on");
+}
+
+// What a walk still refuses, file by file.
+//
+// A verdict is reached about the directory a search walks, so every file
+// below it is one nobody was asked about, and a rule written about such a
+// file has no other moment to be honoured in. The target a walk builds is
+// spelled only the ways the denials in force will read, which is what these
+// pin: a spelling that stopped being built would read back as a path no
+// pattern names, and a denial would quietly stop covering a file.
+//
+// Each kind of pattern is put in force on its own as well as together. Two of
+// them together ask for both spellings between them, so a target would still
+// hold whichever one either pattern went on to read — the case that can tell
+// a pattern from its opposite is the one where only that pattern is written.
+
+/// How a denial was written, which is what decides the spelling it is read
+/// against.
+#[derive(Clone, Copy)]
+enum Written {
+    /// As an absolute path. Names `secret.env`.
+    Absolutely,
+    /// Relative to the workspace root. Names `sub/keys.txt`.
+    BelowRoot,
+}
+
+/// A workspace holding a file for each kind of denial to name, and a `grep`
+/// approved to walk it under exactly the denials asked for.
+struct Walk {
+    workspace: Workspace,
+    from: WorkspacePath,
+    approved: Approved,
+}
+
+impl Walk {
+    fn under(name: &str, denials: &[Written]) -> Self {
+        let base =
+            std::env::temp_dir().join(format!("crucible-walk-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("root");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("secret.env"), "k").unwrap();
+        fs::write(root.join("sub/keys.txt"), "k").unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let workspace = Workspace::open(&root).unwrap();
+        let from = workspace.existing(".").unwrap();
+
+        // None of them names the directory the walk starts at, so the call
+        // itself is allowed and what is left for them to stop is a file it
+        // reaches on its own.
+        let texts: Vec<String> = denials
+            .iter()
+            .map(|denial| match denial {
+                Written::Absolutely => {
+                    format!("grep({}/secret.env)", written(workspace.root()))
+                }
+                Written::BelowRoot => "grep(sub/keys.txt)".to_owned(),
+            })
+            .collect();
+
+        let mut permission = with(
+            Mode::FullAccess,
+            &texts
+                .iter()
+                .map(|text| (Disposition::Deny, text.as_str()))
+                .collect::<Vec<_>>(),
+        );
+
+        let mut answer = Answer::once(Verdict::Deny);
+        let settled = permission.decide(
+            &call("grep"),
+            &Sensitivity::ReadOnly {
+                target: Target::resolved(&workspace, &from),
+            },
+            &mut answer,
+        );
+
+        let Settled::Approved(approved) = settled else {
+            panic!("no denial names the directory the walk starts at, so it is allowed")
+        };
+
+        Self {
+            workspace,
+            from,
+            approved,
+        }
+    }
+
+    /// Whether the walk refuses a file below the root it started at.
+    fn refuses(&self, below: &str) -> bool {
+        self.reaching(&self.workspace.root().join(below))
+    }
+
+    /// Whether the walk refuses a path, wherever it came from.
+    fn reaching(&self, path: &Path) -> bool {
+        self.approved.denies(&self.workspace, &self.from, path)
+    }
+}
+
+impl Drop for Walk {
+    fn drop(&mut self) {
+        if let Some(base) = self.workspace.root().parent() {
+            let _ = fs::remove_dir_all(base);
+        }
+    }
+}
+
+#[test]
+fn a_denial_written_as_an_absolute_path_reaches_a_walked_file_on_its_own() {
+    let walk = Walk::under("absolutely", &[Written::Absolutely]);
+
+    assert!(walk.refuses("secret.env"), "the file it names");
+    assert!(
+        !walk.refuses("sub/keys.txt"),
+        "a file nothing in force names"
+    );
+}
+
+#[test]
+fn a_denial_written_below_the_root_reaches_a_walked_file_on_its_own() {
+    let walk = Walk::under("below-root", &[Written::BelowRoot]);
+
+    assert!(walk.refuses("sub/keys.txt"), "the file it names");
+    assert!(!walk.refuses("secret.env"), "a file nothing in force names");
+}
+
+#[test]
+fn both_kinds_of_denial_hold_together() {
+    let walk = Walk::under("together", &[Written::Absolutely, Written::BelowRoot]);
+
+    assert!(walk.refuses("secret.env"));
+    assert!(walk.refuses("sub/keys.txt"));
+    assert!(
+        !walk.refuses("src/main.rs"),
+        "a file no denial names must stay in the answer"
+    );
+}
+
+#[test]
+fn a_path_the_walk_could_not_have_descended_to_is_refused() {
+    let walk = Walk::under("not-descended", &[Written::BelowRoot]);
+
+    // Nothing written here names it. It is refused anyway: this call cannot
+    // say where such a path came from, and the answer that costs nothing is
+    // the one that keeps a file out of an answer.
+    assert!(walk.reaching(&walk.workspace.root().with_file_name("beside.txt")));
+}
+
+#[test]
+fn the_target_a_call_is_decided_about_holds_both_spellings() {
+    // The one built per file is spelled sparingly; the one built per call is
+    // not, and must not become so. A prompt shows the short spelling and the
+    // rule a "don't ask again" mints is written from it, so both have to be
+    // there however few of them the denials in force happen to read.
+    let walk = Walk::under("both-spellings", &[Written::BelowRoot]);
+    let file = walk.workspace.existing("sub/keys.txt").unwrap();
+    let target = Target::resolved(&walk.workspace, &file);
+
+    assert_eq!(target.below_root(), Some("sub/keys.txt"));
+    assert_eq!(
+        target.absolute(),
+        Some(&*written(&walk.workspace.root().join("sub/keys.txt")))
     );
 }
