@@ -1,19 +1,19 @@
 //! What a whole loop does: a turn, a question, and a window that changed.
 
+use std::cell::Cell;
+use std::io;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{Delta, Mode, Permission, Rules, StopReason};
+use crucible_core::{
+    Delta, Mode, Permission, Rules, Settled, StopReason, ToolArgs, ToolCall, ToolId,
+};
 use crucible_runner::{Model, Session, Tools};
-use crucible_tui::Recording;
+use crucible_tui::{Recording, Size, Terminal, TerminalError};
 
 use super::*;
-use crate::cli::fake::Script;
-use sink::{Breaking, Failing, Kept, Narrowing};
-
-mod asked;
-mod commanded;
-mod sink;
+use crate::cli::fake::{Fixed, Script, changing, running};
+use crate::cli::sample::Sample;
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
@@ -288,4 +288,468 @@ fn the_prompt_line_names_the_mode_in_force() {
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");
+}
+
+// What a question offers, and what the answer to it leaves behind.
+//
+// The turns either side of a question are the parent module's subject. This is
+// the moment in the middle, where the loop is drawing and waiting at once.
+
+/// The whole loop under terms of the test's own: what an answer leaves behind
+/// depends on where those terms point.
+fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str) -> String {
+    let runner = scripted(Script::new(rounds), offered);
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, terms, &mut input).expect("the loop to finish");
+
+    renderer.terminal().written().to_string()
+}
+
+fn tools(tool: Fixed) -> Tools {
+    let mut offered = Tools::new();
+    offered.add(Box::new(tool));
+    offered
+}
+
+/// The call the script below made, as the engine will be asked about it.
+fn asking(name: &str) -> ToolCall {
+    ToolCall {
+        id: ToolId::new("a"),
+        name: name.into(),
+        args: ToolArgs::new("{}"),
+    }
+}
+
+fn calling(name: &str) -> Vec<Delta> {
+    vec![
+        Delta::ToolStarted {
+            id: ToolId::new("a"),
+            name: name.into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ]
+}
+
+#[test]
+fn a_question_asked_mid_turn_is_answered_from_the_same_input() {
+    // The turn blocks on the answer while the loop is drawing its events.
+    // Both are on the one channel, so this deadlocks if they are not.
+    let written = conversing(
+        vec![calling("write"), saying("changed it")],
+        tools(Fixed::new("write", changing())),
+        "edit it\ny\n",
+    );
+
+    assert!(written.contains("wants to change"), "{written}");
+    assert!(written.contains("changed it"), "{written}");
+}
+
+#[test]
+fn refusing_a_tool_ends_the_turn_where_the_user_can_see_why() {
+    let written = conversing(
+        vec![calling("write")],
+        tools(Fixed::new("write", changing())),
+        "edit it\nn\n",
+    );
+
+    assert!(written.contains("write was not allowed"), "{written}");
+}
+
+#[test]
+fn a_question_left_unanswered_at_end_of_input_is_refused() {
+    // The input ends mid-question. Nothing consented, so nothing runs, and
+    // the loop still returns instead of waiting on a pipe that is closed.
+    let written = conversing(
+        vec![calling("write")],
+        tools(Fixed::new("write", changing())),
+        "edit it\n",
+    );
+
+    assert!(written.contains("was not allowed"), "{written}");
+}
+
+#[test]
+fn an_answer_of_always_is_on_the_disk_before_the_next_turn_is_asked_for() {
+    // The whole path, end to end: the rule the question offered is the rule
+    // that reaches the file, and the file is the one crucible reads at start-up.
+    let sample = Sample::new("converse-always");
+    let terms = Terms {
+        remembering: crucible_config::local(&sample.root()),
+        ..plain()
+    };
+
+    let written = answering(
+        &terms,
+        vec![calling("bash"), saying("done")],
+        tools(Fixed::new("bash", running("ls"))),
+        "go\na\n",
+    );
+
+    assert!(written.contains("remembered bash(ls)"), "{written}");
+    assert!(
+        matches!(
+            sample.settles(&asking("bash"), &running("ls")),
+            Settled::Approved(_)
+        ),
+        "the rule is not in {}",
+        crucible_config::local(&sample.root()).display()
+    );
+}
+
+#[test]
+fn a_call_no_rule_can_be_written_for_writes_nothing_when_always_is_typed() {
+    // The question did not offer `always`, so the word is one the prompt has
+    // no answer for. Nothing runs and nothing is written down — the failure
+    // that leaves the user to answer again rather than one that quietly
+    // widens what a file allows.
+    let sample = Sample::new("converse-unwritable");
+    let terms = Terms {
+        remembering: crucible_config::local(&sample.root()),
+        ..plain()
+    };
+
+    let written = answering(
+        &terms,
+        vec![calling("write")],
+        tools(Fixed::new("write", changing())),
+        "go\na\n",
+    );
+
+    assert!(written.contains("was not allowed"), "{written}");
+    assert!(
+        !crucible_config::local(&sample.root()).exists(),
+        "a file was written for a call no rule can be minted from"
+    );
+}
+
+#[test]
+fn yes_allows_this_call_only() {
+    assert_eq!(
+        verdict(Some("y\n"), true),
+        (Verdict::Allow, Remember::Never)
+    );
+    assert_eq!(
+        verdict(Some("yes"), true),
+        (Verdict::Allow, Remember::Never)
+    );
+}
+
+#[test]
+fn session_allows_calls_like_it_until_crucible_exits() {
+    assert_eq!(
+        verdict(Some("s\n"), true),
+        (Verdict::Allow, Remember::Session)
+    );
+    assert_eq!(
+        verdict(Some("session"), true),
+        (Verdict::Allow, Remember::Session)
+    );
+}
+
+#[test]
+fn always_allows_calls_like_it_from_now_on() {
+    // The answer that costs a file. It is a different word from `session`
+    // because it is a different promise, and one of the two outlives the
+    // process that made it.
+    assert_eq!(
+        verdict(Some("a\n"), true),
+        (Verdict::Allow, Remember::Always)
+    );
+    assert_eq!(
+        verdict(Some("always"), true),
+        (Verdict::Allow, Remember::Always)
+    );
+}
+
+#[test]
+fn always_is_not_an_answer_where_no_rule_can_be_written() {
+    // The question did not offer it, so it is a word the user typed at a
+    // prompt that has no such answer — and the failure worth having is the
+    // one where nothing runs.
+    assert_eq!(
+        verdict(Some("a\n"), false),
+        (Verdict::Deny, Remember::Never)
+    );
+    assert_eq!(
+        verdict(Some("always"), false),
+        (Verdict::Deny, Remember::Never)
+    );
+}
+
+#[test]
+fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
+    // Including the empty line, which is what someone types when they meant
+    // to read the question first. A refusal covers the call it refused and no
+    // other, so there is nothing for a duration to hold.
+    for answer in ["n", "no", "", "\n", "yeah", "Y E S", "1"] {
+        assert_eq!(
+            verdict(Some(answer), true),
+            (Verdict::Deny, Remember::Never),
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn end_of_input_is_a_refusal() {
+    // A pipe that closed mid-question cannot consent to anything.
+    assert_eq!(verdict(None, true), (Verdict::Deny, Remember::Never));
+}
+
+// What a command does to the loop it was typed into.
+//
+// Which lines are commands at all is settled in [`super::command`],
+// over strings and without a terminal. What is left for here is everything
+// that needs the loop running: that a command costs the provider nothing, that
+// it answers on the screen, that `/mode` moves the mode the next prompt is
+// taken under, and that `/exit` ends the session with the lines after it
+// unread.
+
+/// The whole loop over lines that ask for no turn: what was drawn, and the
+/// count that says the provider was never reached.
+fn commanding(typed: &str) -> (String, usize) {
+    over(Script::new(vec![saying("answered")]), Tools::new(), typed)
+}
+
+#[test]
+fn a_command_is_answered_here_rather_than_by_the_model() {
+    let (written, asked) = commanding("/help\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("/model"), "{written}");
+    assert!(written.contains("which model answers"), "{written}");
+}
+
+#[test]
+fn the_model_a_session_is_asking_is_the_one_it_was_built_with() {
+    let (written, _) = commanding("/model\n");
+
+    assert!(written.contains("script"), "{written}");
+}
+
+#[test]
+fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is() {
+    // Said back so it can be seen to be a typo, and the list under it so the
+    // next thing typed is the right one. Nothing is a turn: a mistyped command
+    // that reached the provider would be a request paid for by a slip.
+    let (written, asked) = commanding("/hlep\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("! no such command: /hlep"), "{written}");
+    assert!(written.contains("what these are"), "{written}");
+}
+
+#[test]
+fn a_line_that_opens_with_a_path_is_a_prompt_and_takes_a_turn() {
+    let (written, asked) = commanding("/etc/hosts is wrong\n");
+
+    assert_eq!(asked, 1, "{written}");
+    assert!(written.contains("answered"), "{written}");
+}
+
+#[test]
+fn naming_a_mode_puts_the_session_in_it() {
+    // Read off the mark in front of the next line, which is where a session
+    // with no box to type into says which mode it is in. The mode is the
+    // engine's, so this is also what says the switch outlived the command.
+    let (written, asked) = commanding("/mode allowEdits\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("allow edits on"), "{written}");
+    assert!(written.contains("allowEdits › "), "{written}");
+}
+
+#[test]
+fn asking_which_mode_is_in_force_changes_none_of_it() {
+    let (written, _) = commanding("/mode\n");
+
+    assert!(written.contains("ask mode on"), "{written}");
+    assert!(
+        written.contains("ask · allowEdits · fullAccess"),
+        "{written}"
+    );
+    assert!(!written.contains("allowEdits › "), "{written}");
+}
+
+#[test]
+fn a_word_that_names_no_mode_leaves_the_session_where_it_was() {
+    let (written, _) = commanding("/mode sideways\n");
+
+    assert!(written.contains("! sideways is not a mode"), "{written}");
+    assert!(
+        written.contains("ask · allowEdits · fullAccess"),
+        "{written}"
+    );
+    assert!(!written.contains("mode on"), "{written}");
+}
+
+#[test]
+fn forgetting_says_how_much_it_forgot_and_leaves_the_session_running() {
+    // The turn before it is what there is to forget: a prompt and the answer to
+    // it. The line after it is answered as normal, which is the difference
+    // between forgetting a session and ending one.
+    let (written, asked) = commanding("hello\n/clear\nhello again\n");
+
+    assert_eq!(asked, 2, "{written}");
+    assert!(written.contains("forgotten: 2 messages"), "{written}");
+    assert!(
+        written.contains("what is on screen stays where it is"),
+        "{written}"
+    );
+}
+
+#[test]
+fn forgetting_before_anything_was_said_says_there_was_nothing_to_forget() {
+    let (written, asked) = commanding("/clear\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("nothing had been said"), "{written}");
+}
+
+#[test]
+fn asking_what_was_worked_on_here_costs_no_turn_and_leaves_the_loop_running() {
+    // These terms are pointed at a directory nothing was ever recorded in, so
+    // the list is the empty one — which is the answer the loop has to carry
+    // just as far as any other. What the list says when there is something on
+    // it, and what picking one off it does, is proved where the sessions are.
+    let (written, asked) = commanding("/resume\nhello\n");
+
+    assert_eq!(asked, 1, "{written}");
+    assert!(
+        written.contains("nothing has been worked on here yet"),
+        "{written}"
+    );
+    assert!(written.contains("answered"), "{written}");
+}
+
+#[test]
+fn leaving_ends_the_session_with_what_follows_it_unread() {
+    let (written, asked) = commanding("/exit\nand this\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(!written.contains("answered"), "{written}");
+}
+
+// A terminal and a log that do what a real one will not do on request.
+//
+// What the loop writes to is where several of its promises are kept: the
+// window is read again at every prompt, a write that fails must not take the
+// turn's own record with it, and a log has to be finished by whichever thread
+// is holding it. None of that can be driven from a real terminal on a real
+// disk, so each of these is one thing going wrong, on purpose, at a moment a
+// test chose.
+
+/// A terminal that narrows to ten columns once the renderer has read the size
+/// it starts with.
+///
+/// The loop owns the renderer for its whole run, so nothing outside can resize
+/// between turns the way a user does. This one resizes itself.
+pub(super) struct Narrowing {
+    inner: Recording,
+    asked: Cell<usize>,
+}
+
+impl Narrowing {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Recording::new(80, 24),
+            asked: Cell::new(0),
+        }
+    }
+
+    pub(super) fn written(&self) -> &str {
+        self.inner.written()
+    }
+}
+
+impl Terminal for Narrowing {
+    fn size(&self) -> Result<Size, TerminalError> {
+        let asked = self.asked.get();
+        self.asked.set(asked + 1);
+
+        Ok(Size {
+            columns: if asked == 0 { 80 } else { 10 },
+            rows: 24,
+        })
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
+/// A terminal that takes `left` writes and refuses everything after them, the
+/// way one whose window has been closed does.
+pub(super) struct Breaking {
+    pub(super) inner: Recording,
+    pub(super) left: usize,
+}
+
+impl Terminal for Breaking {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            return Err(TerminalError::Io(io::ErrorKind::BrokenPipe.into()));
+        }
+
+        self.left -= 1;
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
+/// A log that fails every write, the way a full disk does.
+pub(super) struct Failing;
+
+impl io::Write for Failing {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            "no space left on device",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A log the test can read back once the session has finished writing it.
+#[derive(Debug)]
+pub(super) struct Kept(pub(super) Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Kept {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .expect("a lock nothing panicked in")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
