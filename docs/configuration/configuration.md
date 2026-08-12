@@ -33,7 +33,7 @@ which is what makes a project's settings a property of the checkout rather than
 of the shell that launched it.
 
 The command line is a fourth layer and is nearer than all three: `--model
-openai/gpt-5.2` wins over anything a file says.
+openai/gpt-5.6-terra` wins over anything a file says.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
@@ -56,13 +56,14 @@ crucible at another variable also points it away from the usual one: with
 `"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at all.
 
 ```json
-{ "providers": { "openai": { "model": "gpt-5.2" } } }
+{ "providers": { "openai": { "model": "gpt-5.6-terra" } } }
 ```
 
 That model is reached by naming the provider and no model — `crucible --model
 openai/`. A bare `crucible` uses `anthropic`, so it takes
 `providers.anthropic.model`, and falls back to `claude-sonnet-5` if nothing set
-one. See [Providers and models](../providers/providers.md).
+one. Each provider has its own fallback, so `--model openai/` with nothing
+configured asks for `gpt-5.6-terra` rather than a model openai does not serve. See [Providers and models](../providers/providers.md).
 
 ### `permissions`
 
@@ -217,7 +218,7 @@ Say `~/.crucible/config.json` holds this:
 
 ```json
 { "providers": { "anthropic": { "model": "claude-opus-5" },
-                 "openai":    { "model": "gpt-5.2" } },
+                 "openai":    { "model": "gpt-5.6-terra" } },
   "output": { "toolDetail": "full" },
   "permissions": { "deny": ["read(.env)"] } }
 ```
@@ -225,11 +226,11 @@ Say `~/.crucible/config.json` holds this:
 and the project's `.crucible/config.json` holds this:
 
 ```json
-{ "providers": { "openai": { "model": "gpt-5.2-mini" } },
+{ "providers": { "openai": { "model": "gpt-5.6-sol" } },
   "permissions": { "allow": ["bash(cargo test)"] } }
 ```
 
-In that project: `openai` asks for `gpt-5.2-mini`, `anthropic` still asks for
+In that project: `openai` asks for `gpt-5.6-sol`, `anthropic` still asks for
 `claude-opus-5`, `toolDetail` is still `full`, and both permission rules are in
 force.
 

@@ -38,7 +38,7 @@ const KEY: &str = "bench-not-a-key";
 const CONFIG: &str = r#"{
   "providers": {
     "anthropic": {"model": "claude-sonnet-5", "apiKeyEnv": "ANTHROPIC_API_KEY"},
-    "openai": {"model": "gpt-5.2"}
+    "openai": {"model": "gpt-5.6-terra"}
   },
   "env": {"RUST_LOG": "warn", "PAGER": "cat"},
   "output": {"color": "auto", "toolDetail": "compact"}
