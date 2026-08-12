@@ -30,7 +30,7 @@ use clap::Parser;
 use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
 use crucible_runner::SessionError;
-use crucible_tui::{Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
+use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
@@ -123,6 +123,10 @@ pub(crate) enum Fatal {
     /// The terminal would not take a title.
     #[error(transparent)]
     Title(#[from] TitleError),
+
+    /// The terminal would not hand over the keys as they are pressed.
+    #[error(transparent)]
+    Raw(#[from] RawError),
 
     /// The command line named a provider this is not built with.
     #[error("no provider called {named}; this build has {}", PROVIDERS.join(", "))]

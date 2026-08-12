@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A prompt is typed into a box, with the mode in force written under it.** The
+  line is drawn as it arrives — the arrows, home, end, backspace, and a window
+  that follows the cursor along a line wider than the terminal. A run whose
+  input or output is redirected has no box and reads whole lines as before.
+
 - **A session opens with a welcome screen rather than two lines.** The release,
   the model and the working directory sit beside what the prompt reacts to. It
   fits itself to the terminal: two columns at eighty and above, one below that,
@@ -44,6 +49,10 @@ Notable changes to crucible. Format follows
   wide the same text is.
 
 ### Changed
+
+- **<kbd>Ctrl-C</kbd> at the prompt throws the line away rather than ending
+  crucible.** Pressing it again on an empty box leaves, as <kbd>Ctrl-D</kbd>
+  does. During a turn it is the signal it always was.
 
 - **A window resized during a redirected run flushes what is live.** `crucible >
   out.txt` used to drop the rows still in the live region, losing that much of

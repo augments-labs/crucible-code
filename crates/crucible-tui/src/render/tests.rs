@@ -2,6 +2,8 @@
 
 use unicode_width::UnicodeWidthStr;
 
+mod live;
+
 use super::*;
 use crate::terminal::Recording;
 

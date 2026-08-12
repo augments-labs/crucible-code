@@ -9,7 +9,7 @@ use crate::color::Slot;
 use crate::row::Row;
 use crate::width;
 
-use super::glyphs::Glyphs;
+use crate::glyphs::Glyphs;
 
 /// The name the frame carries, which is also the program's.
 const NAME: &str = "crucible";

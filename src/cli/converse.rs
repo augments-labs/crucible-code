@@ -5,11 +5,13 @@
 //! be answered, and it is why no lock appears anywhere on the render path: the
 //! only thread that writes to the terminal is the one running this loop.
 //!
-//! Standard input is left in cooked mode for 0.0.1. The consequence worth
-//! knowing: Ctrl-C during a turn ends the process, because catching a signal
-//! would need `unsafe`, which this workspace forbids. The session log is
-//! append-only and written as the turn goes, so `--continue` picks the
-//! session up from wherever it stopped.
+//! A prompt is typed into the box [`typing`] draws, and everything else on this
+//! thread is read as a line the terminal collected. Raw mode is therefore held
+//! only while a line is being written, which is what leaves the rest of the
+//! session as it was: Ctrl-C during a turn ends the process, because catching a
+//! signal would need `unsafe`, which this workspace forbids. The session log is
+//! append-only and written as the turn goes, so `--continue` picks the session
+//! up from wherever it stopped.
 
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -25,8 +27,11 @@ use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use typing::Asked;
 
-/// What the user types after.
+mod typing;
+
+/// What the user types after, where there is no box to type into.
 const MARK: &str = "› ";
 
 /// What every turn in a conversation is taken under.
@@ -60,26 +65,50 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
-    // The mode in force, in front of every prompt, spelled the way
-    // configuration spells it. It is on screen every time rather than said
-    // once at the top because the moment it matters is hours in, when the top
-    // has scrolled away — a `fullAccess` session must not be distinguishable
-    // from an `ask` one only by what the user remembers starting.
-    let mark = format!("{} {MARK}", terms.mode);
+    // The mode in force, spelled the way configuration spells it. It is on
+    // screen every time rather than said once at the top because the moment it
+    // matters is hours in, when the top has scrolled away — a `fullAccess`
+    // session must not be distinguishable from an `ask` one only by what the
+    // user remembers starting. The box says it under itself; a redirected run
+    // has only the row the prompt is read on, so it says it there.
+    let mode = terms.mode.to_string();
+    let mark = format!("{mode} {MARK}");
 
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
 
     loop {
-        // The window may have changed while the last turn was streaming.
-        // Noticed here rather than as it happens because catching the signal a
-        // resize sends needs `unsafe`, so a prompt is the only moment there is:
-        // what a resize costs in 0.0.1 is the turn it lands in, not the session.
+        // The window may have changed while the last turn was streaming. The
+        // box notices a resize as it happens, because in raw mode the terminal
+        // reports one; between turns there is nobody reading, so it is noticed
+        // here instead.
         renderer.resized()?;
-        draw::mark(renderer, &mark, style)?;
 
-        let Some(prompt) = read(input)? else { break };
+        let prompt = match typing::ask(renderer, style, &mode)? {
+            Asked::Said(said) => said,
+            Asked::Ended => break,
+
+            // Nothing to type into: no terminal, or one at only one end. The
+            // line is read the way every other answer on this thread is.
+            Asked::Untyped => {
+                draw::mark(renderer, &mark, style)?;
+
+                let Some(said) = read(input)? else {
+                    // The mark is still the last thing on its row, and nothing
+                    // but this ends it. Without it, whatever comes next is
+                    // drawn on top of `ask › ` — a report below, or the shell's
+                    // own prompt once crucible is gone, which is every ordinary
+                    // exit. The box needs none of this: it takes its own rows
+                    // back before it returns.
+                    draw::ended(renderer)?;
+                    break;
+                };
+
+                said
+            }
+        };
+
         if prompt.trim().is_empty() {
             continue;
         }
@@ -91,12 +120,6 @@ pub(crate) fn converse<T: Terminal>(
             told = true;
         }
     }
-
-    // The prompt the loop just broke at is still the last thing on its row, and
-    // nothing but this ends it. Without it, whatever comes next is drawn on top
-    // of `ask › ` — a report below, or the shell's own prompt once crucible is
-    // gone, which is every ordinary exit.
-    draw::ended(renderer)?;
 
     // The writer thread is usually still holding the last turn when the loop
     // ends, so the poll above cannot be relied on to have seen a failure

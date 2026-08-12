@@ -90,18 +90,22 @@ It opens with the version, the model, and the root it is standing on:
 crucible <version> · claude-sonnet-5
 /home/you/code/my-project
 
-ask › 
+╭────────────────────────────────────────────────────────────╮
+│ ›                                                          │
+╰────────────────────────────────────────────────────────────╯
+ask
 ```
 
-The mode in force is on the prompt line every time — `ask` is the one nothing
-configured gives you, and [Permissions](../permissions/index.md) is where the
-others are.
+The box is as wide as the terminal, and a line longer than it scrolls inside it
+rather than wrapping. Under it is the mode in force, every time — `ask` is the
+one nothing configured gives you, and [Permissions](../permissions/index.md) is
+where the others are.
 
-Type a prompt and press enter. The answer streams in as it is produced. Tool
-calls appear as they run:
+Type a prompt and press enter. The box goes, the line stays where it was, and
+the answer streams in under it. Tool calls appear as they run:
 
 ```
-ask › what does the runner do when a tool fails?
+› what does the runner do when a tool fails?
 
 · read {"path":"crates/crucible-runner/src/runner.rs"}
        1	//! The turn loop. (+238 lines)
@@ -109,14 +113,22 @@ ask › what does the runner do when a tool fails?
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
 
-ask › 
+╭────────────────────────────────────────────────────────────╮
+│ ›                                                          │
+╰────────────────────────────────────────────────────────────╯
+ask
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 A call that failed is marked `✗`.
 
-Press <kbd>Ctrl-D</kbd> on an empty prompt to leave.
+<kbd>Ctrl-C</kbd> throws away a line you are part-way through; pressing it again
+on an empty box leaves, and so does <kbd>Ctrl-D</kbd>.
+
+A run whose input or output is redirected gets no box: `crucible < prompts.txt`
+reads whole lines, one prompt each, and the mode is written in front of them
+instead.
 
 ## When an answer stops early
 

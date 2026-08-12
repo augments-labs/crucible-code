@@ -17,10 +17,12 @@ use crate::terminal::{Size, Terminal, TerminalError};
 
 mod frame;
 mod plain;
+mod region;
 mod screen;
 mod tail;
 
 use frame::Frame;
+pub use region::Caret;
 use tail::Tail;
 
 /// Draws the transcript into the terminal's scrollback.
@@ -32,9 +34,16 @@ pub struct Renderer<T: Terminal> {
     /// duplicating the wrap. Its bound is one, so every row it is given
     /// overflows immediately instead of staying live.
     finished: Tail,
-    /// Rows of tail currently on screen. What the next frame must move back
-    /// over, and the only piece of screen state this process tracks.
+    /// Rows currently on screen. What the next frame must move back over, and
+    /// one of the two pieces of screen state this process tracks.
     drawn: usize,
+    /// How many of those rows sit *below* the cursor.
+    ///
+    /// Zero for everything streamed, where the cursor is left at the end of the
+    /// last row written. A prompt parks it on the row being typed instead, so
+    /// the way back to the top of the region is that many rows shorter than the
+    /// region is tall.
+    parked: usize,
     /// The size the tail is currently wrapped and bounded for.
     ///
     /// Rows as much as columns: the bound is the height, so a window that only
@@ -45,6 +54,8 @@ pub struct Renderer<T: Terminal> {
     frame: Frame,
     /// Reused across frames: rows leaving the tail on their way to scrollback.
     overflow: Vec<String>,
+    /// Reused across frames: the rows of a live region, painted by [`region`].
+    painted: Vec<String>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -68,9 +79,11 @@ impl<T: Terminal> Renderer<T> {
             finished: Tail::new(size.columns, 1),
             terminal,
             drawn: 0,
+            parked: 0,
             size,
             frame: Frame::new(),
             overflow: Vec::new(),
+            painted: Vec::new(),
         }
     }
 
@@ -134,6 +147,57 @@ impl<T: Terminal> Renderer<T> {
         self.terminal.flush()
     }
 
+    /// Draws rows crucible composed itself and leaves them live, with the
+    /// cursor where `caret` says it goes.
+    ///
+    /// The counterpart to [`Renderer::present`] for a component that is still
+    /// being changed: the same rows and the same palette, but redrawn where
+    /// they stand instead of being written once and forgotten. What a keystroke
+    /// costs is therefore one frame — the region is erased and put back — and
+    /// the caller redraws only when something moved.
+    ///
+    /// The cursor is left on the row the caret named rather than at the end of
+    /// what was written, so the terminal's own cursor is the one the reader
+    /// sees, in whatever shape and blink they chose. Nothing is drawn to stand
+    /// in for it.
+    ///
+    /// Nothing at all happens where output is redirected. A live region is a
+    /// thing only a terminal has, and a run whose output is a file has no
+    /// keystrokes arriving to redraw for either — the same condition [`Raw`]
+    /// refuses to enter under.
+    ///
+    /// [`Raw`]: crate::Raw
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn live(
+        &mut self,
+        rows: &[Row],
+        caret: Caret,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        // Anything the last turn left live belongs above the prompt rather than
+        // underneath it, and a rewind that reached over it would take it off
+        // the screen without it ever having been written down.
+        if !self.tail.is_empty() {
+            self.settle()?;
+        }
+
+        region::paint(rows, palette, &mut self.painted);
+
+        let region = self.region();
+        self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
+        self.drawn = self.painted.len();
+
+        self.terminal.write(self.frame.as_str())?;
+        self.terminal.flush()
+    }
+
     /// Ends the live region, leaving what it held in scrollback.
     ///
     /// Called between turns. After this the cursor sits on a fresh row and the
@@ -158,22 +222,18 @@ impl<T: Terminal> Renderer<T> {
             if self.drawn > 0 {
                 self.erase()?;
                 self.terminal.flush()?;
-                self.drawn = 0;
             }
             return Ok(());
         }
 
-        screen::settle(
-            &mut self.frame,
-            self.drawn,
-            &mut self.overflow,
-            &mut self.tail,
-        );
+        let region = self.region();
+        screen::settle(&mut self.frame, region, &mut self.overflow, &mut self.tail);
 
         self.terminal.write(self.frame.as_str())?;
         self.terminal.flush()?;
 
         self.drawn = 0;
+        self.parked = 0;
         Ok(())
     }
 
@@ -210,6 +270,7 @@ impl<T: Terminal> Renderer<T> {
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
         self.drawn = 0;
+        self.parked = 0;
         Ok(())
     }
 
@@ -265,9 +326,11 @@ impl<T: Terminal> Renderer<T> {
             return self.draw_plain();
         }
 
-        screen::draw(&mut self.frame, self.drawn, &mut self.overflow, &self.tail);
+        let region = self.region();
+        screen::draw(&mut self.frame, region, &mut self.overflow, &self.tail);
 
         self.drawn = self.tail.len();
+        self.parked = 0;
         self.terminal.write(self.frame.as_str())?;
         self.terminal.flush()
     }
@@ -294,8 +357,18 @@ impl<T: Terminal> Renderer<T> {
 
     /// Wipes the live region without drawing anything back.
     fn erase(&mut self) -> Result<(), TerminalError> {
-        self.frame.rewind(self.drawn);
+        self.frame.rewind(self.region());
+        self.drawn = 0;
+        self.parked = 0;
         self.terminal.write(self.frame.as_str())
+    }
+
+    /// How many rows a rewind has to move back over to reach the top of the
+    /// live region.
+    ///
+    /// The rows on screen, less the ones below wherever the cursor was parked.
+    fn region(&self) -> usize {
+        self.drawn.saturating_sub(self.parked)
     }
 }
 

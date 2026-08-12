@@ -7,17 +7,21 @@ they settle on is "ask", the question below appears. With nothing configured,
 that is every change and every command. Reading is the exception in every mode:
 a read is allowed, or refused by a rule, and never asked about.
 
-The prompt line always shows the mode in force, spelled the way configuration
-spells it:
+The row under the prompt box always shows the mode in force, spelled the way
+configuration spells it:
 
 ```
-ask ›
+╭────────────────────────────────────────────────────────────╮
+│ ›                                                          │
+╰────────────────────────────────────────────────────────────╯
+ask
 ```
 
 It is there every time rather than said once at the top, because the moment it
 matters is hours in, when the top has scrolled away. A `fullAccess` session
 must never be distinguishable from an `ask` one only by what you remember
-starting.
+starting. Where there is no box — a redirected run — it is written in front of
+the prompt instead, as `ask › `.
 
 ## The question
 

@@ -11,15 +11,13 @@
 //! width be asserted with no terminal attached — and it is why a renderer that
 //! is not a terminal would reimplement [`Row::paint`] rather than this file.
 
+use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
 mod card;
 mod fit;
-mod glyphs;
 mod parts;
-
-pub use glyphs::Glyphs;
 
 /// The narrowest terminal that gets a frame at all.
 const FRAMED_AT: usize = 46;

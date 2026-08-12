@@ -85,6 +85,25 @@ impl Frame {
         self
     }
 
+    /// Puts the cursor `up` rows above the last row written, at `column`.
+    ///
+    /// For a live region the reader is typing into: the rows below the one
+    /// being typed on are still drawn, and the cursor has to come back up over
+    /// them. The column is set absolutely rather than stepped to, because what
+    /// the caller knows is where the cursor belongs and not where it is.
+    ///
+    /// Only ever within the region this frame just wrote, so it cannot reach a
+    /// row that has already gone to scrollback.
+    pub(crate) fn park(&mut self, up: usize, column: usize) -> &mut Self {
+        if up > 0 {
+            let _ = write!(self.buffer, "\x1b[{up}A");
+        }
+
+        // One-based, as every column in the terminal's own counting is.
+        let _ = write!(self.buffer, "\x1b[{}G", column + 1);
+        self
+    }
+
     /// Ends the live region, leaving what it held above the cursor.
     pub(crate) fn break_row(&mut self) -> &mut Self {
         self.buffer.push_str(NEW_ROW);

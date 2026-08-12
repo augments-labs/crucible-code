@@ -49,10 +49,10 @@ holds over every one of them.
 
 ## The mode is always on screen
 
-The prompt line spells it the way configuration does — `allowEdits › ` —
-every time, not once at the top. Hours in, when the opening lines have
-scrolled away, which mode a session is in must not depend on what you remember
-starting.
+The row under the prompt box spells it the way configuration does —
+`allowEdits` — every time, not once at the top. Hours in, when the opening
+lines have scrolled away, which mode a session is in must not depend on what
+you remember starting.
 
 ## When nobody can answer
 

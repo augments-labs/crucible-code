@@ -8,8 +8,8 @@ use crate::color::Slot;
 use crate::row::Row;
 use crate::width;
 
-use super::glyphs::Glyphs;
 use super::{Recent, Welcome, fit};
+use crate::glyphs::Glyphs;
 
 /// The name, as letters, for every form that is not drawing it as art.
 const WORDMARK: &str = "CRUCIBLE";

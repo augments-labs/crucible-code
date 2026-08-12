@@ -6,12 +6,16 @@
 //! font problem rather than an encoding one — and a font is not something this
 //! process can ask about. What it can do is take an answer, which is why this
 //! is a setting and never a guess.
+//!
+//! One set for every component, and that is the reason this sits beside them
+//! rather than inside one: the welcome and the prompt draw the same corner, and
+//! a terminal that shows a hollow square for it shows one in both places.
 
 /// The wordmark, drawn from half blocks.
 ///
 /// crucible's own, drawn for this program. Every row is the same width, which
-/// [`super::tests`] is what keeps true — a row a column short leans the whole
-/// mark, and a row a column long pushes it through the frame beside it.
+/// the welcome's own tests are what keep true — a row a column short leans the
+/// whole mark, and a row a column long pushes it through the frame beside it.
 const ART: [&str; 3] = [
     "▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄",
     "█   █▄▄ █  █ █   █ █▄▄ █   █▄▄",
@@ -33,7 +37,7 @@ pub enum Glyphs {
 
 impl Glyphs {
     /// The corners a frame opens with: left, then right.
-    pub(super) fn top(self) -> (&'static str, &'static str) {
+    pub(crate) fn top(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("╭", "╮"),
             Self::Ascii => ("+", "+"),
@@ -41,7 +45,7 @@ impl Glyphs {
     }
 
     /// The corners a frame closes with: left, then right.
-    pub(super) fn bottom(self) -> (&'static str, &'static str) {
+    pub(crate) fn bottom(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("╰", "╯"),
             Self::Ascii => ("+", "+"),
@@ -49,7 +53,7 @@ impl Glyphs {
     }
 
     /// One column of an edge that runs across, and of a rule drawn inside one.
-    pub(super) fn horizontal(self) -> &'static str {
+    pub(crate) fn horizontal(self) -> &'static str {
         match self {
             Self::Unicode => "─",
             Self::Ascii => "-",
@@ -57,16 +61,28 @@ impl Glyphs {
     }
 
     /// One row of an edge that runs down.
-    pub(super) fn vertical(self) -> &'static str {
+    pub(crate) fn vertical(self) -> &'static str {
         match self {
             Self::Unicode => "│",
             Self::Ascii => "|",
         }
     }
 
+    /// The mark a line is typed after, and that its record keeps afterwards.
+    ///
+    /// One column either way. The prompt reserves exactly that much room for
+    /// it, and a set whose mark were two columns wide would push the line into
+    /// the edge beside it.
+    pub(crate) fn caret(self) -> &'static str {
+        match self {
+            Self::Unicode => "›",
+            Self::Ascii => ">",
+        }
+    }
+
     /// The small mark that parts one thing on a row from the next, and that
     /// opens an item in a list.
-    pub(super) fn dot(self) -> &'static str {
+    pub(crate) fn dot(self) -> &'static str {
         match self {
             Self::Unicode => "·",
             Self::Ascii => "-",
@@ -74,7 +90,7 @@ impl Glyphs {
     }
 
     /// What stands where something did not fit.
-    pub(super) fn ellipsis(self) -> &'static str {
+    pub(crate) fn ellipsis(self) -> &'static str {
         match self {
             Self::Unicode => "…",
             Self::Ascii => "...",
@@ -86,7 +102,7 @@ impl Glyphs {
     /// `None` is not a failure to draw the name — it is the name drawn as
     /// letters instead, which is what every form narrower than two columns uses
     /// as well.
-    pub(super) fn art(self) -> Option<&'static [&'static str]> {
+    pub(crate) fn art(self) -> Option<&'static [&'static str]> {
         match self {
             Self::Unicode => Some(&ART),
             Self::Ascii => None,

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 use crate::width;
 
-use super::glyphs::Glyphs;
+use crate::glyphs::Glyphs;
 
 /// `text`, kept to at most `columns` display columns, with a mark standing
 /// where the rest of it was.
