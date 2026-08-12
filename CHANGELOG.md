@@ -4,7 +4,7 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.8] - 2026-08-12
 
 ### Added
 
@@ -48,12 +48,12 @@ Notable changes to crucible. Format follows
   *starting* there are unaffected: they are two sessions, each recording its own
   log.
 
-- **Commands: `/help`, `/model`, `/mode`, `/resume`, `/clear` and `/exit`.** Typing `/`
-  opens the list above the box, filtered as you type, so the box and the mode
-  under it stay where they are. `/mode allowEdits` names a mode outright instead
-  of stepping to it. A command is answered without asking the provider and does
-  not enter the transcript; a line that only looks like one — `/etc/hosts is
-  wrong` — is still a prompt.
+- **Commands: `/help`, `/model`, `/mode`, `/resume`, `/clear` and `/exit`.**
+  Typing `/` opens the list above the box, filtered as you type, so the box and
+  the mode under it stay where they are. `/mode allowEdits` names a mode
+  outright instead of stepping to it. A command is answered without asking the
+  provider and does not enter the transcript; a line that only looks like one —
+  `/etc/hosts is wrong` — is still a prompt.
 
 - **`/clear` forgets the transcript without ending the session.** The next
   prompt is the first the model sees, and the turns before it are not sent or
@@ -637,7 +637,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5
