@@ -81,6 +81,30 @@ fn inline_code_is_quiet_and_loses_its_backticks() {
 }
 
 #[test]
+fn a_fence_and_the_language_written_on_it_take_no_row_of_their_own() {
+    let said = whole("before\n```rust\nlet it = 1;\n```\nafter\n");
+
+    assert_eq!(drawn(&said), "before\nlet it = 1;\nafter\n");
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn everything_inside_a_fence_is_code_however_it_is_punctuated() {
+    let said = whole("```\n# not a heading **not bold** _not_\n```\n");
+
+    assert_eq!(drawn(&said), "# not a heading **not bold** _not_\n");
+    assert_eq!(slots(&said), vec![Slot::Quiet]);
+}
+
+#[test]
+fn one_backtick_inside_a_fence_is_a_backtick() {
+    let said = whole("```\n`quoted` in a shell\n```\n");
+
+    assert_eq!(drawn(&said), "`quoted` in a shell\n");
+    assert_eq!(slots(&said), vec![Slot::Quiet]);
+}
+
+#[test]
 fn a_bullet_stays_a_bullet_rather_than_opening_emphasis() {
     let said = whole("* first\n* second\n");
 
@@ -130,4 +154,18 @@ fn a_marker_split_across_two_deltas_is_still_one_marker() {
     assert_eq!(drawn(&first), "a ");
     assert_eq!(drawn(&second), "loud word");
     assert_eq!(slots(&second), vec![Slot::Strong, Slot::Plain]);
+}
+
+#[test]
+fn a_fence_split_across_three_deltas_is_still_one_fence() {
+    let mut markdown = Markdown::default();
+
+    let first = read(&mut markdown, "``");
+    let second = read(&mut markdown, "`rust\nlet it");
+    let third = read(&mut markdown, " = 1;\n```\n");
+
+    assert_eq!(drawn(&first), "");
+    assert_eq!(drawn(&second), "let it");
+    assert_eq!(drawn(&third), " = 1;\n");
+    assert_eq!(slots(&third), vec![Slot::Quiet]);
 }
