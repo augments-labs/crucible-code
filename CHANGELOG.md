@@ -23,6 +23,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The transcript reads the model's markdown instead of printing it.** Headings,
+  emphasis, inline code and fenced blocks lose their markers and are toned
+  instead; the tone belongs to the row rather than to the text, so an answer
+  wraps where it always did. Where there is no colour — a redirected run,
+  `NO_COLOR`, `--color never` — every marker is left exactly where the model
+  wrote it, so a piped answer is still a file of markdown.
+
 - **A variable exported empty no longer outvotes the key beside it.**
   `ANTHROPIC_API_KEY=` is how a shell turns that provider off, and crucible
   counted it as a key held — so a machine with a real `OPENAI_API_KEY` beside it

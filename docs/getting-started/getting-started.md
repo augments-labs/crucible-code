@@ -134,6 +134,19 @@ A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 A call that failed is marked `✗`.
 
+The answer itself is read as markdown rather than printed with the markers still
+in it. A heading loses its hashes and stands out, `**` or `_` around a phrase
+leaves it emphasised, backticks leave a run of code toned down, and a fenced
+block is toned for its whole length with the fence lines and the language
+written on them gone. The tone belongs to the row rather than to the text, so it
+costs no column: the answer wraps exactly where the same answer would have
+wrapped plain.
+
+Where there is no colour to read it into, the markers are left where the model
+put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking
+a marker out there would drop the emphasis and put nothing in its place, and
+`crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
+
 <kbd>Ctrl-C</kbd> throws away a line you are part-way through. Against an empty box
 it offers to leave — `press ctrl-c again to leave`, under the mode — and a second
 press within two seconds takes the offer. Any other key first takes it back, so a

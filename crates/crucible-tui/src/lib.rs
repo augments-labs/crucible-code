@@ -36,7 +36,6 @@ pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
 pub use editor::{Editor, Key, Typed};
 pub use glyphs::Glyphs;
-pub use markdown::Markdown;
 pub use menu::{Listed, Menu};
 pub use prompt::Prompt;
 pub use render::{Caret, Renderer};
