@@ -9,17 +9,40 @@ use super::frame::Frame;
 use super::tail::Tail;
 
 /// Builds a frame: back over what was drawn, then the rows that have left the
-/// tail for good, then the rows still live.
-pub(crate) fn draw(frame: &mut Frame, drawn: usize, overflow: &mut Vec<String>, tail: &Tail) {
+/// tail for good, then the rows still live, then whatever stands under them.
+///
+/// Returns how many rows ended up below the cursor, which is what the next
+/// rewind has to stop short of. The cursor comes back to the end of the tail
+/// rather than resting after the last row written, because the end of the tail
+/// is where the next delta goes — and it is where a terminal echoing a keystroke
+/// nothing is waiting to read puts it, rather than through the middle of a row
+/// this process composed.
+pub(crate) fn draw(
+    frame: &mut Frame,
+    drawn: usize,
+    overflow: &mut Vec<String>,
+    tail: &Tail,
+    under: &[String],
+) -> usize {
     open(frame, drawn, overflow);
-    frame.live(tail.rows());
+    frame.live(tail.rows().chain(under.iter().map(String::as_str)));
+
+    if under.is_empty() {
+        return 0;
+    }
+
+    frame.park(under.len(), tail.column());
+    under.len()
 }
 
 /// Builds the end of a turn, and empties the tail into it.
 ///
-/// Two things differ from a frame that stays on screen: the row the cursor sits
-/// on is not content, and the cursor steps past everything, so nothing will
-/// ever move back over these rows again.
+/// Three things differ from a frame that stays on screen: the row the cursor
+/// sits on is not content, the cursor steps past everything, so nothing will
+/// ever move back over these rows again, and whatever stood under the tail is
+/// erased rather than written down. The rewind clears from the top of the
+/// region downwards, which reaches it without being told about it — and it is
+/// chrome about the session rather than something that was said.
 pub(crate) fn settle(frame: &mut Frame, drawn: usize, overflow: &mut Vec<String>, tail: &mut Tail) {
     open(frame, drawn, overflow);
     frame.live(tail.content());
@@ -54,7 +77,7 @@ mod tests {
         let (tail, mut overflow) = streamed(80, 24, "one\ntwo\nthree");
         let mut frame = Frame::new();
 
-        draw(&mut frame, 3, &mut overflow, &tail);
+        draw(&mut frame, 3, &mut overflow, &tail, &[]);
 
         assert_eq!(frame.as_str(), "\r\x1b[2A\x1b[Jone\r\ntwo\r\nthree");
     }
@@ -66,13 +89,31 @@ mod tests {
         let (tail, mut overflow) = streamed(80, 2, "alpha\nbeta\ngamma\ndelta");
         let mut frame = Frame::new();
 
-        draw(&mut frame, 2, &mut overflow, &tail);
+        draw(&mut frame, 2, &mut overflow, &tail, &[]);
 
         assert_eq!(
             frame.as_str(),
             "\r\x1b[1A\x1b[Jalpha\r\nbeta\r\ngamma\r\ndelta"
         );
         assert!(overflow.is_empty(), "overflow was not drained");
+    }
+
+    #[test]
+    fn the_cursor_comes_back_to_the_end_of_the_tail_over_what_stands_under_it() {
+        // The row below is drawn and stays drawn, so the next rewind has to stop
+        // one row short of it — and the next delta has to land where the answer
+        // stopped rather than on the row standing underneath.
+        let (tail, mut overflow) = streamed(80, 24, "the answer");
+        let mut frame = Frame::new();
+        let under = ["ask mode on".to_owned()];
+
+        let parked = draw(&mut frame, 1, &mut overflow, &tail, &under);
+
+        assert_eq!(parked, 1);
+        assert_eq!(
+            frame.as_str(),
+            "\r\x1b[Jthe answer\r\nask mode on\x1b[1A\x1b[11G"
+        );
     }
 
     #[test]

@@ -56,6 +56,11 @@ pub struct Renderer<T: Terminal> {
     overflow: Vec<String>,
     /// Reused across frames: the rows of a live region, painted by [`region`].
     painted: Vec<String>,
+    /// The rows standing under the tail, painted by [`region`] as well.
+    ///
+    /// Painted when they are set rather than once per frame. What they say
+    /// changes when the session changes, and a turn is a great many frames.
+    footing: Vec<String>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -84,6 +89,7 @@ impl<T: Terminal> Renderer<T> {
             frame: Frame::new(),
             overflow: Vec::new(),
             painted: Vec::new(),
+            footing: Vec::new(),
         }
     }
 
@@ -198,10 +204,41 @@ impl<T: Terminal> Renderer<T> {
         self.terminal.flush()
     }
 
+    /// Keeps `rows` under the tail until something takes them back.
+    ///
+    /// The counterpart to [`Renderer::live`] for rows nobody is typing into.
+    /// Streamed output goes on arriving above them and every frame draws them
+    /// again underneath it, so they stay on screen through a turn instead of
+    /// being the first thing it scrolls away. An empty slice takes them back.
+    ///
+    /// They never settle. What stands here is a fact about the session rather
+    /// than something that was said, so the record reads afterwards as though
+    /// it had never been there — and the alternative, a row committed once a
+    /// frame, is a session's worth of scrollback repeating itself.
+    ///
+    /// Nothing happens where output is redirected, for the reason
+    /// [`Renderer::live`] draws nothing there: a file has no bottom row to hold
+    /// anything at.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn under(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        region::paint(rows, palette, &mut self.footing);
+        self.draw()
+    }
+
     /// Ends the live region, leaving what it held in scrollback.
     ///
     /// Called between turns. After this the cursor sits on a fresh row and the
-    /// next frame starts a new tail.
+    /// next frame starts a new tail. Whatever was standing under the tail is
+    /// erased with it and is not written down, but it is not forgotten: the
+    /// next frame draws it again, so a question asked in the middle of a turn
+    /// costs it nothing.
     ///
     /// # Errors
     ///
@@ -269,6 +306,10 @@ impl<T: Terminal> Renderer<T> {
         self.size = size;
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
+        // Dropped for the reason the live rows are: it was laid out for a width
+        // the window no longer has, and a row too wide for the screen is one
+        // the terminal wraps itself. The caller lays out the next one.
+        self.footing.clear();
         self.drawn = 0;
         self.parked = 0;
         Ok(())
@@ -339,10 +380,15 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let region = self.region();
-        screen::draw(&mut self.frame, region, &mut self.overflow, &self.tail);
+        self.parked = screen::draw(
+            &mut self.frame,
+            region,
+            &mut self.overflow,
+            &self.tail,
+            &self.footing,
+        );
 
-        self.drawn = self.tail.len();
-        self.parked = 0;
+        self.drawn = self.tail.len() + self.footing.len();
         self.terminal.write(self.frame.as_str())?;
         self.terminal.flush()
     }
