@@ -32,6 +32,7 @@ const RUN: usize = 6;
 const HASHES: &str = "######";
 const STARS: &str = "******";
 const SCORES: &str = "______";
+const TICKS: &str = "``````";
 
 /// A run of one marker character, waiting for the character that says what it
 /// was.
@@ -43,15 +44,34 @@ struct Held {
 
 /// What is open on the line being read.
 ///
-/// Both end where the line does. Markdown lets emphasis cross a line break and
-/// this does not: an unclosed marker then costs one line rather than the rest of
-/// the answer, and a model that opened one by accident is the case that actually
-/// happens.
+/// All of it ends where the line does. Markdown lets emphasis cross a line
+/// break and this does not: an unclosed marker then costs one line rather than
+/// the rest of the answer, and a model that opened one by accident is the case
+/// that actually happens.
 #[derive(Debug, Default, Clone, Copy)]
 struct Line {
     heading: bool,
     code: bool,
     strong: bool,
+}
+
+/// What the scan is in the middle of, across lines.
+///
+/// The fence is the one thing a line break does not end — that is what a fence
+/// is for, and a block of code is the one place where running past its end is
+/// less wrong than stopping at the first line of it. So one the model never
+/// closes does run to the end of the message; the message boundary is where it
+/// is cleared.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Inside {
+    #[default]
+    Prose,
+    /// The rest of an opening fence's line, which names a language.
+    Opening,
+    /// A fenced block, until a fence at the start of a line closes it.
+    Fence,
+    /// The rest of a closing fence's line.
+    Closing,
 }
 
 /// Reads markdown out of a stream of deltas.
@@ -66,6 +86,7 @@ pub struct Markdown {
     /// The character before the run being held, for the one rule that needs it.
     previous: char,
     line: Line,
+    inside: Inside,
 }
 
 impl Markdown {
@@ -113,6 +134,11 @@ impl Markdown {
                     count: 1,
                 });
                 run = next;
+            } else if matches!(self.inside, Inside::Opening | Inside::Closing) {
+                // What is left of a fence's own line names the language it is
+                // written in, or nothing at all. Either way it is not the
+                // answer, so it goes the way the fence went.
+                run = next;
             } else {
                 self.started |= character != ' ';
                 self.previous = character;
@@ -124,10 +150,17 @@ impl Markdown {
 
     /// Whether `character` starts a run of markers where the scan stands.
     fn marks(&self, character: char) -> bool {
-        match character {
-            '*' | '_' | '`' => true,
-            '#' => !self.started,
-            _ => false,
+        match self.inside {
+            // Inside a fence the only marker left is the fence that closes it,
+            // and only at the start of a line. Code is full of the others.
+            Inside::Fence => character == '`' && !self.started,
+            // A fence's own line is dropped whole; nothing on it marks anything.
+            Inside::Opening | Inside::Closing => false,
+            Inside::Prose => match character {
+                '*' | '_' | '`' => true,
+                '#' => !self.started,
+                _ => false,
+            },
         }
     }
 
@@ -144,7 +177,17 @@ impl Markdown {
                 self.line.heading = true;
                 true
             }
-            '`' => {
+            // Three or more open a block that outlives the line it is on, or
+            // close the one already open.
+            '`' if held.count >= 3 => {
+                self.inside = if self.inside == Inside::Fence {
+                    Inside::Closing
+                } else {
+                    Inside::Opening
+                };
+                false
+            }
+            '`' if self.inside == Inside::Prose => {
                 self.line.code = !self.line.code;
                 false
             }
@@ -183,11 +226,26 @@ impl Markdown {
 
     /// Ends the line, and with it everything markdown ends at one.
     fn end_line(&mut self, say: &mut dyn FnMut(Slot, &str)) {
-        *self = Self::default();
+        let ended = self.inside;
 
-        // After the reset, so the row that ends carries no slot into the row
-        // that follows it. An unclosed marker costs its own line and no more.
-        say(self.slot(), "\n");
+        *self = Self {
+            // The fence is the one thing carried over, and a fence's own line
+            // is where its effect begins or ends.
+            inside: match ended {
+                Inside::Opening => Inside::Fence,
+                Inside::Closing => Inside::Prose,
+                inside => inside,
+            },
+            ..Self::default()
+        };
+
+        // A fence's own line is a marker, and no marker is drawn — the line
+        // break with it, or every block would arrive with a blank line stitched
+        // to each end of it. After the reset otherwise, so the row that ends
+        // carries no slot into the row that follows it.
+        if !matches!(ended, Inside::Opening | Inside::Closing) {
+            say(self.slot(), "\n");
+        }
     }
 
     /// Hands on a run of text, if there is any.
@@ -199,7 +257,7 @@ impl Markdown {
 
     /// The slot everything read right now is written under.
     fn slot(&self) -> Slot {
-        if self.line.code {
+        if self.inside != Inside::Prose || self.line.code {
             Slot::Quiet
         } else if self.line.heading || self.line.strong {
             Slot::Strong
@@ -214,6 +272,7 @@ fn written(held: Held) -> &'static str {
     let whole = match held.mark {
         '#' => HASHES,
         '*' => STARS,
+        '`' => TICKS,
         _ => SCORES,
     };
 
