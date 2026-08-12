@@ -37,7 +37,6 @@ Notable changes to crucible. Format follows
   is reading a key until the turn ends. The row never reaches the scrollback:
   what stands there is a fact about the session rather than something that was
   said.
->>>>>>> origin/main
 
 - **A session claim that could not be attempted no longer reads as a filesystem
   with no locks.** Where the `.lock` file beside a log could not be made at all,
