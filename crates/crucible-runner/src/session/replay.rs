@@ -70,7 +70,7 @@ pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf,
 ///
 /// A log this build does not understand is refused rather than skipped: the
 /// answer to "continue my last session" must never be a different one.
-fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
+pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
         source,

@@ -82,11 +82,32 @@ impl Runner {
     /// they asked it not to be.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
-        let said = transcript.turns();
-
-        self.turn = (1..said).fold(TurnId::FIRST, |turn, _| turn.next());
+        self.turn = Self::counting(&transcript);
         self.transcript = transcript;
         self
+    }
+
+    /// Puts this runner on a different session, and hands back the one it was
+    /// recording to.
+    ///
+    /// What `/resume` runs, and the reason it hands the old session back rather
+    /// than dropping it: closing one properly means consuming it — see
+    /// [`Session::finish`] — and the first write that failed is worth saying
+    /// before the session it failed in is out of sight.
+    ///
+    /// Everything about the session that was answered is answered again. The
+    /// transcript, the log and the turn count come from the session picked up;
+    /// what was allowed for the rest of the *last* session is forgotten, since
+    /// that scope was the thing just left behind. The mode is not an answer of
+    /// that kind — it is where this process is being run, it is on screen at
+    /// all times, and a session that quietly moved it would be the one place
+    /// the row under the box could be wrong.
+    pub fn pick_up(&mut self, session: Session, transcript: Transcript) -> Session {
+        self.permission.forget();
+        self.turn = Self::counting(&transcript);
+        self.transcript = transcript;
+
+        std::mem::replace(&mut self.session, session)
     }
 
     /// The transcript so far.
@@ -328,6 +349,16 @@ impl Runner {
         }
 
         Ok(())
+    }
+
+    /// Where a transcript that already happened leaves the count.
+    ///
+    /// The turn a continued session is *on*, not the one after it: the loop
+    /// steps the count on its way into a turn, and numbering the first
+    /// continued turn `1` would tell the user this is a new session, which is
+    /// exactly what they asked it not to be.
+    fn counting(transcript: &Transcript) -> TurnId {
+        (1..transcript.turns()).fold(TurnId::FIRST, |turn, _| turn.next())
     }
 
     /// What to send this round.

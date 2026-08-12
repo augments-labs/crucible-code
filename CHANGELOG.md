@@ -48,7 +48,7 @@ Notable changes to crucible. Format follows
   *starting* there are unaffected: they are two sessions, each recording its own
   log.
 
-- **Commands: `/help`, `/model`, `/mode`, `/clear` and `/exit`.** Typing `/`
+- **Commands: `/help`, `/model`, `/mode`, `/resume`, `/clear` and `/exit`.** Typing `/`
   opens the list above the box, filtered as you type, so the box and the mode
   under it stay where they are. `/mode allowEdits` names a mode outright instead
   of stepping to it. A command is answered without asking the provider and does
@@ -59,6 +59,12 @@ Notable changes to crucible. Format follows
   prompt is the first the model sees, and the turns before it are not sent or
   paid for again. The same session, log and permission answers carry on, and the
   screen is left alone — what is above the box belongs to the terminal.
+
+- **`/resume` switches to an earlier session in this directory without
+  restarting.** It lists the last nine, newest first and numbered, and `/resume
+  2` picks that one up: the session you were in is closed and stays readable,
+  and the named one's transcript comes back. What it was allowed for the rest of
+  that session is forgotten; the mode and your configured rules carry on.
 
 - **`crucible_tui::cut` and `crucible_tui::clip`, the display-column count the
   renderer itself uses.** `cut` says where a string reaches a given number of

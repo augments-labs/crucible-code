@@ -249,6 +249,37 @@ fn allowing_one_command_for_the_session_does_not_allow_another() {
 }
 
 #[test]
+fn an_engine_that_forgot_asks_again_about_what_the_last_session_allowed() {
+    // What a process picking up a different session does with the answers it
+    // was given about the one it is leaving. "For the rest of this session" is
+    // a scope, and an allow that outlived it would be an answer to a question
+    // nobody was asked.
+    let mut permission = with(Mode::Ask, &[(Disposition::Allow, "write(docs/**)")]);
+    let mut answer = Answer::for_the_session();
+    let call = call("write");
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 1);
+
+    permission.forget();
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 2);
+
+    // What was configured is not what was answered. A rule was read from a
+    // file and is read again by every session; forgetting one session's
+    // answers may not quietly narrow the other.
+    assert!(
+        permission
+            .decide(&call, &writing("docs/guide.md"), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 2, "a rule answers without asking");
+    assert_eq!(permission.mode(), Mode::Ask, "the mode is not an answer");
+}
+
+#[test]
 fn nothing_is_remembered_about_a_refusal() {
     let mut permission = Permission::new();
     let mut answer = Answer {

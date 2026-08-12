@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Sender, channel};
 use std::thread;
 
-use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, narrowest};
+use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Terminal, TerminalError};
 
@@ -54,6 +54,11 @@ pub(crate) struct Terms {
     pub(crate) cancel: Cancel,
     /// The file an answer of `always` writes its rule into.
     pub(crate) remembering: PathBuf,
+    /// Where this machine keeps its session logs.
+    pub(crate) sessions: PathBuf,
+    /// The directory this conversation is about, which is what decides whose
+    /// sessions are listed and which of them may be picked up.
+    pub(crate) workspace: Workspace,
 }
 
 /// Reads prompts and takes turns until input ends.
@@ -116,7 +121,7 @@ pub(crate) fn converse<T: Terminal>(
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
         if let Some(wanted) = command::wanted(&prompt) {
-            match command::run(wanted, renderer, &mut runner, style)? {
+            match command::run(wanted, renderer, &mut runner, terms)? {
                 Ran::Again => continue,
                 Ran::Leave => break,
             }

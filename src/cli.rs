@@ -237,6 +237,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // files were read from — so what an answer of `always` writes is what
         // the next crucible started here reads back.
         remembering: crucible_config::local(workspace.root()),
+
+        // The two `/resume` reads a directory of logs with. Both are settled
+        // here for the same reason everything else in `Terms` is: the session
+        // being picked up is one of this directory's, and which directory that
+        // is was decided before the first prompt.
+        sessions: home.sessions().to_owned(),
+        workspace: workspace.clone(),
     };
 
     // What was worked on here before. This is on the startup path, which is

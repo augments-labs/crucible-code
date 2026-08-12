@@ -144,6 +144,7 @@ session.
 | `/help` | Lists these |
 | `/model` | The model this session is asking |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |
 | `/exit` | Ends the session |
 
@@ -153,6 +154,29 @@ same session either way — the same log, the same permission answers, the same
 mode — and the screen is left alone, because what is above the box is the
 terminal's scrollback rather than crucible's. Continuing that session later
 picks it up from where it started again.
+
+`/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
+newest first, each numbered and shown with when it started and what it was first
+asked:
+
+```
+1  just now      rename the parser's error type
+2  2 hours ago   why does the grep tool miss hidden files
+3  yesterday     add a --json flag to the report command
+```
+
+`/resume 2` picks that one up. The session you were in is closed — its log is
+finished and stays readable — and the one you named becomes the session this
+crucible is recording to, with everything already in it back in the transcript.
+The number is the row on the list you were just shown, so read it again if
+something else has been recorded here since.
+
+Two things are worth knowing before you switch. The [permission
+mode](../permissions/modes.md) comes with you, but what you allowed *for the
+rest of that session* does not — the new session is asked about those calls
+again, and rules you wrote to a file apply as they always did. And a session
+another crucible still has open cannot be picked up: it says so rather than
+letting two of them write to one log.
 
 Typing `/` opens the list above the box, filtered to what has been typed so far,
 so the box and the mode under it stay where they are. The list closes as soon as

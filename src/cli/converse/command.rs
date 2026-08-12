@@ -26,7 +26,9 @@ use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
-use super::mode;
+use super::{Terms, mode};
+
+mod resume;
 
 /// What a line beginning `/` can ask for.
 ///
@@ -40,6 +42,8 @@ pub(super) enum Command {
     Model,
     /// The permission mode: the one in force, or the one named.
     Mode,
+    /// The sessions recorded here, and picking one of them up.
+    Resume,
     /// Forget the transcript, keeping the session.
     Clear,
     /// End the session.
@@ -51,10 +55,11 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 5] = [
+const EVERY: [Command; 6] = [
     Command::Help,
     Command::Model,
     Command::Mode,
+    Command::Resume,
     Command::Clear,
     Command::Exit,
 ];
@@ -89,6 +94,7 @@ impl Command {
             Self::Help => "/help",
             Self::Model => "/model",
             Self::Mode => "/mode",
+            Self::Resume => "/resume",
             Self::Clear => "/clear",
             Self::Exit => "/exit",
         }
@@ -103,6 +109,7 @@ impl Command {
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
             Self::Mode => mode::ring(glyphs),
+            Self::Resume => "pick up an earlier session here",
             Self::Clear => "forget what has been said",
             Self::Exit => "leave",
         }
@@ -170,7 +177,7 @@ pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
-    style: Style,
+    terms: &Terms,
 ) -> Result<Ran, Fatal> {
     // Nothing is drawn on the way out. The loop is about to end and the shell's
     // own prompt is the next thing on the screen; a row saying goodbye is a row
@@ -184,7 +191,7 @@ pub(super) fn run<T: Terminal>(
     // block's neighbours — the line that asked, the box below — are rows the
     // eye is already resting on.
     renderer.commit("")?;
-    answer(wanted, renderer, runner, style)?;
+    answer(wanted, renderer, runner, terms)?;
     renderer.commit("")?;
 
     Ok(Ran::Again)
@@ -195,9 +202,10 @@ fn answer<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
-    style: Style,
+    terms: &Terms,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
+    let style = terms.style;
     let glyphs = style.glyphs();
 
     match wanted {
@@ -224,6 +232,11 @@ fn answer<T: Terminal>(
             command: Command::Mode,
             rest,
         } => moded(rest, renderer, runner, style)?,
+
+        Wanted::Known {
+            command: Command::Resume,
+            rest,
+        } => resume::run(rest, renderer, runner, terms)?,
 
         Wanted::Known {
             command: Command::Clear,

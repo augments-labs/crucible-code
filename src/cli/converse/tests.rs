@@ -1,18 +1,19 @@
 //! What a whole loop does: a turn, a question, and a window that changed.
 
-use std::cell::Cell;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{Delta, Mode, Permission, Rules, StopReason};
 use crucible_runner::{Model, Session, Tools};
-use crucible_tui::{Recording, Size, TerminalError};
+use crucible_tui::Recording;
 
 use super::*;
 use crate::cli::fake::Script;
+use sink::{Breaking, Failing, Kept, Narrowing};
 
 mod asked;
 mod commanded;
+mod sink;
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
@@ -21,59 +22,18 @@ mod commanded;
 /// is never created: a test that watches the writing points these terms at a
 /// sample of its own instead.
 fn plain() -> Terms {
+    let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
+
     Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
-        remembering: crucible_config::local(
-            &std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id())),
-        ),
-    }
-}
+        remembering: crucible_config::local(&unwritten),
 
-/// A terminal that narrows to ten columns once the renderer has read the
-/// size it starts with.
-///
-/// The loop owns the renderer for its whole run, so nothing outside can
-/// resize between turns the way a user does. This one resizes itself.
-struct Narrowing {
-    inner: Recording,
-    asked: Cell<usize>,
-}
-
-impl Narrowing {
-    fn new() -> Self {
-        Self {
-            inner: Recording::new(80, 24),
-            asked: Cell::new(0),
-        }
-    }
-
-    fn written(&self) -> &str {
-        self.inner.written()
-    }
-}
-
-impl Terminal for Narrowing {
-    fn size(&self) -> Result<Size, TerminalError> {
-        let asked = self.asked.get();
-        self.asked.set(asked + 1);
-
-        Ok(Size {
-            columns: if asked == 0 { 80 } else { 10 },
-            rows: 24,
-        })
-    }
-
-    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
-        self.inner.write(text)
-    }
-
-    fn flush(&mut self) -> Result<(), TerminalError> {
-        self.inner.flush()
-    }
-
-    fn is_terminal(&self) -> bool {
-        self.inner.is_terminal()
+        // The same tree, equally absent: a loop these terms drive has no
+        // sessions to list and none to pick up. What `/resume` does with ones
+        // that are there is proved where they are recorded.
+        sessions: unwritten.join("sessions"),
+        workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
     }
 }
 
@@ -221,22 +181,6 @@ fn a_provider_that_fails_says_so_instead_of_ending_the_session() {
     assert_eq!(asked, 2, "a failed turn does not end the session");
 }
 
-/// A log that fails every write, the way a full disk does.
-struct Failing;
-
-impl std::io::Write for Failing {
-    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::StorageFull,
-            "no space left on device",
-        ))
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
 fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prompt_goes_away() {
     // The writer thread runs behind the loop, so the poll after a turn sees
@@ -273,54 +217,6 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
         written.contains("stopped being recorded"),
         "the drained failure never reached the terminal: {written}"
     );
-}
-
-/// A terminal that takes `left` writes and refuses everything after them, the
-/// way one whose window has been closed does.
-struct Breaking {
-    inner: Recording,
-    left: usize,
-}
-
-impl Terminal for Breaking {
-    fn size(&self) -> Result<Size, TerminalError> {
-        self.inner.size()
-    }
-
-    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
-        if self.left == 0 {
-            return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
-        }
-
-        self.left -= 1;
-        self.inner.write(text)
-    }
-
-    fn flush(&mut self) -> Result<(), TerminalError> {
-        self.inner.flush()
-    }
-
-    fn is_terminal(&self) -> bool {
-        self.inner.is_terminal()
-    }
-}
-
-/// A log the test can read back once the session has finished writing it.
-#[derive(Debug)]
-struct Kept(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Kept {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("a lock nothing panicked in")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 #[test]

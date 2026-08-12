@@ -1,0 +1,176 @@
+//! `/resume`: what was worked on in this directory, and picking one of them
+//! back up.
+//!
+//! A session is named by twenty characters nobody types, so the list is
+//! numbered and a number is what is picked by. The numbers belong to the list
+//! as it was printed: it is read again when one is chosen, and the answer names
+//! the session that was picked up, so a list that changed underneath — another
+//! crucible in the same directory, finishing a session while this one read — is
+//! visible rather than silent.
+//!
+//! Picking one up leaves nothing behind. The session being left is closed here,
+//! which is the last chance to say that its log stopped being written, and what
+//! it was allowed for the rest of *its* run is forgotten by the runner — see
+//! [`Runner::pick_up`].
+
+use std::time::SystemTime;
+
+use crucible_runner::{Recorded, Runner, Session, recent};
+use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+
+use crate::cli::Fatal;
+use crate::cli::draw::when;
+
+use super::Terms;
+
+/// How many sessions the list holds.
+///
+/// Nine, so every number on it is one character and the list is read in one
+/// glance. What is older than the last nine sessions in one directory is a
+/// directory listing, and the session directory is already that.
+const SHOWN: usize = 9;
+
+/// Runs it: the list, or the session `said` picked out of it.
+pub(super) fn run<T: Terminal>(
+    said: &str,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let listed = recent(&terms.sessions, &terms.workspace, SHOWN);
+
+    // Read once, here, rather than per row: a list drawn against several
+    // instants is several lists, each dated from a different now.
+    let now = SystemTime::now();
+    let columns = renderer.columns();
+
+    if listed.is_empty() {
+        let rows = [Row::new().then(
+            Slot::Quiet,
+            clip("nothing has been worked on here yet", columns),
+        )];
+        return Ok(renderer.present(&rows, terms.style.palette())?);
+    }
+
+    if said.is_empty() {
+        return Ok(renderer.present(&listing(&listed, now, columns), terms.style.palette())?);
+    }
+
+    let Some(picked) = chosen(said, &listed) else {
+        // The word came off the line and was never shape-checked — anything at
+        // all can follow `/resume ` — so it goes out the way arrived text does.
+        renderer.commit(&format!("! {said} is not on the list"))?;
+        renderer.present(&listing(&listed, now, columns), terms.style.palette())?;
+        return Ok(());
+    };
+
+    picking(picked, renderer, runner, terms, now)
+}
+
+/// Picks one up, having decided which.
+fn picking<T: Terminal>(
+    picked: &Recorded,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+    now: SystemTime,
+) -> Result<(), Fatal> {
+    let columns = renderer.columns();
+
+    // Answered before the log is opened. This session's own claim is on that
+    // file, so continuing it would come back as "open in another crucible" —
+    // which names the wrong crucible, and reads as a reason to go and close
+    // something.
+    if runner.session().id() == Some(picked.id()) {
+        let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
+        return Ok(renderer.present(&rows, terms.style.palette())?);
+    }
+
+    let (session, transcript) =
+        match Session::reopen(&terms.sessions, &terms.workspace, picked.id()) {
+            Ok(picked) => picked,
+            // A path is in every one of these, so it is committed rather than
+            // presented. Nothing else changes: the session in hand is still
+            // being recorded, and the loop carries on with it.
+            Err(problem) => return Ok(renderer.commit(&format!("! {problem}"))?),
+        };
+
+    let held = transcript.len();
+    let left = runner.pick_up(session, transcript);
+
+    // The last chance to say that the log of the session being left stopped
+    // being written. After this there is no session to say it about.
+    if let Some(problem) = left.finish() {
+        renderer.commit(&format!("! {problem}"))?;
+    }
+
+    renderer.present(
+        &picked_up(picked, held, now, columns),
+        terms.style.palette(),
+    )?;
+    Ok(())
+}
+
+/// The rows that say what was picked up.
+///
+/// It names the session rather than the number that reached it, because the
+/// list is read again between being printed and being picked from.
+fn picked_up(picked: &Recorded, held: usize, now: SystemTime, columns: usize) -> Vec<Row> {
+    let said = match held {
+        1 => "1 message".to_owned(),
+        _ => format!("{held} messages"),
+    };
+
+    vec![
+        Row::new().then(Slot::Plain, clip(picked.asked(), columns)),
+        Row::new().then(
+            Slot::Quiet,
+            clip(
+                &format!("{said} · started {}", when::ago(picked.started(), now)),
+                columns,
+            ),
+        ),
+    ]
+}
+
+/// The list, numbered from one.
+fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
+    let ages: Vec<String> = listed
+        .iter()
+        .map(|session| when::ago(session.started(), now))
+        .collect();
+
+    // Measured with `len` rather than by display width, which every other
+    // width in this program is measured by. These are this module's own words
+    // and this module's own digits — ASCII, one column each — and the string
+    // being padded is the one being measured. What arrived from a file is the
+    // title, which is not padded and not measured.
+    let widest = ages.iter().map(String::len).max().unwrap_or_default();
+
+    listed
+        .iter()
+        .zip(&ages)
+        .enumerate()
+        .map(|(at, (session, age))| {
+            let mut row = Row::new()
+                .then(Slot::Accent, format!("{}  ", at + 1))
+                .then(Slot::Quiet, format!("{age:widest$}  "));
+
+            let room = columns.saturating_sub(row.columns());
+            row.push(Slot::Plain, clip(session.asked(), room));
+            row
+        })
+        .collect()
+}
+
+/// Which session `said` names, if it names one.
+///
+/// A number, and nothing else. Naming a session by its identifier would be a
+/// second way in that nothing on screen ever offers, and the list is what the
+/// numbers mean.
+fn chosen<'a>(said: &str, listed: &'a [Recorded]) -> Option<&'a Recorded> {
+    listed.get(said.parse::<usize>().ok()?.checked_sub(1)?)
+}
+
+#[cfg(test)]
+mod tests;

@@ -92,6 +92,19 @@ impl Permission {
         self.mode
     }
 
+    /// Forgets what was allowed for the rest of the session, keeping the mode
+    /// and the rules.
+    ///
+    /// For a process that has picked up a different session. "For the rest of
+    /// this session" was answered about the session being left behind, and an
+    /// allow that outlived the thing it was scoped to would be a question
+    /// nobody was asked. An answer of `always` is untouched, because it was
+    /// never held here: it was written down as a rule, and the rules are what
+    /// they were.
+    pub fn forget(&mut self) {
+        self.remembered = HashSet::new();
+    }
+
     /// Steps that mode on to the next of the ring, and says which it is now.
     ///
     /// The one thing about a session that changes after it has started. It

@@ -33,7 +33,7 @@ const YEAR: u64 = 12 * MONTH;
 /// from somewhere else — reads as just now rather than as a negative age or a
 /// panic. It is the one answer that is never misleading about a session
 /// somebody can see the file of.
-pub(super) fn ago(started: SystemTime, now: SystemTime) -> String {
+pub(crate) fn ago(started: SystemTime, now: SystemTime) -> String {
     let seconds = now.duration_since(started).unwrap_or_default().as_secs();
 
     if seconds < MINUTE {

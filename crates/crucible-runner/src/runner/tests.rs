@@ -4,6 +4,7 @@
 mod forgotten;
 mod recorded;
 mod reported;
+mod resumed;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 

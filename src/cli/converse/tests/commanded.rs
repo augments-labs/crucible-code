@@ -111,6 +111,22 @@ fn forgetting_before_anything_was_said_says_there_was_nothing_to_forget() {
 }
 
 #[test]
+fn asking_what_was_worked_on_here_costs_no_turn_and_leaves_the_loop_running() {
+    // These terms are pointed at a directory nothing was ever recorded in, so
+    // the list is the empty one — which is the answer the loop has to carry
+    // just as far as any other. What the list says when there is something on
+    // it, and what picking one off it does, is proved where the sessions are.
+    let (written, asked) = commanding("/resume\nhello\n");
+
+    assert_eq!(asked, 1, "{written}");
+    assert!(
+        written.contains("nothing has been worked on here yet"),
+        "{written}"
+    );
+    assert!(written.contains("answered"), "{written}");
+}
+
+#[test]
 fn leaving_ends_the_session_with_what_follows_it_unread() {
     let (written, asked) = commanding("/exit\nand this\n");
 

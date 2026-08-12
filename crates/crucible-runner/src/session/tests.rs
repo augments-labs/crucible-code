@@ -363,4 +363,5 @@ fn a_session_that_records_nothing_is_still_a_session() {
     assert_eq!(session.path(), std::path::Path::new(""));
 }
 
+mod named;
 mod recovery;

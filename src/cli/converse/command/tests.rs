@@ -141,11 +141,12 @@ fn help_answers_with_a_name_and_what_it_does() {
     assert_eq!(
         art(&listing(60, Glyphs::Unicode)),
         [
-            "/help    what these are",
-            "/model   which model answers",
-            "/mode    ask · allowEdits · fullAccess",
-            "/clear   forget what has been said",
-            "/exit    leave",
+            "/help     what these are",
+            "/model    which model answers",
+            "/mode     ask · allowEdits · fullAccess",
+            "/resume   pick up an earlier session here",
+            "/clear    forget what has been said",
+            "/exit     leave",
         ]
     );
 }
@@ -155,11 +156,12 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
     assert_eq!(
         art(&listing(60, Glyphs::Ascii)),
         [
-            "/help    what these are",
-            "/model   which model answers",
-            "/mode    ask, allowEdits, fullAccess",
-            "/clear   forget what has been said",
-            "/exit    leave",
+            "/help     what these are",
+            "/model    which model answers",
+            "/mode     ask, allowEdits, fullAccess",
+            "/resume   pick up an earlier session here",
+            "/clear    forget what has been said",
+            "/exit     leave",
         ]
     );
 }

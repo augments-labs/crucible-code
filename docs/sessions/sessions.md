@@ -63,6 +63,26 @@ A log that stops between a tool call and its result is the one case where the
 last recorded turn does not come back: an unanswered question is not something
 to send a provider, so the replay ends before it and the file is cut to match.
 
+## Switching without restarting
+
+`/resume` shows the same list the opening screen does — this directory's last
+nine sessions, newest first, numbered — and picking a number off it changes
+which session the crucible you are in is recording to. It reads a log the way
+`--continue` reads one, and everything above applies to it: the transcript comes
+back, the file is cut to what was replayed before anything new is appended, a
+log this build cannot read is refused rather than half-understood, and a session
+another crucible has open is not available.
+
+What is different is the session being left. It is finished here rather than
+when the process ends, so its log is complete and can be continued from
+somewhere else immediately. Its session-long permission answers end with it —
+"for the rest of this session" was answered about that session, and the new one
+is asked again. The mode carries over, and so do the rules in your configuration
+files, which were never held in a session to begin with.
+
+The one session `/resume` will not pick up is the one you are in. It says so,
+rather than reporting the claim it would find on that file as another crucible's.
+
 ## One at a time
 
 A session is claimed for as long as it is open, so the one crucible is writing
