@@ -326,7 +326,11 @@ fn opened(said: &str, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
         return Vec::new();
     }
 
-    let mut rows = Menu { shown: &shown }.rows(columns);
+    let mut rows = Menu {
+        shown: &shown,
+        chosen: None,
+    }
+    .rows(columns, glyphs);
     rows.push(Row::new());
     rows
 }

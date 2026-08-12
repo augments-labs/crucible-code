@@ -13,13 +13,26 @@
 //! A row is a command and what it does, and nothing else. Which key moves,
 //! runs or closes is documented once, where somebody looks it up, rather than
 //! reprinted beside every list that has ever been on screen.
+//!
+//! A list somebody is choosing from says which row they are on, and says it
+//! twice: the row is marked as well as coloured. Colour alone would be the one
+//! thing on screen that a terminal without it could not report, and the row a
+//! key is about to act on is the last thing to leave to a hue.
 
 use crate::color::Slot;
+use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
 /// What stands between the longest name and the words beside it.
 const GAP: usize = 3;
+
+/// The room kept in front of every row of a list being chosen from: the mark,
+/// and the space after it.
+///
+/// Kept on every row rather than only on the marked one, so the names stand in
+/// one column as the mark moves down them.
+const POINTING: usize = 2;
 
 /// One command, as a list of them draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +49,59 @@ pub struct Listed<'a> {
 pub struct Menu<'a> {
     /// What to draw, in the order it is listed.
     pub shown: &'a [Listed<'a>],
+    /// Which row a key would act on, where this is a list being chosen from.
+    ///
+    /// `None` where it is a list being read instead — `/help`'s answer, which
+    /// is over as soon as it is drawn. Then no room is kept in front of it and
+    /// every row is drawn alike, because there is no row to tell apart.
+    pub chosen: Option<usize>,
+}
+
+/// How one row of a list is drawn.
+///
+/// Three of these, and which one a row gets is what says what the list is: a
+/// list being read, a row of one being chosen from, and the row that is chosen.
+#[derive(Debug, Clone, Copy)]
+struct Drawn {
+    /// What stands in the room kept in front of the row. Empty on every row
+    /// but the chosen one.
+    mark: &'static str,
+    /// How much room that is, on this row and on every other.
+    front: usize,
+    /// The command's own name.
+    name: Slot,
+    /// What it does, beside it.
+    says: Slot,
+}
+
+impl Drawn {
+    /// A list being read rather than chosen from.
+    const READ: Self = Self {
+        mark: "",
+        front: 0,
+        name: Slot::Strong,
+        says: Slot::Plain,
+    };
+
+    /// A row of one being chosen from that the choice has passed over.
+    const fn passed(front: usize) -> Self {
+        Self {
+            mark: "",
+            front,
+            name: Slot::Quiet,
+            says: Slot::Quiet,
+        }
+    }
+
+    /// The row it is on.
+    const fn chosen(mark: &'static str, front: usize) -> Self {
+        Self {
+            mark,
+            front,
+            name: Slot::Strong,
+            says: Slot::Plain,
+        }
+    }
 }
 
 impl Menu<'_> {
@@ -46,7 +112,13 @@ impl Menu<'_> {
     /// than the same one moving: every row of it changed on the keystroke that
     /// filtered it.
     #[must_use]
-    pub fn rows(&self, columns: usize) -> Vec<Row> {
+    pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+        let front = if self.chosen.is_some() && columns > POINTING {
+            POINTING
+        } else {
+            0
+        };
+
         let widest = self
             .shown
             .iter()
@@ -54,13 +126,32 @@ impl Menu<'_> {
             .max()
             .unwrap_or_default();
 
-        let at = widest + GAP;
+        let at = front + widest + GAP;
         let left = columns.saturating_sub(at);
 
         self.shown
             .iter()
-            .map(|one| one.row(columns, at, left))
+            .enumerate()
+            .map(|(row, one)| one.row(columns, at, left, self.drawn(row, front, glyphs)))
             .collect()
+    }
+
+    /// How the row at `row` is drawn, where the list keeps `front` columns in
+    /// front of every row.
+    ///
+    /// No room for the mark is no list to choose from. At that width the mark
+    /// would stand where the name's first column is, and the name is the part
+    /// that has to be typed.
+    fn drawn(&self, row: usize, front: usize, glyphs: Glyphs) -> Drawn {
+        let Some(chosen) = self.chosen.filter(|_| front > 0) else {
+            return Drawn::READ;
+        };
+
+        if chosen == row {
+            Drawn::chosen(glyphs.caret(), front)
+        } else {
+            Drawn::passed(front)
+        }
     }
 }
 
@@ -70,12 +161,17 @@ impl Listed<'_> {
     /// A terminal too narrow for the second column gets the first alone. Half a
     /// sentence about what a command does is worth less than the name of it,
     /// and the name is what has to be typed.
-    fn row(&self, columns: usize, at: usize, left: usize) -> Row {
-        let mut row = Row::new().then(Slot::Strong, width::clip(self.name, columns));
+    fn row(&self, columns: usize, at: usize, left: usize, drawn: Drawn) -> Row {
+        let mut row = Row::new().then(Slot::Accent, drawn.mark);
+        row.pad(drawn.front);
+        row.push(
+            drawn.name,
+            width::clip(self.name, columns.saturating_sub(drawn.front)),
+        );
 
         if left > 0 && !self.says.is_empty() {
             row.pad(at);
-            row.push(Slot::Plain, width::clip(self.says, left));
+            row.push(drawn.says, width::clip(self.says, left));
         }
 
         row
@@ -106,9 +202,18 @@ mod tests {
         ]
     }
 
-    /// What a list of them says, row by row.
+    /// What a list of them says, row by row, as `/help` answers with it.
     fn art(shown: &[Listed<'_>], columns: usize) -> Vec<String> {
-        Menu { shown }.rows(columns).iter().map(Row::text).collect()
+        drawn(shown, columns, None)
+    }
+
+    /// The same for a list somebody is choosing from.
+    fn drawn(shown: &[Listed<'_>], columns: usize, chosen: Option<usize>) -> Vec<String> {
+        Menu { shown, chosen }
+            .rows(columns, Glyphs::Unicode)
+            .iter()
+            .map(Row::text)
+            .collect()
     }
 
     /// A palette that writes every hue it has.
@@ -180,12 +285,18 @@ mod tests {
         // the cursor one row below where the next frame expects it, and the
         // frame after that would erase the wrong lines.
         for columns in 1..=60 {
-            let rows = Menu { shown: &every() }.rows(columns);
+            for chosen in [None, Some(0), Some(2)] {
+                let rows = Menu {
+                    shown: &every(),
+                    chosen,
+                }
+                .rows(columns, Glyphs::Unicode);
 
-            assert!(
-                rows.iter().all(|row| row.columns() <= columns),
-                "at {columns}: {rows:?}"
-            );
+                assert!(
+                    rows.iter().all(|row| row.columns() <= columns),
+                    "at {columns} with {chosen:?}: {rows:?}"
+                );
+            }
         }
 
         assert_eq!(
@@ -208,23 +319,105 @@ mod tests {
 
     #[test]
     fn a_list_with_nothing_in_it_draws_nothing() {
-        assert!(Menu { shown: &[] }.rows(60).is_empty());
+        assert!(
+            Menu {
+                shown: &[],
+                chosen: None,
+            }
+            .rows(60, Glyphs::Unicode)
+            .is_empty()
+        );
     }
 
     #[test]
     fn the_name_is_the_part_that_is_coloured() {
         // What is typed reads as what is typed, and the words after it are the
         // reader's own foreground: a list is one colour and a quiet one.
-        let painted = Menu { shown: &every() }
-            .rows(60)
-            .first()
-            .map(|row| row.paint(colourful()))
-            .expect("a row the component drew");
+        let painted = Menu {
+            shown: &every(),
+            chosen: None,
+        }
+        .rows(60, Glyphs::Unicode)
+        .first()
+        .map(|row| row.paint(colourful()))
+        .expect("a row the component drew");
 
         assert!(
             painted.starts_with(colourful().open(Slot::Strong)),
             "{painted:?}"
         );
         assert!(painted.ends_with("what these are"), "{painted:?}");
+    }
+
+    #[test]
+    fn the_row_being_chosen_is_marked_and_the_rest_stand_in_the_same_column() {
+        // The mark moves down the list and the names do not move with it, which
+        // is what the room in front of every row is for.
+        assert_eq!(
+            drawn(&every(), 60, Some(1)),
+            [
+                "  /help     what these are",
+                "› /model    which model answers",
+                "  /resume   pick up an earlier session here",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_list_nobody_is_choosing_from_keeps_no_room_for_a_mark() {
+        // `/help`'s answer is over as soon as it is drawn. Two columns of
+        // nothing in front of it would be an offer that is not being made.
+        assert_eq!(drawn(&every(), 60, None), art(&every(), 60));
+
+        let first = art(&every(), 60);
+        let first = first.first().expect("the row `/help` is on");
+
+        assert!(first.starts_with("/help"), "{first:?}");
+    }
+
+    #[test]
+    fn a_font_without_the_mark_still_says_which_row_it_is_on() {
+        let rows: Vec<String> = Menu {
+            shown: &every(),
+            chosen: Some(0),
+        }
+        .rows(60, Glyphs::Ascii)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+        let chosen = rows.first().expect("the row it is on");
+        let passed = rows.get(1).expect("a row it has passed over");
+
+        assert!(chosen.starts_with("> /help"), "{chosen:?}");
+        assert!(passed.starts_with("  /model"), "{passed:?}");
+    }
+
+    #[test]
+    fn the_rows_the_choice_has_passed_over_are_the_quiet_ones() {
+        // The second thing that says which row it is on, for a reader who has
+        // colour. The mark is the first, and it is the one that survives a
+        // terminal that has none.
+        let painted: Vec<String> = Menu {
+            shown: &every(),
+            chosen: Some(0),
+        }
+        .rows(60, Glyphs::Unicode)
+        .iter()
+        .map(|row| row.paint(colourful()))
+        .collect();
+
+        let chosen = painted.first().expect("the row it is on");
+        let passed = painted.get(1).expect("a row it has passed over");
+
+        assert!(
+            chosen.contains(colourful().open(Slot::Strong)),
+            "{chosen:?}"
+        );
+        assert!(
+            !passed.contains(colourful().open(Slot::Strong)),
+            "{passed:?}"
+        );
+        assert!(passed.contains(colourful().open(Slot::Quiet)), "{passed:?}");
     }
 }
