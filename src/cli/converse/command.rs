@@ -327,7 +327,11 @@ fn sentence(mode: Mode, columns: usize) -> Row {
 fn listing(columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let shown: Vec<Listed<'static>> = EVERY.into_iter().map(|one| one.listed(glyphs)).collect();
 
-    Menu { shown: &shown }.rows(columns)
+    Menu {
+        shown: &shown,
+        chosen: None,
+    }
+    .rows(columns, glyphs)
 }
 
 /// Whether this one ends the session.
