@@ -25,6 +25,44 @@ readonly MAX_FILE_LINES=1000
 
 failed=0
 
+echo "==> merge conflict markers"
+# First, because it is the cheapest check here and because everything after it
+# is measuring a tree that a marker has already made meaningless.
+#
+# A resolution that missed a line is the one defect the rest of this script
+# waves through. In a `.rs` file the compiler catches it; in a changelog, a
+# workflow, a JSON document or this script it is ordinary text, and one reached
+# `main` through five green jobs. That is what this is here for.
+#
+# Every tracked file, rather than the shipped set the scan below reads: a marker
+# is not a matter of who the file is addressed to. Untracked files are nobody's
+# business and `target/` is never walked, both of which `git ls-files` decides
+# for free.
+#
+# The patterns are counts rather than seven literal characters, because a check
+# that greps for its own source fails on a clean tree. `={7}$` is the one that
+# could match something innocent — a markdown heading underlined with exactly
+# seven `=` looks the same from here. Underline it with any other number.
+#
+# Exit codes are read the way they are for the shipped-files scan below, with
+# one more case: outside a repository `git grep` answers 128, which lands in the
+# same arm as a scan that could not finish, and says so rather than passing.
+scan=0
+conflicted=$(git grep -InE '^(<{7}|\|{7}|={7}|>{7})( |$)') || scan=$?
+case $scan in
+    0)
+        printf '%s\n' "$conflicted"
+        printf '    FAIL the lines above are what a merge left behind\n'
+        failed=1
+        ;;
+    1) ;;
+    *)
+        printf '%s\n' "$conflicted"
+        printf '    FAIL the scan could not be completed; this check measured nothing\n'
+        failed=1
+        ;;
+esac
+
 echo "==> rustfmt"
 cargo fmt --all --check
 
