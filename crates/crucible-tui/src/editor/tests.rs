@@ -95,6 +95,57 @@ fn home_and_end_reach_the_ends_and_then_cost_nothing() {
 }
 
 #[test]
+fn a_word_either_way_crosses_the_whole_word_and_stops_where_it_ends() {
+    // A path is one word. What is usually wrong at the far end of a long line
+    // is a path or a name, and a rule that stopped at every punctuation mark
+    // inside one would need the key four more times to finish crossing it.
+    let mut editor = typed("crates/crucible-tui/src/editor.rs holds the line");
+
+    for left in [
+        "crates/crucible-tui/src/editor.rs holds the ",
+        "crates/crucible-tui/src/editor.rs holds ",
+        "crates/crucible-tui/src/editor.rs ",
+        "",
+    ] {
+        assert_eq!(editor.press(Key::WordLeft), Typed::Changed);
+        assert_eq!(editor.before(), left);
+    }
+
+    assert_eq!(editor.press(Key::WordLeft), Typed::Ignored);
+
+    for right in [
+        "crates/crucible-tui/src/editor.rs",
+        "crates/crucible-tui/src/editor.rs holds",
+        "crates/crucible-tui/src/editor.rs holds the",
+        "crates/crucible-tui/src/editor.rs holds the line",
+    ] {
+        assert_eq!(editor.press(Key::WordRight), Typed::Changed);
+        assert_eq!(editor.before(), right);
+    }
+
+    assert_eq!(editor.press(Key::WordRight), Typed::Ignored);
+}
+
+#[test]
+fn the_spaces_beside_the_cursor_are_crossed_along_with_the_word() {
+    // Sitting on the far side of a space, a press has to reach the word past
+    // it. Landing on the near edge of that space instead would mean the cursor
+    // one press leaves is a press short of the next word, and one word back
+    // would cost two keystrokes for the rest of the line.
+    let mut editor = typed("read   the  tail");
+
+    for left in ["read   the  ", "read   ", ""] {
+        assert_eq!(editor.press(Key::WordLeft), Typed::Changed);
+        assert_eq!(editor.before(), left);
+    }
+
+    for right in ["read", "read   the", "read   the  tail"] {
+        assert_eq!(editor.press(Key::WordRight), Typed::Changed);
+        assert_eq!(editor.before(), right);
+    }
+}
+
+#[test]
 fn a_cursor_is_counted_in_columns_rather_than_characters() {
     // The reason this crate has a width module at all. Two characters that a
     // terminal draws four cells wide, and a cursor placed three cells early is
@@ -242,6 +293,10 @@ fn every_edit_leaves_the_cursor_somewhere_the_line_actually_ends() {
         Key::Backspace,
         Key::Left,
         Key::Backspace,
+        Key::WordLeft,
+        Key::Char(' '),
+        Key::WordRight,
+        Key::WordLeft,
     ];
 
     for key in keys {

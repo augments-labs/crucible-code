@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The cursor crosses a word at a time.** <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held
+  with <kbd>←</kbd> or <kbd>→</kbd> moves a word, and <kbd>Alt-B</kbd> and
+  <kbd>Alt-F</kbd> do the same — so correcting the far end of a long line is no
+  longer one arrow key per character. A word is a run of anything that is not a
+  space, which makes a path one word.
+
 ### Changed
 
 - **<kbd>Shift-Tab</kbd> into `fullAccess` takes effect on the press.** It used
