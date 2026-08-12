@@ -11,7 +11,6 @@ use crucible_core::Workspace;
 use crucible_runner::Recorded;
 use crucible_tui::{Notice, Recent, Renderer, Terminal, TerminalError, Welcome};
 
-use crate::cli::NOTHING_TO_ASK;
 use crate::cli::release::Newer;
 use crate::cli::style::Style;
 
@@ -30,6 +29,9 @@ const UNCHOSEN: &str = "no model selected";
 pub(crate) struct Opening<'a> {
     /// The model this session will ask, or `None` where nothing chose one.
     pub(crate) model: Option<&'a str>,
+    /// What to say where there is none: which of the two halves of setting
+    /// crucible up is the one still missing.
+    pub(crate) unasked: &'a str,
     /// The directory being worked in.
     pub(crate) workspace: &'a Workspace,
     /// What was worked on here before, newest first.
@@ -118,7 +120,7 @@ pub(crate) fn opening<T: Terminal>(
     // block is about the release rather than about this run, and this one is
     // about exactly this run.
     if opening.model.is_none() {
-        super::unconfigured(renderer, NOTHING_TO_ASK, style)?;
+        super::unconfigured(renderer, opening.unasked, style)?;
     }
 
     Ok(())
@@ -130,6 +132,8 @@ mod tests {
 
     use crucible_core::Message;
     use crucible_runner::Session;
+
+    use crate::cli::NOTHING_TO_ASK;
     use crucible_tui::Recording;
 
     use super::*;
@@ -154,6 +158,7 @@ mod tests {
             terminal,
             &Opening {
                 model: Some("claude-sonnet-5"),
+                unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
                 update: None,
@@ -292,6 +297,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
                 update: None,
@@ -326,6 +332,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
                 update: Some(&newer),

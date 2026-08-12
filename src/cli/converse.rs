@@ -27,6 +27,7 @@ use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use super::unasked;
 use command::Ran;
 use typing::Asked;
 
@@ -146,7 +147,7 @@ pub(crate) fn converse<T: Terminal>(
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
         if runner.model().is_empty() {
-            draw::unconfigured(renderer, super::NOTHING_TO_ASK, style)?;
+            draw::unconfigured(renderer, unasked(terms.provider), style)?;
             continue;
         }
 

@@ -21,10 +21,10 @@
 
 use crucible_core::Mode;
 use crucible_runner::Runner;
-use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::style::Style;
-use crate::cli::{Fatal, NOTHING_TO_ASK, remember};
+use crate::cli::{Fatal, NO_MODEL_CHOSEN, NOTHING_TO_ASK, remember};
 
 use super::{Terms, mode};
 
@@ -276,7 +276,8 @@ fn asked<T: Terminal>(
         // Read from configuration or off the command line either way, so it
         // goes out the way arrived text goes out.
         return match runner.model() {
-            "" => renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from),
+            "" if terms.provider.is_none() => renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from),
+            "" => renderer.commit(NO_MODEL_CHOSEN).map_err(Fatal::from),
             name => renderer.commit(name).map_err(Fatal::from),
         };
     }
@@ -291,29 +292,25 @@ fn asked<T: Terminal>(
     runner.ask(said);
     renderer.commit(&format!("{provider}/{said}"))?;
 
-    match remember::choosing(&terms.choosing, provider, said) {
-        Ok(()) => renderer.present(
-            &[Row::new().then(
-                Slot::Quiet,
-                clip(
-                    &format!("written to {}", terms.choosing.display()),
-                    renderer.columns(),
-                ),
-            )],
-            style.palette(),
-        )?,
+    let said = match remember::choosing(&terms.choosing, provider, said) {
+        Ok(()) => format!("written to {}", terms.choosing.display()),
         Err(problem) => {
+            // The switch stands either way: what a failed write costs is the
+            // part that outlives the process, which is the same bargain an
+            // answer of `always` is on.
             renderer.commit(&format!("! {problem}"))?;
-            renderer.present(
-                &[Row::new().then(
-                    Slot::Quiet,
-                    clip("asked for this session only", renderer.columns()),
-                )],
-                style.palette(),
-            )?;
+            "asked for this session only".to_owned()
         }
-    }
+    };
 
+    // Wrapped rather than clipped: a path is most of this row and half of one
+    // says nothing about where to look.
+    let rows: Vec<Row> = fold(&said, renderer.columns())
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Quiet, row))
+        .collect();
+
+    renderer.present(&rows, style.palette())?;
     Ok(())
 }
 

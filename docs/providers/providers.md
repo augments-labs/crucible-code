@@ -46,7 +46,12 @@ There is **no model built in**, and none of these rungs is a guess:
    [configuration](../configuration/configuration.md), for the provider being
    asked. A provider and a bare slash — `--model openai/` — is how you reach
    this rung with the flag present.
-3. Nothing. crucible starts anyway and says so under the welcome:
+3. Nothing. crucible starts anyway and says so under the welcome — naming
+   whichever half of setting it up is still missing:
+
+```
+Warning: No model selected. Use /model to select the model to ask.
+```
 
 ```
 Warning: No models available. Use /login or set an API key environment

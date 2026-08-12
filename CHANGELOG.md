@@ -6,6 +6,59 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`/model <name>` chooses the model and writes the choice down.** It goes to
+  `~/.crucible/config.json` under the provider this run is set up for, so the
+  next crucible you start anywhere begins with it. `/model` on its own still
+  says which model is being asked.
+
+- **Clicking in the prompt box puts the cursor where you clicked.** The terminal
+  reports clicks only while the box is up, so between turns and after crucible
+  exits the mouse is the terminal's own again — hold <kbd>Shift</kbd> to select
+  or middle-click paste inside the box.
+
+- **crucible says when there is a newer release.** A line under the welcome
+  names the version and where to get it. The question is put to GitHub at most
+  once a day on a thread nobody waits for, so it costs the startup path nothing
+  and the answer is drawn the next time you start. `updates.check` set to
+  `never` stops it reaching the network at all.
+
+### Changed
+
+- **The prompt box wraps and grows instead of scrolling sideways.** A line
+  longer than the box takes another row, up to about half the window; past that
+  it scrolls under the top edge. A paragraph you are writing is now a paragraph
+  you can see.
+
+- **The box stays on screen while a turn runs.** It used to leave for the whole
+  of a turn, taking the one fixed thing on screen away exactly when output was
+  scrolling past. It takes no typing while a turn is running, so the key that
+  steps the mode is not offered beside it.
+
+- **OpenAI is reached over the Responses API.** Every turn against a current
+  OpenAI model used to come back `HTTP 400: Function tools with reasoning_effort
+  are not supported …`, because those models reason by default and the older
+  endpoint refuses tools alongside it. The cost is other vendors serving an
+  OpenAI-shaped API: they implement the older endpoint, so `openai` now means
+  OpenAI. Nothing is retained at the vendor, and no token ceiling is sent —
+  one number bounds reasoning and answer together there.
+
+### Fixed
+
+- **crucible no longer asks one vendor for another vendor's model.** There was a
+  model name compiled in per provider and a provider a bare `--model` name fell
+  back to, so `OPENAI_API_KEY` on its own opened a Claude session, and
+  `--model gpt-5.6-terra` beside it went to Anthropic. The key held decides who
+  is asked; `--model` and `providers.<name>.model` decide what for. Neither
+  answered is a session that starts, says so under the welcome, and takes no
+  turn until `/model` answers it. Two keys and nothing choosing between them is
+  now a question rather than a coin toss.
+
+- **`cargo run` starts crucible.** The bench probes under `src/bin/` are targets
+  too, so cargo refused to choose between six binaries and asked for `--bin` —
+  including for the `cargo run -- --help` the documentation gives you.
+
 ## [0.0.9] - 2026-08-12
 
 ### Added

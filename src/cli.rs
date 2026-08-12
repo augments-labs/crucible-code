@@ -76,13 +76,31 @@ pub(crate) struct Served {
     pub(crate) key: &'static str,
 }
 
-/// What crucible says when it has no model to ask.
+/// What crucible says when nothing on this machine is set up to answer.
 ///
-/// One sentence for both halves of the same hole, because a session that cannot
-/// take a turn is in the same position either way: it is said under the welcome
-/// where a run starts with nothing set up, and again in place of any turn typed
-/// before something is.
+/// Said under the welcome where a run starts with no key for any provider, and
+/// again in place of any turn typed before there is one.
 pub(crate) const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.";
+
+/// What it says when there is a provider to ask and nothing to ask it for.
+///
+/// A separate sentence rather than the one above, because the one above tells
+/// somebody to set a key — and the key is the half they have already done. A
+/// warning that names the wrong missing thing is worse than no warning: it
+/// sends the reader to check something that was never wrong.
+pub(crate) const NO_MODEL_CHOSEN: &str =
+    "Warning: No model selected. Use /model to select the model to ask.";
+
+/// Which of the two a session with no model has to say.
+///
+/// The provider by name rather than by entry, because the loop holds only the
+/// name by the time it has to ask this again.
+pub(crate) const fn unasked(provider: Option<&str>) -> &'static str {
+    match provider {
+        Some(_) => NO_MODEL_CHOSEN,
+        None => NOTHING_TO_ASK,
+    }
+}
 
 /// The provider names, for the sentence a name outside them gets back.
 fn names() -> String {
@@ -343,6 +361,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &mut renderer,
         &Opening {
             model: model.as_deref(),
+            unasked: unasked(serving.map(|one| one.name)),
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
