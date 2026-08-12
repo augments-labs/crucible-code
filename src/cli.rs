@@ -110,7 +110,8 @@ changes a file or starts a process.
 --model takes a model name, optionally qualified by the provider serving it: \
 claude-sonnet-5, or openai/gpt-5.6-terra. Unqualified names go to Anthropic. \
 Left off, the provider is whichever of ANTHROPIC_API_KEY and OPENAI_API_KEY \
-your machine holds, and Anthropic when it holds both or neither. Left off, or \
+holds a key, and Anthropic when both or neither does — a variable exported \
+empty holds none, so it does not compete. Left off, or \
 given as a provider and a bare slash, the model comes from your configuration, \
 and failing that from the one this build pairs with that provider. The key is \
 read from that provider's variable, or from whichever one its apiKeyEnv names.
@@ -338,20 +339,36 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 /// meant; it is the same answer for the same machine every run, rather than one
 /// that turns on which variables a shell happened to export.
 ///
-/// A variable exported empty counts as held. It is not a key — the lookup that
-/// reads one refuses a blank — but it is still the provider that was being set
-/// up, and the refusal that follows names the variable already in the shell
-/// rather than one the user has never typed.
+/// A variable exported empty is looked at twice, and the order is the whole
+/// point. It is not a key — the lookup that reads one refuses a blank — so it
+/// loses to a variable that holds one, and a shell carrying `ANTHROPIC_API_KEY=`
+/// to turn that provider *off* does not outvote the key beside it. Where nothing
+/// holds a key it counts after all, so a machine set up with one blank variable
+/// is refused by the name already in the shell rather than by one the user has
+/// never typed.
 fn keyed(settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> &'static str {
-    let mut held = PROVIDERS
-        .into_iter()
-        .filter(|one| from(settings.api_key_env(one.name).unwrap_or(one.key)).is_some());
+    sole(settings, from, |value| !value.trim().is_empty())
+        .or_else(|| sole(settings, from, |_| true))
+        .unwrap_or(FALLBACK)
+}
 
-    let first = held.next();
+/// The one provider whose variable `holds`, or `None` where that is not exactly
+/// one of them.
+///
+/// The value is read and asked a question about; nothing keeps it and nothing
+/// learns what it was.
+fn sole(
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+    holds: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    let mut found = PROVIDERS.into_iter().filter(|one| {
+        from(settings.api_key_env(one.name).unwrap_or(one.key)).is_some_and(|value| holds(&value))
+    });
 
-    match (first, held.next()) {
-        (Some(one), None) => one.name,
-        _ => FALLBACK,
+    match (found.next(), found.next()) {
+        (Some(one), None) => Some(one.name),
+        _ => None,
     }
 }
 
