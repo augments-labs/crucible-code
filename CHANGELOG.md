@@ -72,6 +72,13 @@ Notable changes to crucible. Format follows
   second one within two seconds leaves. Any other key in between takes the offer
   back. A line being typed is still thrown away by the first press, as before.
 
+### Internal
+
+- `scripts/check.sh` refuses a merge conflict marker in any tracked file, and
+  runs that scan first. A resolution that missed a line is caught by the
+  compiler in a `.rs` file and by nothing at all in a changelog or a workflow;
+  one reached `main` through five green jobs.
+
 ## [0.0.8] - 2026-08-12
 
 ### Added
