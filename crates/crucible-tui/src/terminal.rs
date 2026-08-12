@@ -9,7 +9,13 @@
 //! It is also what makes the renderer testable: [`Recording`] is a terminal
 //! that keeps the bytes, so a test can assert on the exact escape sequences
 //! written rather than on a screenshot.
+//!
+//! This module is where `crossterm` is named, and the two files below are the
+//! whole of it: [`system`] for the size and the handle, [`raw`] for the mode.
+//! Everything the renderer writes is plain ANSI, so what a swap would cost is
+//! those two files.
 
+pub(crate) mod raw;
 pub(crate) mod system;
 
 use std::io;

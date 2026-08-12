@@ -31,6 +31,7 @@ pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
 pub use render::Renderer;
 pub use row::Row;
+pub use terminal::raw::{Raw, RawError};
 pub use terminal::system::SystemTerminal;
 pub use terminal::{Recording, Size, Terminal, TerminalError};
 pub use title::{TITLE, Title, TitleError};

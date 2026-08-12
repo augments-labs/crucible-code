@@ -1,9 +1,11 @@
-//! The real terminal, and the only file that names `crossterm`.
+//! The real terminal: the window size, and the standard-output handle.
 //!
-//! Everything a terminal crate is needed for lives behind [`Terminal`]: the
-//! window size, and the standard-output handle. The escape sequences the
-//! renderer writes are ANSI, not `crossterm`, so replacing this file is a day's
-//! work rather than a rewrite -- which is the point of keeping it this thin.
+//! Both live behind [`Terminal`], so the escape sequences the renderer writes
+//! are ANSI rather than `crossterm` and replacing this file is a day's work
+//! rather than a rewrite -- which is the point of keeping it this thin. The mode
+//! the terminal reads keys in is the other thing a terminal crate is needed for,
+//! and it is next door in [`super::raw`] because it is state to hand back rather
+//! than an operation to call.
 //!
 //! Reading the size is not one syscall, whatever it looks like here. `crossterm`
 //! opens `/dev/tty` before the `TIOCGWINSZ` it is being called for, and where
