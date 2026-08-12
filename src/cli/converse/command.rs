@@ -256,12 +256,10 @@ fn answer<T: Terminal>(
 /// `/mode`: the mode in force and the ring it is one of, or the mode named, put
 /// where it was named.
 ///
-/// Nothing is agreed to first, which the key that steps through the ring does
-/// ask for on its way into full access. That confirm is there because a key is
-/// easy to press by accident, and it survives because it fires on one step of
-/// one ring and nowhere else. Typing the name of a mode is not an accident, and
-/// a second confirm is what would teach somebody to dismiss the first one
-/// unread.
+/// Nothing is agreed to first, which is also true of the key that steps through
+/// the ring. The two are one change reached two ways, and a mode that took
+/// effect on the press from one of them and waited on the other would be
+/// answering the same question differently depending on how it was asked.
 fn moded<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,

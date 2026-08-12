@@ -28,7 +28,7 @@ pub enum Pressed {
     Key(Key),
     /// Shift+Tab: step the mode on to the next one.
     Cycle,
-    /// Escape: back out of whatever is waiting to be agreed to.
+    /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
     Up,

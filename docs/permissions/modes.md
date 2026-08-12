@@ -66,11 +66,9 @@ prompt is being typed, which is what keeps it from changing anything mid-turn:
 no call is ever decided under a mode other than the one that was on screen when
 the turn started.
 
-Stepping into `fullAccess` is agreed to before it takes effect. The row says
-what the mode means and waits: <kbd>Enter</kbd> confirms it, <kbd>Esc</kbd>
-leaves the session in the mode it was already in. The other two steps take
-effect on the press, because a mode that still asks about something can be
-answered by stepping again.
+Every step takes effect on the press, `fullAccess` included. The row under the
+box says which mode that landed in and the box changes colour with it, and the
+same key steps out again — a mode reached by one key is left by two more.
 
 A step changes one thing and no others. The rules you wrote hold exactly as
 they did, and anything already allowed for the session stays allowed.
@@ -80,8 +78,7 @@ they did, and anything already allowed for the session stays allowed.
 `/mode allowEdits` puts the session in that mode outright, spelled the way
 [configuration](../configuration/configuration.md) spells it. It is the same
 change under the same conditions — between turns, nothing else about the
-session moving — and it is not agreed to first: typing the name of a mode is
-not something anybody does by accident.
+session moving.
 
 `/mode` on its own says which one is in force and lists the three to choose
 from. A word that names none of them is refused, and the session stays where it

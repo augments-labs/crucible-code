@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **<kbd>Shift-Tab</kbd> into `fullAccess` takes effect on the press.** It used
+  to go on screen and wait for <kbd>Enter</kbd> before it counted. The row under
+  the box still says the mode and the box is still drawn in its colour, and the
+  same key steps back out of it.
+
 ### Fixed
 
 - **The welcome screen spells the program's name.** The `B` of the wordmark was
