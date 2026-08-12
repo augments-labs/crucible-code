@@ -109,7 +109,11 @@ you type, and the row and the colour of the box both follow it.
 [Permissions](../permissions/index.md) is where all three are.
 
 Type a prompt and press enter. The box goes, the line stays where it was, and
-the answer streams in under it. Tool calls appear as they run:
+the answer streams in under it. The mode does not go with the box: it stands on
+its own row under whatever is being written, so a tool call arriving ten minutes
+into a turn is read beside the mode that let it through. The key is not offered
+there — nothing is reading one until the turn ends. Tool calls appear as they
+run:
 
 ```
 › what does the runner do when a tool fails?

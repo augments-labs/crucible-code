@@ -290,6 +290,29 @@ fn the_prompt_line_names_the_mode_in_force() {
     assert!(written.contains("fullAccess › "), "{written}");
 }
 
+#[test]
+fn the_mode_stands_under_a_turn_that_is_still_being_written() {
+    // A turn is the longest a session goes without a prompt on screen, and it
+    // is the stretch the mode is deciding things over -- the mode used to leave
+    // with the box and come back only once there was nothing left to decide.
+    // Pinned to the escape that parks the cursor back on the answer as well as
+    // to the words: a row drawn under the tail and not counted is one the next
+    // frame rewinds over, which would corrupt the turn rather than merely
+    // mislead about it.
+    let runner = scripted(Script::new(vec![saying("hello")]), Tools::new())
+        .permitting(Permission::with(Mode::FullAccess, Rules::new()));
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(
+        written.contains("hello\r\nfull access mode on\x1b[1A"),
+        "{written}"
+    );
+}
+
 // What a question offers, and what the answer to it leaves behind.
 //
 // The turns either side of a question are the parent module's subject. This is

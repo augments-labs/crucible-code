@@ -23,6 +23,14 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The mode stays on screen while a turn is being written.** It used to leave
+  with the box, so the longest stretch of a session was the one stretch that did
+  not say what it was allowed to do. It now stands on its own row under the
+  streaming answer, without the key hint the row under the box carries — nothing
+  is reading a key until the turn ends. The row never reaches the scrollback:
+  what stands there is a fact about the session rather than something that was
+  said.
+
 - **A session claim that could not be attempted no longer reads as a filesystem
   with no locks.** Where the `.lock` file beside a log could not be made at all,
   `--continue` went ahead as though the check had run and found nothing, which

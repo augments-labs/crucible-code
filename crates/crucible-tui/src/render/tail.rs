@@ -127,6 +127,18 @@ impl Tail {
         self.rows.iter().all(|row| row.text.is_empty())
     }
 
+    /// How many columns along the row being appended to the next character
+    /// goes.
+    ///
+    /// Where the cursor belongs whenever a frame wrote something after the
+    /// tail. It is the one column this crate cannot recover by counting bytes:
+    /// a row holds escape sequences that cost nothing and characters that cost
+    /// two, and the tail is what has already counted both.
+    #[must_use]
+    pub(crate) fn column(&self) -> usize {
+        self.rows.back().map_or(0, |row| row.width)
+    }
+
     /// Drops everything, ready for the next turn.
     ///
     /// The rows are gone rather than committed: the caller decides whether
@@ -155,7 +167,7 @@ impl Tail {
             return;
         }
 
-        if self.current_width() + advance > self.width {
+        if self.column() + advance > self.width {
             self.rows.push_back(Row::default());
         }
 
@@ -185,7 +197,7 @@ impl Tail {
             return;
         }
 
-        if self.current_width() + 1 > self.width {
+        if self.column() + 1 > self.width {
             // The pair moves down together: a selector parted from its base
             // stops asking for anything, and the base left behind would draw
             // narrow on a row this tail had already counted wide.
@@ -209,7 +221,7 @@ impl Tail {
     /// edge. Expanded here rather than passed through so the width this tail
     /// reports is the width the terminal will show.
     fn advance_to_tab_stop(&mut self) {
-        let current = self.current_width();
+        let current = self.column();
         let target = width::tab_stop(current);
 
         if target > self.width {
@@ -220,11 +232,6 @@ impl Tail {
         for _ in current..target {
             self.place(' ');
         }
-    }
-
-    /// The width of the row being appended to.
-    fn current_width(&self) -> usize {
-        self.rows.back().map_or(0, |row| row.width)
     }
 }
 
