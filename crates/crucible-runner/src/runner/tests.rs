@@ -1,6 +1,7 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
+mod forgotten;
 mod recorded;
 mod reported;
 

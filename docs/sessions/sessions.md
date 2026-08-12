@@ -187,11 +187,16 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":1,"session":"…","workspace":"/home/you/code/my-project"}
+{"format":2,"session":"…","workspace":"/home/you/code/my-project"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to
 run, and what the tools returned.
+
+`/clear` is written down rather than cut out: it appends a line saying the
+session forgot what it had said, and everything above that line stays in the
+file. `--continue` replays from there, so a cleared session comes back as what
+was said after it and nothing before.
 
 The `workspace` in that header is what `--continue` matches against, and
 `format` is what makes a file from a build that spelled things differently a

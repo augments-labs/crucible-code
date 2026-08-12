@@ -144,7 +144,15 @@ session.
 | `/help` | Lists these |
 | `/model` | The model this session is asking |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/clear` | Forgets what has been said, keeping the session |
 | `/exit` | Ends the session |
+
+`/clear` empties the transcript: the next prompt is the first one the model
+sees, and the turns before it are neither sent nor paid for again. It is the
+same session either way — the same log, the same permission answers, the same
+mode — and the screen is left alone, because what is above the box is the
+terminal's scrollback rather than crucible's. Continuing that session later
+picks it up from where it started again.
 
 Typing `/` opens the list above the box, filtered to what has been typed so far,
 so the box and the mode under it stay where they are. The list closes as soon as

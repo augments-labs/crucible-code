@@ -189,7 +189,7 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
 
     assert_eq!(
         header.get("format").and_then(Value::as_u64),
-        Some(1),
+        Some(u64::from(wire::FORMAT)),
         "{header}"
     );
     assert_eq!(
@@ -221,6 +221,58 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 }
 
 #[test]
+fn a_session_that_forgot_is_continued_from_where_it_started_again() {
+    // What `/clear` leaves in the log. The marker is a line like any other, so
+    // what was said before it is still on the disk — the log is the record of
+    // what happened, and forgetting happened at a point in it — and none of it
+    // comes back, because the model was never going to be told it again.
+    let sample = Sample::new("session-forgot");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&said("what was said first"));
+    session.forgot();
+    session.append(&said("what was said after"));
+    drop(session);
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages(), &[said("what was said after")]);
+}
+
+#[test]
+fn what_a_session_forgot_is_still_in_the_file() {
+    // Written down rather than cut out. A log that quietly lost a stretch of
+    // what happened would be a worse record than one saying where the session
+    // started again — and cutting it is not something an append-only log can do
+    // safely while another line is on its way to the disk.
+    let sample = Sample::new("session-forgot-record");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let path = session.path().to_owned();
+
+    session.append(&said("what was said first"));
+    session.forgot();
+    drop(session);
+
+    let written = fs::read_to_string(path).expect("the log");
+    let lines: Vec<&str> = written.lines().collect();
+
+    assert_eq!(
+        lines.len(),
+        3,
+        "a header, a message and the marker: {written}"
+    );
+    assert!(
+        lines.get(1).is_some_and(|line| line.contains("first")),
+        "{written}"
+    );
+    assert!(
+        lines.get(2).is_some_and(|line| wire::forgets(line)),
+        "{written}"
+    );
+}
+
+#[test]
 fn continuing_a_session_appends_to_the_same_log() {
     // A continued session is the same session. Starting a second file would
     // split one transcript across two, and the next `--continue` would find
@@ -244,7 +296,10 @@ fn the_newest_session_for_this_workspace_is_the_one_continued() {
 
     sample.plant(
         "0000000000001-000001",
-        &[sample.header(1, "old"), r#"{"user":"long ago"}"#.to_owned()],
+        &[
+            sample.header(wire::FORMAT, "old"),
+            r#"{"user":"long ago"}"#.to_owned(),
+        ],
     );
     record(&sample, &[said("just now")]);
 

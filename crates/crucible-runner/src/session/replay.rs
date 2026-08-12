@@ -165,6 +165,17 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
             continue;
         }
 
+        // A session that forgot what it had said. Everything above this line
+        // stays in the file — it is what happened, and the log is the record of
+        // that — and none of it is replayed, because the model was never going
+        // to be told it again.
+        if whole.is_some_and(wire::forgets) {
+            transcript.forget();
+            before = through;
+            through += read as u64;
+            continue;
+        }
+
         let Some(message) = whole.and_then(wire::message) else {
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before

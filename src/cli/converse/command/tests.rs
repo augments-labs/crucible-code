@@ -144,6 +144,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/help    what these are",
             "/model   which model answers",
             "/mode    ask · allowEdits · fullAccess",
+            "/clear   forget what has been said",
             "/exit    leave",
         ]
     );
@@ -157,9 +158,36 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/help    what these are",
             "/model   which model answers",
             "/mode    ask, allowEdits, fullAccess",
+            "/clear   forget what has been said",
             "/exit    leave",
         ]
     );
+}
+
+#[test]
+fn what_was_forgotten_is_counted_and_the_screen_is_said_to_be_untouched() {
+    assert_eq!(
+        art(&forgotten(12, 60)),
+        [
+            "forgotten: 12 messages",
+            "what is on screen stays where it is",
+        ]
+    );
+
+    // One of them is one message. A count is read as a count, and `1 messages`
+    // reads as a program that did not expect the number it printed.
+    assert_eq!(
+        art(&forgotten(1, 60)).first().map(String::as_str),
+        Some("forgotten: 1 message")
+    );
+}
+
+#[test]
+fn forgetting_a_session_with_nothing_in_it_says_that_instead() {
+    // Rather than `forgotten: 0 messages`, which counts something that never
+    // happened, and rather than the row about the screen, which answers a
+    // question nobody asked.
+    assert_eq!(art(&forgotten(0, 60)), ["nothing had been said"]);
 }
 
 #[test]
@@ -167,12 +195,11 @@ fn nothing_answered_is_wider_than_the_window_it_was_asked_in() {
     // A row over the width would wrap, and a wrapped row leaves the cursor a
     // row below where the next frame expects it.
     for columns in 1..=60 {
-        let rows = listing(columns, Glyphs::Unicode);
+        let rows = [listing(columns, Glyphs::Unicode), forgotten(12, columns)];
 
-        assert!(
-            rows.iter().all(|row| row.columns() <= columns),
-            "at {columns}: {rows:?}"
-        );
+        for row in rows.iter().flatten() {
+            assert!(row.columns() <= columns, "at {columns}: {row:?}");
+        }
     }
 }
 

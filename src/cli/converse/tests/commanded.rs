@@ -88,6 +88,29 @@ fn a_word_that_names_no_mode_leaves_the_session_where_it_was() {
 }
 
 #[test]
+fn forgetting_says_how_much_it_forgot_and_leaves_the_session_running() {
+    // The turn before it is what there is to forget: a prompt and the answer to
+    // it. The line after it is answered as normal, which is the difference
+    // between forgetting a session and ending one.
+    let (written, asked) = commanding("hello\n/clear\nhello again\n");
+
+    assert_eq!(asked, 2, "{written}");
+    assert!(written.contains("forgotten: 2 messages"), "{written}");
+    assert!(
+        written.contains("what is on screen stays where it is"),
+        "{written}"
+    );
+}
+
+#[test]
+fn forgetting_before_anything_was_said_says_there_was_nothing_to_forget() {
+    let (written, asked) = commanding("/clear\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("nothing had been said"), "{written}");
+}
+
+#[test]
 fn leaving_ends_the_session_with_what_follows_it_unread() {
     let (written, asked) = commanding("/exit\nand this\n");
 

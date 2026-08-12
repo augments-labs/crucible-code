@@ -321,14 +321,16 @@ fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
     // Cut off at the top it would read as the whole list, and the rewind that
     // takes the region back would reach over rows the terminal has already
     // taken. Neither is worth the rows it would have shown.
-    for room in 0..4 {
+    let every = command::filtering("/", Glyphs::Unicode).len();
+
+    for room in 0..every {
         assert!(
             opened("/", 60, room, Glyphs::Unicode).is_empty(),
-            "a list of four opened with room for {room}"
+            "a list of {every} opened with room for {room}"
         );
     }
 
-    assert!(!opened("/", 60, 4, Glyphs::Unicode).is_empty());
+    assert!(!opened("/", 60, every, Glyphs::Unicode).is_empty());
 }
 
 #[test]

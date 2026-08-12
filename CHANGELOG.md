@@ -48,12 +48,17 @@ Notable changes to crucible. Format follows
   *starting* there are unaffected: they are two sessions, each recording its own
   log.
 
-- **Commands: `/help`, `/model`, `/mode` and `/exit`.** Typing `/` opens the
-  list above the box, filtered as you type, so the box and the mode under it
-  stay where they are. `/mode allowEdits` names a mode outright instead of
-  stepping to it. A command is answered without asking the provider and does not
-  enter the transcript; a line that only looks like one — `/etc/hosts is wrong`
-  — is still a prompt.
+- **Commands: `/help`, `/model`, `/mode`, `/clear` and `/exit`.** Typing `/`
+  opens the list above the box, filtered as you type, so the box and the mode
+  under it stay where they are. `/mode allowEdits` names a mode outright instead
+  of stepping to it. A command is answered without asking the provider and does
+  not enter the transcript; a line that only looks like one — `/etc/hosts is
+  wrong` — is still a prompt.
+
+- **`/clear` forgets the transcript without ending the session.** The next
+  prompt is the first the model sees, and the turns before it are not sent or
+  paid for again. The same session, log and permission answers carry on, and the
+  screen is left alone — what is above the box belongs to the terminal.
 
 - **`crucible_tui::cut` and `crucible_tui::clip`, the display-column count the
   renderer itself uses.** `cut` says where a string reaches a given number of
@@ -63,6 +68,11 @@ Notable changes to crucible. Format follows
   measures it the way the tail that wraps it does.
 
 ### Changed
+
+- **The session log format is version 2, so 0.0.7 logs cannot be continued.**
+  `--continue` refuses them by name — `… was written by a different version of
+  crucible` — and the welcome screen leaves them out of what was worked on here.
+  Nothing is deleted or migrated; the files stay where they are.
 
 - **<kbd>Ctrl-C</kbd> at the prompt throws the line away rather than ending
   crucible.** Pressing it again on an empty box leaves, as <kbd>Ctrl-D</kbd>

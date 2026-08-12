@@ -40,6 +40,8 @@ pub(super) enum Command {
     Model,
     /// The permission mode: the one in force, or the one named.
     Mode,
+    /// Forget the transcript, keeping the session.
+    Clear,
     /// End the session.
     Exit,
 }
@@ -49,7 +51,13 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 4] = [Command::Help, Command::Model, Command::Mode, Command::Exit];
+const EVERY: [Command; 5] = [
+    Command::Help,
+    Command::Model,
+    Command::Mode,
+    Command::Clear,
+    Command::Exit,
+];
 
 /// What a line turned out to be asking for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +89,7 @@ impl Command {
             Self::Help => "/help",
             Self::Model => "/model",
             Self::Mode => "/mode",
+            Self::Clear => "/clear",
             Self::Exit => "/exit",
         }
     }
@@ -94,6 +103,7 @@ impl Command {
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
             Self::Mode => mode::ring(glyphs),
+            Self::Clear => "forget what has been said",
             Self::Exit => "leave",
         }
     }
@@ -215,6 +225,11 @@ fn answer<T: Terminal>(
             rest,
         } => moded(rest, renderer, runner, style)?,
 
+        Wanted::Known {
+            command: Command::Clear,
+            ..
+        } => renderer.present(&forgotten(runner.forget(), columns), style.palette())?,
+
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;
             renderer.commit("")?;
@@ -261,6 +276,32 @@ fn moded<T: Terminal>(
     runner.switch(asked);
     renderer.present(&[sentence(asked, columns)], style.palette())?;
     Ok(())
+}
+
+/// What `/clear` says, having forgotten `held` messages.
+///
+/// The second row is the one worth drawing every time. What is above the box is
+/// the terminal's scrollback and stays exactly where it is — this program never
+/// took that screen and is not about to hand it back empty — so the difference
+/// between a session that forgot and one that did not is invisible without a
+/// line saying which happened.
+fn forgotten(held: usize, columns: usize) -> Vec<Row> {
+    if held == 0 {
+        return vec![Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
+    }
+
+    let said = match held {
+        1 => "forgotten: 1 message".to_owned(),
+        _ => format!("forgotten: {held} messages"),
+    };
+
+    vec![
+        Row::new().then(Slot::Plain, clip(&said, columns)),
+        Row::new().then(
+            Slot::Quiet,
+            clip("what is on screen stays where it is", columns),
+        ),
+    ]
 }
 
 /// The row that says which mode is in force, in the colour that mode is drawn

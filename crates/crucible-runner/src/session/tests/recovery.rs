@@ -52,7 +52,7 @@ fn a_line_that_cannot_be_read_at_all_is_a_failure_rather_than_a_shorter_session(
     let path = sample.plant(
         "0000000000004-000004",
         &[
-            sample.header(1, "damaged"),
+            sample.header(wire::FORMAT, "damaged"),
             r#"{"user":"before"}"#.to_owned(),
         ],
     );
@@ -80,7 +80,7 @@ fn turns_recorded_after_a_line_that_is_not_a_message_are_refused_rather_than_cut
     let path = sample.plant(
         "0000000000003-000003",
         &[
-            sample.header(1, "holed"),
+            sample.header(wire::FORMAT, "holed"),
             r#"{"user":"before the disk filled"}"#.to_owned(),
             r#"{"user":"the line the disk cut sh{"user":"welded onto it"}"#.to_owned(),
             r#"{"user":"after the disk was freed"}"#.to_owned(),
@@ -108,7 +108,10 @@ fn a_last_line_torn_mid_character_ends_the_log_rather_than_failing_it() {
     let sample = Sample::new("session-torn-character");
     let path = sample.plant(
         "0000000000005-000005",
-        &[sample.header(1, "torn"), r#"{"user":"kept"}"#.to_owned()],
+        &[
+            sample.header(wire::FORMAT, "torn"),
+            r#"{"user":"kept"}"#.to_owned(),
+        ],
     );
 
     // The first two bytes of a three-byte character, and then the power cut.
@@ -167,7 +170,7 @@ fn a_line_that_is_not_a_message_is_cut_off_rather_than_written_past() {
     sample.plant(
         "0000000000006-000006",
         &[
-            sample.header(1, "holed"),
+            sample.header(wire::FORMAT, "holed"),
             r#"{"user":"kept"}"#.to_owned(),
             r#"{"whatever":"not a message"}"#.to_owned(),
         ],
@@ -194,7 +197,7 @@ fn an_empty_line_is_read_past_rather_than_taken_for_the_end_of_the_log() {
     sample.plant(
         "0000000000009-000009",
         &[
-            sample.header(1, "gapped"),
+            sample.header(wire::FORMAT, "gapped"),
             r#"{"user":"before"}"#.to_owned(),
             String::new(),
             r#"{"user":"after"}"#.to_owned(),
@@ -229,7 +232,8 @@ fn a_header_the_process_never_finished_is_passed_over_rather_than_written_onto()
 
     // Named so it sorts newest, which is the only way it is ever looked at.
     let torn = sample.logs().join("9999999999999-999999.jsonl");
-    fs::write(&torn, sample.header(1, "unfinished")).expect("a writable temporary directory");
+    fs::write(&torn, sample.header(wire::FORMAT, "unfinished"))
+        .expect("a writable temporary directory");
 
     let (session, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");

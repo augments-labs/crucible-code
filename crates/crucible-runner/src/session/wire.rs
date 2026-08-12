@@ -21,7 +21,26 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 2;
+
+/// The line that says everything before it was forgotten.
+///
+/// A marker rather than a rewrite. The log is append-only — it is written by a
+/// thread that never seeks, and it is what a crashed process leaves behind —
+/// so what a session forgets is recorded as something that happened at a point
+/// in it, the same as a message. Replay reads it and starts the transcript
+/// again from there.
+pub(crate) fn forgotten() -> String {
+    json!({ "forgotten": true }).to_string()
+}
+
+/// Whether this line is that marker.
+pub(crate) fn forgets(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .and_then(|value| value.get("forgotten").and_then(Value::as_bool))
+        .unwrap_or_default()
+}
 
 /// The first line, which says what the file is and what it belongs to.
 pub(crate) fn header(session: &SessionId, workspace: &Path) -> String {
