@@ -109,9 +109,9 @@ fn eighty_columns_draws_the_identity_beside_what_happened_here() {
 │  ~/code/crucible-code            │                                           │
 │                                  │ Tips                                      │
 │                                  │                                           │
-│                                  │ · /  opens the command list               │
-│                                  │ · !  runs a shell command here            │
-│                                  │ · @  points crucible at a file            │
+│                                  │ · /          opens the command list       │
+│                                  │ · shift+tab  steps the permission mode    │
+│                                  │ · ctrl-c     clears the line typed so far │
 ╰──────────────────────────────────────────────────────────────────────────────╯"
     );
 }
@@ -142,9 +142,9 @@ fn a_terminal_too_narrow_for_two_columns_stacks_them() {
 │                                            │
 │ Tips                                       │
 │                                            │
-│ · /  opens the command list                │
-│ · !  runs a shell command here             │
-│ · @  points crucible at a file             │
+│ · /          opens the command list        │
+│ · shift+tab  steps the permission mode     │
+│ · ctrl-c     clears the line typed so far  │
 ╰────────────────────────────────────────────╯"
     );
 }

@@ -32,15 +32,15 @@ pub(super) const SHOWN: usize = 3;
 /// The heading over what the prompt itself reacts to.
 const TIPS: &str = "Tips";
 
-/// Three characters that do something the moment they are typed at the prompt.
+/// Three things the prompt does that nothing on screen would otherwise say.
 ///
 /// Not flags and not files: those are in `--help`, and this is the category
 /// `--help` cannot hold, because there is nothing to look up until you already
-/// know the character exists.
+/// know the key exists.
 const AFFORDANCES: [(&str, &str); 3] = [
     ("/", "opens the command list"),
-    ("!", "runs a shell command here"),
-    ("@", "points crucible at a file"),
+    ("shift+tab", "steps the permission mode"),
+    ("ctrl-c", "clears the line typed so far"),
 ];
 
 /// At least this much space between a session's title and when it happened, so
@@ -114,7 +114,7 @@ pub(super) fn aside(welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) -> Ve
     rows.push(Row::new());
     rows.push(Row::new().then(Slot::Strong, TIPS));
     rows.push(Row::new());
-    rows.extend(tips(glyphs));
+    rows.extend(tips(columns, glyphs));
     rows
 }
 
@@ -160,16 +160,37 @@ fn recent(number: usize, session: &Recent<'_>, columns: usize, glyphs: Glyphs) -
     row
 }
 
-/// One row per affordance: the mark, the character, and what it does.
-fn tips(glyphs: Glyphs) -> Vec<Row> {
+/// One row per affordance: the mark, the key, and what it does.
+///
+/// The keys are padded to the widest of them, so what they do reads as a column
+/// rather than as three sentences starting in three places. What a key does is
+/// what gives up room when there is not enough: a key elided to two characters
+/// is not one anybody could type.
+fn tips(columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let widest = AFFORDANCES
+        .iter()
+        .map(|(key, _)| width::columns(key))
+        .max()
+        .unwrap_or_default();
+
+    // The mark, a space, the widest key, and the two columns that separate it
+    // from what it does — the same on every row, which is what lines them up.
+    let indent = width::columns(glyphs.dot()) + 1 + widest + 2;
+
     AFFORDANCES
         .iter()
         .map(|(key, does)| {
-            Row::new()
+            let mut row = Row::new()
                 .then(Slot::Quiet, glyphs.dot())
                 .then(Slot::Plain, " ")
-                .then(Slot::Accent, *key)
-                .then(Slot::Plain, format!("  {does}"))
+                .then(Slot::Accent, *key);
+
+            row.pad(indent);
+            row.push(
+                Slot::Plain,
+                fit::elide(does, columns.saturating_sub(indent), glyphs),
+            );
+            row
         })
         .collect()
 }
