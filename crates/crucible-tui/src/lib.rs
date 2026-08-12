@@ -19,6 +19,7 @@
 
 mod clear;
 mod color;
+mod editor;
 mod escape;
 mod render;
 mod row;
@@ -29,6 +30,7 @@ mod width;
 
 pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
+pub use editor::{Editor, Key, Typed};
 pub use render::Renderer;
 pub use row::Row;
 pub use terminal::raw::{Raw, RawError};
