@@ -25,6 +25,12 @@ cargo build
 cargo run -- --help
 ```
 
+What your machine needs besides rustup is one C compiler, and
+[Building](docs/building/building.md) names the package that carries it on
+Linux, macOS and Windows. [Building for another
+platform](docs/building/cross-compiling.md) covers the rest: crucible ships
+seven targets, and six of them can be compiled from one machine.
+
 ## Before you commit
 
 ```bash
@@ -33,7 +39,7 @@ scripts/check.sh
 
 That is the whole gate, and CI runs exactly the same script — a green run here
 is a green run there. It covers formatting, clippy with `-D warnings`, tests,
-the 400-line-per-file cap, and dependency pinning and justification.
+the 1000-line-per-file cap, and dependency pinning and justification.
 
 One check deliberately sits outside it. The advisory scan runs on a schedule in
 CI rather than here, because its answer changes when somebody publishes an
@@ -42,7 +48,11 @@ sentence above, and turn your pull request red for something you never touched.
 See [New dependencies](#new-dependencies).
 
 If the file-length check fails, split the file by responsibility rather than by
-line count. Two halves that must always change together are still one file.
+line count. Two halves that must always change together are still one file, and
+the ceiling is set high enough that hitting it means the subject went missing
+rather than that the file got long. Splitting to be under a number produces the
+failure no number can see: a directory of files too small to have a subject,
+where learning what one of them does means opening all of them.
 
 ## Making a change
 
@@ -55,6 +65,26 @@ line count. Two halves that must always change together are still one file.
 5. Open a pull request. The template asks what the change does and how you
    verified it — the second question is the one that matters.
 
+## Pull requests are 400 changed lines or fewer
+
+Additions plus deletions across the diff, `Cargo.lock` and `schema/` aside since
+both are generated. CI measures it and a larger one is sent back — past that
+size a review turns into agreement, where the reader is checking that a change
+looks plausible rather than that it is right.
+
+Where it is going decides whether that blocks. Into `main`, `dev` or a release
+branch it does: those are read by somebody other than the author, and a release
+is cut from them. Into a branch of your own that is collecting sub-branches it
+does not — CI prints the number and passes, because that branch is measured in
+turn when it asks for `main`, over everything it collected. Nothing reaches
+`main` unmeasured.
+
+A change that does not fit is a sequence of pull requests that each stand on
+their own, not one larger one with a note about its size. The one diff this
+measures wrongly is code that only moves, and no diff can prove that about
+itself: ask for the `moves-only` label, which grants the exception and leaves it
+visible on the pull request afterwards.
+
 ## Commit messages
 
 ```
@@ -66,7 +96,10 @@ perf(tui): reuse the render buffer between frames
 ```
 
 Scope is the crate or area. The body explains *why*, since the diff already
-shows what.
+shows what — a short paragraph, not an essay. Reasoning that needs more than
+that belongs in a comment beside the code it explains, where the person who
+needs it is looking. The changelog is shorter still: a bold lead and a sentence
+or two, written for someone deciding whether to upgrade.
 
 ## Performance is a reviewed property
 

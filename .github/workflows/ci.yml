@@ -26,6 +26,70 @@ jobs:
       # version and components a contributor has — one pin, not two.
       - run: scripts/check.sh
 
+  size:
+    name: 400 changed lines
+    # The one rule that cannot live in scripts/check.sh, whose whole promise is
+    # the same answer for the same tree. How large a change is asks about two
+    # trees, and the second is whatever main has reached by now.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Both ends of the comparison. The default clone holds the head and
+          # nothing to measure it against.
+          fetch-depth: 0
+
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # Where it is going decides whether the ceiling blocks. `main`, `dev`
+          # and a release branch are read by somebody other than the author and
+          # are what a release is cut from. Anywhere else is a branch somebody
+          # is assembling, and the review that matters happens when it asks for
+          # one of these — measured then, over everything it collected.
+          INTO: ${{ github.event.pull_request.base.ref }}
+          # Code that only moves is the diff this measures wrongly, and no diff
+          # can prove that about itself. The label is somebody saying so, and it
+          # stays on the pull request where the next reader can see it was said.
+          MOVED: ${{ contains(github.event.pull_request.labels.*.name, 'moves-only') }}
+        run: |
+          set -euo pipefail
+
+          # Against the point the branch left its base rather than against the
+          # base as it stands, or every commit merged since would be counted as
+          # this pull request's.
+          from=$(git merge-base "$BASE" "$HEAD")
+
+          # Generated files are output. `Cargo.lock` moves by hundreds of lines
+          # for a one-line manifest edit, and the schema is written by the
+          # parser — neither is read a line at a time by anyone.
+          changed=$(git diff --numstat "$from" "$HEAD" \
+              -- . ':!Cargo.lock' ':!schema' |
+              awk '{ added += $1; removed += $2 } END { print added + removed }')
+
+          if ((changed <= 400)); then
+              echo "$changed changed lines into $INTO"
+              exit 0
+          fi
+
+          if [[ "$MOVED" == true ]]; then
+              echo "$changed changed lines, labelled moves-only"
+              exit 0
+          fi
+
+          case "$INTO" in
+              main | dev | release/*)
+                  echo "$changed changed lines into $INTO; the ceiling is 400"
+                  echo "split it into pull requests that each stand on their own,"
+                  echo "or label it moves-only if nothing changed but where it lives"
+                  exit 1
+                  ;;
+          esac
+
+          echo "$changed changed lines into $INTO, over the 400-line ceiling"
+          echo "not blocked here — $INTO is measured in turn when it asks for main"
+
   platforms:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

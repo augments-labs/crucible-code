@@ -9,3 +9,4 @@ that changes a file or starts a process.
 - [Configuration](configuration/index.md) — the JSON files, and which one wins.
 - [Permissions](permissions/index.md) — what you are asked, and what each answer means.
 - [Sessions](sessions/index.md) — where a session is kept, and `--continue`.
+- [Building](building/index.md) — what to install to build it from source.
