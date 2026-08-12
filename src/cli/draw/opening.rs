@@ -118,18 +118,24 @@ mod tests {
     /// A workspace and a sessions directory of their own, deleted with it.
     struct Scratch(PathBuf);
 
+    /// What the workspace directory is called, on every machine and under every
+    /// temporary directory. A test that looks for where it is working on screen
+    /// looks for this: it is the last component of the path, which is the part
+    /// shortening keeps.
+    const WORKED_IN: &str = "worked-in";
+
     impl Scratch {
         fn new(name: &str) -> Self {
             let base = std::env::temp_dir()
                 .join(format!("crucible-opening-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&base);
-            std::fs::create_dir_all(base.join("work")).expect("a temporary directory");
+            std::fs::create_dir_all(base.join(WORKED_IN)).expect("a temporary directory");
 
             Self(base)
         }
 
         fn workspace(&self) -> Workspace {
-            Workspace::open(self.0.join("work")).expect("the directory exists")
+            Workspace::open(self.0.join(WORKED_IN)).expect("the directory exists")
         }
 
         fn logs(&self) -> PathBuf {
@@ -145,17 +151,22 @@ mod tests {
 
     #[test]
     fn a_session_opens_by_saying_what_it_is_asking_and_where() {
-        let screen = opened(80, true);
+        let scratch = Scratch::new("asking");
+        let screen = drawn(80, true, &scratch.workspace(), &[]);
 
         assert!(
             screen.contains(concat!("crucible v", env!("CARGO_PKG_VERSION"))),
             "{screen}"
         );
         assert!(screen.contains("claude-sonnet-5"), "{screen}");
-        assert!(
-            screen.contains(&std::env::temp_dir().display().to_string()),
-            "{screen}"
-        );
+
+        // The name of the directory rather than the whole path to it. A path
+        // too wide for its column keeps its two ends and gives up the route
+        // between them, and where a machine puts its temporary directory
+        // decides whether this one is that wide — one column on Linux, five
+        // nested directories on macOS. The name is the end that answers
+        // "where", and it is the end shortening never drops.
+        assert!(screen.contains(WORKED_IN), "{screen}");
 
         // A directory nobody has worked in. The heading stays either way: its
         // absence would be a different thing than its emptiness.
