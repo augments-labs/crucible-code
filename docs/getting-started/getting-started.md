@@ -93,13 +93,15 @@ crucible <version> · claude-sonnet-5
 ╭────────────────────────────────────────────────────────────╮
 │ ›                                                          │
 ╰────────────────────────────────────────────────────────────╯
-ask
+ask mode on (shift+tab to cycle)
 ```
 
 The box is as wide as the terminal, and a line longer than it scrolls inside it
-rather than wrapping. Under it is the mode in force, every time — `ask` is the
-one nothing configured gives you, and [Permissions](../permissions/index.md) is
-where the others are.
+rather than wrapping. Under it is the mode in force, every time — `ask mode on`
+is the one nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next
+one while you type, and stepping into full access is agreed to first, because
+nothing is asked after it. [Permissions](../permissions/index.md) is where all
+three are.
 
 Type a prompt and press enter. The box goes, the line stays where it was, and
 the answer streams in under it. Tool calls appear as they run:
@@ -116,7 +118,7 @@ result of that call, and the model decides what to do about it.
 ╭────────────────────────────────────────────────────────────╮
 │ ›                                                          │
 ╰────────────────────────────────────────────────────────────╯
-ask
+ask mode on (shift+tab to cycle)
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Sender, channel};
 use std::thread;
 
-use crucible_core::{Cancel, Event, Minted, Mode, Post as _, Remember, Verdict, narrowest};
+use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, narrowest};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Terminal, TerminalError};
 
@@ -37,15 +37,16 @@ const MARK: &str = "› ";
 /// What every turn in a conversation is taken under.
 ///
 /// All of these are settled before the first prompt and none changes at one:
-/// the style comes from the files and the terminal together, the mode from the
-/// same resolution the engine was built with, and the cancel is the same one
-/// the tools were built with. One value rather than three parameters carried
-/// down through every turn.
+/// the style comes from the files and the terminal together, and the cancel is
+/// the same one the tools were built with. One value rather than three
+/// parameters carried down through every turn.
+///
+/// The mode is not among them. It is the one thing about a session that changes
+/// after it has started, so it is read from the engine that holds it every time
+/// it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
     /// Whether to write colour, and how much of a tool call to show.
     pub(crate) style: Style,
-    /// The mode the permission engine is in, written on every prompt line.
-    pub(crate) mode: Mode,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// The file an answer of `always` writes its rule into.
@@ -65,15 +66,6 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
-    // The mode in force, spelled the way configuration spells it. It is on
-    // screen every time rather than said once at the top because the moment it
-    // matters is hours in, when the top has scrolled away — a `fullAccess`
-    // session must not be distinguishable from an `ask` one only by what the
-    // user remembers starting. The box says it under itself; a redirected run
-    // has only the row the prompt is read on, so it says it there.
-    let mode = terms.mode.to_string();
-    let mark = format!("{mode} {MARK}");
-
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -85,14 +77,21 @@ pub(crate) fn converse<T: Terminal>(
         // here instead.
         renderer.resized()?;
 
-        let prompt = match typing::ask(renderer, style, &mode)? {
+        let prompt = match typing::ask(renderer, style, &mut runner)? {
             Asked::Said(said) => said,
             Asked::Ended => break,
 
             // Nothing to type into: no terminal, or one at only one end. The
             // line is read the way every other answer on this thread is.
             Asked::Untyped => {
-                draw::mark(renderer, &mark, style)?;
+                // The mode in force, spelled the way configuration spells it,
+                // in front of the line rather than under a box there is none
+                // of. It is on screen every time rather than said once at the
+                // top because the moment it matters is hours in, when the top
+                // has scrolled away — a `fullAccess` session must not be
+                // distinguishable from an `ask` one only by what the user
+                // remembers starting.
+                draw::mark(renderer, &format!("{} {MARK}", runner.mode()), style)?;
 
                 let Some(said) = read(input)? else {
                     // The mark is still the last thing on its row, and nothing

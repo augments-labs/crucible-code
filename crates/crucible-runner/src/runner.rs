@@ -8,7 +8,7 @@
 //! what decides whether the session continues.
 
 use crucible_core::{
-    Ask, Cancel, Delta, DeltaStream, Event, Message, Permission, Post, Provider, Request,
+    Ask, Cancel, Delta, DeltaStream, Event, Message, Mode, Permission, Post, Provider, Request,
     StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
@@ -99,6 +99,23 @@ impl Runner {
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// The permission mode this session is in, which the prompt shows at all
+    /// times.
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.permission.mode()
+    }
+
+    /// Steps that mode on to the next of the ring, and says which it is now.
+    ///
+    /// Reachable only between turns, because a turn owns the runner while it
+    /// runs. That is not a rule this crate enforces so much as one the loop's
+    /// shape already made true, and it is what leaves the engine needing no
+    /// lock: nothing is deciding a call while the mode is being changed.
+    pub fn cycle(&mut self) -> Mode {
+        self.permission.cycle()
     }
 
     /// Hands the session out, for the caller that is finished driving turns.

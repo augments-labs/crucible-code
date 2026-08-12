@@ -16,10 +16,19 @@ use super::TerminalError;
 use crate::editor::Key;
 
 /// What arrived while the prompt was waiting.
+///
+/// Two of these are keys the editor has no business seeing. A line is a line
+/// whatever mode the session is in, and the editor stays what its own module
+/// says it is — a string and an offset — rather than growing a case for every
+/// key that acts on something around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pressed {
     /// A key the editor knows what to do with.
     Key(Key),
+    /// Shift+Tab: step the mode on to the next one.
+    Cycle,
+    /// Escape: back out of whatever is waiting to be agreed to.
+    Escape,
     /// The window changed size, so whatever is live was laid out for a width
     /// the terminal no longer has.
     Resized,
@@ -75,6 +84,13 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // given a meaning to. Typed as a bare character it would be the letter
         // without the modifier, which is not what was pressed.
         KeyCode::Char(_) if control => Pressed::Ignored,
+
+        // Shift+Tab, which every terminal here sends as one sequence of its
+        // own rather than as tab with a modifier — so this is the code to
+        // match, and the modifier a given emulator does or does not set
+        // alongside it is not a second case.
+        KeyCode::BackTab => Pressed::Cycle,
+        KeyCode::Esc => Pressed::Escape,
 
         KeyCode::Char(typed) => Pressed::Key(Key::Char(typed)),
         KeyCode::Backspace => Pressed::Key(Key::Backspace),
@@ -139,6 +155,27 @@ mod tests {
             meaning(&control(KeyCode::Char('d'))),
             Pressed::Key(Key::Eof)
         );
+    }
+
+    #[test]
+    fn the_keys_that_act_on_the_mode_are_not_keys_the_editor_sees() {
+        // A line is a line whatever mode the session is in, so neither of
+        // these reaches the thing holding one.
+        assert_eq!(meaning(&press(KeyCode::BackTab)), Pressed::Cycle);
+        assert_eq!(meaning(&press(KeyCode::Esc)), Pressed::Escape);
+
+        // Some emulators set the modifier as well as sending the code, and
+        // one that does is not sending a different key.
+        let shifted = Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(meaning(&shifted), Pressed::Cycle);
+    }
+
+    #[test]
+    fn tab_on_its_own_is_not_the_key_that_steps_the_mode() {
+        // The two are one key apart and only one of them was bound. Reading a
+        // near miss as the binding is how somebody ends up in a mode they did
+        // not ask for.
+        assert_eq!(meaning(&press(KeyCode::Tab)), Pressed::Ignored);
     }
 
     #[test]

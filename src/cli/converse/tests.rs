@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{Delta, Mode, StopReason};
+use crucible_core::{Delta, Mode, Permission, Rules, StopReason};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, TerminalError};
 
@@ -22,7 +22,6 @@ mod asked;
 fn plain() -> Terms {
     Terms {
         style: Style::plain(),
-        mode: Mode::Ask,
         cancel: Cancel::new(),
         remembering: crucible_config::local(
             &std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id())),
@@ -383,15 +382,12 @@ fn the_prompt_line_names_the_mode_in_force() {
     // announces itself with a question, so the prompt line is the only place a
     // session that never asks says what it is. Written before the read, which
     // is why empty input still shows it once.
-    let runner = scripted(Script::new(vec![]), Tools::new());
+    let runner = scripted(Script::new(vec![]), Tools::new())
+        .permitting(Permission::with(Mode::FullAccess, Rules::new()));
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    let terms = Terms {
-        mode: Mode::FullAccess,
-        ..plain()
-    };
-    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");

@@ -2,7 +2,8 @@
 
 A session runs in one mode, set by `permissions.mode` in
 [configuration](../configuration/configuration.md): `ask`, `allowEdits` or
-`fullAccess`. Nothing set means `ask`.
+`fullAccess`. Nothing set means `ask`. That is where a session starts rather
+than what it stays at — <kbd>Shift-Tab</kbd> steps it while you type.
 
 A mode decides exactly one thing: what happens to a call no
 [rule](rules.md) mentions. It is never a way around the engine — every call
@@ -49,10 +50,29 @@ holds over every one of them.
 
 ## The mode is always on screen
 
-The row under the prompt box spells it the way configuration does —
-`allowEdits` — every time, not once at the top. Hours in, when the opening
-lines have scrolled away, which mode a session is in must not depend on what
-you remember starting.
+The row under the prompt box says which one is in force — `ask mode on`,
+`allow edits on`, `full access mode on` — every time, not once at the top.
+Hours in, when the opening lines have scrolled away, which mode a session is in
+must not depend on what you remember starting. The box itself is drawn in that
+mode's colour, so a session that is not asking looks unlike one that is before
+the row is read at all.
+
+## Stepping it while you type
+
+<kbd>Shift-Tab</kbd> steps to the next mode and wraps round: `ask`, then
+`allowEdits`, then `fullAccess`, then `ask` again. It is reachable only while a
+prompt is being typed, which is what keeps it from changing anything mid-turn:
+no call is ever decided under a mode other than the one that was on screen when
+the turn started.
+
+Stepping into `fullAccess` is agreed to before it takes effect. The row says
+what the mode means and waits: <kbd>Enter</kbd> confirms it, <kbd>Esc</kbd>
+leaves the session in the mode it was already in. The other two steps take
+effect on the press, because a mode that still asks about something can be
+answered by stepping again.
+
+A step changes one thing and no others. The rules you wrote hold exactly as
+they did, and anything already allowed for the session stays allowed.
 
 ## When nobody can answer
 
@@ -65,8 +85,9 @@ explicitly, with `allow` rules or with `fullAccess`.
 ## `--continue` resumes the transcript, not the mode
 
 The mode is read from configuration at every start. Continuing a session picks
-up its transcript; it does not pick up the mode the session last ran in, nor a
-session-long allow — that lives only as long as the process it was made in.
+up its transcript; it does not pick up the mode the session last ran in — a
+step made with <kbd>Shift-Tab</kbd> included — nor a session-long allow, which
+lives only as long as the process it was made in.
 
 An answer of `always` is not one of those. It writes an `allow`
 [rule](rules.md) into `.crucible/config.local.json`, and every later start reads

@@ -216,8 +216,9 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
     // answer is the same, and the distinction is the command line's to use.
-    // Resolved once and handed to the prompt line and the engine both, so the
-    // mode on screen cannot drift from the mode in force.
+    // This is where a session starts and not what it stays at: the engine below
+    // takes it, and from then on the engine is the only thing that holds it, so
+    // the mode on screen cannot drift from the mode in force.
     let mode = settings.mode().unwrap_or_default();
 
     // Settled once, here, from the files and the terminal together. Nothing on
@@ -230,7 +231,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             renderer.is_terminal(),
             &from,
         ),
-        mode,
         cancel: cancel.clone(),
 
         // The layer git ignores, resolved from the root the project's own

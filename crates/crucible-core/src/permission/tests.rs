@@ -271,6 +271,52 @@ fn the_mode_is_readable_because_the_prompt_shows_it() {
 }
 
 #[test]
+fn cycling_walks_the_ring_and_comes_back_to_where_it_started() {
+    let mut permission = Permission::new();
+
+    assert_eq!(permission.cycle(), Mode::AllowEdits);
+    assert_eq!(permission.cycle(), Mode::FullAccess);
+    assert_eq!(permission.cycle(), Mode::Ask);
+
+    // What it says afterwards is what it stepped to, so the row under the box
+    // and the arm a call is decided by cannot be two different modes.
+    assert_eq!(permission.mode(), Mode::Ask);
+}
+
+#[test]
+fn a_rule_still_holds_after_the_mode_was_stepped_on() {
+    // `fullAccess` asks about nothing, and a `deny` rule is the one thing that
+    // can still say no there. Reaching it by pressing a key rather than by
+    // configuring it may not be the way round that.
+    let mut permission = with(Mode::AllowEdits, &[(Disposition::Deny, "bash(**)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert_eq!(permission.cycle(), Mode::FullAccess);
+
+    let settled = permission.decide(&call("bash"), &running(&["curl example.com"]), &mut answer);
+
+    assert!(!settled.ran());
+    assert_eq!(answer.asked, 0, "a denial was put to the user");
+}
+
+#[test]
+fn what_was_allowed_for_the_session_is_still_allowed_after_a_step() {
+    // The two are separate promises. Stepping the mode changes the arm no rule
+    // matched; it does not take back an answer the user already gave.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    let call = call("bash");
+
+    permission.decide(&call, &running(&["curl example.com"]), &mut answer);
+
+    // Ask to allowEdits, which still asks about a command that reaches out.
+    assert_eq!(permission.cycle(), Mode::AllowEdits);
+    permission.decide(&call, &running(&["curl example.com"]), &mut answer);
+
+    assert_eq!(answer.asked, 1, "the session's own allow was forgotten");
+}
+
+#[test]
 fn the_question_names_what_is_about_to_happen() {
     // "change files" tells the user nothing they can decide on.
     assert_eq!(writing("src/a.rs").to_string(), "change src/a.rs");

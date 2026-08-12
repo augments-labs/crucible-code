@@ -13,6 +13,13 @@ Notable changes to crucible. Format follows
   that follows the cursor along a line wider than the terminal. A run whose
   input or output is redirected has no box and reads whole lines as before.
 
+- **<kbd>Shift-Tab</kbd> steps the permission mode while you type.** `ask`, then
+  `allowEdits`, then `fullAccess`, then round again, with the row under the box
+  and the colour of the box itself saying which is in force. Stepping into
+  `fullAccess` waits to be confirmed; the rules you wrote and anything already
+  allowed for the session are untouched either way. `--continue` still starts
+  from the configured mode rather than the stepped one.
+
 - **A session opens with a welcome screen rather than two lines.** The release,
   the model and the working directory sit beside what the prompt reacts to. It
   fits itself to the terminal: two columns at eighty and above, one below that,

@@ -92,6 +92,22 @@ impl Permission {
         self.mode
     }
 
+    /// Steps that mode on to the next of the ring, and says which it is now.
+    ///
+    /// The one thing about a session that changes after it has started. It
+    /// changes nothing else: the rules are what they were, what was allowed for
+    /// the session stays allowed, and the arm no rule matched is the only arm
+    /// this reaches.
+    ///
+    /// Reachable while a prompt is being typed and at no other moment, which is
+    /// what makes this need no lock: no turn is running then, so nothing is
+    /// looking at the mode and no call can have the mode it was decided under
+    /// change underneath it.
+    pub fn cycle(&mut self) -> Mode {
+        self.mode = self.mode.next();
+        self.mode
+    }
+
     /// Decides one call, asking the user if that is what it comes to.
     pub fn decide(
         &mut self,
