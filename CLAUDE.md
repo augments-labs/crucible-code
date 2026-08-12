@@ -114,15 +114,20 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
     anything that ships. Written a release later, a page documents a memory of
     the change rather than the change — and the reader who needed it met the
     gap first.
-11. **A pull request over 400 changed lines is sent back.** Additions plus
-    deletions across the whole diff, generated files aside — `Cargo.lock` and
-    `schema/` are output, and nobody reads output line by line. Past that a
-    review stops being one: the reader is agreeing that it looks plausible
-    rather than checking that it is right. The remedy is a sequence of pull
-    requests that each stand on their own, not one larger one with a note
+11. **A pull request over 400 changed lines into `main` is sent back.**
+    Additions plus deletions across the whole diff, generated files aside —
+    `Cargo.lock` and `schema/` are output, and nobody reads output line by line.
+    Past that a review stops being one: the reader is agreeing that it looks
+    plausible rather than checking that it is right. The remedy is a sequence of
+    pull requests that each stand on their own, not one larger one with a note
     apologising for its size. Code that only moves is the diff this measures
     wrongly, and a diff cannot prove that about itself, so that exception is a
     label on the pull request — granted, and visible afterwards.
+
+    `dev` and a release branch hold it too, being what a release is cut from.
+    Into a branch somebody is assembling it is printed and not enforced: that
+    branch is measured in turn when it asks for `main`, over everything it
+    collected, so nothing arrives there unmeasured.
 
 ## Vocabulary
 

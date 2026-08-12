@@ -72,6 +72,13 @@ both are generated. CI measures it and a larger one is sent back — past that
 size a review turns into agreement, where the reader is checking that a change
 looks plausible rather than that it is right.
 
+Where it is going decides whether that blocks. Into `main`, `dev` or a release
+branch it does: those are read by somebody other than the author, and a release
+is cut from them. Into a branch of your own that is collecting sub-branches it
+does not — CI prints the number and passes, because that branch is measured in
+turn when it asks for `main`, over everything it collected. Nothing reaches
+`main` unmeasured.
+
 A change that does not fit is a sequence of pull requests that each stand on
 their own, not one larger one with a note about its size. The one diff this
 measures wrongly is code that only moves, and no diff can prove that about
