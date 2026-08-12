@@ -5,7 +5,7 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
-use crucible_core::{Permission, Rules};
+use crucible_core::{Mode, Permission, Rules};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Key, Recording};
 
@@ -31,10 +31,9 @@ fn engine(mode: Mode) -> Runner {
     .permitting(Permission::with(mode, Rules::new()))
 }
 
-/// The row a session in this mode is drawn with, nothing waiting to be agreed
-/// to.
+/// The row a session in this mode is drawn with.
 fn settled(mode: Mode) -> Says {
-    saying(&engine(mode), None, Glyphs::Unicode)
+    saying(&engine(mode))
 }
 
 /// The same, with the offer to leave standing under it.
@@ -219,79 +218,45 @@ fn the_row_is_read_off_the_engine_rather_than_from_a_copy_of_the_mode() {
     // meant to say what is in force would be the one thing that could be wrong
     // about it.
     let mut runner = engine(Mode::Ask);
-    assert_eq!(saying(&runner, None, Glyphs::Unicode).mode, "ask mode on");
+    assert_eq!(saying(&runner).mode, "ask mode on");
 
     runner.cycle();
-    assert_eq!(
-        saying(&runner, None, Glyphs::Unicode).mode,
-        "allow edits on"
-    );
+    assert_eq!(saying(&runner).mode, "allow edits on");
 }
 
 #[test]
-fn a_mode_waiting_to_be_agreed_to_is_the_one_on_screen_and_not_the_one_in_force() {
-    // What the box is drawn in while a step is standing is the mode being
-    // offered, so agreeing to it changes what is in force and not what is
-    // being looked at. The engine is still in the mode it was in until the key
-    // that agrees arrives.
-    let runner = engine(Mode::AllowEdits);
-    let says = saying(&runner, Some(Mode::FullAccess), Glyphs::Unicode);
+fn stepping_into_full_access_takes_effect_on_the_press() {
+    // It used to go on screen first and wait to be agreed to, which put a
+    // confirm on a key nobody reaches for by accident — and a confirm nobody
+    // needs is what teaches people to dismiss the ones they do.
+    let mut runner = engine(Mode::AllowEdits);
+    runner.cycle();
 
-    assert!(says.mode.contains("full access mode on"), "{:?}", says.mode);
-    assert!(
-        says.mode.contains("nothing will be asked"),
-        "the step says what it means: {:?}",
-        says.mode
-    );
-    assert_eq!(says.tone, tone(Mode::FullAccess));
-    assert_eq!(runner.mode(), Mode::AllowEdits);
+    assert_eq!(runner.mode(), Mode::FullAccess);
+    assert_eq!(saying(&runner).mode, "full access mode on");
+    assert_eq!(saying(&runner).tone, tone(Mode::FullAccess));
 }
 
 #[test]
-fn the_row_names_the_keys_that_answer_whatever_it_is_showing() {
-    // One key while there is nothing standing, two while there is. A row that
-    // named the step and not the answer to it would leave somebody looking at
-    // a mode they cannot get out of.
-    assert_eq!(settled(Mode::Ask).keys, CYCLE);
-
-    let waiting = saying(
-        &engine(Mode::AllowEdits),
-        Some(Mode::FullAccess),
-        Glyphs::Unicode,
-    );
-    assert!(waiting.keys.contains("confirm"), "{:?}", waiting.keys);
-    assert!(waiting.keys.contains("esc"), "{:?}", waiting.keys);
+fn the_row_names_the_key_that_steps_the_mode_in_every_mode_alike() {
+    // The row is the only thing that says the mode is a control at all, so it
+    // says so wherever the ring has landed rather than in some of it.
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        assert_eq!(settled(mode).keys, CYCLE, "{mode:?}");
+    }
 }
 
 #[test]
-fn a_terminal_with_no_box_drawing_font_gets_the_same_sentence_in_its_own_characters() {
-    // The marks in the unicode row are the two the confirm is answered with,
-    // so a terminal that would draw them as hollow squares is one where the
-    // keys stop being legible rather than merely looking plain.
-    let says = saying(
-        &engine(Mode::AllowEdits),
-        Some(Mode::FullAccess),
-        Glyphs::Ascii,
-    );
+fn the_row_under_the_box_is_drawn_from_characters_every_terminal_has() {
+    // The glyph set does not reach this row, so what it says has to be legible
+    // in both: a mark added to the sentence or to the key beside it would show
+    // as a hollow square on a terminal that asked for `ascii`.
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        let says = settled(mode);
 
-    assert!(says.mode.is_ascii(), "{:?}", says.mode);
-    assert!(says.keys.is_ascii(), "{:?}", says.keys);
-    assert!(
-        says.mode.contains("nothing will be asked"),
-        "{:?}",
-        says.mode
-    );
-    assert!(says.keys.contains("enter"), "{:?}", says.keys);
-}
-
-#[test]
-fn the_only_step_that_is_agreed_to_first_is_the_one_that_stops_asking() {
-    // The other two still ask about something, so a step into either is
-    // answerable by stepping again. This one is the end of the ring in that
-    // sense: nothing after it will ask.
-    assert!(!agreed_first(Mode::Ask));
-    assert!(!agreed_first(Mode::AllowEdits));
-    assert!(agreed_first(Mode::FullAccess));
+        assert!(says.mode.is_ascii(), "{:?}", says.mode);
+        assert!(says.keys.is_ascii(), "{:?}", says.keys);
+    }
 }
 
 #[test]

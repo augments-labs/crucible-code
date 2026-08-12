@@ -21,10 +21,9 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use crucible_core::Mode;
 use crucible_runner::Runner;
 use crucible_tui::{
-    Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed,
+    Editor, Glyphs, Listed, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed,
     pressed,
 };
 
@@ -86,10 +85,7 @@ pub(crate) fn ask<T: Terminal>(
     let glyphs = style.glyphs();
     let mut editor = Editor::new();
 
-    // A mode put on screen and waiting to be agreed to. `None` is the ordinary
-    // state, where what the box is drawn in is the mode the engine is in.
-    let mut proposed: Option<Mode> = None;
-    let mut says = saying(runner, proposed, glyphs);
+    let mut says = saying(runner);
 
     // What the line has open above the box. Rebuilt on the keystroke that
     // changed the line rather than per frame: the box is redrawn on every key,
@@ -105,27 +101,6 @@ pub(crate) fn ask<T: Terminal>(
 
     loop {
         let arrived = pressed()?;
-
-        // A mode waiting to be agreed to is modal, and the row under the box
-        // names the two keys that answer it. Everything else waits, including a
-        // character that would otherwise be typed into the line: a key that
-        // both typed and left the question standing would have somebody
-        // agreeing to one thing while looking at another.
-        if proposed.is_some() {
-            match arrived {
-                Pressed::Resized => renderer.resized()?,
-                Pressed::Key(Key::Enter) => {
-                    runner.cycle();
-                    proposed = None;
-                }
-                Pressed::Escape => proposed = None,
-                _ => continue,
-            }
-
-            says = saying(runner, proposed, glyphs);
-            draw(renderer, &editor, style, &says, &open)?;
-            continue;
-        }
 
         // Whatever arrived, the offer to leave was made to the key after the
         // one that made it, and this is that key.
@@ -162,19 +137,13 @@ pub(crate) fn ask<T: Terminal>(
                 }
             }
 
-            // Stepping the mode on. One that has to be agreed to goes on screen
-            // first and is entered by the key that agrees to it; every other
-            // one takes effect on the press.
+            // Stepping the mode on. Every step takes effect on the press: the
+            // row under the box says which mode that landed in, and the same
+            // key is what steps out of it again.
             Pressed::Cycle => {
-                let next = runner.mode().next();
+                runner.cycle();
 
-                if agreed_first(next) {
-                    proposed = Some(next);
-                } else {
-                    runner.cycle();
-                }
-
-                says = saying(runner, proposed, glyphs);
+                says = saying(runner);
                 draw(renderer, &editor, style, &says, &open)?;
             }
 
@@ -245,58 +214,15 @@ struct Says {
     asking: Option<&'static str>,
 }
 
-/// The row for whichever mode the box is showing.
-fn saying(runner: &Runner, proposed: Option<Mode>, glyphs: Glyphs) -> Says {
-    // The colour goes on first and the sentence says what the colour means,
-    // which is what the step is worth a keystroke for: *nothing will be asked*
-    // is something somebody can agree to, where `fullAccess` is something they
-    // can only recognise.
-    let Some(mode) = proposed else {
-        let mode = runner.mode();
-
-        return Says {
-            mode: Cow::Borrowed(mode.sentence()),
-            keys: CYCLE,
-            tone: tone(mode),
-            asking: None,
-        };
-    };
-
-    let (means, keys) = confirming(glyphs);
+/// The row for the mode the box is showing.
+fn saying(runner: &Runner) -> Says {
+    let mode = runner.mode();
 
     Says {
-        mode: Cow::Owned(format!("{} {means}", mode.sentence())),
-        keys,
+        mode: Cow::Borrowed(mode.sentence()),
+        keys: CYCLE,
         tone: tone(mode),
         asking: None,
-    }
-}
-
-/// What the row says after the mode while one is waiting to be agreed to, and
-/// the keys that answer it.
-///
-/// A pair per set of characters rather than one sentence with its marks swapped
-/// out. What a terminal with no box-drawing font gets is a different sentence
-/// rather than the same one punctuated differently, and keeping the two side by
-/// side is what makes that a decision instead of a fallback.
-const fn confirming(glyphs: Glyphs) -> (&'static str, &'static str) {
-    match glyphs {
-        Glyphs::Unicode => ("— nothing will be asked", "(⏎ confirm · esc cancels)"),
-        Glyphs::Ascii => ("- nothing will be asked", "(enter confirms, esc cancels)"),
-    }
-}
-
-/// Whether stepping into this mode is agreed to before it takes effect.
-///
-/// One mode, one step, and that is the whole of the case for it: a confirm on a
-/// key somebody pressed on purpose is exactly the shape that teaches people to
-/// dismiss confirms unread, and this one survives because it is the only one. A
-/// second landing on this key is a reason to reconsider this one rather than to
-/// join it.
-const fn agreed_first(mode: Mode) -> bool {
-    match mode {
-        Mode::Ask | Mode::AllowEdits => false,
-        Mode::FullAccess => true,
     }
 }
 

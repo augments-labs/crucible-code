@@ -100,9 +100,8 @@ ask mode on (shift+tab to cycle)
 The box is as wide as the terminal, and a line longer than it scrolls inside it
 rather than wrapping. Under it is the mode in force, every time — `ask mode on`
 is the one nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next
-one while you type, and stepping into full access is agreed to first, because
-nothing is asked after it. [Permissions](../permissions/index.md) is where all
-three are.
+one while you type, and the row and the colour of the box both follow it.
+[Permissions](../permissions/index.md) is where all three are.
 
 Type a prompt and press enter. The box goes, the line stays where it was, and
 the answer streams in under it. Tool calls appear as they run:
