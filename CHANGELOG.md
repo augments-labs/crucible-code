@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **<kbd>Enter</kbd> runs the command the open list is pointing at, rather than
+  the letters typed.** One row is marked and <kbd>↑</kbd> and <kbd>↓</kbd> move
+  the mark, so any command runs from the letters that name it without the rest
+  being typed. A name typed in full runs that command rather than a longer one
+  beginning the same way.
+
 - **<kbd>Ctrl-C</kbd> against an empty prompt no longer ends the session on its
   own.** The first press says `press ctrl-c again to leave` under the mode; a
   second one within two seconds leaves. Any other key in between takes the offer

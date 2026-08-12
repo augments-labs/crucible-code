@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use crucible_core::Mode;
 use crucible_runner::Runner;
 use crucible_tui::{
-    Editor, Glyphs, Key, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed, pressed,
+    Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Raw, Renderer, Row, Slot, Terminal, Typed,
+    pressed,
 };
 
 use crate::cli::Fatal;
@@ -90,12 +91,17 @@ pub(crate) fn ask<T: Terminal>(
     let mut proposed: Option<Mode> = None;
     let mut says = saying(runner, proposed, glyphs);
 
+    // What the line has open above the box. Rebuilt on the keystroke that
+    // changed the line rather than per frame: the box is redrawn on every key,
+    // and this is the same list until one of them edits the line.
+    let mut open = Opened::default();
+
     // When Ctrl-C was last pressed against an empty line, if it is still the
     // last key pressed. Taken by every other key, so the pair has to be two
     // presses in a row rather than two with a session between them.
     let mut leaving: Option<Instant> = None;
 
-    draw(renderer, &editor, style, &says, None)?;
+    draw(renderer, &editor, style, &says, &open)?;
 
     loop {
         let arrived = pressed()?;
@@ -117,13 +123,14 @@ pub(crate) fn ask<T: Terminal>(
             }
 
             says = saying(runner, proposed, glyphs);
-            draw(renderer, &editor, style, &says, None)?;
+            draw(renderer, &editor, style, &says, &open)?;
             continue;
         }
 
         // Whatever arrived, the offer to leave was made to the key after the
         // one that made it, and this is that key.
         let offered = leaving.take();
+        says.asking = None;
 
         match arrived {
             // Redrawn rather than re-wrapped: the box was laid out for a width
@@ -131,14 +138,27 @@ pub(crate) fn ask<T: Terminal>(
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                draw(renderer, &editor, style, &says, None)?;
+                draw(renderer, &editor, style, &says, &open)?;
             }
 
             // Nothing is standing, so there is nothing to back out of — except
             // the offer above, which is on screen and has just been taken back.
             Pressed::Escape | Pressed::Ignored => {
                 if offered.is_some() {
-                    draw(renderer, &editor, style, &says, None)?;
+                    draw(renderer, &editor, style, &says, &open)?;
+                }
+            }
+
+            // Through whatever the line has open above the box. With nothing
+            // open, or at the end it is already on, the key costs no frame.
+            Pressed::Up => {
+                if open.up() || offered.is_some() {
+                    draw(renderer, &editor, style, &says, &open)?;
+                }
+            }
+            Pressed::Down => {
+                if open.down() || offered.is_some() {
+                    draw(renderer, &editor, style, &says, &open)?;
                 }
             }
 
@@ -155,7 +175,7 @@ pub(crate) fn ask<T: Terminal>(
                 }
 
                 says = saying(runner, proposed, glyphs);
-                draw(renderer, &editor, style, &says, None)?;
+                draw(renderer, &editor, style, &says, &open)?;
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -164,11 +184,14 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => {
                     if offered.is_some() {
-                        draw(renderer, &editor, style, &says, None)?;
+                        draw(renderer, &editor, style, &says, &open)?;
                     }
                 }
-                Typed::Changed => draw(renderer, &editor, style, &says, None)?,
-                Typed::Submitted => return said(renderer, &mut editor, style),
+                Typed::Changed => {
+                    open = Opened::filtered(editor.text(), glyphs);
+                    draw(renderer, &editor, style, &says, &open)?;
+                }
+                Typed::Submitted => return said(renderer, &mut editor, &open, style),
 
                 // Ctrl-C against a line with nothing on it. The first press
                 // says what a second one would do; the second does it, so long
@@ -181,7 +204,8 @@ pub(crate) fn ask<T: Terminal>(
                     }
 
                     leaving = Some(Instant::now());
-                    draw(renderer, &editor, style, &says, Some(LEAVING))?;
+                    says.asking = Some(LEAVING);
+                    draw(renderer, &editor, style, &says, &open)?;
                 }
 
                 Typed::Ended => {
@@ -203,12 +227,12 @@ fn together(offered: Option<Instant>, now: Instant) -> bool {
     offered.is_some_and(|since| now.duration_since(since) < TOGETHER)
 }
 
-/// What the row under the box says, and the colour the box says it in.
+/// What the rows under the box say, and the colour the box says it in.
 ///
-/// Built when the mode changes rather than when the box is drawn. The box is
-/// redrawn on every keystroke and this is the same row until a key changes the
-/// mode, so formatting it per frame would be work done to produce the bytes
-/// that were already there.
+/// The mode is built when the mode changes rather than when the box is drawn.
+/// The box is redrawn on every keystroke and this is the same row until a key
+/// changes the mode, so formatting it per frame would be work done to produce
+/// the bytes that were already there.
 struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
     mode: Cow<'static, str>,
@@ -216,6 +240,9 @@ struct Says {
     keys: &'static str,
     /// What the border and the sentence are both drawn in.
     tone: Slot,
+    /// A row under that, for something waiting on the very next key. `None` in
+    /// the ordinary state, where the mode is the last row there is.
+    asking: Option<&'static str>,
 }
 
 /// The row for whichever mode the box is showing.
@@ -231,6 +258,7 @@ fn saying(runner: &Runner, proposed: Option<Mode>, glyphs: Glyphs) -> Says {
             mode: Cow::Borrowed(mode.sentence()),
             keys: CYCLE,
             tone: tone(mode),
+            asking: None,
         };
     };
 
@@ -240,6 +268,7 @@ fn saying(runner: &Runner, proposed: Option<Mode>, glyphs: Glyphs) -> Says {
         mode: Cow::Owned(format!("{} {means}", mode.sentence())),
         keys,
         tone: tone(mode),
+        asking: None,
     }
 }
 
@@ -282,7 +311,7 @@ fn draw<T: Terminal>(
     editor: &Editor,
     style: Style,
     says: &Says,
-    asking: Option<&str>,
+    open: &Opened,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
 
@@ -292,7 +321,7 @@ fn draw<T: Terminal>(
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: says.keys,
-        asking,
+        asking: says.asking,
     };
 
     let mut boxed = prompt.rows(columns, style.glyphs());
@@ -302,7 +331,7 @@ fn draw<T: Terminal>(
     // the box have taken theirs.
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
-    let mut rows = opened(editor.text(), columns, room, style.glyphs());
+    let mut rows = open.rows(columns, room, style.glyphs());
     caret.row += rows.len();
     rows.append(&mut boxed);
 
@@ -310,29 +339,91 @@ fn draw<T: Terminal>(
     Ok(())
 }
 
-/// The command list to open above the box, and the blank row under it.
+/// The command list a line has open above the box, and the row of it that
+/// pressing return would run.
 ///
 /// Empty in the ordinary case, where the line is a prompt: nothing is
 /// allocated, and the region is the rows the box has always been.
 ///
-/// A list with no room for it is not opened. The live region is taken back by
-/// moving the cursor up over it, so one taller than the screen is one whose top
-/// has already scrolled beyond reach — the next rewind would move back over
-/// rows the terminal has taken. Drawing what fits instead would be worse than
-/// drawing nothing: a list cut off at the top reads as the whole list.
-fn opened(said: &str, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-    let shown = command::filtering(said, glyphs);
-    if shown.is_empty() || shown.len() > room {
-        return Vec::new();
+/// The row is what makes this a list rather than a reminder. A list that only
+/// showed what a line could become would leave every half-typed name to be
+/// finished by hand and then rejected — the list being right about the command
+/// and the line being wrong about it, at the same time and on the same screen.
+#[derive(Debug, Default)]
+struct Opened {
+    /// What the filter left, in the order `/help` lists them.
+    shown: Vec<Listed<'static>>,
+    /// Which row of it return runs.
+    at: usize,
+}
+
+impl Opened {
+    /// The list `said` has open, and the row it points at before an arrow has
+    /// moved anything.
+    ///
+    /// That row is the one whose name is the whole line where there is one,
+    /// rather than the first of them. `/mode` is a prefix of `/model`, so a
+    /// line naming a command outright would otherwise point at a different
+    /// command that merely starts the same way.
+    fn filtered(said: &str, glyphs: Glyphs) -> Self {
+        let shown = command::filtering(said, glyphs);
+        let at = shown
+            .iter()
+            .position(|one| one.name == said)
+            .unwrap_or_default();
+
+        Self { shown, at }
     }
 
-    let mut rows = Menu {
-        shown: &shown,
-        chosen: None,
+    /// Moves the mark back a row, and says whether it moved.
+    ///
+    /// Stopping at the end rather than running round to the other one, the same
+    /// as the arrows that move along the line. A list is short enough to read
+    /// whole, so wrapping would buy a keystroke at the price of somebody
+    /// looking away and back to find where the mark went.
+    fn up(&mut self) -> bool {
+        let moved = self.at > 0;
+        self.at = self.at.saturating_sub(1);
+        moved
     }
-    .rows(columns, glyphs);
-    rows.push(Row::new());
-    rows
+
+    /// Moves it on a row.
+    fn down(&mut self) -> bool {
+        let last = self.shown.len().saturating_sub(1);
+        let moved = self.at < last;
+        self.at = last.min(self.at + 1);
+        moved
+    }
+
+    /// What return runs, or `None` where there is no list and the line is what
+    /// was typed.
+    fn chosen(&self) -> Option<&'static str> {
+        self.shown.get(self.at).map(|one| one.name)
+    }
+
+    /// The rows to open above the box, and the blank row that keeps them off
+    /// it.
+    ///
+    /// A list with no room for it is not opened. The live region is taken back
+    /// by moving the cursor up over it, so one taller than the screen is one
+    /// whose top has already scrolled beyond reach — the next rewind would move
+    /// back over rows the terminal has taken. Drawing what fits instead would
+    /// be worse than drawing nothing: a list cut off at the top reads as the
+    /// whole list.
+    fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        if self.shown.is_empty() || self.shown.len() > room {
+            return Vec::new();
+        }
+
+        let mut rows = Menu {
+            shown: &self.shown,
+            chosen: Some(self.at),
+        }
+        .rows(columns, glyphs);
+
+        rows.push(Row::new());
+        rows
+    }
 }
 
 /// Takes the finished line, leaving it in the record where the box was.
@@ -340,12 +431,19 @@ fn opened(said: &str, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
 /// The box goes and the line stays: what was asked belongs in the transcript
 /// beside the answer to it, and the box is chrome around a line that is no
 /// longer being changed.
+///
+/// What is taken is the command the list was pointing at where there was one,
+/// and the line as typed where there was not. A marked row is an offer, and the
+/// key that finishes a line is the key that answers it.
 fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &mut Editor,
+    open: &Opened,
     style: Style,
 ) -> Result<Asked, Fatal> {
-    let said = editor.take();
+    let chosen = open.chosen();
+    let typed = editor.take();
+    let said = chosen.map_or(typed, str::to_owned);
 
     renderer.settle()?;
     renderer.present(&[Prompt::committed(&said, style.glyphs())], style.palette())?;
