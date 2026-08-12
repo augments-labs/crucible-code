@@ -11,7 +11,7 @@
 //! construction rather than by care. The sequences themselves live in
 //! [`frame`]; this module decides when a frame happens.
 
-use crate::color::Palette;
+use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 
@@ -101,6 +101,21 @@ impl<T: Terminal> Renderer<T> {
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
         self.tail.push(delta, &mut self.overflow);
         self.draw()
+    }
+
+    /// Writes everything streamed after this in `slot`.
+    ///
+    /// For the part of an answer crucible has read something about — a heading,
+    /// a run of code — where [`Renderer::commit`] is for a line it composed
+    /// itself. The colour belongs to the slot rather than to the text, so it
+    /// costs no column and the wrap is the wrap the same answer would have had
+    /// plain.
+    ///
+    /// Nothing is drawn: a slot changes between two pieces of the same delta,
+    /// and a frame per change would be several frames per delta. The next
+    /// [`Renderer::stream`] puts the result on screen.
+    pub fn wear(&mut self, slot: Slot, palette: Palette) {
+        self.tail.wear(slot, palette);
     }
 
     /// Writes a line that is finished and will never be redrawn.

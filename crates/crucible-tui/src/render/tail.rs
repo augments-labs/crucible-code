@@ -15,6 +15,7 @@
 
 use std::collections::VecDeque;
 
+use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
 use crate::width::{self, EMOJI_PRESENTATION};
 
@@ -35,6 +36,23 @@ pub(crate) struct Tail {
     /// text and counted as columns — which is the bug this exists to stop,
     /// reappearing only under streaming.
     escapes: Escapes,
+    /// The sequence text is written under, and the one that ends it.
+    ///
+    /// Both come from the palette, which answers in `&'static str`, so wearing
+    /// a slot allocates nothing and a row that wraps can open the same slot
+    /// again without asking a second time. Empty for [`Slot::Plain`] and for
+    /// every slot where colour is off, which is what keeps a redirected run
+    /// free of escape bytes.
+    worn: &'static str,
+    /// What closes [`Self::worn`].
+    close: &'static str,
+    /// Whether the row being appended to has [`Self::worn`] open on it.
+    ///
+    /// The invariant this keeps is that every row is closed once [`Self::push`]
+    /// returns. A row read with a sequence still open on it would set that
+    /// attribute on everything drawn after it, and the row settled into the
+    /// record would carry it into the reader's scrollback for good.
+    open: bool,
 }
 
 /// One display row, with its width kept alongside so appending stays O(1).
@@ -56,7 +74,37 @@ impl Tail {
             width: width.max(1),
             bound: bound.max(1),
             escapes: Escapes::default(),
+            worn: "",
+            close: "",
+            open: false,
         }
+    }
+
+    /// Writes everything after this in `slot`, until the next call says
+    /// otherwise.
+    ///
+    /// The slot is crucible's own reading of what arrived — which run of the
+    /// answer is a heading, which is code — so it is applied here rather than
+    /// travelling as bytes inside the text. Bytes inside the text are the one
+    /// thing this tail refuses: they arrive from the model, they are dropped
+    /// undrawn and uncounted, and the reason is that an instruction from there
+    /// could move the cursor out of the region this renderer believes it owns.
+    ///
+    /// The sequence costs no column. Width is counted as characters are placed
+    /// and a sequence is never placed, so a row wearing a slot wraps in exactly
+    /// the same column as the same row plain.
+    pub(crate) fn wear(&mut self, slot: Slot, palette: Palette) {
+        let worn = palette.open(slot);
+        if worn == self.worn {
+            return;
+        }
+
+        // Closed here and opened on the next character rather than now: a slot
+        // worn at the end of a delta and changed at the start of the next one
+        // would otherwise leave an opening sequence around nothing.
+        self.close_worn();
+        self.worn = worn;
+        self.close = palette.close();
     }
 
     /// Appends streamed text, moving any rows past the bound into `overflow`.
@@ -75,7 +123,7 @@ impl Tail {
 
             match character {
                 // A newline ends the row wherever it is.
-                '\n' => self.rows.push_back(Row::default()),
+                '\n' => self.break_row(),
                 // Bare carriage returns arrive as half of a CRLF from a tool's
                 // output. Dropping them is what stops a blank row per line.
                 '\r' => {}
@@ -84,6 +132,11 @@ impl Tail {
                 _ => self.place(character),
             }
         }
+
+        // Every row this tail hands out is balanced, including the one still
+        // being appended to. The next character reopens the slot where it left
+        // off, so the pair costs a few bytes per delta and nothing per frame.
+        self.close_worn();
 
         while self.rows.len() > self.bound {
             // The row that leaves is complete: only the last row is still being
@@ -108,7 +161,7 @@ impl Tail {
     /// most of them.
     pub(crate) fn content(&self) -> impl ExactSizeIterator<Item = &str> {
         let rows = match self.rows.back() {
-            Some(row) if row.text.is_empty() => self.rows.len().saturating_sub(1),
+            Some(row) if row.width == 0 => self.rows.len().saturating_sub(1),
             _ => self.rows.len(),
         };
 
@@ -122,9 +175,13 @@ impl Tail {
     }
 
     /// Whether the tail holds nothing but empty rows.
+    ///
+    /// Measured in columns rather than bytes, like everything else here: a row
+    /// holding a slot's opening and closing sequence and no text draws nothing
+    /// and is nothing.
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
-        self.rows.iter().all(|row| row.text.is_empty())
+        self.rows.iter().all(|row| row.width == 0)
     }
 
     /// How many columns along the row being appended to the next character
@@ -149,6 +206,50 @@ impl Tail {
         // A turn that ended mid-sequence ended mid-sequence. Carrying that into
         // the next one would swallow the start of the next answer.
         self.escapes = Escapes::default();
+        // The slot belongs to the answer that was being written, and that
+        // answer is over. An unfinished code block would otherwise paint the
+        // whole of the next one.
+        self.worn = "";
+        self.close = "";
+        self.open = false;
+    }
+
+    /// Ends the row being appended to and starts a fresh one, carrying the slot
+    /// in force across the break.
+    ///
+    /// Every row is closed where it ends and opened where it begins, so a
+    /// paragraph wrapped over four rows is four self-contained rows rather than
+    /// one attribute set on the first and unset on the last. That matters
+    /// because the rows do not stay together: the oldest overflow into
+    /// scrollback one at a time, and a row that reached the terminal holding
+    /// only half of a pair would leave the other half unwritten for good.
+    fn break_row(&mut self) {
+        self.close_worn();
+        self.rows.push_back(Row::default());
+    }
+
+    /// Opens the worn slot on the current row, if it is not open already.
+    fn open_worn(&mut self) {
+        if self.open || self.worn.is_empty() {
+            return;
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            row.text.push_str(self.worn);
+            self.open = true;
+        }
+    }
+
+    /// Closes the worn slot on the current row, if it is open.
+    fn close_worn(&mut self) {
+        if !self.open {
+            return;
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            row.text.push_str(self.close);
+        }
+        self.open = false;
     }
 
     /// Puts one character on the current row, wrapping first if it will not
@@ -168,9 +269,10 @@ impl Tail {
         }
 
         if self.column() + advance > self.width {
-            self.rows.push_back(Row::default());
+            self.break_row();
         }
 
+        self.open_worn();
         if let Some(row) = self.rows.back_mut() {
             row.text.push(character);
             row.width += advance;
@@ -205,12 +307,13 @@ impl Tail {
                 row.text.pop();
                 row.width = row.width.saturating_sub(1);
             }
-            self.rows.push_back(Row::default());
+            self.break_row();
             if let Some(base) = base {
                 self.place(base);
             }
         }
 
+        self.open_worn();
         if let Some(row) = self.rows.back_mut() {
             row.text.push(EMOJI_PRESENTATION);
             row.width += 1;
@@ -225,7 +328,7 @@ impl Tail {
         let target = width::tab_stop(current);
 
         if target > self.width {
-            self.rows.push_back(Row::default());
+            self.break_row();
             return;
         }
 
