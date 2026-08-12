@@ -39,11 +39,19 @@
           "type": "string"
         },
         "color": {
-          "description": "Whether to dim the prompt: auto follows the terminal and NO_COLOR, always and never override it",
+          "description": "Whether to write colour: auto follows the terminal and NO_COLOR, always and never override it",
           "enum": [
             "auto",
             "always",
             "never"
+          ],
+          "type": "string"
+        },
+        "glyphs": {
+          "description": "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
+          "enum": [
+            "unicode",
+            "ascii"
           ],
           "type": "string"
         },

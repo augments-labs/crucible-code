@@ -25,6 +25,41 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// The next mode of the ring, which stepping through them lands on.
+    ///
+    /// A ring rather than a list with two ends. The step is one key, and a key
+    /// that stops working at the end of a list is one somebody presses twice
+    /// before working out that nothing is broken.
+    ///
+    /// The order is the permissiveness the modes are written in above, so the
+    /// step is always the same direction and a reader who has pressed it once
+    /// knows where the next press goes.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Ask => Self::AllowEdits,
+            Self::AllowEdits => Self::FullAccess,
+            Self::FullAccess => Self::Ask,
+        }
+    }
+
+    /// The mode as the row under the prompt box says it.
+    ///
+    /// Not what [`fmt::Display`] writes, and the difference is who the string
+    /// is for: `allowEdits` is what you would *type* into a configuration file,
+    /// and this is what you *read* off the screen while it is in force. Both
+    /// live here so that a mode added later cannot be given one and not the
+    /// other — a table of these in the renderer would have compiled fine and
+    /// printed nothing.
+    #[must_use]
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::Ask => "ask mode on",
+            Self::AllowEdits => "allow edits on",
+            Self::FullAccess => "full access mode on",
+        }
+    }
+
     /// The disposition for a call the rules said nothing about.
     ///
     /// A read is allowed in every mode. It is not that reading is harmless —

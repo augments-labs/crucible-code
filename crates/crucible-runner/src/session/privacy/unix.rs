@@ -39,6 +39,35 @@ pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
     Ok(file)
 }
 
+/// Opens the mark beside a log, making it if it is not there, out of reach.
+///
+/// Held at what a log is held at. It is named for a session and sits in the
+/// same directory, so what it gives away by existing is what the log beside it
+/// gives away, and there is no reason for the two to be at different modes.
+///
+/// Opened to read and write rather than to append, which is the one way it
+/// differs from [`log`]. Nothing is ever written through the handle — the
+/// access is what taking a lock on it needs. `flock` asks for none, but the
+/// call Windows takes a lock with refuses a handle opened only to append, and a
+/// mark that cannot be locked is a claim that is never taken.
+pub(in crate::session) fn mark(path: &Path) -> Result<File, io::Error> {
+    // Never truncated. A mark holds nothing, so there is nothing in one to
+    // lose — but the mark another crucible is holding this instant is a file
+    // this call opens, and a call that opens it is not a call that should be
+    // able to write to it at all.
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .mode(LOG)
+        .open(path)?;
+
+    narrow(path, LOG)?;
+
+    Ok(file)
+}
+
 /// Puts `path` at exactly `mode`, and only when it is not already there.
 ///
 /// `DirBuilderExt::mode` and `OpenOptionsExt::mode` apply only when the call

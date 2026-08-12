@@ -66,7 +66,8 @@ impl fmt::Display for At {
     }
 }
 
-/// The keys accepted where an unknown one was found.
+/// What was accepted where something else was found — the keys a block has, or
+/// the answers a setting takes.
 ///
 /// Rendered as a list rather than as a guess at what was meant. A document this
 /// small has few enough keys at any level that showing all of them is both
@@ -76,8 +77,8 @@ impl fmt::Display for At {
 pub struct Accepted(Box<[&'static str]>);
 
 impl Accepted {
-    pub(crate) fn new(keys: Vec<&'static str>) -> Self {
-        Self(keys.into_boxed_slice())
+    pub(crate) fn new(accepted: Vec<&'static str>) -> Self {
+        Self(accepted.into_boxed_slice())
     }
 }
 
@@ -236,6 +237,38 @@ pub enum ConfigError {
         name: Box<str>,
         /// Where it is, when that can be said.
         at: At,
+    },
+
+    /// One of crucible's own settings, written in a file as something crucible
+    /// does not take.
+    ///
+    /// Refused rather than read as the default. Every other name in `env` is a
+    /// string on its way to a command and means whatever it says; this one has
+    /// a meaning crucible fixes, and quietly falling back would be a setting
+    /// that looks applied and does nothing.
+    #[error("{file}: env {name}{at} is not set to an answer crucible takes — {accepted}")]
+    Answer {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The variable name. A name, never the value beside it.
+        name: Box<str>,
+        /// Where it is, when that can be said.
+        at: At,
+        /// What the setting takes instead.
+        accepted: Accepted,
+    },
+
+    /// The same setting, set in the shell rather than in a file.
+    ///
+    /// No file and no position, because there is neither: this one was typed in
+    /// front of the run. The name is enough to find it, and the value is left
+    /// out for the reason it is left out of every message here.
+    #[error("{name} is not set to an answer crucible takes — {accepted}")]
+    AnswerInShell {
+        /// The variable name.
+        name: Box<str>,
+        /// What the setting takes instead.
+        accepted: Accepted,
     },
 
     /// A file a rule could not be added to without rewriting the rest of it.

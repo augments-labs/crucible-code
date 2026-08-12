@@ -11,14 +11,18 @@
 //! construction rather than by care. The sequences themselves live in
 //! [`frame`]; this module decides when a frame happens.
 
+use crate::color::Palette;
+use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 
 mod frame;
 mod plain;
+mod region;
 mod screen;
 mod tail;
 
 use frame::Frame;
+pub use region::Caret;
 use tail::Tail;
 
 /// Draws the transcript into the terminal's scrollback.
@@ -30,15 +34,28 @@ pub struct Renderer<T: Terminal> {
     /// duplicating the wrap. Its bound is one, so every row it is given
     /// overflows immediately instead of staying live.
     finished: Tail,
-    /// Rows of tail currently on screen. What the next frame must move back
-    /// over, and the only piece of screen state this process tracks.
+    /// Rows currently on screen. What the next frame must move back over, and
+    /// one of the two pieces of screen state this process tracks.
     drawn: usize,
-    /// Columns the tail is currently wrapped for.
-    columns: usize,
+    /// How many of those rows sit *below* the cursor.
+    ///
+    /// Zero for everything streamed, where the cursor is left at the end of the
+    /// last row written. A prompt parks it on the row being typed instead, so
+    /// the way back to the top of the region is that many rows shorter than the
+    /// region is tall.
+    parked: usize,
+    /// The size the tail is currently wrapped and bounded for.
+    ///
+    /// Rows as much as columns: the bound is the height, so a window that only
+    /// got shorter would otherwise leave the tail holding more rows than there
+    /// is screen to show them, and every rewind would reach above the top.
+    size: Size,
     /// Reused across frames: a frame is one string, so it is one write.
     frame: Frame,
     /// Reused across frames: rows leaving the tail on their way to scrollback.
     overflow: Vec<String>,
+    /// Reused across frames: the rows of a live region, painted by [`region`].
+    painted: Vec<String>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -62,9 +79,11 @@ impl<T: Terminal> Renderer<T> {
             finished: Tail::new(size.columns, 1),
             terminal,
             drawn: 0,
-            columns: size.columns,
+            parked: 0,
+            size,
             frame: Frame::new(),
             overflow: Vec::new(),
+            painted: Vec::new(),
         }
     }
 
@@ -94,6 +113,91 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Writes rows crucible composed itself, in colour, above everything after
+    /// them.
+    ///
+    /// The counterpart to [`Renderer::commit`], and separate from it for one
+    /// reason: a committed line is text that came from somewhere else, so it
+    /// goes through the same wrap and the same escape-dropping as streamed
+    /// output — a colour code in a tool result is bytes an untrusted string put
+    /// there. A [`Row`] is not text that arrived; it is spans this program
+    /// built, whose colour the palette decides here, at the last moment.
+    ///
+    /// Not wrapped either, and it does not need to be: a component is given the
+    /// width and returns rows that fit it. Nothing is ever redrawn over these,
+    /// so no frame is counting the columns they cost.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn present(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
+        self.settle()?;
+
+        let terminal = self.terminal.is_terminal();
+        let mut painted = String::new();
+
+        self.frame.plain();
+        for row in rows {
+            painted.clear();
+            row.paint_into(palette, &mut painted);
+            self.frame.settled(&painted, terminal);
+        }
+
+        self.terminal.write(self.frame.as_str())?;
+        self.terminal.flush()
+    }
+
+    /// Draws rows crucible composed itself and leaves them live, with the
+    /// cursor where `caret` says it goes.
+    ///
+    /// The counterpart to [`Renderer::present`] for a component that is still
+    /// being changed: the same rows and the same palette, but redrawn where
+    /// they stand instead of being written once and forgotten. What a keystroke
+    /// costs is therefore one frame — the region is erased and put back — and
+    /// the caller redraws only when something moved.
+    ///
+    /// The cursor is left on the row the caret named rather than at the end of
+    /// what was written, so the terminal's own cursor is the one the reader
+    /// sees, in whatever shape and blink they chose. Nothing is drawn to stand
+    /// in for it.
+    ///
+    /// Nothing at all happens where output is redirected. A live region is a
+    /// thing only a terminal has, and a run whose output is a file has no
+    /// keystrokes arriving to redraw for either — the same condition [`Raw`]
+    /// refuses to enter under.
+    ///
+    /// [`Raw`]: crate::Raw
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn live(
+        &mut self,
+        rows: &[Row],
+        caret: Caret,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        // Anything the last turn left live belongs above the prompt rather than
+        // underneath it, and a rewind that reached over it would take it off
+        // the screen without it ever having been written down.
+        if !self.tail.is_empty() {
+            self.settle()?;
+        }
+
+        region::paint(rows, palette, &mut self.painted);
+
+        let region = self.region();
+        self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
+        self.drawn = self.painted.len();
+
+        self.terminal.write(self.frame.as_str())?;
+        self.terminal.flush()
+    }
+
     /// Ends the live region, leaving what it held in scrollback.
     ///
     /// Called between turns. After this the cursor sits on a fresh row and the
@@ -109,63 +213,100 @@ impl<T: Terminal> Renderer<T> {
 
         if self.tail.is_empty() {
             // Nothing live is worth keeping, but the region may still be on
-            // screen from a frame that only committed rows.
+            // screen from a frame that only committed rows. The tail is emptied
+            // whichever way this ends, so both paths leave the same thing
+            // behind: empty rows kept here would be drawn again by the next
+            // frame and settle into the record as blank lines nobody wrote.
+            self.tail.clear();
+
             if self.drawn > 0 {
                 self.erase()?;
                 self.terminal.flush()?;
-                self.drawn = 0;
             }
             return Ok(());
         }
 
-        screen::settle(
-            &mut self.frame,
-            self.drawn,
-            &mut self.overflow,
-            &mut self.tail,
-        );
+        let region = self.region();
+        screen::settle(&mut self.frame, region, &mut self.overflow, &mut self.tail);
 
         self.terminal.write(self.frame.as_str())?;
         self.terminal.flush()?;
 
         self.drawn = 0;
+        self.parked = 0;
         Ok(())
     }
 
     /// Re-wraps for a terminal the user resized.
     ///
-    /// The rows already on screen were wrapped for the old width, so what is
-    /// live is dropped rather than redrawn wrongly: it is at most one screen,
-    /// and the model is still streaming into it.
+    /// The rows already on screen were wrapped for the old width, so on a
+    /// terminal what is live is dropped rather than redrawn wrongly: it is at
+    /// most one screen, and the model is still streaming into it. Height counts
+    /// as much as width, because the height is what bounds the tail.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn resized(&mut self) -> Result<(), TerminalError> {
         let size = self.terminal.size().unwrap_or(Size::FALLBACK);
-        if size.columns == self.columns {
+        if size == self.size {
             return Ok(());
         }
 
         // The size comes from the terminal, not from the stream, so a run whose
         // output is redirected still sees the window change. There is no live
         // region in a pipe to wipe, and an erase sequence written into one ends
-        // up in whatever kept the output. The rewrap below still applies.
+        // up in whatever kept the output -- but neither can a pipe take a row
+        // back, so what is live there is written out instead of dropped. The
+        // rewrap below applies either way.
         if self.terminal.is_terminal() {
             self.erase()?;
             self.terminal.flush()?;
+        } else {
+            self.settle_plain()?;
         }
 
-        self.columns = size.columns;
+        self.size = size;
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
         self.drawn = 0;
+        self.parked = 0;
         Ok(())
     }
 
-    /// The terminal underneath, for the wiring that owns it.
-    pub fn terminal(&mut self) -> &mut T {
-        &mut self.terminal
+    /// Ends the live region and writes `text` exactly as given.
+    ///
+    /// Nothing is added: a prompt mark the user types after wants no line
+    /// ending, and a caller that wants the row to end puts one in `text`. The
+    /// bytes are not counted either, which is safe because the settle above has
+    /// just left nothing live -- no frame will ever move back over this row.
+    /// That is also what makes colour the caller's to decide and to put into
+    /// `text`: escape bytes in a row that is never redrawn cannot cost a column
+    /// this renderer is counting.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn prompt(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.settle()?;
+        self.terminal.write(text)?;
+        self.terminal.flush()
+    }
+
+    /// Whether output is going to a terminal rather than a pipe or a file.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        self.terminal.is_terminal()
+    }
+
+    /// The terminal underneath, to read rather than to write on.
+    ///
+    /// Shared and not exclusive: a write made through here would land in the
+    /// middle of the live region, and the count of what is on screen would be
+    /// wrong with nothing in this crate able to notice. [`Renderer::prompt`] is
+    /// how a caller puts bytes down; this is how it asks what came back.
+    pub fn terminal(&self) -> &T {
+        &self.terminal
     }
 
     /// How wide the terminal was when this last looked.
@@ -176,7 +317,19 @@ impl<T: Terminal> Renderer<T> {
     /// what keeps it true.
     #[must_use]
     pub fn columns(&self) -> usize {
-        self.columns
+        self.size.columns
+    }
+
+    /// How tall it was when this last looked.
+    ///
+    /// Held for the same reason the width is, and read for one thing: a live
+    /// region taller than the screen is one whose top has scrolled out of
+    /// reach, so the next rewind would move back over rows the terminal has
+    /// already taken. A component that can grow asks how much room there is
+    /// before it does.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.size.rows
     }
 
     /// One frame, assembled by [`screen`].
@@ -185,9 +338,11 @@ impl<T: Terminal> Renderer<T> {
             return self.draw_plain();
         }
 
-        screen::draw(&mut self.frame, self.drawn, &mut self.overflow, &self.tail);
+        let region = self.region();
+        screen::draw(&mut self.frame, region, &mut self.overflow, &self.tail);
 
         self.drawn = self.tail.len();
+        self.parked = 0;
         self.terminal.write(self.frame.as_str())?;
         self.terminal.flush()
     }
@@ -214,8 +369,18 @@ impl<T: Terminal> Renderer<T> {
 
     /// Wipes the live region without drawing anything back.
     fn erase(&mut self) -> Result<(), TerminalError> {
-        self.frame.rewind(self.drawn);
+        self.frame.rewind(self.region());
+        self.drawn = 0;
+        self.parked = 0;
         self.terminal.write(self.frame.as_str())
+    }
+
+    /// How many rows a rewind has to move back over to reach the top of the
+    /// live region.
+    ///
+    /// The rows on screen, less the ones below wherever the cursor was parked.
+    fn region(&self) -> usize {
+        self.drawn.saturating_sub(self.parked)
     }
 }
 

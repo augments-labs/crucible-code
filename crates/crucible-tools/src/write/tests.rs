@@ -58,6 +58,48 @@ fn the_directories_above_a_new_file_are_made() {
 }
 
 #[test]
+fn an_absolute_path_inside_the_workspace_is_written_like_a_relative_one() {
+    // The directories are made by walking the components of the parent, and
+    // the walk used to start from an empty path — so the first component of an
+    // absolute path was the filesystem root, containment was decided about `/`,
+    // and every absolute path was refused. Every other test here sends a
+    // relative one, which is why nothing caught it.
+    let sample = Sample::new("write-absolute");
+    let path = format!("{}/sub/one.txt", sample.named());
+
+    let output = write(
+        &sample,
+        &format!(r#"{{"path":"{path}","content":"alpha\n"}}"#),
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "sub/one.txt"), "alpha\n");
+}
+
+#[test]
+fn a_file_is_written_into_a_directory_the_workspace_reaches() {
+    // `extraDirectories` names a place the tools may work, and it can only be
+    // named absolutely — so the defect above meant nothing could be written
+    // into one at all.
+    let sample = Sample::new("write-reaching");
+    let beside = sample.beside("notes");
+
+    let tool = Write::new(sample.reaching(&beside));
+    let output = tool
+        .run(allowed(
+            &tool,
+            &format!(r#"{{"path":"{beside}/todo.md","content":"buy milk\n"}}"#),
+        ))
+        .unwrap();
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(
+        fs::read_to_string(format!("{beside}/todo.md")).expect("the file the tool wrote"),
+        "buy milk\n"
+    );
+}
+
+#[test]
 fn a_path_outside_the_workspace_is_refused_without_writing_it() {
     let sample = Sample::new("write-escape");
     let outside = format!("{}/../outside/secret.txt", sample.named());

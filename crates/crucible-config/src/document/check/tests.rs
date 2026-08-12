@@ -47,6 +47,42 @@ fn a_variable_read_before_any_file_is_opened_is_refused_in_every_layer() {
 }
 
 #[test]
+fn one_of_crucibles_own_settings_is_refused_where_it_was_written() {
+    // Its shape is right — every entry in `env` is a string — so the walk has
+    // nothing to say about it, and by the time the layers have merged the file
+    // it came from is gone. Here is the only place a refusal can still name
+    // both, which is what makes it worth refusing rather than defaulting.
+    for read in [
+        mine as fn(&str) -> Result<Document, ConfigError>,
+        local,
+        shared,
+    ] {
+        let err = read(r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "sometimes"}}"#).unwrap_err();
+
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Answer { .. }), "got {err:?}");
+        assert!(said.contains("CRUCIBLE_CODE_CLEAR_SCREEN"), "got {said}");
+        assert!(said.contains("line 1"), "got {said}");
+        assert!(said.contains("true"), "got {said}");
+
+        // The name and where it is, never what was set beside it. This block is
+        // the environment, so the next value to go wrong could be a token.
+        assert!(!said.contains("sometimes"), "got {said}");
+    }
+}
+
+#[test]
+fn an_answer_crucible_takes_passes_in_every_layer() {
+    for read in [
+        mine as fn(&str) -> Result<Document, ConfigError>,
+        local,
+        shared,
+    ] {
+        read(r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "true"}}"#).unwrap();
+    }
+}
+
+#[test]
 fn a_setting_that_wants_a_string_refuses_a_number() {
     let err = shared(r#"{"output": {"color": 1}}"#).unwrap_err();
     let said = err.to_string();
@@ -135,8 +171,8 @@ fn someone_elses_variable_is_refused_in_the_file_that_travels_with_a_clone() {
     assert!(said.contains("config.local.json"), "got {said}");
 
     // And it must not quote what it refused. The whole point of refusing is
-    // that the value might be a secret; echoing it into an error string
-    // would put it exactly where G3 says it may never go.
+    // that the value might be a secret, and an error string is one of the
+    // places this workspace never writes one.
     assert!(!said.contains("hunter2"), "got {said}");
 }
 

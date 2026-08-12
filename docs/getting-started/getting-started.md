@@ -30,10 +30,32 @@ Windows](https://git-scm.com/download/win) carries one, and crucible finds that
 one where it is normally installed even when it is not on the `PATH`. Without
 one, everything except the `bash` tool works and that tool says what is missing.
 
+## Install it
+
+The archives are attached to the
+[releases page](https://github.com/augments-labs/crucible-code/releases), with
+`SHA256SUMS` beside them. Take the one for your platform and that file, check
+one against the other, unpack it, and put the binary somewhere on your `PATH`:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf crucible-<version>-linux-x86_64.tar.gz
+install crucible-<version>-linux-x86_64/crucible ~/.local/bin/
+```
+
+`--ignore-missing` is what lets one checksum file covering the whole release
+check the one archive you took. Each archive unpacks into a directory named
+after it, holding the binary, the README and the licence.
+
+Each Windows target also ships the executable on its own, beside the archive and
+named the same way — `crucible-<version>-windows-x86_64.exe` — so there is
+nothing to unpack. `SHA256SUMS` covers those too.
+
 ## Build it
 
 Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain
-on the first build.
+on the first build. This is the path for a platform not in the table above, and
+for working on crucible itself.
 
 ```bash
 git clone https://github.com/augments-labs/crucible-code
@@ -62,17 +84,28 @@ cd ~/code/my-project
 crucible
 ```
 
-It opens with the version, the model, and the root it is standing on:
+It opens with a card naming the release, the model it is asking, and the root it
+is standing on, beside the last few sessions started in this directory. The card
+fits itself to the terminal: two columns at eighty and above, one below that,
+and under forty-six there is no frame at all — just what it is, what it is
+asking, and where. Under the card is the box:
 
 ```
-crucible 0.0.1 · claude-sonnet-5
-/home/you/code/my-project
-
-› 
+╭────────────────────────────────────────────────────────────╮
+│ ›                                                          │
+╰────────────────────────────────────────────────────────────╯
+ask mode on (shift+tab to cycle)
 ```
 
-Type a prompt and press enter. The answer streams in as it is produced. Tool
-calls appear as they run:
+The box is as wide as the terminal, and a line longer than it scrolls inside it
+rather than wrapping. Under it is the mode in force, every time — `ask mode on`
+is the one nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next
+one while you type, and stepping into full access is agreed to first, because
+nothing is asked after it. [Permissions](../permissions/index.md) is where all
+three are.
+
+Type a prompt and press enter. The box goes, the line stays where it was, and
+the answer streams in under it. Tool calls appear as they run:
 
 ```
 › what does the runner do when a tool fails?
@@ -83,14 +116,73 @@ calls appear as they run:
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
 
-› 
+╭────────────────────────────────────────────────────────────╮
+│ ›                                                          │
+╰────────────────────────────────────────────────────────────╯
+ask mode on (shift+tab to cycle)
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 A call that failed is marked `✗`.
 
-Press <kbd>Ctrl-D</kbd> on an empty prompt to leave.
+<kbd>Ctrl-C</kbd> throws away a line you are part-way through; pressing it again
+on an empty box leaves, and so does <kbd>Ctrl-D</kbd>.
+
+A run whose input or output is redirected gets no box: `crucible < prompts.txt`
+reads whole lines, one prompt each, and the mode is written in front of them
+instead.
+
+## Commands
+
+A line starting with `/` is a command rather than a prompt. It is answered here,
+costs the provider nothing, and is not part of what the model is told about the
+session.
+
+| Command | What it does |
+| --- | --- |
+| `/help` | Lists these |
+| `/model` | The model this session is asking |
+| `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/resume` | Lists what was worked on in this directory, and picks one back up |
+| `/clear` | Forgets what has been said, keeping the session |
+| `/exit` | Ends the session |
+
+`/clear` empties the transcript: the next prompt is the first one the model
+sees, and the turns before it are neither sent nor paid for again. It is the
+same session either way — the same log, the same permission answers, the same
+mode — and the screen is left alone, because what is above the box is the
+terminal's scrollback rather than crucible's. Continuing that session later
+picks it up from where it started again.
+
+`/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
+newest first, each numbered and shown with when it started and what it was first
+asked:
+
+```
+1  just now      rename the parser's error type
+2  2 hours ago   why does the grep tool miss hidden files
+3  yesterday     add a --json flag to the report command
+```
+
+`/resume 2` picks that one up. The session you were in is closed — its log is
+finished and stays readable — and the one you named becomes the session this
+crucible is recording to, with everything already in it back in the transcript.
+The number is the row on the list you were just shown, so read it again if
+something else has been recorded here since.
+
+Two things are worth knowing before you switch. The [permission
+mode](../permissions/modes.md) comes with you, but what you allowed *for the
+rest of that session* does not — the new session is asked about those calls
+again, and rules you wrote to a file apply as they always did. And a session
+another crucible still has open cannot be picked up: it says so rather than
+letting two of them write to one log.
+
+Typing `/` opens the list above the box, filtered to what has been typed so far,
+so the box and the mode under it stay where they are. The list closes as soon as
+the line becomes something else — a path, a sentence, a command with a word
+after it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only
+taken for a command where it could not be anything else.
 
 ## When an answer stops early
 
@@ -105,16 +197,22 @@ does, a line says so under the turn:
 ! unfinished: the provider's filter cut the answer short
 ```
 
-The two are named apart because the remedy is opposite. The first means the
-answer ran out of room, and a narrower question gets a complete one. The second
-means the provider stopped the answer on its own, and asking for less buys
-nothing. Without the line, both look exactly like an answer that finished.
+```
+! unfinished: the provider paused this turn; ask it to go on
+```
 
-A turn that ended normally says nothing at all. There is a third line,
-`! stopped`, for a turn that was cancelled — but nothing in 0.0.1 can cancel
+The three are named apart because the remedy differs. The first means the answer
+ran out of room, and a narrower question gets a complete one. The second means
+the provider stopped the answer on its own, and asking for less buys nothing.
+The third means the answer is not over: the same prompt again carries on from a
+transcript that already holds this much. Without the line, all three look
+exactly like an answer that finished.
+
+A turn that ended normally says nothing at all. There is a fourth line,
+`! stopped`, for a turn that was cancelled — but nothing in 0.0.x can cancel
 one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
 
-<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.1 input is left
+<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.x input is left
 in the terminal's cooked mode and no signal is caught, so there is no way to stop
 a single answer and keep the session. The session log is written as the turn
 goes, so `crucible --continue` picks the session up from wherever it

@@ -5,18 +5,20 @@
 //! be answered, and it is why no lock appears anywhere on the render path: the
 //! only thread that writes to the terminal is the one running this loop.
 //!
-//! Standard input is left in cooked mode for 0.0.1. The consequence worth
-//! knowing: Ctrl-C during a turn ends the process, because catching a signal
-//! would need `unsafe`, which this workspace forbids. The session log is
-//! append-only and written as the turn goes, so `--continue` picks the
-//! session up from wherever it stopped.
+//! A prompt is typed into the box [`typing`] draws, and everything else on this
+//! thread is read as a line the terminal collected. Raw mode is therefore held
+//! only while a line is being written, which is what leaves the rest of the
+//! session as it was: Ctrl-C during a turn ends the process, because catching a
+//! signal would need `unsafe`, which this workspace forbids. The session log is
+//! append-only and written as the turn goes, so `--continue` picks the session
+//! up from wherever it stopped.
 
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 
-use crucible_core::{Cancel, Event, Minted, Mode, Post as _, Remember, Verdict, narrowest};
+use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Terminal, TerminalError};
 
@@ -25,26 +27,38 @@ use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use command::Ran;
+use typing::Asked;
 
-/// What the user types after.
+mod command;
+mod mode;
+mod typing;
+
+/// What the user types after, where there is no box to type into.
 const MARK: &str = "› ";
 
 /// What every turn in a conversation is taken under.
 ///
 /// All of these are settled before the first prompt and none changes at one:
-/// the style comes from the files and the terminal together, the mode from the
-/// same resolution the engine was built with, and the cancel is the same one
-/// the tools were built with. One value rather than three parameters carried
-/// down through every turn.
+/// the style comes from the files and the terminal together, and the cancel is
+/// the same one the tools were built with. One value rather than three
+/// parameters carried down through every turn.
+///
+/// The mode is not among them. It is the one thing about a session that changes
+/// after it has started, so it is read from the engine that holds it every time
+/// it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
     /// Whether to write colour, and how much of a tool call to show.
     pub(crate) style: Style,
-    /// The mode the permission engine is in, written on every prompt line.
-    pub(crate) mode: Mode,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// The file an answer of `always` writes its rule into.
     pub(crate) remembering: PathBuf,
+    /// Where this machine keeps its session logs.
+    pub(crate) sessions: PathBuf,
+    /// The directory this conversation is about, which is what decides whose
+    /// sessions are listed and which of them may be picked up.
+    pub(crate) workspace: Workspace,
 }
 
 /// Reads prompts and takes turns until input ends.
@@ -60,26 +74,59 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
-    // The mode in force, in front of every prompt, spelled the way
-    // configuration spells it. It is on screen every time rather than said
-    // once at the top because the moment it matters is hours in, when the top
-    // has scrolled away — a `fullAccess` session must not be distinguishable
-    // from an `ask` one only by what the user remembers starting.
-    let mark = format!("{} {MARK}", terms.mode);
-
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
 
     loop {
-        // The window may have changed while the last turn was streaming.
-        // Noticed here rather than as it happens because catching the signal a
-        // resize sends needs `unsafe`, so a prompt is the only moment there is:
-        // what a resize costs in 0.0.1 is the turn it lands in, not the session.
+        // The window may have changed while the last turn was streaming. The
+        // box notices a resize as it happens, because in raw mode the terminal
+        // reports one; between turns there is nobody reading, so it is noticed
+        // here instead.
         renderer.resized()?;
-        draw::mark(renderer, &mark, style)?;
 
-        let Some(prompt) = read(input)? else { break };
+        let prompt = match typing::ask(renderer, style, &mut runner)? {
+            Asked::Said(said) => said,
+            Asked::Ended => break,
+
+            // Nothing to type into: no terminal, or one at only one end. The
+            // line is read the way every other answer on this thread is.
+            Asked::Untyped => {
+                // The mode in force, spelled the way configuration spells it,
+                // in front of the line rather than under a box there is none
+                // of. It is on screen every time rather than said once at the
+                // top because the moment it matters is hours in, when the top
+                // has scrolled away — a `fullAccess` session must not be
+                // distinguishable from an `ask` one only by what the user
+                // remembers starting.
+                draw::mark(renderer, &format!("{} {MARK}", runner.mode()), style)?;
+
+                let Some(said) = read(input)? else {
+                    // The mark is still the last thing on its row, and nothing
+                    // but this ends it. Without it, whatever comes next is
+                    // drawn on top of `ask › ` — a report below, or the shell's
+                    // own prompt once crucible is gone, which is every ordinary
+                    // exit. The box needs none of this: it takes its own rows
+                    // back before it returns.
+                    draw::ended(renderer)?;
+                    break;
+                };
+
+                said
+            }
+        };
+
+        // Before the turn, because a command is not one: it is answered here,
+        // on this thread, and costs the provider nothing. Nothing of it reaches
+        // the transcript either — what the model is told about a session is
+        // what was said to it, and `/help` was not.
+        if let Some(wanted) = command::wanted(&prompt) {
+            match command::run(wanted, renderer, &mut runner, terms)? {
+                Ran::Again => continue,
+                Ran::Leave => break,
+            }
+        }
+
         if prompt.trim().is_empty() {
             continue;
         }
@@ -117,7 +164,11 @@ pub(crate) fn converse<T: Terminal>(
 ///
 /// The runner goes to the worker and comes back, which is what makes the
 /// transcript and the permission memory survive a turn without being shared
-/// between threads.
+/// between threads. It is also why a failure on this side is held to the end of
+/// the turn rather than returned where it happens: the worker owns the runner,
+/// the runner owns the session, and the session's log is finished by a thread
+/// its `Drop` waits for. Leaving early would drop the join handle and detach
+/// all three, and the process would exit over a log still being written.
 fn take<T: Terminal>(
     runner: Runner,
     renderer: &mut Renderer<T>,
@@ -125,8 +176,6 @@ fn take<T: Terminal>(
     input: &mut dyn BufRead,
     prompt: String,
 ) -> Result<Runner, Fatal> {
-    let style = terms.style;
-
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = channel();
@@ -151,33 +200,60 @@ fn take<T: Terminal>(
     // Ends when the worker drops both senders, which happens when the turn is
     // over. No sentinel event, and no way to leave the loop early and miss the
     // last delta.
+    let mut held = Ok(());
+
     for one in seen {
-        match one {
-            Seen::Turn(event) => draw::event(renderer, event, style)?,
-            Seen::Question { call, sensitivity } => {
-                // Minted once and used twice. What the question offers has to
-                // be the rule that gets written, or the user agreed to one
-                // thing and crucible wrote down another.
-                let rule = narrowest(&call, &sensitivity);
-
-                draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
-                let answer = verdict(read(input)?.as_deref(), rule.is_some());
-
-                // Before the answer goes back, so the file is written by the
-                // time the tool it allowed runs. `always` is only ever answered
-                // where a rule was minted, so the two arriving together is one
-                // fact twice rather than a case that has to be handled.
-                if let (Some(rule), Remember::Always) = (&rule, answer.1) {
-                    keep(renderer, &terms.remembering, rule, style)?;
-                }
-
-                // A worker that stopped waiting has already denied itself.
-                let _ = reply.send(answer);
-            }
+        if held.is_ok() {
+            held = shown(one, renderer, terms, input, &reply);
+        } else if matches!(one, Seen::Question { .. }) {
+            // Nothing is drawn and nothing is read once the terminal or the
+            // input has failed, but a question still has to be answered: the
+            // worker waits on the reply channel, and this loop waits on the
+            // worker. A refusal is what a drawing thread that has stopped
+            // already means, said out loud rather than by going quiet.
+            let _ = reply.send(verdict(None, false));
         }
     }
 
-    working.join().map_err(|_| Fatal::Lost)
+    let runner = working.join().map_err(|_| Fatal::Lost)?;
+    held.map(|()| runner)
+}
+
+/// Draws one thing the worker sent, and answers it if it was a question.
+fn shown<T: Terminal>(
+    one: Seen,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    input: &mut dyn BufRead,
+    reply: &Sender<Answer>,
+) -> Result<(), Fatal> {
+    let style = terms.style;
+
+    match one {
+        Seen::Turn(event) => draw::event(renderer, event, style)?,
+        Seen::Question { call, sensitivity } => {
+            // Minted once and used twice. What the question offers has to be
+            // the rule that gets written, or the user agreed to one thing and
+            // crucible wrote down another.
+            let rule = narrowest(&call, &sensitivity);
+
+            draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
+            let answer = verdict(read(input)?.as_deref(), rule.is_some());
+
+            // Before the answer goes back, so the file is written by the time
+            // the tool it allowed runs. `always` is only ever answered where a
+            // rule was minted, so the two arriving together is one fact twice
+            // rather than a case that has to be handled.
+            if let (Some(rule), Remember::Always) = (&rule, answer.1) {
+                keep(renderer, &terms.remembering, rule, style)?;
+            }
+
+            // A worker that stopped waiting has already denied itself.
+            let _ = reply.send(answer);
+        }
+    }
+
+    Ok(())
 }
 
 /// Writes one rule down, and says what happened either way.

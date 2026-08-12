@@ -6,6 +6,13 @@
 //! the name a search gave it. Two spellings of one file turn each of those into
 //! a near miss, and a near miss between a deny rule and the file it names reads
 //! as protection while being none.
+//!
+//! A path written down only to be compared back to itself is the exception, and
+//! the only one — a session log recording which directory it belongs to wants
+//! identity rather than legibility, and normalising both sides of a comparison
+//! can only make two paths that differ agree. Nothing here refuses to be used
+//! there; the point is that a site not going through this door is not
+//! automatically one to correct.
 
 use std::path::Path;
 

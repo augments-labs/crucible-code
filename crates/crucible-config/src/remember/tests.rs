@@ -195,6 +195,50 @@ fn a_file_that_is_not_json_says_so_instead_of_being_overwritten() {
 }
 
 #[test]
+fn a_block_written_twice_is_left_for_a_person_to_fix() {
+    // JSON says nothing about a key written twice and the parser keeps the
+    // last of them, so the block the file *means* is not the block a scan of
+    // the text finds first. Splicing into the one it found would put the rule
+    // where the file's own meaning already shadows it, and leave a second
+    // `allow` behind in a block that had one.
+    let err = allowing(
+        "{\n  \"permissions\": {\"allow\": [\"bash(git status)\"]},\n  \"permissions\": {\"mode\": \"ask\"}\n}\n",
+        FILE,
+        &rule("cargo test"),
+    )
+    .expect_err("a file whose keys disagree is not one to write into");
+
+    assert!(matches!(err, ConfigError::Unspliceable { .. }), "{err:?}");
+}
+
+#[test]
+fn a_list_written_twice_is_left_for_a_person_to_fix() {
+    let err = allowing(
+        r#"{"permissions": {"allow": ["bash(git status)"], "allow": ["bash(ls)"]}}"#,
+        FILE,
+        &rule("cargo test"),
+    )
+    .expect_err("a file whose keys disagree is not one to write into");
+
+    assert!(matches!(err, ConfigError::Unspliceable { .. }), "{err:?}");
+}
+
+#[test]
+fn a_key_spelled_with_an_escape_is_left_for_a_person_to_fix() {
+    // `\u0070ermissions` is `permissions` to the parser and is not the text
+    // this searches for, so the file holds a block that a scan cannot find and
+    // a scan finds a block that may not be the one the file means.
+    let err = allowing(
+        "{\"permissions\": {\"allow\": []}, \"\\u0070ermissions\": {\"mode\": \"ask\"}}",
+        FILE,
+        &rule("cargo test"),
+    )
+    .expect_err("a file whose keys disagree is not one to write into");
+
+    assert!(matches!(err, ConfigError::Unspliceable { .. }), "{err:?}");
+}
+
+#[test]
 fn a_file_that_is_not_an_object_is_left_for_a_person_to_fix() {
     let err = allowing("[1, 2]", FILE, &rule("cargo test"))
         .expect_err("a rule has nowhere to go in a list");

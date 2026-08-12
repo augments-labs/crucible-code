@@ -4,7 +4,192 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.8] - 2026-08-12
+
+### Added
+
+- **A prompt is typed into a box, with the mode in force written under it.** The
+  line is drawn as it arrives — the arrows, home, end, backspace, and a window
+  that follows the cursor along a line wider than the terminal. A run whose
+  input or output is redirected has no box and reads whole lines as before.
+
+- **<kbd>Shift-Tab</kbd> steps the permission mode while you type.** `ask`, then
+  `allowEdits`, then `fullAccess`, then round again, with the row under the box
+  and the colour of the box itself saying which is in force. Stepping into
+  `fullAccess` waits to be confirmed; the rules you wrote and anything already
+  allowed for the session are untouched either way. `--continue` still starts
+  from the configured mode rather than the stepped one.
+
+- **A session opens with a welcome screen rather than two lines.** The release,
+  the model and the working directory sit beside what the prompt reacts to. It
+  fits itself to the terminal: two columns at eighty and above, one below that,
+  and no frame at all under forty-six.
+
+- **The welcome screen lists what was worked on in this directory.** The last
+  few sessions started here, newest first, each with what it was first asked and
+  how long ago it began. Reading them costs the same on a machine that has held
+  crucible for a year as on one that installed it today: the names give the
+  order, and only the newest few files are opened.
+
+- **`output.glyphs` picks the characters crucible draws with.** `ascii` for a
+  terminal whose font has no box drawing, where borders would otherwise show as
+  hollow squares. `unicode` is the default and nothing detects it — a missing
+  glyph is invisible to the program, so it is asked for.
+
+- **`CRUCIBLE_CODE_CLEAR_SCREEN` empties the terminal before crucible draws.**
+  Set it to `true` in `env`, or in the shell, to start from a bare screen and an
+  empty scrollback. Off by default and ignored when output is redirected; a
+  value that is not `1`, `true`, `0` or `false` is refused, naming the file and
+  the line.
+
+- **A session another crucible has open is refused rather than continued.**
+  `--continue` in a second terminal in the same directory stops with `… is open
+  in another crucible`, having read nothing and changed nothing. Two crucibles
+  *starting* there are unaffected: they are two sessions, each recording its own
+  log.
+
+- **Commands: `/help`, `/model`, `/mode`, `/resume`, `/clear` and `/exit`.**
+  Typing `/` opens the list above the box, filtered as you type, so the box and
+  the mode under it stay where they are. `/mode allowEdits` names a mode
+  outright instead of stepping to it. A command is answered without asking the
+  provider and does not enter the transcript; a line that only looks like one —
+  `/etc/hosts is wrong` — is still a prompt.
+
+- **`/clear` forgets the transcript without ending the session.** The next
+  prompt is the first the model sees, and the turns before it are not sent or
+  paid for again. The same session, log and permission answers carry on, and the
+  screen is left alone — what is above the box belongs to the terminal.
+
+- **`/resume` switches to an earlier session in this directory without
+  restarting.** It lists the last nine, newest first and numbered, and `/resume
+  2` picks that one up: the session you were in is closed and stays readable,
+  and the named one's transcript comes back. What it was allowed for the rest of
+  that session is forgotten; the mode and your configured rules carry on.
+
+- **`crucible_tui::cut` and `crucible_tui::clip`, the display-column count the
+  renderer itself uses.** `cut` says where a string reaches a given number of
+  columns — a wide character taking two, a combining mark none, a tab reaching
+  its stop, and an emoji presentation selector taking the column it widens by —
+  and `clip` returns that much of it. Anything composing a row of its own now
+  measures it the way the tail that wraps it does.
+
+### Changed
+
+- **The session log format is version 2, so 0.0.7 logs cannot be continued.**
+  `--continue` refuses them by name — `… was written by a different version of
+  crucible` — and the welcome screen leaves them out of what was worked on here.
+  Nothing is deleted or migrated; the files stay where they are.
+
+- **<kbd>Ctrl-C</kbd> at the prompt throws the line away rather than ending
+  crucible.** Pressing it again on an empty box leaves, as <kbd>Ctrl-D</kbd>
+  does. During a turn it is the signal it always was.
+
+- **A window resized during a redirected run flushes what is live.** `crucible >
+  out.txt` used to drop the rows still in the live region, losing that much of
+  the answer. They are written out instead, which puts a line break in the file
+  where the resize happened.
+
+### Fixed
+
+- **`grep` keeps the matches it found in a file it could not finish reading.**
+  One line that is not text used to discard every match already found in that
+  file — often leaving `nothing matched`. The matches are reported, and a note
+  names the files the search stopped partway through, so a gap in the answer is
+  visible rather than silent. Files that could not be opened at all are named by
+  that note too, where before they were passed over without a word.
+
+- **A recursive delete is asked about even where it cannot leave the tree.**
+  `rm -r` inside the workspace used to be allowed by the same reasoning that
+  allows `rm` on one file. The flag that makes it recursive is now what puts it
+  in front of you.
+
+- **A narrow terminal no longer draws over the line above.** A tail one or two
+  columns wide could emit a row wider than itself, and the renderer moves back
+  over the width it counted. Anything that cannot fit in a row is dropped.
+
+- **A permission rule that could not be saved leaves nothing behind.** When
+  replacing the file failed, a `.writing.<pid>` copy of the whole document
+  stayed in `.crucible`. It is removed; the error you see is unchanged.
+
+- **Damage in the middle of a session log stops `--continue` rather than
+  truncating the log to it.** A line this build cannot read with turns recorded
+  after it is refused and the file is left as it is. Damage at the end still
+  costs that line and nothing else.
+
+- **A write to the log that fails part-way through cannot weld two lines
+  together.** The next line written starts a line of its own, so a failed write
+  costs the line it was on rather than the one after it as well.
+
+- **A turn's tool calls are recorded before the tools run.** A turn that stopped
+  between the model asking for a tool and the result arriving left a log whose
+  last word was the prompt, so continuing it re-read files it had already
+  edited.
+
+- **An answer cut off mid-stream stays in the transcript.** Those deltas were on
+  screen already, and a transcript without them is one the user and the model
+  disagree about.
+
+- **A log whose first line was never finished is passed over.** It holds no
+  turns and names no workspace, and `--continue` used to append to it — after
+  which nothing could find the session at all.
+
+- **`write` takes an absolute path.** The directories a path needs are made by
+  walking its parents, and the walk began at the filesystem root, so every
+  absolute path was refused — including every path into a directory named by
+  `permissions.extraDirectories`, which can only be named absolutely.
+
+- **`glob` finds files in a directory reached through
+  `permissions.extraDirectories`.** It reported nothing there while `grep`
+  searched the same directory happily.
+
+- **`bash` output is bounded as it is read, not only when it is reported.** A
+  command producing gigabytes filled memory with bytes that were always going to
+  be discarded. What the model sees is unchanged: the two ends, and how much was
+  cut from between them.
+
+- **`grep` stops at a binary file.** A vendored font or `.so` that happens to be
+  valid UTF-8 was searched line by line, and those lines went back to the model
+  with NUL bytes in them.
+
+- **`read` has a ceiling on `limit`.** A large enough number pulled a whole
+  vendored bundle into the transcript in one call. The notice on a truncated
+  read already says how to ask for the next page.
+
+- **`su` and `doas` are treated as wrapper programs, like `sudo`.** A command
+  using one is asked about every time and no narrow rule covers it: `bash(su *)`
+  reads as a rule about `su` and would have authorised every program on the
+  machine.
+
+- **A keep-alive with no payload no longer fails the turn.** Some proxies send
+  one while the model is thinking; it was read as a payload that would not
+  parse, discarding the answer that had already arrived. Both wires.
+
+- **Tool call arguments are assembled onto the call they belong to.** Arguments
+  arriving under an index other than the open call's, and a call announced with
+  an id but no name, are refused on both wires instead of being folded into
+  whichever call was open — which is one tool running on another tool's
+  arguments.
+
+- **A resize that changes only the height is noticed.** The live region is
+  bounded by the height as much as by the width, and only the width was being
+  watched.
+
+- **Text is measured in display columns wherever it is wrapped or shortened.** An
+  emoji presentation selector counted as no column left a drawn row a column
+  short — one the terminal then wrapped itself, after which the next frame
+  erased the wrong lines. The binary's `!` notices were clipped by counting
+  characters instead: `日本語` came back at twice the width asked for, `⚠️` was
+  cut early enough to part a character from the selector that widens it, and the
+  ellipsis was added past the budget rather than taken out of it.
+
+- **`.crucible/config.local.json` keeps its permissions when `always` writes to
+  it.** The file is replaced by a rename, so one narrowed to `600` came back at
+  whatever the account creates a file as — on the file that says what may run
+  without being asked.
+
+- **A terminal that fails mid-turn no longer detaches the thread writing the
+  log.** The failure is held until the turn is over, so everything queued reaches
+  the disk before crucible exits.
 
 ## [0.0.7] - 2026-08-10
 
@@ -24,6 +209,34 @@ Notable changes to crucible. Format follows
   `crucible-v0.0.6-x86_64-unknown-linux-gnu.tar.gz`. One `SHA256SUMS` covers the
   release instead of a `.sha256` beside each archive. Anything that fetches a
   release by name needs updating.
+
+### Fixed
+
+- **`--continue` works on Windows.** Trimming the last line of a log needs a
+  handle that may rewrite the file, which an append handle is not granted there,
+  so continuing any session failed.
+
+- **A rule remembered on Windows matches the file it was minted from.** An
+  `always` answer about `src\main.rs` wrote a rule with the separator escaped as
+  a character it is not, so the same question came back next turn. Paths are
+  spelled with `/`, which is what the pattern language has.
+
+- **A rule naming an absolute path matches on Windows.** A resolved path carries
+  the extended-length spelling, `\\?\C:\...`, which `deny read(C:/Users/you/**)`
+  was never going to match. A rule that reads as protection and is none is worse
+  than no rule.
+
+- **`grep` and `glob` name a file the way a rule about it is written.** They
+  reported Windows paths with the separator a rule cannot carry, so a rule
+  written from what a search printed matched nothing.
+
+- **`permissions.extraDirectories` takes a Windows path.** An entry is judged
+  absolute by what the platform it runs on calls absolute, rather than by a
+  leading `/` that only some platforms use.
+
+- **A session log is born with the access control list that closes it.** The
+  list came down from the directory, so there is no moment in which a log exists
+  carrying what the user profile hands Administrators and SYSTEM.
 
 ## [0.0.6] - 2026-08-10
 
@@ -424,7 +637,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/augments-labs/crucible-code/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/augments-labs/crucible-code/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/augments-labs/crucible-code/compare/v0.0.4...v0.0.5

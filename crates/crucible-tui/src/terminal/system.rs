@@ -1,9 +1,18 @@
-//! The real terminal, and the only file that names `crossterm`.
+//! The real terminal: the window size, and the standard-output handle.
 //!
-//! Everything a terminal crate is needed for lives behind [`Terminal`]: one
-//! ioctl for the size, and the standard-output handle. The escape sequences the
-//! renderer writes are ANSI, not `crossterm`, so replacing this file is a day's
-//! work rather than a rewrite -- which is the point of keeping it this thin.
+//! Both live behind [`Terminal`], so the escape sequences the renderer writes
+//! are ANSI rather than `crossterm` and replacing this file is a day's work
+//! rather than a rewrite -- which is the point of keeping it this thin. The mode
+//! the terminal reads keys in is the other thing a terminal crate is needed for,
+//! and it is next door in [`super::raw`] because it is state to hand back rather
+//! than an operation to call.
+//!
+//! Reading the size is not one syscall, whatever it looks like here. `crossterm`
+//! opens `/dev/tty` before the `TIOCGWINSZ` it is being called for, and where
+//! there is no controlling terminal to open it falls back to running `tput`
+//! twice. Nothing on the render path asks: the size is read once when a renderer
+//! is built and again at a prompt, and [`crate::Renderer::columns`] is what the
+//! render path reads instead.
 
 use std::io::{self, IsTerminal, StdoutLock, Write};
 

@@ -107,8 +107,15 @@ means nothing to anyone else who clones the repository.
 
 | Key | Answers | Means |
 | --- | --- | --- |
-| `color` | `auto`, `always`, `never` | Whether to dim the prompt. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
+| `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
+| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
+
+`glyphs` is asked rather than detected. A hollow square where a border should be
+is a font missing that character, and nothing about that reaches crucible — the
+bytes arrived, the encoding was right, and the gap is in a font this program
+cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
+font has no box drawing rather than a fallback crucible guesses its way into.
 
 ### `env`
 
@@ -169,20 +176,55 @@ line 3, column 5 — crucible reads it before it opens any configuration file,
 because it is what says where the files are. Set it in your shell instead
 ```
 
+## `CRUCIBLE_CODE_CLEAR_SCREEN`
+
+Empties the terminal — the screen and the scrollback above it — before crucible
+draws its first row. Off unless you ask for it, because crucible draws inline:
+what is already on the screen is your own work, and the terminal's scrollback is
+yours to keep.
+
+```json
+{ "env": { "CRUCIBLE_CODE_CLEAR_SCREEN": "true" } }
+```
+
+Written in `env` like any other variable, so it layers like one: a project can
+set it for everybody who clones the repository, your home directory can set it
+for every project, and the environment you start crucible in beats both.
+
+```console
+$ CRUCIBLE_CODE_CLEAR_SCREEN=0 crucible
+```
+
+`1` and `true` mean yes, `0` and `false` mean no, in any capitalisation.
+Anything else is refused rather than read as `false`:
+
+```
+crucible: .crucible/config.json: env CRUCIBLE_CODE_CLEAR_SCREEN at line 3,
+column 5 is not set to an answer crucible takes — accepted here: 1, true, 0,
+false
+```
+
+A run whose output is redirected is never cleared. A pipe has no screen, so the
+sequence would be escape bytes at the top of your file.
+
 ## How layers combine
 
 A **scalar** takes the nearest layer that set it. An **object** is merged key by
 key, so a project naming one provider leaves your other one alone. A **list** is
 concatenated: every layer's entries are kept and none of them replaces another.
 
-```json5
-// ~/.crucible/config.json
+Say `~/.crucible/config.json` holds this:
+
+```json
 { "providers": { "anthropic": { "model": "claude-opus-5" },
                  "openai":    { "model": "gpt-5.2" } },
   "output": { "toolDetail": "full" },
   "permissions": { "deny": ["read(.env)"] } }
+```
 
-// .crucible/config.json
+and the project's `.crucible/config.json` holds this:
+
+```json
 { "providers": { "openai": { "model": "gpt-5.2-mini" } },
   "permissions": { "allow": ["bash(cargo test)"] } }
 ```
@@ -200,10 +242,28 @@ safe precisely because `deny` wins wherever it came from.
 The cost is that a list cannot be shortened by a nearer layer, only added to.
 Removing an entry means editing the file that holds it.
 
+## Comments
+
+JSON has no comment syntax, which is the one real cost of the format. `$comment`
+is the standard's own answer to it, and crucible takes it anywhere in a
+document — at the top, beside a rule list, inside a provider block — and does
+nothing with it:
+
+```json
+{ "permissions": {
+    "$comment": "read(.env) is denied because the deploy keys are in it",
+    "deny": ["read(.env)"] } }
+```
+
+A `//` line is not a comment here. crucible parses JSON, so a file carrying one
+is refused before anything is drawn.
+
 ## Your editor
 
 The `$schema` line is what makes an editor complete these files, check them as
 you type, and show what each key means. It is optional and crucible ignores it.
+Those two are the keys the standard reserves, and the only ones beginning with
+`$` that mean anything here.
 
 The schema is generated from the same declaration the parser walks, so an editor
 that accepts a document and a crucible that refuses it would have to disagree
@@ -222,7 +282,7 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, toolDetail
+crucible has at line 3, column 5 — accepted here: color, glyphs, toolDetail
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

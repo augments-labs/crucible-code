@@ -24,11 +24,18 @@ failed=0
 echo "==> rustfmt"
 cargo fmt --all --check
 
+# `--locked` on both, because CI passes it and a release builds with it. Without
+# it cargo rewrites `Cargo.lock` on the way past whenever the manifest asks for
+# something the lock does not have, and the run goes green on a lockfile that
+# only exists on this machine. The change then lands with the manifest edit and
+# without the lock, and the first machine to build it with `--locked` is a
+# release runner. A green run here has to mean a green run there, and that is
+# only true if both are answering the same question.
 echo "==> clippy"
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 
 echo "==> tests"
-cargo test --workspace
+cargo test --workspace --locked
 
 echo "==> file length (<= ${MAX_FILE_LINES} lines)"
 # `find` printing nothing would walk this loop zero times and pass. The error
@@ -51,16 +58,45 @@ fi
 echo "==> no process memory in shipped files"
 # `docs/` is published as a website and `crates/`, `src/` and `schema/` are the
 # program, so all four are read by people who have never opened this repository.
+# `README.md` is read by more of them than any of the four: crates.io renders it
+# as the package page and `.github/workflows/release.yml` copies it into every
+# archive a release publishes, so it leaves this repository literally rather than
+# only in effect. The rest of the root markdown stays out for the same reason
+# `CLAUDE.md` does — CONTRIBUTING, RELEASING and the changelog are addressed to
+# someone who has the repository open, and naming its own machinery is what they
+# are for.
+#
 # A decision identifier, an assumption label or the name of a planning directory
 # is this repository talking to itself: a stranger cannot resolve it and has no
 # reason to want to. Those notes are allowed to exist — just not to travel — so
 # the files that hold them are deliberately not scanned here.
-if grep -rInE '\b[A-Z]-[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/' \
+#
+# The exit code is read rather than the command being used as the condition
+# directly. `grep` answers 0 for a match, 1 for none and 2 for "I could not
+# finish" — an unreadable file, a directory that is not there. Only the first of
+# those is a violation and only the second is a pass, so a bare `if grep` treats
+# a scan that never happened as a clean one, and prints whatever it did find on
+# the way past. `|| scan=$?` is what carries that status out: `errexit` ends the
+# script on a failed assignment, and "no match" is a failed assignment, so a bare
+# `memory=$(grep ...)` would exit 1 with nothing printed on precisely the clean
+# tree this is meant to wave through.
+scan=0
+memory=$(grep -rInE '\b[A-Z]-[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/' \
     --include='*.rs' --include='*.md' --include='*.json' \
-    crates src docs schema; then
-    printf '    FAIL the lines above name something only this repository can resolve\n'
-    failed=1
-fi
+    crates src docs schema README.md) || scan=$?
+case $scan in
+    0)
+        printf '%s\n' "$memory"
+        printf '    FAIL the lines above name something only this repository can resolve\n'
+        failed=1
+        ;;
+    1) ;;
+    *)
+        printf '%s\n' "$memory"
+        printf '    FAIL the scan could not be completed; this check measured nothing\n'
+        failed=1
+        ;;
+esac
 
 echo "==> documentation links"
 # Every topic under `docs/` is a directory whose path is a public URL, so a
@@ -73,19 +109,57 @@ echo "==> documentation links"
 # Only repository-relative links are checked: an external one can rot without
 # this tree changing, and a gate that goes red for someone else's outage stops
 # being read.
+pages=()
+while IFS= read -r -d '' page; do
+    pages+=("$page")
+done < <(
+    find docs -name '*.md' -type f -print0
+    find . -maxdepth 1 -name '*.md' -type f -print0
+)
+if ((${#pages[@]} == 0)); then
+    printf '    FAIL no markdown under docs/ or at the root; this check measured nothing\n'
+    failed=1
+fi
+
 while IFS= read -r found; do
     file=${found%%:*}
     target=${found#*:}
-    [[ "$target" == \#* ]] && continue
+
+    # A destination ends at the first space unless it is wrapped in angle
+    # brackets; whatever follows that space is the optional title. Keeping the
+    # title turned `[read](../read.md "what read bounds")` — a legal link that
+    # every renderer resolves — into a FAIL for a file that is right there, and
+    # a gate that goes red for a correct page stops being read.
+    if [[ "$target" == \<* ]]; then
+        target=${target#<}
+        target=${target%%>*}
+    else
+        target=${target%%[[:space:]]*}
+    fi
+
+    [[ -z "$target" || "$target" == \#* ]] && continue
     if [[ ! -e "$(dirname "$file")/${target%%#*}" ]]; then
         printf '    FAIL %s: link to %s leads nowhere\n' "$file" "$target"
         failed=1
     fi
-done < <({
-    find docs -name '*.md' -type f -print0
-    find . -maxdepth 1 -name '*.md' -type f -print0
-} | xargs -0 grep -IHoE '\]\([^)#][^)]*\)' |
-    sed -E 's/\]\(([^)]*)\)$/\1/' | grep -v '://')
+done < <(
+    # Both spellings, because a page written in either is a page that can rot.
+    # `</dev/null` is what keeps the empty case a report rather than a hang: a
+    # `grep` handed no file operands reads standard input, so a tree with no
+    # markdown at all would leave this waiting instead of failing above.
+    {
+        # Inline: `[text](target)`.
+        grep -IHoE '\]\([^)#][^)]*\)' -- "${pages[@]}" </dev/null |
+            sed -E 's/\]\(([^)]*)\)$/\1/'
+
+        # Reference: `[label]: target`, defined once at the foot of a page and
+        # used by label everywhere above. Nothing on the line that uses it names
+        # a path, so the definition is the only place a rename can be caught.
+        grep -IHoE '^[[:space:]]{0,3}\[[^]]+\]:[[:space:]]*[^[:space:]]+' \
+            -- "${pages[@]}" </dev/null |
+            sed -E 's/:[[:space:]]*\[[^]]*\]:[[:space:]]*/:/'
+    } | grep -v '://'
+)
 
 echo "==> agent rules files"
 # One set of rules, one file. CLAUDE.md is the original everywhere in this
@@ -180,14 +254,23 @@ for rule in "${rules[@]}"; do
     done <<<"$globs"
 done
 
-# One per crate. A crate nothing claims is a corner of the tree where the
-# obligations that bind there are written down nowhere. Asked of `claimed`
-# rather than of the files: a `grep` over an empty rules array reads standard
-# input instead, which turns the no-rules case into a wait rather than a report.
-for crate in crates/*/; do
-    name=$(basename "$crate")
-    if ! printf '%s' "$claimed" | grep -qF -- "crates/$name/"; then
-        printf '    FAIL crates/%s: no paths: frontmatter under .claude/rules/ claims it\n' "$name"
+# One per package, and `src/` is one of them. It is not under `crates/`, so a
+# loop over `crates/*/` alone reported complete coverage of a tree it was only
+# looking at part of — and of the part it skipped, CLAUDE.md says "wiring only,
+# the sole place concrete types meet". That is the one directory where a
+# provider, a tool and a runner are allowed to know about each other, which
+# makes the obligations binding there the most particular in the tree rather
+# than the least.
+#
+# A package nothing claims is a corner where those obligations are written down
+# nowhere. Asked of `claimed` rather than of the rules files: searching a whole
+# file would let a package named once in a sentence satisfy the requirement
+# while no frontmatter aims anything at it. The leading newline anchors the test
+# to the start of a claim, so `crates/crucible-tools/src/**` cannot answer for
+# `src/`.
+for package in crates/*/ src/; do
+    if [[ $'\n'"$claimed" != *$'\n'"$package"* ]]; then
+        printf '    FAIL %s: no paths: frontmatter under .claude/rules/ claims it\n' "$package"
         failed=1
     fi
 done
@@ -231,58 +314,104 @@ for entry in .agents/skills/*; do
     fi
 done
 
+# Every manifest in the workspace, root first. The three checks below are all
+# about what a manifest declares, and a manifest gate that reads one file is a
+# statement about one seventh of this tree phrased as a statement about the
+# tree.
+manifests=(Cargo.toml crates/*/Cargo.toml)
+if ((${#manifests[@]} < 2)); then
+    printf '    FAIL no manifest under crates/; every manifest gate below would read the root alone\n'
+    failed=1
+fi
+
+echo "==> workspace lints"
+# `[workspace.lints]` in the root manifest is where the standard is written, but
+# a lint table binds only the crates that ask for it — `[lints] workspace = true`,
+# once per manifest. A crate without that line is not held to a weaker rule 1;
+# it is not held to it at all. `unwrap_used`, `panic`, `indexing_slicing`,
+# `print_stdout` and `unsafe_code` are every one of them allow-by-default, so
+# `cargo clippy -- -D warnings` above stays green while `.unwrap()`, `panic!()`
+# and `unsafe {}` are all legal in that crate. Nothing in the compiler can
+# notice a table that was never applied to it, which is why it is checked here.
+for manifest in "${manifests[@]}"; do
+    # Both spellings TOML allows for the same table, because a manifest written
+    # in either is opted in and reporting otherwise would send the reader
+    # looking for a line that is already there.
+    if ! awk '
+        /^[[:space:]]*lints\.workspace[[:space:]]*=[[:space:]]*true/ { found = 1 }
+        /^[[:space:]]*\[lints\]/ { table = 1; next }
+        /^[[:space:]]*\[/        { table = 0; next }
+        table && /^[[:space:]]*workspace[[:space:]]*=[[:space:]]*true/ { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$manifest"; then
+        printf '    FAIL %s: no [lints] workspace = true, so every lint the workspace denies is back to its default here\n' "$manifest"
+        failed=1
+    fi
+done
+
 echo "==> dependency pinning"
 # Exact pins keep a release reproducible and make a version bump a reviewed
 # change rather than a side effect of somebody else's publish.
-# Cargo accepts three spellings and this has to read all of them: a grep for a
+#
+# Cargo accepts several spellings and this has to read all of them: a grep for a
 # literal `version =` key sees only the inline-table form and waves the bare one
-# straight through, which is most of them.
+# straight through, which is most of them. The key is not always on the crate's
+# own line either — an inline table wraps once it carries a feature list, and
+# the version can end up after the array — so any `version =` inside a
+# dependency table is a pin site wherever it sits, and brace depth is tracked so
+# that a continuation line is never read as a new dependency.
 unpinned=$(awk '
-    /^\[workspace\.dependencies\]/ { table = 1; named = ""; next }
-    /^\[workspace\.dependencies\./ {
-        table = 1
-        named = $0
-        gsub(/^\[workspace\.dependencies\.|\]/, "", named)
-        next
+    function opens(s,   n)  { n = gsub(/\{/, "&", s); return n }
+    function closes(s,   n) { n = gsub(/\}/, "&", s); return n }
+    function report(   text) {
+        text = $0
+        sub(/^[[:space:]]+/, "", text)
+        print "        " FILENAME ": " (named == "" ? "" : named ": ") text
     }
-    /^\[/      { table = 0; named = ""; next }
-    table == 0 { next }
 
-    # `[workspace.dependencies.foo]` puts the crate in the header, so a bare
-    # `version =` line beneath one is that crate pinning itself. Every other key
-    # in that table — `features`, `default-features` — is an option of the one
-    # crate rather than a dependency of its own, and has no version to pin.
-    named != "" {
-        if ($0 ~ /^[[:space:]]*version[[:space:]]*=/ && $0 !~ /=[[:space:]]*"=/) {
-            print "        " named ": " $0
+    # `[dependencies]`, its dev and build variants, the same three behind a
+    # `[target.<cfg>.]` prefix, and `[workspace.dependencies]` in the root. Each
+    # has a second form that puts one crate in the header: there the header is
+    # the dependency and every key beneath it is an option of that one crate
+    # rather than a dependency of its own.
+    /^[[:space:]]*\[/ {
+        header = $0
+        sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+        sub(/[[:space:]]*\]+.*$/, "", header)
+        table = 0
+        named = ""
+        depth = 0
+        if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
+            table = 1
+        } else if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)\.[^.]+$/) {
+            table = 1
+            named = header
+            sub(/^.*\./, "", named)
         }
         next
     }
 
-    # `serde.version = "1.0.151"` is the third spelling: a dotted key, the same
-    # declaration as the inline table and accepted by Cargo alike. It is neither
-    # a bare name nor a `{`, so it went through the rule below untouched.
-    /^[a-zA-Z0-9_-]+\.version[[:space:]]*=/ {
-        if ($0 !~ /=[[:space:]]*"=/) print "        " $0
-        next
-    }
+    table == 0       { next }
+    /^[[:space:]]*#/ { next }
 
-    # Any other dotted key sets an option on that dependency. The `.version`
-    # line above is the one that pins it.
-    /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+[[:space:]]*=/ { next }
-
-    /^[a-zA-Z0-9_-]+[[:space:]]*=/ {
-        if ($0 ~ /\{/) {
-            # A path dependency inside this workspace carries no version and
-            # needs none; anything naming one has to pin it.
-            if ($0 ~ /version[[:space:]]*=/ && $0 !~ /version[[:space:]]*=[[:space:]]*"=/) {
-                print "        " $0
-            }
-        } else if ($0 !~ /=[[:space:]]*"=/) {
-            print "        " $0
+    {
+        if ($0 ~ /version[[:space:]]*=/) {
+            if ($0 !~ /version[[:space:]]*=[[:space:]]*"=/) report()
+        } else if (depth == 0 && named == "" &&
+                   $0 ~ /^[a-zA-Z0-9_-]+[[:space:]]*=/ &&
+                   $0 !~ /^[a-zA-Z0-9_-]+\./ && $0 !~ /\{/) {
+            # The bare spelling, where the whole value is the requirement. A
+            # dotted key and an inline table are both handled above: one names
+            # its version on a `.version` line, the other inside the braces, and
+            # a path dependency inside this workspace names none because it
+            # needs none.
+            if ($0 !~ /=[[:space:]]*"=/) report()
         }
+
+        depth += opens($0) - closes($0)
+        if (depth < 0) depth = 0
     }
-' Cargo.toml)
+' "${manifests[@]}")
 if [[ -n "$unpinned" ]]; then
     printf '    FAIL not =-pinned:\n%s\n' "$unpinned"
     failed=1
@@ -299,31 +428,61 @@ echo "==> dependency justification"
 # reason for the first crate beneath it, so a dependency added there needed no
 # comment of its own.
 unjustified=$(awk '
-    /^\[workspace\.dependencies\]/ { table = 1; named = ""; justified = 0; next }
-    /^\[workspace\.dependencies\./ {
-        table = 1
-        named = $0
-        gsub(/^\[workspace\.dependencies\.|\]/, "", named)
-        if (justified == 0) print "        " named
+    function opens(s,   n)  { n = gsub(/\{/, "&", s); return n }
+    function closes(s,   n) { n = gsub(/\}/, "&", s); return n }
+    function report(what,   text) {
+        text = what
+        sub(/^[[:space:]]+/, "", text)
+        print "        " FILENAME ": " text
+    }
+
+    /^[[:space:]]*\[/ {
+        header = $0
+        sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+        sub(/[[:space:]]*\]+.*$/, "", header)
+        above = justified
+        table = 0
+        named = ""
+        depth = 0
         justified = 0
+        if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
+            table = 1
+        } else if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)\.[^.]+$/) {
+            table = 1
+            named = header
+            sub(/^.*\./, "", named)
+            if (above == 0) report(named)
+        }
         next
     }
-    /^\[/      { table = 0; named = ""; next }
+
     table == 0 { justified = ($0 ~ /^[[:space:]]*#/); next }
 
     /^[[:space:]]*#/ { justified = 1; next }
     /^[[:space:]]*$/ { justified = 0; next }
 
-    # Inside `[workspace.dependencies.foo]` the header is the dependency and the
-    # comment above it is the reason. The keys beneath belong to that one crate,
-    # so asking each of them to carry a justification names lines that never
-    # could.
-    named != "" { next }
+    {
+        # Inside `[dependencies.foo]` the header is the dependency and the
+        # comment above it is the reason; the keys beneath belong to that one
+        # crate, so asking each of them for a justification names lines that
+        # never could carry one. The same goes for the body of an inline table
+        # that wrapped onto a second line.
+        wrapped = (depth > 0)
+        depth += opens($0) - closes($0)
+        if (depth < 0) depth = 0
+        if (wrapped || named != "") next
 
-    # A dotted key declares a dependency too, and one comment covers the group
-    # beneath it exactly as it does for the bare spelling.
-    justified == 0 && /^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*[[:space:]]*=/ { print "        " $0 }
-' Cargo.toml)
+        # A crate that takes the workspace entry inherits the reason with the
+        # pin. Both are written once, at the root, beside the version — asking
+        # for a second copy in the member manifest would put the same sentence
+        # in two files and make one of them wrong later.
+        if ($0 ~ /workspace[[:space:]]*=[[:space:]]*true/) next
+
+        # A dotted key declares a dependency too, and one comment covers the
+        # group beneath it exactly as it does for the bare spelling.
+        if (justified == 0 && $0 ~ /^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*[[:space:]]*=/) report($0)
+    }
+' "${manifests[@]}")
 if [[ -n "$unjustified" ]]; then
     printf '    FAIL no comment saying why it is needed:\n%s\n' "$unjustified"
     failed=1

@@ -1,16 +1,19 @@
 //! What a whole loop does: a turn, a question, and a window that changed.
 
-use std::cell::Cell;
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
-use crucible_core::{Delta, Mode, StopReason};
+use crucible_core::{Delta, Mode, Permission, Rules, StopReason};
 use crucible_runner::{Model, Session, Tools};
-use crucible_tui::{Recording, Size, TerminalError};
+use crucible_tui::Recording;
 
 use super::*;
 use crate::cli::fake::Script;
+use sink::{Breaking, Failing, Kept, Narrowing};
 
 mod asked;
+mod commanded;
+mod sink;
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
@@ -19,60 +22,18 @@ mod asked;
 /// is never created: a test that watches the writing points these terms at a
 /// sample of its own instead.
 fn plain() -> Terms {
+    let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
+
     Terms {
         style: Style::plain(),
-        mode: Mode::Ask,
         cancel: Cancel::new(),
-        remembering: crucible_config::local(
-            &std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id())),
-        ),
-    }
-}
+        remembering: crucible_config::local(&unwritten),
 
-/// A terminal that narrows to ten columns once the renderer has read the
-/// size it starts with.
-///
-/// The loop owns the renderer for its whole run, so nothing outside can
-/// resize between turns the way a user does. This one resizes itself.
-struct Narrowing {
-    inner: Recording,
-    asked: Cell<usize>,
-}
-
-impl Narrowing {
-    fn new() -> Self {
-        Self {
-            inner: Recording::new(80, 24),
-            asked: Cell::new(0),
-        }
-    }
-
-    fn written(&self) -> &str {
-        self.inner.written()
-    }
-}
-
-impl Terminal for Narrowing {
-    fn size(&self) -> Result<Size, TerminalError> {
-        let asked = self.asked.get();
-        self.asked.set(asked + 1);
-
-        Ok(Size {
-            columns: if asked == 0 { 80 } else { 10 },
-            rows: 24,
-        })
-    }
-
-    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
-        self.inner.write(text)
-    }
-
-    fn flush(&mut self) -> Result<(), TerminalError> {
-        self.inner.flush()
-    }
-
-    fn is_terminal(&self) -> bool {
-        self.inner.is_terminal()
+        // The same tree, equally absent: a loop these terms drive has no
+        // sessions to list and none to pick up. What `/resume` does with ones
+        // that are there is proved where they are recorded.
+        sessions: unwritten.join("sessions"),
+        workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
     }
 }
 
@@ -220,22 +181,6 @@ fn a_provider_that_fails_says_so_instead_of_ending_the_session() {
     assert_eq!(asked, 2, "a failed turn does not end the session");
 }
 
-/// A log that fails every write, the way a full disk does.
-struct Failing;
-
-impl std::io::Write for Failing {
-    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::StorageFull,
-            "no space left on device",
-        ))
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
 fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prompt_goes_away() {
     // The writer thread runs behind the loop, so the poll after a turn sees
@@ -275,20 +220,71 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
 }
 
 #[test]
+fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
+    // The worker owns the runner, the runner owns the session, and the log is
+    // finished by a thread the session's `Drop` waits for — on whichever thread
+    // holds it. Returning the moment a write failed would drop the join handle
+    // and leave that thread running with the process on its way out, so the
+    // turn on screen when the window closed is the turn missing from the log.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let session = Session::onto("/nowhere".into(), Kept(Arc::clone(&kept)));
+
+    let runner = Runner::new(
+        Box::new(Script::new(vec![saying("what the model said")])),
+        Tools::new(),
+        Model {
+            name: "script".into(),
+            max_tokens: 64,
+            system: None,
+        },
+        session,
+    );
+
+    // One write is the prompt mark, colour and all, which the loop makes before
+    // it reads. That leaves the first frame of the turn as what finds the
+    // terminal gone -- after the worker has been handed the runner.
+    let mut renderer = Renderer::new(Breaking {
+        inner: Recording::new(80, 24),
+        left: 1,
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem =
+        converse(runner, &mut renderer, &plain(), &mut input).expect_err("the terminal to fail");
+
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+
+    let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
+    assert!(
+        written.contains("what the model said"),
+        "the turn never reached the log: {written:?}"
+    );
+}
+
+#[test]
+fn the_prompt_the_loop_ended_at_is_a_row_of_its_own() {
+    // The mark is written straight through the terminal so it can be left
+    // without a line ending while the user types after it, which leaves the
+    // renderer no row to settle. Unless the loop ends that row, the next thing
+    // drawn lands on top of it — a report below, or the shell's own prompt
+    // once crucible is gone.
+    let written = conversing(vec![], Tools::new(), "");
+
+    assert!(written.ends_with('\n'), "{written:?}");
+}
+
+#[test]
 fn the_prompt_line_names_the_mode_in_force() {
     // fullAccess is the mode worth pinning: in `ask` every sensitive call
     // announces itself with a question, so the prompt line is the only place a
     // session that never asks says what it is. Written before the read, which
     // is why empty input still shows it once.
-    let runner = scripted(Script::new(vec![]), Tools::new());
+    let runner = scripted(Script::new(vec![]), Tools::new())
+        .permitting(Permission::with(Mode::FullAccess, Rules::new()));
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    let terms = Terms {
-        mode: Mode::FullAccess,
-        ..plain()
-    };
-    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");

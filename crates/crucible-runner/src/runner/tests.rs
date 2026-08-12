@@ -1,7 +1,10 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
+mod forgotten;
+mod recorded;
 mod reported;
+mod resumed;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -267,6 +270,40 @@ fn a_provider_that_fails_ends_the_turn() {
         problem,
         TurnError::Provider(ProviderError::Refused { .. })
     ));
+}
+
+#[test]
+fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
+    // Those deltas were posted as they arrived, so the user has read them.
+    // Dropping them leaves a transcript the user and the model disagree about:
+    // the next prompt follows the last one with nothing in between, and every
+    // request for the rest of the session — and every continuation of it —
+    // carries the two questions back to back.
+    let script = Script::breaking(vec![vec![
+        Delta::Text("let me look at ".into()),
+        Delta::Text("src/main.rs".into()),
+    ]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("what is in main.rs?").unwrap_err();
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::Provider(ProviderError::Transport { .. })
+        ),
+        "{problem}"
+    );
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::User("what is in main.rs?".into()),
+            Message::Agent {
+                text: "let me look at src/main.rs".into(),
+                calls: Vec::new(),
+            },
+        ]
+    );
 }
 
 #[test]

@@ -92,6 +92,46 @@ impl Permission {
         self.mode
     }
 
+    /// Forgets what was allowed for the rest of the session, keeping the mode
+    /// and the rules.
+    ///
+    /// For a process that has picked up a different session. "For the rest of
+    /// this session" was answered about the session being left behind, and an
+    /// allow that outlived the thing it was scoped to would be a question
+    /// nobody was asked. An answer of `always` is untouched, because it was
+    /// never held here: it was written down as a rule, and the rules are what
+    /// they were.
+    pub fn forget(&mut self) {
+        self.remembered = HashSet::new();
+    }
+
+    /// Steps that mode on to the next of the ring, and says which it is now.
+    ///
+    /// The one thing about a session that changes after it has started. It
+    /// changes nothing else: the rules are what they were, what was allowed for
+    /// the session stays allowed, and the arm no rule matched is the only arm
+    /// this reaches.
+    ///
+    /// Reachable while a prompt is being typed and at no other moment, which is
+    /// what makes this need no lock: no turn is running then, so nothing is
+    /// looking at the mode and no call can have the mode it was decided under
+    /// change underneath it.
+    pub fn cycle(&mut self) -> Mode {
+        self.mode = self.mode.next();
+        self.mode
+    }
+
+    /// Puts that mode where it is, for a user who named the one they want
+    /// rather than stepping to it.
+    ///
+    /// The same change [`Permission::cycle`] makes and under the same
+    /// conditions — a prompt is being typed, no turn is running, nothing else
+    /// about the session moves. Naming one is not a second way to change the
+    /// mode, it is a shorter way to reach the same one.
+    pub fn switch(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
     /// Decides one call, asking the user if that is what it comes to.
     pub fn decide(
         &mut self,
@@ -132,9 +172,17 @@ impl Permission {
         // asked not to have it go through unwatched, and refusing is the only
         // answer left that respects that. No mode produces this arm — every one
         // of them allows a read — so it is only ever somebody's own rule.
+        //
+        // Spelled out rather than closed with a wildcard. This is the last step
+        // before a disposition becomes a verdict, so a sensitivity added later
+        // has to be decided about here rather than inheriting whatever the
+        // rules and the mode happened to say about it.
         match (sensitivity, stated) {
             (Sensitivity::ReadOnly { .. }, Disposition::Ask) => Disposition::Deny,
-            (_, settled) => settled,
+            (Sensitivity::ReadOnly { .. }, settled) => settled,
+            (Sensitivity::MutatesFile { .. } | Sensitivity::SpawnsProcess { .. }, settled) => {
+                settled
+            }
         }
     }
 
@@ -190,6 +238,13 @@ impl Permission {
     /// Matched on whole components of the resolved path, so a directory that
     /// merely ends in `.crucible` is somebody else's, and a symbolic link
     /// into the real file does not slip past.
+    ///
+    /// It is a check on the path and not on the file behind it, so a second
+    /// name for the same inode — a hard link, which resolving does not undo —
+    /// is not this file as far as this is concerned. Making one is what holds
+    /// that closed: no program `bash` can prove stays inside the workspace
+    /// creates a hard link, so a line that would is one somebody is asked
+    /// about, in every mode.
     fn own_configuration(target: &Target) -> bool {
         const DIRECTORY: &str = ".crucible";
         const FILES: [&str; 2] = ["config.json", "config.local.json"];

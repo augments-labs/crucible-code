@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crucible_config::ConfigError;
 use crucible_core::Minted;
@@ -61,14 +61,84 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
         fs::create_dir_all(directory)?;
     }
 
-    // Written beside the file and renamed over it. A write that stops part-way
-    // through leaves half a document, and half a document is a file crucible
-    // refuses to start from — so the failure would cost the user their whole
-    // configuration rather than one rule. The process id is what keeps two
-    // crucibles in one checkout off each other's half-written file.
-    let beside = directory.join(format!(".writing.{}", std::process::id()));
-    fs::write(&beside, text)?;
-    fs::rename(&beside, file)
+    // What the file is held at now, before it is replaced. A rename puts a new
+    // file where the old one was rather than new bytes inside it, so whatever
+    // the user narrowed this to would be widened back to what the account
+    // creates a file as — and this is the file that says what may run without
+    // being asked about, so widening who can write to it is the last thing
+    // answering `always` should do. `None` where there is nothing there yet,
+    // which is the case the account's own default is right for.
+    let held = fs::metadata(file).map(|found| found.permissions()).ok();
+
+    let beside = Beside::new(directory);
+    beside.write(text)?;
+
+    if let Some(held) = held {
+        beside.hold(held)?;
+    }
+
+    beside.over(file)
+}
+
+/// The document, written where it does not belong yet.
+///
+/// Written beside the file and renamed over it, because a write that stops
+/// part-way through leaves half a document, and half a document is a file
+/// crucible refuses to start from — so the failure would cost the user their
+/// whole configuration rather than one rule.
+///
+/// The rename is what makes the replacement whole, so every step before it is
+/// work that can fail with this file already on disk, holding the entire
+/// permission document under a name nothing will ever look at again: the next
+/// crucible reuses this process id only by coincidence. Removing it falls to a
+/// guard rather than to an arm on each failure, because the steps between the
+/// write and the rename are the kind that get added to, and a guard covers the
+/// next one without being told it is there.
+struct Beside {
+    path: PathBuf,
+    landed: bool,
+}
+
+impl Beside {
+    /// A name beside the file to be replaced. The process id in it is what
+    /// keeps two crucibles in one checkout off each other's half-written file.
+    fn new(directory: &Path) -> Self {
+        Self {
+            path: directory.join(format!(".writing.{}", std::process::id())),
+            landed: false,
+        }
+    }
+
+    fn write(&self, text: &str) -> io::Result<()> {
+        fs::write(&self.path, text)
+    }
+
+    /// Held at what the file being replaced was held at.
+    fn hold(&self, permissions: fs::Permissions) -> io::Result<()> {
+        fs::set_permissions(&self.path, permissions)
+    }
+
+    /// Over the real file, which is the step that makes this the real file.
+    fn over(mut self, file: &Path) -> io::Result<()> {
+        fs::rename(&self.path, file)?;
+        self.landed = true;
+
+        Ok(())
+    }
+}
+
+impl Drop for Beside {
+    fn drop(&mut self) {
+        if self.landed {
+            return;
+        }
+
+        // Whatever went wrong is already on its way to the user, and it is the
+        // part they need: the rule was not remembered. A tidy-up that failed
+        // has nowhere to go that would not be in front of that, so it goes
+        // nowhere. The same silence covers the write that never made a file.
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 #[cfg(test)]

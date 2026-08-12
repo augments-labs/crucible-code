@@ -4,6 +4,7 @@ use crate::tool::ToolArgs;
 
 mod configuration;
 mod modes;
+mod walked;
 
 /// An answer decided in advance, plus a count of how often it was needed.
 struct Answer {
@@ -248,6 +249,37 @@ fn allowing_one_command_for_the_session_does_not_allow_another() {
 }
 
 #[test]
+fn an_engine_that_forgot_asks_again_about_what_the_last_session_allowed() {
+    // What a process picking up a different session does with the answers it
+    // was given about the one it is leaving. "For the rest of this session" is
+    // a scope, and an allow that outlived it would be an answer to a question
+    // nobody was asked.
+    let mut permission = with(Mode::Ask, &[(Disposition::Allow, "write(docs/**)")]);
+    let mut answer = Answer::for_the_session();
+    let call = call("write");
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 1);
+
+    permission.forget();
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 2);
+
+    // What was configured is not what was answered. A rule was read from a
+    // file and is read again by every session; forgetting one session's
+    // answers may not quietly narrow the other.
+    assert!(
+        permission
+            .decide(&call, &writing("docs/guide.md"), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 2, "a rule answers without asking");
+    assert_eq!(permission.mode(), Mode::Ask, "the mode is not an answer");
+}
+
+#[test]
 fn nothing_is_remembered_about_a_refusal() {
     let mut permission = Permission::new();
     let mut answer = Answer {
@@ -267,6 +299,52 @@ fn nothing_is_remembered_about_a_refusal() {
 fn the_mode_is_readable_because_the_prompt_shows_it() {
     assert_eq!(Permission::new().mode(), Mode::Ask);
     assert_eq!(with(Mode::FullAccess, &[]).mode().to_string(), "fullAccess");
+}
+
+#[test]
+fn cycling_walks_the_ring_and_comes_back_to_where_it_started() {
+    let mut permission = Permission::new();
+
+    assert_eq!(permission.cycle(), Mode::AllowEdits);
+    assert_eq!(permission.cycle(), Mode::FullAccess);
+    assert_eq!(permission.cycle(), Mode::Ask);
+
+    // What it says afterwards is what it stepped to, so the row under the box
+    // and the arm a call is decided by cannot be two different modes.
+    assert_eq!(permission.mode(), Mode::Ask);
+}
+
+#[test]
+fn a_rule_still_holds_after_the_mode_was_stepped_on() {
+    // `fullAccess` asks about nothing, and a `deny` rule is the one thing that
+    // can still say no there. Reaching it by pressing a key rather than by
+    // configuring it may not be the way round that.
+    let mut permission = with(Mode::AllowEdits, &[(Disposition::Deny, "bash(**)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert_eq!(permission.cycle(), Mode::FullAccess);
+
+    let settled = permission.decide(&call("bash"), &running(&["curl example.com"]), &mut answer);
+
+    assert!(!settled.ran());
+    assert_eq!(answer.asked, 0, "a denial was put to the user");
+}
+
+#[test]
+fn what_was_allowed_for_the_session_is_still_allowed_after_a_step() {
+    // The two are separate promises. Stepping the mode changes the arm no rule
+    // matched; it does not take back an answer the user already gave.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    let call = call("bash");
+
+    permission.decide(&call, &running(&["curl example.com"]), &mut answer);
+
+    // Ask to allowEdits, which still asks about a command that reaches out.
+    assert_eq!(permission.cycle(), Mode::AllowEdits);
+    permission.decide(&call, &running(&["curl example.com"]), &mut answer);
+
+    assert_eq!(answer.asked, 1, "the session's own allow was forgotten");
 }
 
 #[test]

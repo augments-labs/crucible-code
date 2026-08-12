@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{Command, Reach};
 
-use super::output::{OUTPUT, cut};
+use super::output::OUTPUT;
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
 use crate::sample::{Sample, allowed};
 
@@ -204,31 +204,26 @@ fn a_call_with_no_command_says_what_is_missing() {
 }
 
 #[test]
-fn more_output_than_anything_can_use_keeps_both_ends() {
-    let text = format!("{}{}", "start", "x".repeat(OUTPUT * 2));
-    let short = cut(&text);
+fn a_command_that_floods_its_pipe_reports_everything_that_went() {
+    // End to end, because the count comes from two places — what the reader
+    // let go while the command ran, and what the cut took out at the end — and
+    // the model is owed their sum rather than whichever half one of them saw.
+    const FLOOD: usize = 400_000;
+    let sample = Sample::new("bash-flood");
 
-    assert!(short.starts_with("start"), "the beginning went");
-    assert!(short.ends_with('x'));
-    assert!(short.len() < text.len());
-    assert!(short.contains("cut from the middle"), "{short}");
-}
+    let output = ran(
+        &sample,
+        &format!(r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}","timeout":30}}"#),
+    );
 
-#[test]
-fn a_cut_never_lands_inside_a_character() {
-    // Multi-byte characters at an offset that puts the halfway mark inside one:
-    // slicing there would yield nothing at all rather than a shorter head.
-    let text = format!("a{}", "€".repeat(OUTPUT));
-    let short = cut(&text);
-
-    assert!(short.starts_with('a'), "the head was dropped whole");
-    assert!(short.ends_with('€'));
-    assert!(short.len() < text.len());
-}
-
-#[test]
-fn output_that_fits_comes_back_untouched() {
-    assert_eq!(cut("small enough\n"), "small enough");
+    assert!(
+        output.text().contains(&format!(
+            "[{} bytes of output cut from the middle]",
+            FLOOD - OUTPUT
+        )),
+        "{}",
+        output.text()
+    );
 }
 
 #[test]
@@ -272,6 +267,27 @@ fn the_sensitivity_says_when_a_command_was_proved_to_stay_inside() {
 }
 
 #[test]
+fn a_recursive_delete_reaches_the_engine_as_a_command_that_gets_asked_about() {
+    // The seam `allowEdits` reads. `Reach::Workspace` is the claim that mode
+    // acts on without a question, so this is where the line between `rm one.txt`
+    // and `rm -rf .` either holds or does not.
+    let sample = Sample::new("bash-recursive");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+
+    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"rm -rf ."}"#));
+
+    assert_eq!(
+        sensitivity,
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                parts: Box::from([Box::from("rm -rf .")]),
+                reach: Reach::Anything,
+            }
+        }
+    );
+}
+
+#[test]
 fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
     // `run` will refuse it, but a sensitivity is needed first, and the safe
     // answer to "what will this run" when the answer is unknown is everything.
@@ -300,6 +316,21 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     let output = tool.run(allowed(&tool, args)).expect("the command ran");
 
     assert_eq!(output.text(), "cat");
+}
+
+#[test]
+fn a_variable_the_tool_was_given_never_reaches_a_debug_line() {
+    // This is the one tool that holds configured *values* rather than names,
+    // because it is the one that has to hand them to a child — and a
+    // `GITHUB_TOKEN` or an `ANTHROPIC_API_KEY` is an ordinary thing to put
+    // there. Which name is set is what a reader needs; the value never is.
+    let sample = Sample::new("bash-debug");
+
+    let tool = Bash::new(sample.workspace(), Cancel::new()).exporting([("SECRET", "hunter2")]);
+    let shown = format!("{tool:?}");
+
+    assert!(shown.contains("SECRET"), "{shown}");
+    assert!(!shown.contains("hunter2"), "{shown}");
 }
 
 #[test]

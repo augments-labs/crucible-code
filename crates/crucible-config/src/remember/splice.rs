@@ -25,14 +25,21 @@ pub(super) fn root(text: &str) -> Option<Span> {
     })
 }
 
-/// The value `key` is written against inside `object`.
+/// The value `key` is written against inside `object`, when the text names it
+/// once and names it plainly.
 ///
-/// `None` where the object has no such member — and also where it has one
-/// under a spelling this does not recognise, which is why the caller checks the
-/// parsed value first and refuses rather than inserting a second copy.
+/// `None` where the object has no such member, where it has one under a
+/// spelling this does not recognise, and where it writes the key twice. The
+/// last two are the same fault seen from either side: JSON permits a key to
+/// appear more than once and the parser keeps the last of them, so a member
+/// found by reading the text is not necessarily the member the document means.
+/// The caller refuses rather than guessing, because writing into the wrong one
+/// adds a rule the document itself already shadows — and leaves a second copy
+/// of a key behind to say so.
 pub(super) fn member(text: &str, object: Span, key: &str) -> Option<Span> {
     let bytes = text.as_bytes();
     let mut at = object.start + 1;
+    let mut found = None;
 
     while at < object.end.saturating_sub(1) {
         if bytes.get(at) != Some(&b'"') {
@@ -49,13 +56,23 @@ pub(super) fn member(text: &str, object: Span, key: &str) -> Option<Span> {
             end: end_of_value(text, start),
         };
 
-        if &text[at + 1..after - 1] == key {
-            return Some(value);
+        // Spellings are compared byte for byte, so a key holding an escape is
+        // one this cannot read — and therefore one it cannot rule out being a
+        // second way of writing the key it is looking for.
+        let written = &text[at + 1..after - 1];
+        if written.contains('\\') {
+            return None;
+        }
+        if written == key {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(value);
         }
         at = value.end;
     }
 
-    None
+    found
 }
 
 /// The text with `item` inside `container`, laid out the way its neighbours

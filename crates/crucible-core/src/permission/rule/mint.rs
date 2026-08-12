@@ -78,13 +78,26 @@ pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
 /// allowed to contain: `rm *.tmp` is a command somebody runs, and writing it
 /// into a rule unescaped would mint `rm <anything>.tmp` — precisely the
 /// generalisation this module exists not to make.
+///
+/// Whitespace at either end is the same failure by a quieter route. A file may
+/// be named `" secret.txt"`, and `parse` trims what it finds inside the
+/// brackets — so a leading or trailing space written plainly comes back as a
+/// rule about `secret.txt`, which is a different file and one nobody was asked
+/// about. Escaped, there is nothing left for the trim to take.
 fn literally(subject: &str) -> String {
     let mut spelled = String::with_capacity(subject.len());
 
-    for character in subject.chars() {
+    // Where the last character starts, which is all "at an end" needs to know.
+    let last = subject.char_indices().next_back().map_or(0, |(at, _)| at);
+
+    for (at, character) in subject.char_indices() {
+        let end = at == 0 || at == last;
+
         // A one-character class is the escape that needs no escape character,
         // so it means the same thing wherever the glob is compiled.
-        if matches!(character, '*' | '?' | '[' | ']' | '{' | '}' | '\\') {
+        if matches!(character, '*' | '?' | '[' | ']' | '{' | '}' | '\\')
+            || (end && character.is_whitespace())
+        {
             spelled.push('[');
             spelled.push(character);
             spelled.push(']');

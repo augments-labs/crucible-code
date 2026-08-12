@@ -22,7 +22,7 @@ use crate::sse::SseEvent;
 /// [`ProviderError::Upstream`] when the event is the provider reporting a
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when an event that should carry a payload does
-/// not parse.
+/// not parse, or announces a tool call by half its identity.
 pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
     // Types that carry nothing worth parsing. `ping` is the keep-alive, and the
     // rest are brackets around content that has already been delivered.
@@ -33,10 +33,18 @@ pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
         return Ok(None);
     }
 
+    // Nothing to parse. A proxy's own heartbeat is spelled however that proxy
+    // likes and can arrive with no data line at all; read as a payload it is
+    // empty rather than JSON, which would fail the turn and discard the answer
+    // that had already arrived.
+    if event.data.trim().is_empty() {
+        return Ok(None);
+    }
+
     let payload = parse(&event.data)?;
 
     match event.name.as_str() {
-        "content_block_start" => Ok(started(&payload)),
+        "content_block_start" => started(&payload),
         "content_block_delta" => Ok(content(&payload)),
         "message_delta" => Ok(stopped(&payload)),
         "error" => Err(upstream(&payload)),
@@ -48,19 +56,31 @@ pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
 }
 
 /// The beginning of a content block.
-fn started(payload: &Value) -> Option<Delta> {
-    let block = payload.get("content_block")?;
+fn started(payload: &Value) -> Result<Option<Delta>, ProviderError> {
+    let Some(block) = payload.get("content_block") else {
+        return Ok(None);
+    };
 
     // Text blocks announce themselves and then arrive as deltas; there is
     // nothing to show yet. Only a tool call carries its identity up front.
     if block.get("type").and_then(Value::as_str) != Some("tool_use") {
-        return None;
+        return Ok(None);
     }
 
-    Some(Delta::ToolStarted {
-        id: ToolId::new(text(block, "id")?),
-        name: text(block, "name")?.into(),
-    })
+    // Half an identity. Skipped, the block's arguments would be assembled onto
+    // the call before it — one tool running on another tool's arguments — and
+    // the call that was half announced would leave no trace at all.
+    let (Some(id), Some(name)) = (text(block, "id"), text(block, "name")) else {
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a tool call arrived with an id or a name but not both".into(),
+        });
+    };
+
+    Ok(Some(Delta::ToolStarted {
+        id: ToolId::new(id),
+        name: name.into(),
+    }))
 }
 
 /// More of the current content block.
@@ -192,6 +212,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_carrying_half_an_identity_is_refused_rather_than_skipped() {
+        // Skipped, it is a call the runner never opens, so the fragments that
+        // follow are assembled onto the call before it — a tool running on
+        // another tool's arguments — and the one that was half announced
+        // vanishes without anything saying so.
+        for half in [
+            r#"{"index":1,"content_block":{"type":"tool_use","id":"toolu_1"}}"#,
+            r#"{"index":1,"content_block":{"type":"tool_use","name":"read"}}"#,
+        ] {
+            let problem = delta(&event("content_block_start", half)).unwrap_err();
+
+            assert!(
+                matches!(problem, ProviderError::Protocol { .. }),
+                "expected a protocol failure, got {problem:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_text_block_starting_is_not_a_delta() {
         // It carries no text; the text follows. Emitting something here would
         // put an empty line in front of every answer.
@@ -297,9 +336,12 @@ mod tests {
 
     #[test]
     fn a_keep_alive_with_no_payload_is_not_a_parse_failure() {
-        // Some proxies send `event: ping` with no data line at all. Parsing
-        // that as JSON would fail a turn over a heartbeat.
+        // Some proxies send `event: ping` with no data line at all, and a proxy
+        // that spells its heartbeat differently sends the same empty payload
+        // under a name this build has never heard of. Parsing either as JSON
+        // would fail a turn over a keep-alive.
         assert_eq!(of("ping", ""), None);
+        assert_eq!(of("keep-alive", ""), None);
     }
 
     #[test]

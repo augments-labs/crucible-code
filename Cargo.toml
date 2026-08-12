@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -177,7 +177,7 @@ authors.workspace = true
 name = "crucible"
 path = "src/main.rs"
 
-# All five, and only here. Every crate below reaches core and nothing else; the
+# All six, and only here. Every crate below reaches core and nothing else; the
 # arrows that make an Anthropic provider and a bash tool meet a runner are drawn
 # in this package or they are not drawn at all.
 [dependencies]

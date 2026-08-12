@@ -95,10 +95,13 @@ impl Tool for Glob {
             // does the same, which is what keeps the two from disagreeing
             // about what is in the workspace.
             .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
+            // Matched against the name it will be reported under, which is the
+            // one `grep` reports too. Dropping every entry that would not strip
+            // to a relative path answered "no path matched" for a directory the
+            // workspace was widened to reach and `grep` searched happily.
             .filter_map(|entry| {
-                let relative = entry.path().strip_prefix(self.workspace.root()).ok()?;
-                glob.is_match(relative)
-                    .then(|| crucible_core::written(relative))
+                let shown = crate::tree::named(&self.workspace, entry.path());
+                glob.is_match(&shown).then_some(shown)
             })
             .collect();
 
@@ -280,6 +283,40 @@ mod tests {
 
         assert!(!output.text().contains("private/"), "{}", output.text());
         assert!(output.text().contains("src/main.rs"), "{}", output.text());
+    }
+
+    #[test]
+    fn grep_and_glob_name_a_file_in_a_reached_directory_the_same_way() {
+        // `extraDirectories` is a place the tools work. `glob` spelled a hit
+        // relative to the primary root and dropped anything that would not
+        // strip, so a file `grep` returned was one `glob` reported did not
+        // exist — the disagreement the shared walk exists to prevent.
+        let sample = Sample::new("glob-reaching");
+        let beside = sample.beside("notes");
+        std::fs::write(std::path::Path::new(&beside).join("plan.md"), "needle\n")
+            .expect("a writable temporary directory");
+
+        let workspace = sample.reaching(&beside);
+        let listing = Glob::new(workspace.clone());
+        let listed = listing
+            .run(allowed(
+                &listing,
+                &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
+            ))
+            .unwrap();
+
+        let search = crate::Grep::new(workspace);
+        let searched = search
+            .run(allowed(
+                &search,
+                &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
+            ))
+            .unwrap();
+
+        assert!(!listed.is_failed(), "{}", listed.text());
+        let named = listed.text().trim_end();
+        assert!(named.ends_with("plan.md"), "{named}");
+        assert_eq!(searched.text(), format!("{named}:1:needle\n"));
     }
 
     #[test]

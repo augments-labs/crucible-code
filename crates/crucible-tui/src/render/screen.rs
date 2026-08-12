@@ -1,6 +1,6 @@
 //! Rendering into a terminal.
 //!
-//! The counterpart to [`crate::plain`]. Here there is a cursor to move and a
+//! The counterpart to [`super::plain`]. Here there is a cursor to move and a
 //! region to erase, so the live tail is redrawn in full every frame and only
 //! the rows that have left it are permanent. Everything a frame is allowed to
 //! do to the screen is in these two functions.

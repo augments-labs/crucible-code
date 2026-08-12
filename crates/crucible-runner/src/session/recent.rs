@@ -1,0 +1,188 @@
+//! What happened in this directory before, as much of it as a screen holds.
+//!
+//! A different read from [`super::replay`], for a different reason. That one
+//! finds one log and hands back everything in it, because a session is about to
+//! be continued. This one finds a few and takes one line from each, because
+//! somebody is about to be shown a list — and it runs before the first frame,
+//! where twenty milliseconds is the whole budget.
+//!
+//! Everything here is bounded twice over: how many logs may be opened, and how
+//! much of one may be read. Neither bound grows with the directory, which is
+//! what keeps a machine that has run crucible for a year starting as fast as
+//! one that never has.
+
+use std::fs::File;
+use std::io::{BufRead as _, BufReader, Read as _};
+use std::path::Path;
+use std::str::FromStr as _;
+use std::time::SystemTime;
+
+use crucible_core::{Message, SessionId, Workspace};
+
+use super::replay::logs;
+use super::wire;
+
+/// How many logs may be opened before the scan gives up.
+///
+/// The newest logs are the ones most likely to be this directory's, and a
+/// welcome screen is a list rather than a search: a machine whose last sixty-odd
+/// sessions were all somewhere else gets the heading and nothing under it, which
+/// is what it would get from a slower answer too.
+const EXAMINED: usize = 64;
+
+/// How much of one log may be read looking for what was first asked.
+///
+/// The first message is the first line after the header, so this is reached
+/// only by a prompt with a pasted file in it. Reading stops there and the
+/// session is left out, rather than the startup path being handed a length
+/// somebody else chose.
+const READ: u64 = 64 * 1024;
+
+/// How much of that message is kept.
+///
+/// Wider than any terminal, because what fits is the component's question, and
+/// far short of what a prompt can be — this is a title, and the rest of it is
+/// in the log.
+const TITLE: usize = 512;
+
+/// One session that was recorded in this directory before.
+#[derive(Debug, Clone)]
+pub struct Recorded {
+    /// Which session, and so also when it started.
+    id: SessionId,
+    /// The first thing asked of it, on one line.
+    asked: Box<str>,
+}
+
+impl Recorded {
+    /// Which session it was.
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// When it started.
+    #[must_use]
+    pub fn started(&self) -> SystemTime {
+        self.id.started()
+    }
+
+    /// The first thing asked of it.
+    ///
+    /// One line, with nothing in it a terminal would act on: it is text a user
+    /// typed and a file gave back, so it arrives as untrusted as anything else
+    /// read from a disk, and it is flattened where it is read rather than
+    /// wherever it is drawn.
+    #[must_use]
+    pub fn asked(&self) -> &str {
+        &self.asked
+    }
+}
+
+/// The sessions recorded for `workspace`, newest first, at most `wanted` of
+/// them.
+///
+/// Total, and deliberately so. Every session here is decoration on a screen
+/// that has not asked for anything yet: a log this build cannot read, a file
+/// that will not open, a directory that is not there — each of those is one
+/// fewer row, and none of them is a reason to refuse to start. The paths that
+/// have to be loud about a session still are, and `--continue` is the loudest
+/// of them.
+#[must_use]
+pub fn recent(directory: &Path, workspace: &Workspace, wanted: usize) -> Vec<Recorded> {
+    // Capped at what could be found rather than at what was asked for, so a
+    // caller that wants everything does not name the allocation.
+    let mut found = Vec::with_capacity(wanted.min(EXAMINED));
+    if wanted == 0 {
+        return found;
+    }
+
+    // The listing is the one unbounded read, and it is a read of names: no file
+    // is opened to put them in time order, because the name is what the order
+    // is in.
+    let logs = logs(directory).unwrap_or_default();
+
+    for path in logs.into_iter().rev().take(EXAMINED) {
+        if let Some(session) = read(&path, workspace) {
+            found.push(session);
+
+            if found.len() == wanted {
+                break;
+            }
+        }
+    }
+
+    found
+}
+
+/// One log, as the session it records, or `None` if it is not one this run can
+/// offer.
+///
+/// The header decides most of it: a log belongs to this directory or it does
+/// not, and one written by a build that spelled things differently is left out
+/// rather than half-read. What is left is the first message, which is the first
+/// thing that was asked.
+fn read(path: &Path, workspace: &Workspace) -> Option<Recorded> {
+    let id = SessionId::from_str(path.file_stem()?.to_str()?).ok()?;
+
+    let mut log = BufReader::new(File::open(path).ok()?).take(READ);
+    let mut line = String::new();
+
+    // A first line the process never finished is a log with nothing whole in
+    // it: the header is written before a session can record anything.
+    log.read_line(&mut line).ok()?;
+    if !line.ends_with('\n') {
+        return None;
+    }
+
+    let opening = wire::opening(line.trim_end())?;
+    if opening.format != wire::FORMAT || Path::new(&opening.workspace) != workspace.root() {
+        return None;
+    }
+
+    loop {
+        line.clear();
+        if log.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+
+        if let Some(Message::User(text)) = wire::message(line.trim_end()) {
+            let asked = single(&text);
+
+            // A session whose first prompt was nothing but spaces has no row to
+            // draw: the number and the date with a gap between them says less
+            // than leaving it out does.
+            return (!asked.is_empty()).then_some(Recorded { id, asked });
+        }
+    }
+}
+
+/// One line of what was asked, with nothing in it that could become a row.
+///
+/// A newline here would be a second row the renderer never counted, and every
+/// frame after it would move the cursor to the wrong place. Whitespace of any
+/// kind collapses to one space, so a prompt somebody wrote over five lines
+/// still reads as a sentence, and leading and trailing runs go entirely.
+fn single(text: &str) -> Box<str> {
+    let mut said = String::new();
+    let mut spacing = false;
+
+    for character in text.chars().take(TITLE) {
+        if character.is_whitespace() || character.is_control() {
+            spacing = !said.is_empty();
+            continue;
+        }
+
+        if spacing {
+            said.push(' ');
+            spacing = false;
+        }
+
+        said.push(character);
+    }
+
+    said.into()
+}
+
+#[cfg(test)]
+mod tests;

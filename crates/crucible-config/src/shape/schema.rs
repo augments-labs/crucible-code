@@ -7,10 +7,11 @@
 //! comparing them can only test the documents somebody thought to write down.
 //! Deriving one from the other leaves nothing to disagree.
 //!
-//! `scripts/check.sh` regenerates this and compares it byte for byte with the
-//! copy checked in at `schema/crucible-code-schema.json`, which is the file
-//! SchemaStore serves. So the checked-in schema is not maintained; it is
-//! output, and a stale one fails the gate rather than misleading an editor.
+//! The test at the foot of this file regenerates the schema and compares it
+//! byte for byte with the copy checked in at `schema/crucible-code-schema.json`,
+//! which is the file SchemaStore serves — so `cargo test` is what says whether
+//! the two agree. The checked-in schema is therefore not maintained; it is
+//! output, and a stale one fails rather than misleading an editor.
 
 use serde_json::{Map, Value, json};
 

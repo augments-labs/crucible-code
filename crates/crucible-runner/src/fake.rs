@@ -23,6 +23,7 @@ pub(crate) struct Script {
     rounds: Mutex<VecDeque<Vec<Delta>>>,
     sent: Sent,
     refuses: bool,
+    breaks: bool,
 }
 
 impl Script {
@@ -33,6 +34,7 @@ impl Script {
             rounds: Mutex::new(rounds.into()),
             sent: Sent::default(),
             refuses: false,
+            breaks: false,
         }
     }
 
@@ -41,6 +43,19 @@ impl Script {
         Self {
             refuses: true,
             ..Self::new(Vec::new())
+        }
+    }
+
+    /// A provider whose connection breaks once the round's deltas have been
+    /// handed over.
+    ///
+    /// The failure the loop cannot treat as an ending: the deltas were posted,
+    /// so the user has already read them, and nothing the provider sends after
+    /// them says how the answer was meant to finish.
+    pub(crate) fn breaking(rounds: Vec<Vec<Delta>>) -> Self {
+        Self {
+            breaks: true,
+            ..Self::new(rounds)
         }
     }
 
@@ -74,6 +89,7 @@ impl Provider for Script {
         let round = self.rounds.lock().unwrap().pop_front().unwrap_or_default();
         Ok(Box::new(Recited {
             deltas: round.into(),
+            breaks: self.breaks,
         }))
     }
 }
@@ -81,11 +97,24 @@ impl Provider for Script {
 /// A round already in memory, handed out one delta at a time.
 struct Recited {
     deltas: VecDeque<Delta>,
+    /// Whether running out of deltas is a broken connection rather than the end
+    /// of the answer.
+    breaks: bool,
 }
 
 impl DeltaStream for Recited {
     fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        self.deltas.pop_front().map(Ok)
+        if let Some(delta) = self.deltas.pop_front() {
+            return Some(Ok(delta));
+        }
+
+        self.breaks.then(|| {
+            self.breaks = false;
+            Err(ProviderError::Transport {
+                provider: SCRIPT,
+                problem: "the connection went away".into(),
+            })
+        })
     }
 }
 

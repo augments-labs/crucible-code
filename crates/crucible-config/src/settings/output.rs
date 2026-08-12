@@ -20,6 +20,12 @@ impl Settings {
         ToolDetail::read(self.output("toolDetail")?)
     }
 
+    /// Which characters crucible draws with.
+    #[must_use]
+    pub fn glyphs(&self) -> Option<Glyphs> {
+        Glyphs::read(self.output("glyphs")?)
+    }
+
     /// One string out of the `output` block.
     fn output(&self, key: &str) -> Option<&str> {
         self.value.get("output")?.get(key)?.as_str()
@@ -77,6 +83,31 @@ impl ToolDetail {
     }
 }
 
+/// Which characters crucible draws its own interface with.
+///
+/// Stated rather than guessed. A box-drawing character that arrives at a
+/// terminal whose font has no glyph for it is drawn as a hollow square, and
+/// nothing about that reaches this process: the bytes were accepted, the
+/// encoding was right, and the failure is in a font this program cannot see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glyphs {
+    /// Box drawing, bullets and an ellipsis.
+    Unicode,
+    /// Characters every font has had since before there were fonts to choose.
+    Ascii,
+}
+
+impl Glyphs {
+    /// Reads one of [`shape::GLYPHS`](crate::shape::GLYPHS).
+    fn read(found: &str) -> Option<Self> {
+        match found {
+            "unicode" => Some(Self::Unicode),
+            "ascii" => Some(Self::Ascii),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::{Document, Origin};
@@ -111,6 +142,7 @@ mod tests {
 
         assert_eq!(settings.color(), None);
         assert_eq!(settings.tool_detail(), None);
+        assert_eq!(settings.glyphs(), None);
     }
 
     #[test]
@@ -126,6 +158,9 @@ mod tests {
         }
         for name in shape::TOOL_DETAIL {
             assert!(ToolDetail::read(name).is_some(), "toolDetail: {name}");
+        }
+        for name in shape::GLYPHS {
+            assert!(Glyphs::read(name).is_some(), "glyphs: {name}");
         }
     }
 }

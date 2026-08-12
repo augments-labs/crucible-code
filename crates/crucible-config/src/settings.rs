@@ -7,24 +7,31 @@
 //! they are read out as the strings they were written as, and there is nothing
 //! to interpret.
 
+use std::fmt;
+
 use crucible_core::Rules;
 use serde_json::{Map, Value};
 
 use crate::document::Document;
+use crate::env;
 use crate::shape::{DOCUMENT, Shape};
 
 mod layers;
 mod output;
 mod permissions;
+mod variables;
 
 pub use layers::local;
-pub use output::{Color, ToolDetail};
+pub use output::{Color, Glyphs, ToolDetail};
+pub use variables::ClearScreen;
+
+pub(crate) use variables::refused;
 
 /// What every layer together says a setting is.
 ///
 /// Built once at startup and read from there on, so nothing on the turn path
 /// touches a file.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Settings {
     value: Value,
 
@@ -32,6 +39,19 @@ pub struct Settings {
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
+}
+
+impl fmt::Debug for Settings {
+    /// Written by hand so the `env` block is redacted. This type is what the
+    /// wiring above holds for the whole session, so it is the one most likely
+    /// to end up inside somebody's diagnostic — and it holds every variable
+    /// the two private layers set, values and all.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Settings")
+            .field("value", &env::Redacted(&self.value))
+            .field("rules", &self.rules)
+            .finish()
+    }
 }
 
 impl Settings {
@@ -213,5 +233,39 @@ mod tests {
         // Per name, not per block: overriding one variable in a checkout does
         // not turn off the rest of what the user set at home.
         assert_eq!(found, vec![("PAGER", "cat"), ("RUST_LOG", "debug")]);
+    }
+
+    #[test]
+    fn printing_the_settings_names_a_variable_and_shows_nothing_of_its_value() {
+        // The layers git ignores may hold anything the user's commands need, so
+        // this type holds secrets by design. What it must not do is print one:
+        // a `{settings:?}` in a diagnostic somebody adds later is a leak nobody
+        // reviewed, which is why the redaction lives in the type rather than in
+        // the call sites.
+        let local = Document::sample(r#"{"env": {"TOKEN": "hunter2"}}"#, Origin::ProjectLocal);
+        let settings = Settings::resolve(vec![local]);
+
+        let printed = format!("{settings:?}");
+        assert!(printed.contains("TOKEN"), "got {printed}");
+        assert!(!printed.contains("hunter2"), "got {printed}");
+
+        // And the value is still there for the commands that need it.
+        assert_eq!(
+            settings.env().collect::<Vec<_>>(),
+            vec![("TOKEN", "hunter2")]
+        );
+    }
+
+    #[test]
+    fn printing_the_settings_shows_everything_that_is_not_a_variable() {
+        // Redacting is not a reason to print nothing. A diagnostic about which
+        // model a turn asked for is exactly what this would be read for.
+        let user = Document::sample(
+            r#"{"providers": {"anthropic": {"model": "from-home"}}}"#,
+            Origin::User,
+        );
+
+        let printed = format!("{:?}", Settings::resolve(vec![user]));
+        assert!(printed.contains("from-home"), "got {printed}");
     }
 }

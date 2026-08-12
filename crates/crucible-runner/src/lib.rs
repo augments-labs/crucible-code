@@ -23,5 +23,5 @@ mod session;
 mod tools;
 
 pub use runner::{Model, Runner};
-pub use session::{Session, SessionError};
+pub use session::{Recorded, Session, SessionError, recent};
 pub use tools::Tools;

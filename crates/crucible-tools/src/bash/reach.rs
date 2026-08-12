@@ -13,6 +13,14 @@
 //! that is not a path, and the arithmetic of which word belongs to which flag
 //! is exactly the kind of thing to be wrong about quietly. So they are absent,
 //! and a line using one is asked about.
+//!
+//! One shape is refused with the proof in hand: a recursive `rm`. `rm -rf .`
+//! from the workspace root cannot reach outside the tree, and that is true and
+//! not enough. [`Reach::Workspace`] is what a mode may act on *without asking*,
+//! and every other line this reads changes the things it names — one call, one
+//! bounded loss, whatever was typed. A recursive delete changes everything
+//! beneath them instead. That is a difference in kind rather than degree, so it
+//! is where the answer stops.
 
 use crucible_core::{Reach, Workspace};
 
@@ -24,20 +32,62 @@ struct Program {
     letters: &'static str,
     /// Whole words, matched entire.
     words: &'static [&'static str],
+    /// Which of the above turn the call into one about everything underneath
+    /// what it names.
+    recursive: Recursion,
 }
+
+/// The flags that make a program descend, in both spellings one can arrive in.
+///
+/// A subset of the tables above rather than a table of its own, because a flag
+/// this does not otherwise recognise is refused before it gets here — so the
+/// only thing this has to be right about is which of the recognised ones
+/// descend.
+struct Recursion {
+    /// Single letters, which may arrive bundled: `-rf` descends as `-r` does.
+    letters: &'static str,
+    /// Whole words, matched entire.
+    words: &'static [&'static str],
+}
+
+/// For a program that has no such flag.
+const NEVER: Recursion = Recursion {
+    letters: "",
+    words: &[],
+};
 
 impl Program {
     /// Whether this flag is one of the program's, and carries no value.
     fn takes(&self, flag: &str) -> bool {
         if flag.starts_with("--") {
             // `--` itself ends the options and is in no table, so a line using
-            // it is asked about rather than half-read.
+            // it is asked about rather than half-read. Which also settles what
+            // a path spelled `-r` after one means here: nothing, because the
+            // line stopped being read at the terminator.
             self.words.contains(&flag)
         } else {
             // `-rf` is `-r` and `-f`, and every letter has to be recognised.
             flag[1..]
                 .chars()
                 .all(|letter| self.letters.contains(letter))
+        }
+    }
+
+    /// Whether this flag makes the call one about everything under the paths it
+    /// names.
+    ///
+    /// Asked only of a word [`flag`] already called a flag, so a file named
+    /// `-r` — or, far likelier, a path with `-r` somewhere inside it — is never
+    /// put to this at all. The bundle is the spelling to get right: `-rf` and
+    /// `-fr` descend exactly as `-r` does, and a match written against the whole
+    /// word would see neither.
+    fn recurses(&self, flag: &str) -> bool {
+        if flag.starts_with("--") {
+            self.recursive.words.contains(&flag)
+        } else {
+            flag.chars()
+                .skip(1)
+                .any(|letter| self.recursive.letters.contains(letter))
         }
     }
 }
@@ -51,16 +101,22 @@ const PROGRAMS: [Program; 6] = [
         name: "mkdir",
         letters: "pv",
         words: &["--parents", "--verbose"],
+        recursive: NEVER,
     },
     Program {
         name: "rmdir",
         letters: "pv",
         words: &["--parents", "--verbose"],
+        // Not `rm`. `-p` climbs rather than descends, and every directory it
+        // removes has to be empty already — so nothing is destroyed that was
+        // not already nothing.
+        recursive: NEVER,
     },
     Program {
         name: "touch",
         letters: "acmv",
         words: &["--no-create"],
+        recursive: NEVER,
     },
     Program {
         name: "rm",
@@ -72,6 +128,14 @@ const PROGRAMS: [Program; 6] = [
             "--dir",
             "--verbose",
         ],
+        // Both letters, because `-R` is the same flag, and the long word,
+        // because a list holding two of the three spellings is a rule about
+        // spelling. `-d` is not here: it removes an empty directory, which is
+        // `rmdir` under another name.
+        recursive: Recursion {
+            letters: "rR",
+            words: &["--recursive"],
+        },
     },
     Program {
         name: "cp",
@@ -85,6 +149,10 @@ const PROGRAMS: [Program; 6] = [
             "--verbose",
             "--no-target-directory",
         ],
+        // `-r` descends here too, and copying into the tree creates rather than
+        // destroys. What it can cost is a file overwritten, which is the bound
+        // `allowEdits` already accepts from `write`.
+        recursive: NEVER,
     },
     Program {
         name: "mv",
@@ -96,6 +164,7 @@ const PROGRAMS: [Program; 6] = [
             "--verbose",
             "--no-target-directory",
         ],
+        recursive: NEVER,
     },
 ];
 
@@ -134,8 +203,12 @@ fn confined(part: &str, workspace: &Workspace) -> Reach {
         // A flag in the table carries no value, so the next word is still a
         // path. One that is not in it may take the next word with it, and then
         // the word resolved here is not the one that gets changed.
+        //
+        // And one that makes the program descend ends the reading too, though
+        // for the other reason: not that the paths cannot be proved, but that
+        // proving them stopped being the question — see the note at the top.
         if let Some(flag) = flag(word) {
-            if program.takes(flag) {
+            if program.takes(flag) && !program.recurses(flag) {
                 continue;
             }
             return Reach::Anything;

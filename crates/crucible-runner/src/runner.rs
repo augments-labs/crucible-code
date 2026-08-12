@@ -8,8 +8,8 @@
 //! what decides whether the session continues.
 
 use crucible_core::{
-    Ask, Cancel, Delta, Event, Message, Permission, Post, Provider, Request, StopReason, ToolCall,
-    Transcript, TurnError, TurnId,
+    Ask, Cancel, Delta, DeltaStream, Event, Message, Mode, Permission, Post, Provider, Request,
+    StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
 use crate::session::Session;
@@ -82,11 +82,32 @@ impl Runner {
     /// they asked it not to be.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
-        let said = transcript.turns();
-
-        self.turn = (1..said).fold(TurnId::FIRST, |turn, _| turn.next());
+        self.turn = Self::counting(&transcript);
         self.transcript = transcript;
         self
+    }
+
+    /// Puts this runner on a different session, and hands back the one it was
+    /// recording to.
+    ///
+    /// What `/resume` runs, and the reason it hands the old session back rather
+    /// than dropping it: closing one properly means consuming it — see
+    /// [`Session::finish`] — and the first write that failed is worth saying
+    /// before the session it failed in is out of sight.
+    ///
+    /// Everything about the session that was answered is answered again. The
+    /// transcript, the log and the turn count come from the session picked up;
+    /// what was allowed for the rest of the *last* session is forgotten, since
+    /// that scope was the thing just left behind. The mode is not an answer of
+    /// that kind — it is where this process is being run, it is on screen at
+    /// all times, and a session that quietly moved it would be the one place
+    /// the row under the box could be wrong.
+    pub fn pick_up(&mut self, session: Session, transcript: Transcript) -> Session {
+        self.permission.forget();
+        self.turn = Self::counting(&transcript);
+        self.transcript = transcript;
+
+        std::mem::replace(&mut self.session, session)
     }
 
     /// The transcript so far.
@@ -99,6 +120,58 @@ impl Runner {
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// The permission mode this session is in, which the prompt shows at all
+    /// times.
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.permission.mode()
+    }
+
+    /// Steps that mode on to the next of the ring, and says which it is now.
+    ///
+    /// Reachable only between turns, because a turn owns the runner while it
+    /// runs. That is not a rule this crate enforces so much as one the loop's
+    /// shape already made true, and it is what leaves the engine needing no
+    /// lock: nothing is deciding a call while the mode is being changed.
+    pub fn cycle(&mut self) -> Mode {
+        self.permission.cycle()
+    }
+
+    /// Puts the mode where the user named, rather than stepping to it.
+    ///
+    /// Reachable at the same moment [`Runner::cycle`] is and for the same
+    /// reason.
+    pub fn switch(&mut self, mode: Mode) {
+        self.permission.switch(mode);
+    }
+
+    /// Forgets the transcript, and says how many messages that was.
+    ///
+    /// The session is the same session: the same log, the same file, the same
+    /// permission memory and the same mode. What changes is what the next turn
+    /// carries — nothing — and that is recorded in the log where it happened,
+    /// so continuing this session later picks it up from here rather than from
+    /// the top.
+    ///
+    /// The turn count goes back with it. The next turn is the first the model
+    /// will see, and numbering it otherwise would name a turn that is no longer
+    /// anywhere.
+    pub fn forget(&mut self) -> usize {
+        let held = self.transcript.len();
+
+        self.session.forgot();
+        self.transcript.forget();
+        self.turn = TurnId::FIRST;
+
+        held
+    }
+
+    /// The model this session is asking, as the provider spells it.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model.name
     }
 
     /// Hands the session out, for the caller that is finished driving turns.
@@ -188,6 +261,19 @@ impl Runner {
                 events.post(Event::ToolRequested { call: call.clone() });
             }
 
+            // Recorded before they run, because running them is what changes
+            // the tree: a turn that ends part way through a round would
+            // otherwise leave a log whose last word is the prompt, and a
+            // continued session that reads files it has already edited. A log
+            // ending on a call nothing answered is the shape the replay already
+            // drops on the way back in. The calls are cloned because the round
+            // needs them too — one round's worth, which is what the turn holds
+            // either way and does not grow with the transcript.
+            self.record(Message::Agent {
+                text,
+                calls: calls.clone(),
+            });
+
             let (results, went) = Work {
                 tools: &self.tools,
                 permission: &mut self.permission,
@@ -197,7 +283,6 @@ impl Runner {
             }
             .round(&calls);
 
-            self.record(Message::Agent { text, calls });
             self.record(Message::ToolResults(results));
 
             match went {
@@ -221,10 +306,36 @@ impl Runner {
     }
 
     /// One request, read to the end.
-    fn listen(&self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
+    ///
+    /// An answer that breaks off part way is recorded before the failure
+    /// leaves: those deltas were posted as they arrived, so the user has
+    /// already read them, and a transcript that does not hold them is one the
+    /// user and the model disagree about — the next prompt would follow the
+    /// last one with nothing in between. Calls the model never finished asking
+    /// for go no further, the same as when it stops early.
+    fn listen(&mut self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
         let mut answer = Answer::new(self.provider.name());
 
+        if let Err(problem) = Self::hear(stream.as_mut(), &mut answer, events) {
+            let (text, _) = answer.finish();
+            self.record(Message::Agent {
+                text,
+                calls: Vec::new(),
+            });
+
+            return Err(problem);
+        }
+
+        Ok(answer)
+    }
+
+    /// Reads deltas into `answer` until the stream ends.
+    fn hear(
+        stream: &mut dyn DeltaStream,
+        answer: &mut Answer,
+        events: &dyn Post,
+    ) -> Result<(), TurnError> {
         while let Some(delta) = stream.next() {
             match delta? {
                 Delta::Text(text) => {
@@ -237,7 +348,17 @@ impl Runner {
             }
         }
 
-        Ok(answer)
+        Ok(())
+    }
+
+    /// Where a transcript that already happened leaves the count.
+    ///
+    /// The turn a continued session is *on*, not the one after it: the loop
+    /// steps the count on its way into a turn, and numbering the first
+    /// continued turn `1` would tell the user this is a new session, which is
+    /// exactly what they asked it not to be.
+    fn counting(transcript: &Transcript) -> TurnId {
+        (1..transcript.turns()).fold(TurnId::FIRST, |turn, _| turn.next())
     }
 
     /// What to send this round.

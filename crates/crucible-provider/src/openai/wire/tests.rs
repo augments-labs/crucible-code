@@ -15,8 +15,10 @@ fn event(data: &str) -> SseEvent {
     }
 }
 
+/// One chunk of a response that has nothing open, which is every chunk here
+/// except where a test says otherwise: what spans chunks is pinned in `stream`.
 fn of(data: &str) -> Vec<Delta> {
-    deltas(&event(data)).unwrap()
+    deltas(&event(data), &mut None).unwrap()
 }
 
 #[test]
@@ -125,7 +127,7 @@ fn a_call_carrying_half_an_identity_is_refused_rather_than_guessed() {
         r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":""}}]}}]}"#,
         r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"read","arguments":""}}]}}]}"#,
     ] {
-        let problem = deltas(&event(half)).unwrap_err();
+        let problem = deltas(&event(half), &mut None).unwrap_err();
 
         assert!(
             matches!(problem, ProviderError::Protocol { .. }),
@@ -140,11 +142,14 @@ fn arguments_for_a_call_the_chunk_did_not_open_are_refused() {
     // call opened last. A chunk that opens one call and then carries arguments
     // under a different index is the case where that rule is visibly wrong, and
     // the arguments would land on the call above.
-    let problem = deltas(&event(
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[
+    let problem = deltas(
+        &event(
+            r#"{"choices":[{"index":0,"delta":{"tool_calls":[
                 {"index":0,"id":"call_1","function":{"name":"read","arguments":""}},
                 {"index":1,"function":{"arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
-    ))
+        ),
+        &mut None,
+    )
     .unwrap_err();
 
     assert!(
@@ -245,9 +250,10 @@ fn an_unknown_field_is_skipped_rather_than_fatal() {
 fn a_failure_inside_the_response_carries_what_the_provider_called_it() {
     // This arrives on a 200. Being over a rate limit is the usual cause,
     // and the kind is what tells a caller it is worth trying again.
-    let problem = deltas(&event(
-        r#"{"error":{"type":"server_error","message":"The server had an error"}}"#,
-    ))
+    let problem = deltas(
+        &event(r#"{"error":{"type":"server_error","message":"The server had an error"}}"#),
+        &mut None,
+    )
     .unwrap_err();
 
     assert_eq!(
@@ -260,7 +266,7 @@ fn a_failure_inside_the_response_carries_what_the_provider_called_it() {
 fn a_chunk_that_is_not_json_is_a_protocol_failure_that_does_not_quote_it() {
     // The payload can be an entire chunk long, and this message is shown to
     // a user.
-    let problem = deltas(&event("not json at all")).unwrap_err();
+    let problem = deltas(&event("not json at all"), &mut None).unwrap_err();
 
     assert!(
         matches!(problem, ProviderError::Protocol { .. }),

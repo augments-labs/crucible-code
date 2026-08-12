@@ -6,11 +6,13 @@
 //! faults, the size of the binary itself — so this spawns `crucible` the way a
 //! shell does and reads its output.
 //!
-//! Two things the reading does not include, both stated rather than hidden:
-//! the child's output is a pipe, not a terminal, so the renderer takes its
-//! plain path and the escape sequences are not assembled; and the shell's own
-//! `fork` is not counted, only the `exec`. Both are small against a budget that
-//! is dominated by process start.
+//! Two things about what the reading covers, both stated rather than hidden.
+//! The child's output is a pipe, not a terminal, so the renderer takes its
+//! plain path and the escape sequences are not assembled — that much is left
+//! out. And the clock starts before `spawn`, which forks as well as execs, so
+//! the probe's own fork is inside the reading rather than outside it: the
+//! number is a little worse than the binary deserves, never better, which is
+//! the direction an error in a budget should run.
 
 use std::fs;
 use std::io::{self, Read as _};
@@ -131,6 +133,66 @@ fn once(binary: &Path, home: &Path, needle: &'static str) -> Result<Duration, St
     reading.ok_or(StartupError::Silent(needle))
 }
 
+/// How many session logs the bench home is given.
+///
+/// A directory somebody has been working in for a while. An empty one would say
+/// nothing about the read that happens before the first frame, and would keep
+/// saying nothing as it filled up — the same reason the configuration file
+/// above is written rather than left out.
+const LOGS: u64 = 100;
+
+/// Where among them the ones this run could use sit, counting from the oldest.
+///
+/// Deep enough that everything above is opened and refused before anything is
+/// found: what the reading then covers is the bound the scan is written to,
+/// rather than the four newest files in a directory that happens to be tidy.
+const USABLE: std::ops::Range<u64> = 44..48;
+
+/// The session logs, planted.
+///
+/// Each is a header and one message, which is what a session that was asked one
+/// thing and then closed leaves behind. The ones outside [`USABLE`] name a
+/// directory the child is not started in, so they are read and put down again;
+/// the ones inside it name the directory it is, so their titles are read too.
+///
+/// The format number is written out rather than asked for — it is not public,
+/// and a build that moves on from it refuses these logs after opening and
+/// reading them, which costs the same reading this is here to take.
+///
+/// Written by hand rather than through a JSON library, because this package
+/// does not depend on one and a bench probe is not a reason to. The two
+/// characters that would break the document are the two escaped below; a
+/// Windows path is full of the first.
+fn worked_in(sessions: &Path) -> Result<(), StartupError> {
+    fs::create_dir_all(sessions)?;
+
+    let here = quoted(&std::env::current_dir()?.display().to_string());
+
+    for nth in 0..LOGS {
+        // Session names sort by start time as text, so the index is the order.
+        let id = format!("{:013}-{nth:06x}", 1_700_000_000_000_u64 + nth);
+        let root = if USABLE.contains(&nth) {
+            here.clone()
+        } else {
+            format!("/nowhere/{nth}")
+        };
+
+        let log = format!(
+            "{{\"format\":1,\"session\":\"{id}\",\"workspace\":\"{root}\"}}\n\
+             {{\"user\":\"what the last person to sit here asked\"}}\n"
+        );
+
+        fs::write(sessions.join(format!("{id}.jsonl")), log)?;
+    }
+
+    Ok(())
+}
+
+/// A path as it goes inside a JSON string.
+fn quoted(path: &str) -> String {
+    path.replace('\\', r"\\").replace('"', "\\\"")
+}
+
 /// The probe's sibling in `target/release/`.
 ///
 /// Found next to this executable rather than at a path relative to the working
@@ -163,6 +225,7 @@ impl Scratch {
         ));
         fs::create_dir_all(&base)?;
         fs::write(base.join("config.json"), CONFIG)?;
+        worked_in(&base.join("sessions"))?;
         Ok(Self(base))
     }
 

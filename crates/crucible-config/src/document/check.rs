@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
+use crate::settings;
 use crate::shape::Shape;
 
 use super::Origin;
@@ -181,11 +182,12 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// Checks the `env` block against the two rules that are not about shape.
+    /// Checks the `env` block against the three rules that are not about shape.
     ///
-    /// Both are about *which name* was written rather than what kind of value it
-    /// holds, so neither belongs in the walk above — the shape of every entry in
-    /// `env` is the same string either way.
+    /// None of them belongs in the walk above: the first two are about *which
+    /// name* was written rather than what kind of value it holds, and the third
+    /// is about a meaning the shape has no way to state — the shape of every
+    /// entry in `env` is the same string either way.
     ///
     /// The first is structural security. The one layer that reaches everyone who
     /// clones a repository can hold no value whose meaning crucible does not
@@ -198,15 +200,21 @@ impl Reader<'_> {
     /// The second holds in every layer: a variable crucible has already read by
     /// the time it opens a file cannot be set from one, so it is refused instead
     /// of accepted and quietly dropped.
+    ///
+    /// The third is the value of one of crucible's own settings, which means
+    /// something other than the string it was written as. Asked here rather
+    /// than where the setting is read, because here the file is still open and
+    /// the position can still be pointed at — by the time the layers have
+    /// merged, neither can.
     pub(super) fn variables(&self, value: &Value, origin: Origin) -> Result<(), ConfigError> {
         let Some(vars) = value.get("env").and_then(Value::as_object) else {
             return Ok(());
         };
 
-        for name in vars.keys() {
+        for (name, held) in vars {
             // The name, never the value beside it. Naming the variable is what
-            // makes either message actionable; quoting what was set there would
-            // put a possible secret into an error string.
+            // makes any of these messages actionable; quoting what was set
+            // there would put a possible secret into an error string.
             if env::too_late(name) {
                 return Err(ConfigError::TooLate {
                     file: self.file.into(),
@@ -221,6 +229,20 @@ impl Reader<'_> {
                     name: name.as_str().into(),
                     at: At::of(name, self.text),
                     namespace: env::NAMESPACE,
+                });
+            }
+
+            // Only a string has an answer to read. Anything else was already
+            // refused by the walk above, which ran first and says what shape an
+            // entry here has to be.
+            if let Some(written) = held.as_str()
+                && let Some(accepted) = settings::refused(name, written)
+            {
+                return Err(ConfigError::Answer {
+                    file: self.file.into(),
+                    name: name.as_str().into(),
+                    at: At::of(name, self.text),
+                    accepted,
                 });
             }
         }

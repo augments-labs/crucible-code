@@ -2,11 +2,12 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crucible_core::{Message, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
 use serde_json::Value;
 
-use super::{Session, SessionError};
+use super::{Session, SessionError, wire};
 use crate::sample::Sample;
 
 fn said(text: &str) -> Message {
@@ -89,6 +90,75 @@ impl std::io::Write for Blocked {
 }
 
 #[test]
+fn a_line_a_failed_write_cut_short_is_ended_before_the_next_one_starts() {
+    // A line reaches the file as its bytes and then the newline that ends it,
+    // so a disk that fills between the two leaves a line with nothing after it.
+    // Written straight onto, the next message makes one line that is neither —
+    // damage in the middle of the log, which costs every turn recorded after it
+    // rather than the one the disk cost.
+    let written = Written::default();
+    let session = Session::writing(
+        PathBuf::from("filled.jsonl"),
+        Filling {
+            written: Arc::clone(&written),
+            writes: 0,
+            // The newline of the first line, and nothing else.
+            fails_at: 2,
+        },
+    );
+
+    session.append(&said("the line the disk cut short"));
+    session.append(&said("the one after it"));
+    assert!(session.finish().is_some(), "the failure is still reported");
+
+    let log = String::from_utf8(written.lock().expect("the writer is gone").clone())
+        .expect("a log of text");
+    let lines: Vec<&str> = log.lines().collect();
+
+    assert_eq!(lines.len(), 2, "{log}");
+    assert!(
+        lines.iter().all(|line| wire::message(line).is_some()),
+        "{log}"
+    );
+}
+
+/// What a log kept, shared with the test that reads it back.
+type Written = Arc<Mutex<Vec<u8>>>;
+
+/// A log that stops taking bytes part way through a line and then works again
+/// — a disk that filled up and was freed while the session went on.
+struct Filling {
+    written: Written,
+    writes: usize,
+    /// Which write fails. Counted from one, and only one of them does.
+    fails_at: usize,
+}
+
+impl std::io::Write for Filling {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.writes += 1;
+
+        if self.writes == self.fails_at {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "no space left on device",
+            ));
+        }
+
+        self.written
+            .lock()
+            .expect("the test is holding it")
+            .extend_from_slice(bytes);
+
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
 fn every_message_reaches_the_file_in_the_order_it_happened() {
     let sample = Sample::new("session-order");
 
@@ -119,7 +189,7 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
 
     assert_eq!(
         header.get("format").and_then(Value::as_u64),
-        Some(1),
+        Some(u64::from(wire::FORMAT)),
         "{header}"
     );
     assert_eq!(
@@ -151,6 +221,58 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 }
 
 #[test]
+fn a_session_that_forgot_is_continued_from_where_it_started_again() {
+    // What `/clear` leaves in the log. The marker is a line like any other, so
+    // what was said before it is still on the disk — the log is the record of
+    // what happened, and forgetting happened at a point in it — and none of it
+    // comes back, because the model was never going to be told it again.
+    let sample = Sample::new("session-forgot");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&said("what was said first"));
+    session.forgot();
+    session.append(&said("what was said after"));
+    drop(session);
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages(), &[said("what was said after")]);
+}
+
+#[test]
+fn what_a_session_forgot_is_still_in_the_file() {
+    // Written down rather than cut out. A log that quietly lost a stretch of
+    // what happened would be a worse record than one saying where the session
+    // started again — and cutting it is not something an append-only log can do
+    // safely while another line is on its way to the disk.
+    let sample = Sample::new("session-forgot-record");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let path = session.path().to_owned();
+
+    session.append(&said("what was said first"));
+    session.forgot();
+    drop(session);
+
+    let written = fs::read_to_string(path).expect("the log");
+    let lines: Vec<&str> = written.lines().collect();
+
+    assert_eq!(
+        lines.len(),
+        3,
+        "a header, a message and the marker: {written}"
+    );
+    assert!(
+        lines.get(1).is_some_and(|line| line.contains("first")),
+        "{written}"
+    );
+    assert!(
+        lines.get(2).is_some_and(|line| wire::forgets(line)),
+        "{written}"
+    );
+}
+
+#[test]
 fn continuing_a_session_appends_to_the_same_log() {
     // A continued session is the same session. Starting a second file would
     // split one transcript across two, and the next `--continue` would find
@@ -174,7 +296,10 @@ fn the_newest_session_for_this_workspace_is_the_one_continued() {
 
     sample.plant(
         "0000000000001-000001",
-        &[sample.header(1, "old"), r#"{"user":"long ago"}"#.to_owned()],
+        &[
+            sample.header(wire::FORMAT, "old"),
+            r#"{"user":"long ago"}"#.to_owned(),
+        ],
     );
     record(&sample, &[said("just now")]);
 
@@ -238,4 +363,5 @@ fn a_session_that_records_nothing_is_still_a_session() {
     assert_eq!(session.path(), std::path::Path::new(""));
 }
 
+mod named;
 mod recovery;

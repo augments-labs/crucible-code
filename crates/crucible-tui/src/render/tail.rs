@@ -15,10 +15,8 @@
 
 use std::collections::VecDeque;
 
-use unicode_width::UnicodeWidthChar;
-
-/// How far a tab advances, matching what terminals do.
-const TAB_STOP: usize = 8;
+use crate::escape::Escapes;
+use crate::width::{self, EMOJI_PRESENTATION};
 
 /// The wrapped, bounded live region.
 #[derive(Debug)]
@@ -29,6 +27,14 @@ pub(crate) struct Tail {
     width: usize,
     /// The most rows that may stay live. Beyond this, the oldest overflow.
     bound: usize,
+    /// How far into an escape sequence the stream is.
+    ///
+    /// Kept here rather than made fresh per delta: a delta is a piece of the
+    /// wire, not a piece of the output, so a sequence arrives split as often as
+    /// not. Started again each time, the half after the split would be drawn as
+    /// text and counted as columns — which is the bug this exists to stop,
+    /// reappearing only under streaming.
+    escapes: Escapes,
 }
 
 /// One display row, with its width kept alongside so appending stays O(1).
@@ -49,6 +55,7 @@ impl Tail {
             rows: VecDeque::from([Row::default()]),
             width: width.max(1),
             bound: bound.max(1),
+            escapes: Escapes::default(),
         }
     }
 
@@ -58,6 +65,14 @@ impl Tail {
     /// pushes nothing out of the tail allocates nothing.
     pub(crate) fn push(&mut self, delta: &str, overflow: &mut Vec<String>) {
         for character in delta.chars() {
+            // Instruction rather than text: neither drawn nor counted. What
+            // reaches a tail is output this process did not write, and a
+            // sequence from there could move the cursor out of the region this
+            // renderer believes it owns.
+            if self.escapes.holds(character) {
+                continue;
+            }
+
             match character {
                 // A newline ends the row wherever it is.
                 '\n' => self.rows.push_back(Row::default()),
@@ -65,6 +80,7 @@ impl Tail {
                 // output. Dropping them is what stops a blank row per line.
                 '\r' => {}
                 '\t' => self.advance_to_tab_stop(),
+                EMOJI_PRESENTATION => self.place_emoji_presentation(),
                 _ => self.place(character),
             }
         }
@@ -105,7 +121,7 @@ impl Tail {
         self.rows.len()
     }
 
-    /// Whether the tail holds nothing but an empty row.
+    /// Whether the tail holds nothing but empty rows.
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(|row| row.text.is_empty())
@@ -118,16 +134,26 @@ impl Tail {
     pub(crate) fn clear(&mut self) {
         self.rows.clear();
         self.rows.push_back(Row::default());
+        // A turn that ended mid-sequence ended mid-sequence. Carrying that into
+        // the next one would swallow the start of the next answer.
+        self.escapes = Escapes::default();
     }
 
-    /// Puts one character on the current row, wrapping first if it will not fit.
+    /// Puts one character on the current row, wrapping first if it will not
+    /// fit, and dropping it if no row of this width could hold it.
     fn place(&mut self, character: char) {
-        // Zero for combining marks, two for the wide scripts, `None` for
-        // controls — which are dropped, because a stray escape byte from a tool
-        // would move a cursor this renderer believes it is tracking.
-        let Some(advance) = character.width() else {
+        // Zero for combining marks, two for the wide scripts, and nothing at
+        // all for a control character, which is dropped rather than drawn.
+        let Some(advance) = width::advance(character) else {
             return;
         };
+
+        // Wider than the whole row is nowhere to put it: wrapping would only
+        // move the overflow onto a fresh row and count that row short, which is
+        // the row the terminal wraps itself. Dropped, so the count stays honest.
+        if advance > self.width {
+            return;
+        }
 
         if self.current_width() + advance > self.width {
             self.rows.push_back(Row::default());
@@ -139,12 +165,52 @@ impl Tail {
         }
     }
 
+    /// Puts the emoji presentation selector down, taking the column it makes
+    /// the character before it worth. A row counted a column short is a row the
+    /// terminal wraps itself, leaving the cursor a row below where the next
+    /// frame rewinds to.
+    fn place_emoji_presentation(&mut self) {
+        let current = self.rows.back();
+        let base = current.and_then(|row| row.text.chars().next_back());
+
+        if !width::widens(base) {
+            self.place(EMOJI_PRESENTATION);
+            return;
+        }
+
+        // A row one column wide has no room for the pair anywhere. The base is
+        // already down and drawn as text; the selector only asked for a
+        // presentation, so it goes rather than the character it applies to.
+        if self.width < 2 {
+            return;
+        }
+
+        if self.current_width() + 1 > self.width {
+            // The pair moves down together: a selector parted from its base
+            // stops asking for anything, and the base left behind would draw
+            // narrow on a row this tail had already counted wide.
+            if let Some(row) = self.rows.back_mut() {
+                row.text.pop();
+                row.width = row.width.saturating_sub(1);
+            }
+            self.rows.push_back(Row::default());
+            if let Some(base) = base {
+                self.place(base);
+            }
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            row.text.push(EMOJI_PRESENTATION);
+            row.width += 1;
+        }
+    }
+
     /// Pads with spaces to the next tab stop, wrapping if the stop is past the
     /// edge. Expanded here rather than passed through so the width this tail
     /// reports is the width the terminal will show.
     fn advance_to_tab_stop(&mut self) {
         let current = self.current_width();
-        let target = (current / TAB_STOP + 1) * TAB_STOP;
+        let target = width::tab_stop(current);
 
         if target > self.width {
             self.rows.push_back(Row::default());
@@ -163,171 +229,4 @@ impl Tail {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Pushes and returns what overflowed, so a test reads as one call.
-    fn push(tail: &mut Tail, delta: &str) -> Vec<String> {
-        let mut overflow = Vec::new();
-        tail.push(delta, &mut overflow);
-        overflow
-    }
-
-    fn rows(tail: &Tail) -> Vec<&str> {
-        tail.rows().collect()
-    }
-
-    #[test]
-    fn text_shorter_than_the_width_stays_on_one_row() {
-        let mut tail = Tail::new(20, 5);
-        assert!(push(&mut tail, "hello").is_empty());
-        assert_eq!(rows(&tail), ["hello"]);
-    }
-
-    #[test]
-    fn a_delta_split_mid_word_still_lands_on_one_row() {
-        // Providers split wherever the socket did, so the tail must not treat a
-        // delta boundary as anything at all.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "hel");
-        push(&mut tail, "lo wor");
-        push(&mut tail, "ld");
-        assert_eq!(rows(&tail), ["hello world"]);
-    }
-
-    #[test]
-    fn a_newline_starts_a_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo");
-        assert_eq!(rows(&tail), ["one", "two"]);
-    }
-
-    #[test]
-    fn crlf_does_not_leave_a_blank_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\r\ntwo");
-        assert_eq!(rows(&tail), ["one", "two"]);
-    }
-
-    #[test]
-    fn text_wider_than_the_width_wraps() {
-        let mut tail = Tail::new(4, 5);
-        push(&mut tail, "abcdefghij");
-        assert_eq!(rows(&tail), ["abcd", "efgh", "ij"]);
-    }
-
-    #[test]
-    fn a_wide_character_takes_two_columns_when_wrapping() {
-        // The bug this catches is counting characters instead of columns: five
-        // of these fit in a five-column row only if each is one wide, and they
-        // are not.
-        let mut tail = Tail::new(5, 5);
-        push(&mut tail, "日本語です");
-        assert_eq!(rows(&tail), ["日本", "語で", "す"]);
-    }
-
-    #[test]
-    fn a_combining_mark_does_not_take_a_column() {
-        // "e" plus a combining acute is two chars and one column, so it must
-        // not push the row over the edge.
-        let mut tail = Tail::new(2, 5);
-        push(&mut tail, "e\u{301}x");
-        assert_eq!(rows(&tail), ["e\u{301}x"]);
-    }
-
-    #[test]
-    fn an_escape_sequence_from_a_tool_cannot_move_the_cursor() {
-        // Tool output is not trusted to be plain text. A control character kept
-        // verbatim would move a cursor this renderer believes it is tracking,
-        // and the next frame would erase the wrong lines.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "a\x1b[2Jb");
-        assert_eq!(rows(&tail), ["a[2Jb"]);
-    }
-
-    #[test]
-    fn a_tab_advances_to_the_next_stop() {
-        let mut tail = Tail::new(40, 5);
-        push(&mut tail, "ab\tc");
-        assert_eq!(rows(&tail), ["ab      c"]);
-    }
-
-    #[test]
-    fn a_tab_past_the_edge_wraps_instead_of_overflowing_the_row() {
-        let mut tail = Tail::new(6, 5);
-        push(&mut tail, "abcde\tx");
-        assert_eq!(rows(&tail), ["abcde", "x"]);
-    }
-
-    #[test]
-    fn rows_past_the_bound_overflow_oldest_first() {
-        let mut tail = Tail::new(20, 2);
-        let out = push(&mut tail, "one\ntwo\nthree\nfour");
-
-        assert_eq!(out, ["one", "two"]);
-        assert_eq!(rows(&tail), ["three", "four"]);
-    }
-
-    #[test]
-    fn the_tail_never_grows_past_its_bound() {
-        // This is the property the whole type exists for: memory must not grow
-        // with how long the session has run.
-        let mut tail = Tail::new(20, 3);
-        let mut overflow = Vec::new();
-
-        for turn in 0..10_000 {
-            tail.push(&format!("line {turn}\n"), &mut overflow);
-            overflow.clear();
-            assert!(tail.len() <= 3, "tail grew to {} rows", tail.len());
-        }
-    }
-
-    #[test]
-    fn wrapped_rows_count_against_the_bound_too() {
-        // One logical line can be many display rows, so the bound has to be
-        // about rows or a single long paragraph would blow past it.
-        let mut tail = Tail::new(4, 2);
-        let out = push(&mut tail, "abcdefghijklmnop");
-
-        assert_eq!(out, ["abcd", "efgh"]);
-        assert_eq!(rows(&tail), ["ijkl", "mnop"]);
-    }
-
-    #[test]
-    fn the_row_the_cursor_sits_on_is_not_content() {
-        // Otherwise every answer ending in a newline settles a blank line.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo\n");
-
-        assert_eq!(rows(&tail), ["one", "two", ""]);
-        assert_eq!(tail.content().collect::<Vec<_>>(), ["one", "two"]);
-    }
-
-    #[test]
-    fn a_blank_line_somebody_wrote_is_content() {
-        // Only the *last* empty row is the cursor's. The rest are output.
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\n\ntwo");
-
-        assert_eq!(tail.content().collect::<Vec<_>>(), ["one", "", "two"]);
-    }
-
-    #[test]
-    fn clearing_leaves_one_empty_row() {
-        let mut tail = Tail::new(20, 5);
-        push(&mut tail, "one\ntwo");
-        tail.clear();
-
-        assert_eq!(rows(&tail), [""]);
-        assert!(tail.is_empty());
-    }
-
-    #[test]
-    fn a_zero_width_does_not_wrap_forever() {
-        // A terminal reports zero columns while a pane is being dragged, and a
-        // literal zero here would loop pushing empty rows.
-        let mut tail = Tail::new(0, 3);
-        push(&mut tail, "abc");
-        assert_eq!(rows(&tail), ["a", "b", "c"]);
-    }
-}
+mod tests;

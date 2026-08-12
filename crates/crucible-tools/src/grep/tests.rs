@@ -170,6 +170,105 @@ fn something_that_is_not_text_contributes_nothing() {
 }
 
 #[test]
+fn a_file_that_is_valid_text_and_still_binary_is_left_alone() {
+    // A NUL byte is valid UTF-8, so nothing about decoding stops this one — a
+    // checked-in font, `.so` or fixture would otherwise be searched byte for
+    // byte and its "lines" sent back to the model with NUL bytes inside them.
+    // The sniff `rg` does by default is what draws the line, and the budget is
+    // measured against `rg`.
+    let sample = Sample::new("grep-binary-text");
+    sample.write("one.txt", "needle\n");
+    sample.write_bytes("blob.bin", b"\x00\x00needle in the noise\x00\x00");
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    assert_eq!(output.text(), "one.txt:1:needle\n");
+}
+
+#[test]
+fn a_bad_byte_later_in_a_file_does_not_take_the_hits_before_it() {
+    // Only a NUL stops the searcher, so a Latin-1 file is searched as the text
+    // it nearly is. The sink decodes, so the line carrying the odd byte comes
+    // back as an error — and that error used to throw away every hit the file
+    // had already given up, leaving an answer that said the file held no match.
+    let sample = Sample::new("grep-latin1");
+    sample.write_bytes("latin1.txt", b"needle one\nneedle caf\xe9\n");
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    assert!(
+        output.text().starts_with("latin1.txt:1:needle one\n"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output.text().contains("stopped partway through latin1.txt"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_file_the_search_could_not_finish_is_named_even_when_nothing_matched() {
+    // "Nothing matched" is a claim about files that were read to the end, and a
+    // file the search stopped partway through is not one of them.
+    let sample = Sample::new("grep-latin1-first");
+    sample.write_bytes("latin1.txt", b"caf\xe9 needle\nplain needle\n");
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    assert!(output.is_failed());
+    assert!(
+        output.text().starts_with("nothing matched needle"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output.text().contains("stopped partway through latin1.txt"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn more_files_than_the_note_names_are_counted_instead() {
+    // The note is output, and output here is bounded like the rest of it: a
+    // tree of files the searcher cannot decode would otherwise put a line in
+    // the answer for each of them.
+    let sample = Sample::new("grep-latin1-many");
+    for which in 0..8 {
+        sample.write_bytes(&format!("f{which}.txt"), b"needle one\nneedle caf\xe9\n");
+    }
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    assert!(
+        output
+            .text()
+            .contains("f0.txt, f1.txt, f2.txt, f3.txt, f4.txt and 3 more"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_search_that_found_exactly_the_limit_does_not_claim_it_stopped_short() {
+    // Whether the answer was cut used to be read off `hits.len() >= limit`
+    // *after* the truncation, where "exactly this many exist" and "more exist
+    // and were cut" look the same. Telling the model to narrow a pattern that
+    // needed no narrowing costs it a turn to rediscover the same lines.
+    let sample = Sample::new("grep-exact");
+    sample.write("three.txt", &"needle\n".repeat(3));
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":3}"#);
+
+    assert_eq!(
+        output.text(),
+        "three.txt:1:needle\nthree.txt:2:needle\nthree.txt:3:needle\n"
+    );
+}
+
+#[test]
 fn a_file_a_deny_rule_names_is_never_searched() {
     // The call was decided about the directory, and a rule about a file below
     // it says nothing at that moment. The walk is where it has to be honoured,

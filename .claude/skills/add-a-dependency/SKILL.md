@@ -45,17 +45,24 @@ bump a reviewed change rather than a side effect of somebody else's publish.
 `scripts/check.sh` fails on a caret. Dependabot moves the pin as a pull request
 that CI has to pass.
 
+The workspace entry is where the pin and the reason live, which is why the
+member manifest names neither: `some-crate.workspace = true` inherits both. Both
+gates read every manifest, so declaring the version in the member instead — a
+plausible shortcut, and one that used to pass — fails on the pin and on the
+missing comment together.
+
 ## Where it may go
 
 Dependencies point down only, and cargo enforces it:
 
 ```
 core       -> (nothing)
+config     -> core
 provider   -> core
 tools      -> core
 runner     -> core
 tui        -> core
-crucible-code -> all five
+crucible-code -> all six
 ```
 
 Adding a crate to `crucible-core` puts it in every other crate's build. Push it

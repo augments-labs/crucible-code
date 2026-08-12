@@ -1,4 +1,5 @@
-//! The arm no rule matched, which is the only thing a mode decides.
+//! The arm no rule matched, which is the only thing a mode decides — and the
+//! two ways a mode is spelled for the person it is decided in front of.
 //!
 //! Each of these is a promise made in a word somebody typed once and then
 //! stopped thinking about, so the shape worth testing is the boundary: what
@@ -141,4 +142,32 @@ fn full_access_asks_about_nothing() {
             .ran()
     );
     assert_eq!(answer.asked, 0);
+}
+
+#[test]
+fn the_ring_goes_one_way_and_closes() {
+    // One key steps it, so there is no end to reach and no direction to
+    // choose. Three presses from anywhere is where you started.
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        assert_eq!(mode.next().next().next(), mode, "{mode}");
+        assert_ne!(mode.next(), mode, "{mode}");
+    }
+
+    // In the order they are written, which is least permissive first.
+    assert_eq!(Mode::Ask.next(), Mode::AllowEdits);
+    assert_eq!(Mode::AllowEdits.next(), Mode::FullAccess);
+}
+
+#[test]
+fn a_mode_is_spelled_one_way_to_type_and_another_way_to_read() {
+    // The row under the box is read while the mode is in force; the
+    // configuration file is typed. Neither string is the other's shortening.
+    assert_eq!(Mode::Ask.to_string(), "ask");
+    assert_eq!(Mode::Ask.sentence(), "ask mode on");
+
+    assert_eq!(Mode::AllowEdits.to_string(), "allowEdits");
+    assert_eq!(Mode::AllowEdits.sentence(), "allow edits on");
+
+    assert_eq!(Mode::FullAccess.to_string(), "fullAccess");
+    assert_eq!(Mode::FullAccess.sentence(), "full access mode on");
 }

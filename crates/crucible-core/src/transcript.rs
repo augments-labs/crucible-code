@@ -93,6 +93,17 @@ impl Transcript {
         &self.messages
     }
 
+    /// Forgets everything said so far.
+    ///
+    /// The whole point is the memory as much as the meaning: this is the only
+    /// thing here that grows with a session, and the peak-RSS budget is set to
+    /// cover it. So the vector goes rather than being emptied — `Vec::clear`
+    /// keeps the room the longest transcript ever needed, and a session cleared
+    /// because it had become too large would carry that size to the end.
+    pub fn forget(&mut self) {
+        self.messages = Vec::new();
+    }
+
     /// How many messages the transcript holds.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -139,5 +150,19 @@ mod tests {
 
         assert_eq!(transcript.turns(), 2);
         assert_eq!(transcript.len(), 3);
+    }
+
+    #[test]
+    fn a_transcript_that_forgot_has_nothing_in_it_and_no_turns_behind_it() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::User("said".into()));
+        transcript.push(Message::User("said again".into()));
+
+        transcript.forget();
+
+        assert!(transcript.is_empty());
+        assert_eq!(transcript.len(), 0);
+        assert_eq!(transcript.turns(), 0);
+        assert_eq!(transcript.messages(), []);
     }
 }

@@ -47,9 +47,12 @@ mod sample;
 mod settings;
 mod shape;
 
-pub use document::{Document, Origin};
+// A document is not on this surface. [`Settings::read`] is the one way in, so
+// the type that parses one file and the type that resolves several are both
+// crate-private: a caller who could build a `Document` would then have nothing
+// to do with it, and a second way in is a second answer to which files exist.
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::allowing;
-pub use settings::{Color, Settings, ToolDetail, local};
+pub use settings::{ClearScreen, Color, Glyphs, Settings, ToolDetail, local};
 pub use shape::schema::schema;
