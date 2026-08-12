@@ -7,9 +7,9 @@
 //! it; this is what does it afterwards.
 //!
 //! Deliberately the smallest thing that is still an editor: characters,
-//! backspace, the arrows, the two ends, and the three keys that end a line.
-//! History, word motion, bracketed paste and a second row are each separable,
-//! and none of them is what makes a bordered prompt possible.
+//! backspace, the arrows, a word either way, the two ends, and the three keys
+//! that end a line. History, bracketed paste and a second row are each
+//! separable, and none of them is what makes a bordered prompt possible.
 //!
 //! Nothing here reads a key or draws a row. It is a string and an offset, so a
 //! test of what a keystroke does is a test of what a keystroke does, and the
@@ -34,6 +34,10 @@ pub enum Key {
     Left,
     /// Move one character on.
     Right,
+    /// Move back over the word behind the cursor, to where it starts.
+    WordLeft,
+    /// Move on over the word ahead of it, to where it ends.
+    WordRight,
     /// Move to the start of the line.
     Home,
     /// Move to the end of it.
@@ -136,6 +140,8 @@ impl Editor {
             Key::Backspace => self.rub(),
             Key::Left => self.left(),
             Key::Right => self.right(),
+            Key::WordLeft => self.jump(self.word_back()),
+            Key::WordRight => self.jump(self.word_ahead()),
             Key::Home => self.jump(0),
             Key::End => self.jump(self.said.len()),
             Key::Enter => self.submit(),
@@ -215,7 +221,41 @@ impl Editor {
         }
     }
 
-    /// Moves the cursor to an end.
+    /// Where a word back from the cursor is.
+    ///
+    /// A word is a run of anything that is not a space, so a path is one word
+    /// and so is `parser's`. That is the rule a shell uses, and it is the one
+    /// that suits what gets typed here: the reason to cross a line in one press
+    /// is usually a path or an identifier near the far end of it, and a rule
+    /// that stopped inside either would need the press again to finish the job.
+    ///
+    /// Any space immediately behind the cursor is crossed first. Without that,
+    /// a cursor sitting after a space would land on the end of the word it is
+    /// already past rather than on the start of it, and pressing the key twice
+    /// would be how you get one word back.
+    fn word_back(&self) -> usize {
+        self.before()
+            .trim_end()
+            .char_indices()
+            .rev()
+            .find(|(_, one)| one.is_whitespace())
+            .map_or(0, |(at, one)| at + one.len_utf8())
+    }
+
+    /// Where a word on from it is.
+    fn word_ahead(&self) -> usize {
+        let after = self.said.get(self.at..).unwrap_or_default();
+        let word = after.trim_start();
+        let spaces = after.len() - word.len();
+
+        word.find(char::is_whitespace)
+            .map_or(self.said.len(), |at| self.at + spaces + at)
+    }
+
+    /// Moves the cursor somewhere the line already has a boundary.
+    ///
+    /// A move that lands where it started is nothing happening, which is what
+    /// keeps the key that reaches an end it is already at from redrawing.
     fn jump(&mut self, to: usize) -> Typed {
         if self.at == to {
             return Typed::Ignored;

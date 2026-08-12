@@ -98,9 +98,14 @@ ask mode on (shift+tab to cycle)
 ```
 
 The box is as wide as the terminal, and a line longer than it scrolls inside it
-rather than wrapping. Under it is the mode in force, every time — `ask mode on`
-is the one nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next
-one while you type, and the row and the colour of the box both follow it.
+rather than wrapping. The arrows move a character, <kbd>Ctrl</kbd> or
+<kbd>Alt</kbd> held with one moves a word — as do <kbd>Alt-B</kbd> and
+<kbd>Alt-F</kbd> — and <kbd>Home</kbd> and <kbd>End</kbd> reach the two ends. A
+word here is a run of anything that is not a space, so a path is one word.
+
+Under the box is the mode in force, every time — `ask mode on` is the one
+nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
+you type, and the row and the colour of the box both follow it.
 [Permissions](../permissions/index.md) is where all three are.
 
 Type a prompt and press enter. The box goes, the line stays where it was, and

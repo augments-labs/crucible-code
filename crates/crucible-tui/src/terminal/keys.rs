@@ -78,6 +78,7 @@ fn key_pressed(key: KeyEvent) -> Pressed {
     }
 
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
 
     match key.code {
         // The two the terminal used to answer itself. In raw mode they are keys
@@ -85,10 +86,20 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Char('c') if control => Pressed::Key(Key::Interrupt),
         KeyCode::Char('d') if control => Pressed::Key(Key::Eof),
 
-        // Anything else held with control is a binding this release has not
-        // given a meaning to. Typed as a bare character it would be the letter
-        // without the modifier, which is not what was pressed.
-        KeyCode::Char(_) if control => Pressed::Ignored,
+        // A word either way, spelled the three ways the terminals here spell
+        // it: control and an arrow on Linux and Windows, alt and an arrow on
+        // macOS, and the pair readline has answered to for as long as there
+        // have been shells. All three are the terminal's own conventions, so
+        // whichever one is already in the fingers is the one that works.
+        KeyCode::Left if control || alt => Pressed::Key(Key::WordLeft),
+        KeyCode::Right if control || alt => Pressed::Key(Key::WordRight),
+        KeyCode::Char('b') if alt => Pressed::Key(Key::WordLeft),
+        KeyCode::Char('f') if alt => Pressed::Key(Key::WordRight),
+
+        // Anything else held with either modifier is a binding this release has
+        // not given a meaning to. Typed as a bare character it would be the
+        // letter without the modifier, which is not what was pressed.
+        KeyCode::Char(_) if control || alt => Pressed::Ignored,
 
         // Shift+Tab, which every terminal here sends as one sequence of its
         // own rather than as tab with a modifier — so this is the code to
@@ -125,6 +136,11 @@ mod tests {
     /// The same, held with control.
     fn control(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL))
+    }
+
+    /// The same, held with alt.
+    fn alt(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::ALT))
     }
 
     #[test]
@@ -197,10 +213,37 @@ mod tests {
     }
 
     #[test]
+    fn every_way_a_terminal_here_spells_a_word_reaches_the_editor_as_one() {
+        // Three spellings and one meaning. A reader who learned the binding on
+        // one of these platforms is not asked to learn it again on the next.
+        for held in [control(KeyCode::Left), alt(KeyCode::Left)] {
+            assert_eq!(meaning(&held), Pressed::Key(Key::WordLeft), "{held:?}");
+        }
+
+        for held in [control(KeyCode::Right), alt(KeyCode::Right)] {
+            assert_eq!(meaning(&held), Pressed::Key(Key::WordRight), "{held:?}");
+        }
+
+        assert_eq!(
+            meaning(&alt(KeyCode::Char('b'))),
+            Pressed::Key(Key::WordLeft)
+        );
+        assert_eq!(
+            meaning(&alt(KeyCode::Char('f'))),
+            Pressed::Key(Key::WordRight)
+        );
+    }
+
+    #[test]
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
         // Ctrl-A is the start of a line in one program and select-all in the
         // next. Typing a bare `a` for it would be the worst of the three.
         assert_eq!(meaning(&control(KeyCode::Char('a'))), Pressed::Ignored);
+
+        // Alt is the modifier a reader is most likely to be holding for
+        // something this program has never heard of — a window manager's, an
+        // emulator's — and the letter under it is not what they meant to type.
+        assert_eq!(meaning(&alt(KeyCode::Char('a'))), Pressed::Ignored);
     }
 
     #[test]
