@@ -107,6 +107,12 @@ stuck as busy. The file it was taken on stays where it is and is never mistaken
 for a session. Some network filesystems have no locks to take at all; there,
 `--continue` goes ahead without the check rather than refusing everything.
 
+A `.lock` file that cannot be made at all — something already in its place, a
+directory gone read-only — is a third answer and not that one. Nothing was asked
+about the log, so nothing is assumed about it: `--continue` stops with
+`could not claim the session log …` and the reason the operating system gave,
+having read nothing and changed nothing.
+
 ## When recording stops
 
 A write to the log can fail — a full disk, most often — and the turn does not

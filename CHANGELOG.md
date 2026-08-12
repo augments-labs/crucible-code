@@ -23,6 +23,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A session claim that could not be attempted no longer reads as a filesystem
+  with no locks.** Where the `.lock` file beside a log could not be made at all,
+  `--continue` went ahead as though the check had run and found nothing, which
+  is the one case the check exists for. It stops with `could not claim the
+  session log …` instead, having read nothing and changed nothing. A filesystem
+  that genuinely has no locks is unaffected.
+
 - **The welcome screen spells the program's name.** The `B` of the wordmark was
   drawn as a second `E`, so the first thing on screen read `CRUCIELE`. Nothing
   else moved: the mark is the same three rows and the same width.
