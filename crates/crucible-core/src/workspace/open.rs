@@ -10,24 +10,40 @@
 //! carries closes that gap; the check is true of the instant it ran and of no
 //! other instant.
 //!
-//! So the open happens here, beside the proof, rather than wherever a caller
-//! happened to hold the path. That is what this module is for: one place where
-//! a proven path becomes an open file, so what the open promises is stated once
-//! and can be strengthened once.
+//! So the open happens here, beside the proof, and on Unix it never hands the
+//! whole path over: `descent` walks down from the directory containment was
+//! settled against, one component at a time against a descriptor it already
+//! holds, and each step is one system call with no inside for a swap to land
+//! in. A link somebody *meant* is unaffected — resolving followed it and
+//! settled containment about where it led, so a root reached through a link and
+//! a project that links to its own files both work as they read.
 //!
-//! Today it opens the path by name, and `name` says what that does and does not
-//! refuse: a link at the last component is refused and a creation will not
-//! follow one, and a directory *above* the file can still be replaced between
-//! the check and the call. Closing that means never handing the whole path over
-//! — walking down from the directory containment was settled against, against
-//! descriptors already held — which is a Unix notion and arrives next.
+//! What that leaves is renaming: a directory the walk is holding can be moved
+//! out of the tree and the file below it goes along. It takes write access to
+//! the workspace and yields the mover a file they could already read, which is
+//! why it is the residue rather than the hole. A second hard name for a file is
+//! not a link at all, so nothing distinguishes it from the original — that
+//! belongs to the filesystem, and no check on names or on components reaches it.
+//!
+//! Windows is where this stops. `openat` is a Unix notion and the equivalent
+//! there is reached only through FFI this crate does not write, so `name`
+//! opens the path as one: the refusal of a link at the last component and the
+//! flag that refuses one at a creation both stand, and a directory above the
+//! file can still be replaced between the check and the call.
 
 use std::fs::File;
 use std::io::Error;
 
 use super::{PathError, WorkspacePath, written};
 
+#[cfg(unix)]
+mod descent;
+#[cfg(unix)]
+use descent::{created, opened};
+
+#[cfg(not(unix))]
 mod name;
+#[cfg(not(unix))]
 use name::{created, opened};
 
 /// What the caller means to do with the file it asked for.
