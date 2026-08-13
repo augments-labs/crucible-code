@@ -41,6 +41,7 @@ use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
 
 use crate::screen::Screen;
+use crate::vendor::Vendor;
 
 /// How long the terminal must go without a byte before the screen is settled.
 ///
@@ -59,12 +60,33 @@ const CEILING: Duration = Duration::from_secs(20);
 /// the box, which is the last thing written before crucible waits for a key.
 const READY: &str = "ask mode on";
 
-/// The configuration every case is given.
+/// The model a case with something to ask asks for.
+///
+/// It reaches [`Vendor`], which answers whatever it is asked, so the name only
+/// has to be one — but it is on the screen, so it is written to look like one
+/// rather than like a test fixture.
+const MODEL: &str = "claude-test-1";
+
+/// The configuration a case is given, pointed at `vendor` where there is one.
 ///
 /// `updates.check` reaches GitHub, and a test that asks a network for anything
 /// is a test that fails when the network does. Written rather than left to the
 /// default so that the answer is in the tree next to the cases.
-const NEVER: &str = "{\n  \"updates\": {\n    \"check\": \"never\"\n  }\n}\n";
+///
+/// This is crucible's *own* configuration file, in the home this run was given.
+/// That matters for `baseUrl`: it is refused in the file a checkout carries, so
+/// a case that wrote it there would be testing the refusal instead.
+fn document(vendor: Option<&Vendor>) -> String {
+    let providers = vendor.map_or_else(String::new, |vendor| {
+        format!(
+            ",\n  \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}",
+            vendor.address()
+        )
+    });
+
+    format!("{{\n  \"updates\": {{\n    \"check\": \"never\"\n  }}{providers}\n}}\n")
+}
 
 /// crucible, and the terminal it is drawing into.
 #[derive(Debug)]
@@ -87,7 +109,26 @@ impl Window {
     ///
     /// `case` names the directory this run is given, so two cases running at
     /// once share no session log, no configuration and no working directory.
+    ///
+    /// No provider: this is crucible with nothing to answer, which is every
+    /// case about what is on screen before a turn.
     pub(crate) fn open(case: &str, columns: u16, rows: u16) -> Self {
+        Self::started(case, columns, rows, None)
+    }
+
+    /// The same, with a provider on this machine that answers what it is asked.
+    ///
+    /// A turn is what most of the renderer's arithmetic is *for* — the live
+    /// tail, the footing standing under a streaming answer, the box taking
+    /// typing while one runs — and none of it was reachable from here while the
+    /// address a request goes to was a constant.
+    pub(crate) fn answering(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        Self::started(case, columns, rows, Some(vendor))
+    }
+
+    /// Starts crucible in a window that size and waits for it to finish
+    /// drawing.
+    fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>) -> Self {
         // One flat directory per case, so the last thing a case does can take
         // the whole of what it made with it.
         let scratch = std::env::temp_dir().join(format!(
@@ -104,10 +145,10 @@ impl Window {
             .join("workspace");
         fs::create_dir_all(&home).expect("a scratch home directory");
         fs::create_dir_all(&workspace).expect("a scratch working directory");
-        fs::write(home.join("config.json"), NEVER).expect("a configuration file");
+        fs::write(home.join("config.json"), document(vendor)).expect("a configuration file");
 
         let (terminal, inside) = pair(columns, rows);
-        let child = start(&scratch, &home, &workspace, inside);
+        let child = start(&scratch, &home, &workspace, vendor.is_some(), inside);
         let (sender, bytes) = mpsc::channel();
         let reading = terminal
             .try_clone()
@@ -252,7 +293,12 @@ fn pair(columns: u16, rows: u16) -> (File, File) {
 /// crucible reads, but a run that fell back for any reason must not fall back
 /// into the developer's own files. `PATH` is the one thing carried over, since
 /// it is how `setsid` is found.
-fn start(scratch: &Path, home: &Path, workspace: &Path, inside: File) -> Child {
+///
+/// `keyed` sets the variable a key is read from. It is not a key — the address
+/// beside it is a socket on this machine, and what answers there wants nothing
+/// signed — but crucible will not choose a provider without one, so a case with
+/// something to ask needs the variable set to reach the provider at all.
+fn start(scratch: &Path, home: &Path, workspace: &Path, keyed: bool, inside: File) -> Child {
     let second = inside.try_clone().expect("a second handle on the far side");
     let third = inside.try_clone().expect("a third handle on the far side");
 
@@ -266,6 +312,7 @@ fn start(scratch: &Path, home: &Path, workspace: &Path, inside: File) -> Child {
         .env("TERM", "xterm-256color")
         .env("NO_COLOR", "1")
         .env("CRUCIBLE_CODE_HOME", home)
+        .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .stdin(Stdio::from(inside))
         .stdout(Stdio::from(second))
         .stderr(Stdio::from(third))

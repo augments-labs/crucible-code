@@ -32,8 +32,10 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 mod screen;
+mod vendor;
 mod window;
 
+use vendor::Vendor;
 use window::Window;
 
 /// A line long enough to need more rows than the box is allowed to grow to.
@@ -43,6 +45,17 @@ use window::Window;
 /// comfortably past that at the size the case uses.
 fn overlong() -> String {
     "the quick brown fox jumps over the lazy dog. ".repeat(12)
+}
+
+/// An answer with more rows in it than the whole window has.
+///
+/// Past the window rather than merely past the box, and the difference is the
+/// test: the tail may hold what the footing leaves it, so an answer that fits on
+/// screen never reaches the bound and never exercises the arithmetic that was
+/// wrong. This is long enough that rows leave the tail for the terminal's
+/// scrollback while the box goes on standing under them.
+fn taller_than_the_window() -> String {
+    "the quick brown fox jumps over the lazy dog. ".repeat(40)
 }
 
 #[test]
@@ -97,6 +110,34 @@ fn a_slash_opens_the_command_list_above_the_box() {
     let mut window = Window::open("commands", 80, 24);
 
     window.types("/");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
+    // The first case here that takes a turn. What it watches is the handover:
+    // the answer becomes rows the terminal owns, and the box and its footing
+    // are drawn again underneath, once, at the bottom of the screen.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::answering("answered", 80, 24, &vendor);
+
+    window.types("what is 2+2\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn an_answer_longer_than_the_window_leaves_the_box_whole_at_the_foot_of_it() {
+    // The defect this whole file was written for, and the one no component test
+    // could reach: the live tail was bounded by the window rather than by the
+    // rows left under it, so an answer this long ate the box from the top as it
+    // grew. A short window, because what decides it is how much of the screen
+    // the answer fills.
+    let vendor = Vendor::answering(&taller_than_the_window());
+    let mut window = Window::answering("answered-long", 80, 16, &vendor);
+
+    window.types("say something long\r");
 
     insta::assert_snapshot!(window.picture());
 }

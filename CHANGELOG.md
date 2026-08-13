@@ -14,6 +14,13 @@ Notable changes to crucible. Format follows
   who receives it. Refused in `.crucible/config.json` for that reason, since
   that file travels to everyone who clones the repository.
 
+### Internal
+
+- The whole-screen tests now drive a real turn. A provider on a loopback port
+  serves a canned event stream, which `baseUrl` made reachable, so the case that
+  streams an answer taller than the window is finally the case that catches the
+  defect the suite was written for — proven by putting that defect back.
+
 ## [0.0.16] - 2026-08-13
 
 ### Fixed
