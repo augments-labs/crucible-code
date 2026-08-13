@@ -312,6 +312,7 @@ fn every_notice_is_a_single_line() {
         StopReason::Filtered,
         StopReason::Paused,
         StopReason::Cancelled,
+        StopReason::Unknown,
     ];
 
     for stop in every {
@@ -321,7 +322,8 @@ fn every_notice_is_a_single_line() {
             | StopReason::OutOfTokens
             | StopReason::Filtered
             | StopReason::Paused
-            | StopReason::Cancelled => {}
+            | StopReason::Cancelled
+            | StopReason::Unknown => {}
         }
 
         let said = notice(stop).unwrap_or_default();

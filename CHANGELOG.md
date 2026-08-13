@@ -8,6 +8,20 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A stop reason this build has never heard of is reported as unfinished.** It
+  used to fall back to "the model finished", so the day a vendor adds a word to
+  its list, an answer cut short would have arrived looking complete — the one
+  failure a reader cannot catch for themselves. Being wrong about a turn that
+  was fine costs a line of text; being wrong the other way costs the answer.
+
+- **A proxy's own heartbeat no longer fails the turn.** An event under a name
+  this build does not know can arrive with no data line at all, and it was read
+  as a payload before the name was looked at — so empty text was parsed as JSON,
+  and the turn died along with the answer already on screen. The name decides
+  first now.
+
+### Fixed
+
 - **A refusal that never finishes arriving no longer wedges the turn.** The
   message under a refused response is read to the end so it can be shown, and a
   body that stalled with the connection still open was read forever — the turn

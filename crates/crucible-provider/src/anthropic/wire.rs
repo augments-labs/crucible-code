@@ -17,6 +17,11 @@ use crate::sse::SseEvent;
 
 /// What an event means, or nothing if it means nothing to us.
 ///
+/// The name decides before the payload is touched. Read the other way round, an
+/// event this build has no name for fails the turn on a payload nobody was
+/// going to look at — a proxy's heartbeat under a name of its own carries no
+/// data line at all — and the arm that exists to skip it is never reached.
+///
 /// # Errors
 ///
 /// [`ProviderError::Upstream`] when the event is the provider reporting a
@@ -24,33 +29,19 @@ use crate::sse::SseEvent;
 /// [`ProviderError::Protocol`] when an event that should carry a payload does
 /// not parse, or announces a tool call by half its identity.
 pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
-    // Types that carry nothing worth parsing. `ping` is the keep-alive, and the
-    // rest are brackets around content that has already been delivered.
-    if matches!(
-        event.name.as_str(),
-        "ping" | "message_start" | "content_block_stop" | "message_stop"
-    ) {
-        return Ok(None);
-    }
-
-    // Nothing to parse. A proxy's own heartbeat is spelled however that proxy
-    // likes and can arrive with no data line at all; read as a payload it is
-    // empty rather than JSON, which would fail the turn and discard the answer
-    // that had already arrived.
-    if event.data.trim().is_empty() {
-        return Ok(None);
-    }
-
-    let payload = parse(&event.data)?;
-
     match event.name.as_str() {
-        "content_block_start" => started(&payload),
-        "content_block_delta" => Ok(content(&payload)),
-        "message_delta" => Ok(stopped(&payload)),
-        "error" => Err(upstream(&payload)),
-        // An unknown type is a newer API talking to an older client. Skipping
-        // it keeps the answer flowing; the alternative is failing a turn over
-        // something that was additive.
+        "content_block_start" => started(&parse(&event.data)?),
+        "content_block_delta" => Ok(content(&parse(&event.data)?)),
+        "message_delta" => Ok(stopped(&parse(&event.data)?)),
+        "error" => Err(upstream(&parse(&event.data)?)),
+
+        // Everything else, and none of it parsed. `ping` is the keep-alive and
+        // `message_start`, `content_block_stop` and `message_stop` are brackets
+        // around content already delivered; a type this build has never heard
+        // of is a newer API talking to an older client, or a proxy spelling its
+        // own heartbeat however it likes — which arrives with no data line at
+        // all. Skipping the lot keeps the answer flowing; the alternative is
+        // failing a turn over something that was additive.
         _ => Ok(None),
     }
 }
@@ -119,10 +110,15 @@ fn stopped(payload: &Value) -> Option<Delta> {
         // unfinished answer reaches the user looking whole.
         "pause_turn" => StopReason::Paused,
 
-        // `end_turn` and `stop_sequence`. A reason added later lands here too
-        // and will read as a finish — so a new one in the vendor's list is a
-        // change to make here, not something this arm can be trusted to cover.
-        _ => StopReason::Yielded,
+        // The two ways this API says a turn ended.
+        "end_turn" | "stop_sequence" => StopReason::Yielded,
+
+        // A reason added to the vendor's list after this build shipped. Named
+        // as unknown rather than folded into a finish: this arm fires on the
+        // day nobody is watching, and an answer cut short by a reason with no
+        // arm yet would otherwise arrive looking complete. A new reason is
+        // still an edit here — this is what holds until it is made.
+        _ => StopReason::Unknown,
     }))
 }
 
@@ -347,6 +343,29 @@ mod tests {
     #[test]
     fn an_unknown_event_type_is_skipped_rather_than_fatal() {
         assert_eq!(of("something_new", r#"{"whatever":true}"#), None);
+    }
+
+    #[test]
+    fn an_unknown_event_is_skipped_without_its_payload_being_read() {
+        // The order this reads in is the whole of it. Parsed first, an event
+        // with a name nothing handles fails the turn on a payload nobody was
+        // going to look at — and the arm above, which exists to skip it, is
+        // never reached at all.
+        assert_eq!(of("something_new", "not json at all"), None);
+    }
+
+    #[test]
+    fn a_stop_reason_this_build_has_not_heard_of_is_not_reported_as_a_finish() {
+        // The day the vendor adds one is the day nobody is watching. Read as a
+        // finish, an answer cut short by it arrives looking complete, which is
+        // the one failure the user cannot see for themselves.
+        assert_eq!(
+            of(
+                "message_delta",
+                r#"{"delta":{"stop_reason":"something_new"}}"#
+            ),
+            Some(Delta::Stopped(StopReason::Unknown))
+        );
     }
 
     #[test]

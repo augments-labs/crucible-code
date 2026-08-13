@@ -67,6 +67,20 @@ pub enum StopReason {
     Paused,
     /// The user cancelled.
     Cancelled,
+    /// The provider named a reason this build has never heard of.
+    ///
+    /// Every other variant here says what happened; this one says only that
+    /// nobody knows, which is why it exists rather than a fallback to
+    /// [`Self::Yielded`]. A vendor's list grows, and the day it does, the arm
+    /// that catches the new word decides whether an answer that was cut short
+    /// arrives looking complete. Reading it as unfinished is wrong at worst
+    /// about a turn that was fine; reading it as a finish is wrong about the
+    /// one failure the user cannot see for themselves.
+    ///
+    /// It is not a licence to stop mapping reasons. A new one in a vendor's
+    /// list is still an edit to that provider — this is what holds until the
+    /// edit is made.
+    Unknown,
 }
 
 /// The ordered record of turns.
