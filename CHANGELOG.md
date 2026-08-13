@@ -8,6 +8,14 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Containment holds against the tree changing underneath it, on Unix.** A
+  check settles where a name led at the instant it ran, and anything else that
+  can write into the workspace could move it after — replace a directory above
+  the file with a link and the open followed it out. A proven path is now
+  reached by walking down against descriptors already held, one component at a
+  time, leaving no interval for a swap. Windows keeps the check on the last
+  component; `workspace/open.rs` says what that leaves.
+
 - **Stopping a command stops the pipeline it started, on Unix.** Only the shell
   was signalled, and every other process on the line is a child of it — so they
   were reparented and kept running. `yes > /dev/null | cat`, timed out or

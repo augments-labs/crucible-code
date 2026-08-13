@@ -73,12 +73,14 @@ globset = "=0.4.20"
 grep-searcher = "=0.1.17"
 grep-regex = "=0.1.14"
 
-# Unix system calls `std` does not expose. Stopping a command means stopping the
-# pipeline it started rather than the shell at the head of it, and that is
-# `kill` on a negated process group id — which `std` has no call for. Used by
-# `crucible-tools` under `cfg(unix)`, confined to `bash/output.rs`, and with the
-# feature naming the one area it is drawn on.
-rustix = { version = "=1.1.4", features = ["process"] }
+# Two Unix calls `std` does not expose, and the feature list is which. `process`
+# is `kill` on a negated process group id, so a command's whole pipeline is
+# stopped rather than the shell at its head — `crucible-tools`, confined to
+# `bash/output.rs`. `fs` is `openat`, so a proven path is reached by walking
+# down against descriptors already held rather than by name a second time —
+# `crucible-core`, confined to `workspace/open/descent.rs`. Both `cfg(unix)`,
+# where `crossterm` already compiles this, so it costs a feature not a crate.
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 # JSON. Every wire protocol here speaks it, and hand-rolling the parser would
 # mean hand-rolling string escapes and surrogate pairs — where a mistake is a

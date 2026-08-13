@@ -4,6 +4,14 @@
 //! about to be created cannot be resolved the same way: the first can be
 //! canonicalised whole, and the second has a last component that is not there
 //! yet.
+//!
+//! Both answer about an instant. What a canonical path settles is where a name
+//! led when it was asked, and a second writer can move it afterwards — so what
+//! comes back is a resolved path with no symbolic link anywhere in it, and
+//! [`open`](super::WorkspacePath::open) is what proves that still true by
+//! walking it. The division is the point: containment is decided here, once,
+//! about text somebody sent; whether the tree still agrees is decided there,
+//! at the moment of the call.
 
 use std::path::{Path, PathBuf};
 
@@ -95,13 +103,16 @@ impl Workspace {
     }
 
     /// The containment check itself, on resolved paths.
+    ///
+    /// What comes back carries the directory it was found under as well as the
+    /// path, because that directory is where opening it later starts from —
+    /// see [`open`](super::WorkspacePath::open).
     fn contain(&self, requested: &str, resolved: PathBuf) -> Result<WorkspacePath, PathError> {
-        if self.roots.contains(&resolved) {
-            Ok(WorkspacePath::proven(resolved))
-        } else {
-            Err(PathError::Escapes {
+        match self.roots.containing(&resolved) {
+            Some(root) => Ok(WorkspacePath::proven(root, resolved)),
+            None => Err(PathError::Escapes {
                 requested: requested.into(),
-            })
+            }),
         }
     }
 }

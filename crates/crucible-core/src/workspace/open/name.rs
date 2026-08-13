@@ -1,4 +1,5 @@
-//! Reaching a proven path by name.
+//! Reaching a proven path by name, where a walk through descriptors cannot be
+//! had.
 //!
 //! What this holds is the last component: a name that has become a symbolic
 //! link since it was resolved is refused, and a new file is created through the

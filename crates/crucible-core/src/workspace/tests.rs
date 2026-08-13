@@ -213,6 +213,13 @@ fn a_reached_directory_is_readable_and_writable() {
         .creatable(&f.beside.join("new.txt").display().to_string())
         .unwrap();
     assert!(written.as_path().starts_with(&f.beside));
+
+    // Opening walks down from whichever directory containment was settled
+    // against, so a reached directory has to be one a walk can start at. Were
+    // that always the root, every path here would be refused for lying outside
+    // a tree it was never in.
+    assert!(read.open().is_ok());
+    assert!(written.create().is_ok());
 }
 
 #[test]
@@ -292,6 +299,113 @@ fn a_root_whose_name_is_not_utf8_is_refused_at_the_door() {
     assert!(matches!(err, PathError::NotText { .. }), "got {err:?}");
 
     let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn a_leaf_made_into_a_link_after_the_check_is_not_opened_through() {
+    let f = Fixture::new("swapleaf");
+    let path = f.workspace.existing("kept.txt").unwrap();
+
+    // Containment established where this name led at the instant it ran. A
+    // second writer with the workspace open — a build script, a watcher, a
+    // shell in the next pane — can move it afterwards, and opening by name
+    // would follow it straight out of the tree.
+    fs::remove_file(path.as_path()).unwrap();
+    symlink(f.outside.join("secret.txt"), path.as_path());
+
+    let err = path.open_to_change().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert_eq!(
+        fs::read_to_string(f.outside.join("secret.txt")).unwrap(),
+        "out"
+    );
+}
+
+#[test]
+fn a_link_planted_where_a_new_file_goes_is_not_created_through() {
+    let f = Fixture::new("swapcreate");
+    let path = f.workspace.creatable("fresh.txt").unwrap();
+
+    symlink(f.outside.join("absent.txt"), path.as_path());
+
+    // `O_CREAT | O_EXCL`, so the operating system refuses to satisfy the
+    // create through a link at the last component, dangling or not. There is
+    // no second lookup here for the swap to win.
+    let err = path.create().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert!(!f.outside.join("absent.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
+    // The other half of the race, and the one a check on the last component
+    // never sees: it is not the file that moves but a directory above it. What
+    // answers is the walk down from the root, which asks for `sub` against a
+    // descriptor for the directory holding it and with `O_NOFOLLOW` — so a
+    // `sub` that has become a link is refused by the same call that would
+    // otherwise have followed it, for reading and for creating alike.
+    let f = Fixture::new("swapabove");
+    fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
+    fs::write(f.outside.join("one.txt"), "out").unwrap();
+    let existing = f.workspace.existing("sub/one.txt").unwrap();
+    let fresh = f.workspace.creatable("sub/fresh.txt").unwrap();
+
+    fs::remove_dir_all(f.workspace.root().join("sub")).unwrap();
+    std::os::unix::fs::symlink(&f.outside, f.workspace.root().join("sub")).unwrap();
+
+    let err = existing.open().unwrap_err();
+    assert!(
+        matches!(err, PathError::Swapped { .. }),
+        "a file outside the workspace was opened for reading: {err:?}"
+    );
+
+    let err = fresh.create().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert!(
+        !f.outside.join("fresh.txt").exists(),
+        "a file was created outside the workspace"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_a_project_links_to_its_own_files_through_is_still_read() {
+    let f = Fixture::new("linkeddir");
+    fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
+    symlink(
+        f.workspace.root().join("sub"),
+        f.workspace.root().join("via"),
+    );
+
+    // The link a checkout shipped, which is most of them: `via` is inside the
+    // workspace and leads inside it. Resolving followed it and settled
+    // containment about where it led, so what the walk down takes is `sub` —
+    // refusing every link on sight would instead refuse a repository for being
+    // laid out the way repositories are.
+    let path = f.workspace.existing("via/one.txt").unwrap();
+    assert!(path.as_path().starts_with(f.workspace.root().join("sub")));
+
+    let mut file = path.open().unwrap();
+    let mut read = String::new();
+    std::io::Read::read_to_string(&mut file, &mut read).unwrap();
+    assert_eq!(read, "in");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_reached_through_a_link_is_still_a_workspace() {
+    let f = Fixture::new("linkedroot");
+    let alias = f.workspace.root().with_file_name("checkout");
+    symlink(f.workspace.root(), &alias);
+
+    // A checkout reached through a link is common enough that getting it wrong
+    // would be getting the feature wrong: the root is resolved once when the
+    // workspace opens, so every walk afterwards starts at the far end and the
+    // link is never on the way down.
+    let workspace = Workspace::open(&alias).unwrap();
+    let path = workspace.existing("kept.txt").unwrap();
+    assert!(path.open().is_ok());
 }
 
 #[test]
