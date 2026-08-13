@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Internal
+
+- A component's rows can be pictured against a file checked in beside it, so a
+  test about what something *looks like* is reviewed as a screen rather than as
+  a `vec!` of formatted strings. It is for pictures only: an invariant such as
+  "no row is wider than the terminal" stays a property test, because a snapshot
+  would assert the answer instead of the rule. `menu` is the first to use it.
+
 ### Fixed
 
 - **The prompt box and the row under it never disappear.** The live tail was
