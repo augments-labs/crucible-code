@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **<kbd>Ctrl-C</kbd> lands while a model is thinking.** The socket read had no
+  bound, so a provider that stopped sending mid-answer kept the turn inside it
+  and the press waited for the next token — which might never come. The read is
+  now bounded, comes back saying nothing arrived, and the turn checks whether
+  you asked it to stop.
+
 ### Changed
 
 - **A provider stream can say "nothing yet".** A read used to block until the
