@@ -7,6 +7,22 @@
 //!
 //! The alternative — a second thread forwarding events into the first — buys
 //! nothing and adds a hop to every delta.
+//!
+//! An answer carries no name for the question it answers, and does not need
+//! one. [`Asking`] reads from a channel of its own, and [`Ask::ask`] takes
+//! `&mut self` and blocks until the answer arrives — so the value that asked is
+//! the value that reads, and it cannot have a second question outstanding while
+//! it waits. What an identifier would defend against is therefore only a
+//! question answered twice, and the thread that draws answers each exactly
+//! once: on the path that drew it, or on the path that has stopped drawing.
+//!
+//! Two turns cannot overlap either, but that is not what this rests on. A
+//! second asker would be a second [`Asking`] with a channel of its own, and
+//! what it would want is not a name for its question: it would want the drawing
+//! thread to learn which channel to answer on, which is the reply end
+//! travelling with the question rather than being held for the turn. One asker
+//! is why it is held for the turn, and an identifier carried today would name a
+//! question nothing is competing with.
 
 use std::sync::mpsc::{Receiver, Sender};
 

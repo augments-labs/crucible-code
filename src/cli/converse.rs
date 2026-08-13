@@ -5,28 +5,39 @@
 //! be answered, and it is why no lock appears anywhere on the render path: the
 //! only thread that writes to the terminal is the one running this loop.
 //!
-//! A prompt is typed into the box [`typing`] draws, and everything else on this
-//! thread is read as a line the terminal collected. Raw mode is therefore held
-//! only while a line is being written, which is what leaves the rest of the
-//! session as it was: Ctrl-C during a turn ends the process, because catching a
-//! signal would need `unsafe`, which this workspace forbids. The session log is
-//! append-only and written as the turn goes, so `--continue` picks the session
-//! up from wherever it stopped.
+//! Raw mode is held for the whole session rather than for each prompt, because
+//! the box takes typing while a turn runs: the keyboard cannot be handed back
+//! between turns if somebody is still writing in one. So this loop reads keys
+//! and the worker's events together — a short wait on the channel, then a look
+//! at whatever the keyboard already has, round and round — and a permission
+//! question is answered by a key rather than by a line the terminal collected.
+//!
+//! Two things follow from holding it. Ctrl-C is a key here rather than a signal
+//! the terminal raises, so this loop is the only thing that can act on it: mid
+//! turn it asks the turn to stop, which is what it always meant. And a session
+//! with no terminal at either end holds nothing at all and reads whole lines,
+//! which is the path every test drives.
+//!
+//! The session log is append-only and written as the turn goes, so `--continue`
+//! picks the session up from wherever it stopped.
 
+use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::thread;
+use std::time::Duration;
 
 use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
 use crucible_runner::Runner;
-use crucible_tui::{Renderer, Terminal, TerminalError};
+use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, TerminalError, pressed};
 
 use super::Fatal;
 use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use super::unasked;
 use command::Ran;
 use typing::Asked;
 
@@ -36,6 +47,14 @@ mod typing;
 
 /// What the user types after, where there is no box to type into.
 const MARK: &str = "› ";
+
+/// How long the loop waits on the turn before looking at the keyboard.
+///
+/// A wake-up rate rather than a spin: the thread is parked in `recv_timeout`
+/// for all of it. Short enough that a keystroke appears at once — well inside
+/// what a hand notices — and long enough that a turn producing nothing costs
+/// sixty wake-ups a second and no work in any of them.
+const TICK: Duration = Duration::from_millis(16);
 
 /// What every turn in a conversation is taken under.
 ///
@@ -54,6 +73,14 @@ pub(crate) struct Terms {
     pub(crate) cancel: Cancel,
     /// The file an answer of `always` writes its rule into.
     pub(crate) remembering: PathBuf,
+    /// Which provider this session is set up to ask, where a key was found for
+    /// one. `/model` writes its answer under this name, and where there is none
+    /// there is no name to write it under.
+    pub(crate) provider: Option<&'static str>,
+    /// The file at home that `/model` writes its answer into. A model is a fact
+    /// about who is running crucible rather than about the checkout, so it is
+    /// not the file beside `remembering`.
+    pub(crate) choosing: PathBuf,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -74,6 +101,23 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
+    // Held for the whole session and dropped on the way out however this
+    // returns. Between turns it is what draws the box; during one it is what
+    // lets the box go on being typed into. `None` is a session with no terminal
+    // at one end or the other, which reads whole lines instead.
+    let raw = Raw::enter()?;
+    let keys = raw.is_some();
+
+    // One line for the whole session rather than one per prompt. What was typed
+    // while a turn ran is still there when it ends, and the allocation the last
+    // line grew to is the one the next starts in.
+    let mut editor = Editor::new();
+
+    // Lines finished while a turn was still running. They are the next prompts,
+    // in the order they were typed, and each is taken without asking for
+    // another.
+    let mut queued: VecDeque<String> = VecDeque::new();
+
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -85,7 +129,33 @@ pub(crate) fn converse<T: Terminal>(
         // here instead.
         renderer.resized()?;
 
-        let prompt = match typing::ask(renderer, style, &mut runner)? {
+        // A line queued during the last turn is the prompt, and nothing is
+        // asked. It is committed here rather than where it was typed: at that
+        // moment the answer above it was still arriving, and a line written
+        // into the middle of one is a line in the wrong place.
+        if let Some(said) = queued.pop_front() {
+            draw::queued(renderer, &said, style)?;
+
+            runner = take(
+                runner,
+                renderer,
+                terms,
+                Taking {
+                    prompt: said,
+                    editor: &mut editor,
+                    queued: &mut queued,
+                    answers: Answers { input, keys },
+                },
+            )?;
+
+            if !told && let Some(problem) = runner.session().trouble() {
+                draw::trouble(renderer, &problem, style)?;
+                told = true;
+            }
+            continue;
+        }
+
+        let prompt = match typing::ask(renderer, style, &mut runner, &mut editor, keys)? {
             Asked::Said(said) => said,
             Asked::Ended => break,
 
@@ -131,7 +201,28 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        runner = take(runner, renderer, terms, input, prompt)?;
+        // Before the turn and not inside it, because a turn with no model is
+        // not a turn: the prompt would be recorded, a request would go out
+        // naming nothing, and the vendor's refusal would describe a model name
+        // that was never typed. `/model` is what changes this answer, so it is
+        // said again here rather than only under the welcome the session opened
+        // with — by now that has scrolled away.
+        if runner.model().is_empty() {
+            draw::unconfigured(renderer, unasked(terms.provider), style)?;
+            continue;
+        }
+
+        runner = take(
+            runner,
+            renderer,
+            terms,
+            Taking {
+                prompt,
+                editor: &mut editor,
+                queued: &mut queued,
+                answers: Answers { input, keys },
+            },
+        )?;
 
         if !told && let Some(problem) = runner.session().trouble() {
             draw::trouble(renderer, &problem, style)?;
@@ -173,8 +264,7 @@ fn take<T: Terminal>(
     runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    input: &mut dyn BufRead,
-    prompt: String,
+    mut taking: Taking<'_>,
 ) -> Result<Runner, Fatal> {
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
@@ -185,16 +275,25 @@ fn take<T: Terminal>(
     let relay = Relay::new(post);
     let running = terms.cancel.clone();
 
-    // The mode stands under the turn, where it stands under the box the rest of
-    // the time. A turn is the longest a session goes without a prompt on
-    // screen, and it is the stretch the mode is deciding things over: what a
-    // tool call arriving in the middle of it costs is exactly which mode is in
-    // force, and reading that off the screen must not mean remembering it.
+    // The box stands under the turn, where it stands under the prompt the rest
+    // of the time, and the mode stands under the box. A turn is the longest a
+    // session goes without a prompt on screen, and it is the stretch the mode is
+    // deciding things over: what a tool call arriving in the middle of it costs
+    // is exactly which mode is in force, and reading that off the screen must
+    // not mean remembering it.
     //
     // Read here because the runner is about to leave, and nothing changes the
     // mode while it is away. Drawn below rather than here, where a failure would
     // be a turn that never ran.
-    let standing = mode::standing(runner.mode(), renderer.columns());
+    let mode = runner.mode();
+    let prompt = taking.prompt;
+
+    // Whatever stopped the last turn is spent, and this is the last moment at
+    // which clearing it can be certain of that: from the next line on there are
+    // two threads, one of them reading the keyboard. A press arriving after
+    // this is a press about the turn below, which is what the turn does with a
+    // flag it finds raised.
+    terms.cancel.reset();
 
     let working = thread::spawn(move || {
         let mut runner = runner;
@@ -211,30 +310,46 @@ fn take<T: Terminal>(
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
-    let mut held = renderer
-        .under(&[standing], None, terms.style.palette())
-        .map_err(Fatal::from);
+    let mut held = typing::stand(renderer, taking.editor, mode, terms.style);
 
     // Ends when the worker drops both senders, which happens when the turn is
-    // over. No sentinel event, and no way to leave the loop early and miss the
-    // last delta.
+    // over. The wait is bounded rather than blocking so that the keyboard is
+    // looked at between deltas; nothing is skipped either way, because every
+    // event is still taken from the same channel in the order it was sent.
+    loop {
+        match seen.recv_timeout(TICK) {
+            Ok(one) => {
+                if held.is_ok() {
+                    held = shown(one, renderer, terms, &mut taking.answers, &reply);
+                } else if matches!(one, Seen::Question { .. }) {
+                    // Nothing is drawn and nothing is read once the terminal or
+                    // the input has failed, but a question still has to be
+                    // answered: the worker waits on the reply channel, and this
+                    // loop waits on the worker. A refusal is what a drawing
+                    // thread that has stopped already means, said out loud
+                    // rather than by going quiet.
+                    let _ = reply.send(verdict(None, false));
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
 
-    for one in seen {
-        if held.is_ok() {
-            held = shown(one, renderer, terms, input, &reply);
-        } else if matches!(one, Seen::Question { .. }) {
-            // Nothing is drawn and nothing is read once the terminal or the
-            // input has failed, but a question still has to be answered: the
-            // worker waits on the reply channel, and this loop waits on the
-            // worker. A refusal is what a drawing thread that has stopped
-            // already means, said out loud rather than by going quiet.
-            let _ = reply.send(verdict(None, false));
+        // After the event rather than before it, so what the turn said is on
+        // screen before the box is drawn back underneath it. A line finished
+        // here is kept for the loop above: running it now would start a second
+        // turn inside this one.
+        if held.is_ok() && taking.answers.keys {
+            match typing::during(renderer, taking.editor, mode, terms.style, &terms.cancel) {
+                Ok(said) => queue(taking.queued, said),
+                Err(problem) => held = Err(problem),
+            }
         }
     }
 
-    // The turn is over, so the row that stood under it is. What comes back next
-    // is the box, and the box carries the mode itself -- left standing, it
-    // would be the same fact twice with a blank row between them.
+    // The turn is over, so what stood under it is taken back. What comes back
+    // next is the same box, live this time, and the two on screen together
+    // would be one box drawn twice.
     if held.is_ok() {
         held = renderer
             .under(&[], None, terms.style.palette())
@@ -245,12 +360,140 @@ fn take<T: Terminal>(
     held.map(|()| runner)
 }
 
+/// Adds a line finished mid turn behind whatever is already waiting.
+///
+/// Kept in order, and every one of them kept. The other two answers were both
+/// wrong for the same reason: keeping one line and dropping the rest loses
+/// something the user typed, watched the box take, and never sees again, and
+/// joining them into one prompt puts a message in the transcript nobody wrote —
+/// two lines typed a minute apart are two things asked, and the second is often
+/// what to do about the answer to the first. A queue costs a turn each and
+/// loses none of it.
+fn queue(waiting: &mut VecDeque<String>, said: Option<String>) {
+    if let Some(said) = said {
+        waiting.push_back(said);
+    }
+}
+
+/// What one turn is being taken with, beyond the runner and the terminal.
+///
+/// A struct because the line and where an answer comes from both outlive the
+/// turn, and a call with five references in a row is one nobody can read.
+struct Taking<'a> {
+    /// What was asked.
+    prompt: String,
+    /// The line being written while the turn runs. It outlives the turn, so
+    /// what was typed during one is still in the box after it.
+    editor: &'a mut Editor,
+    /// The prompts waiting behind this turn, which this one adds to as lines
+    /// are finished in the box under it. The loop above takes them.
+    queued: &'a mut VecDeque<String>,
+    /// Where the answer to a permission question comes from.
+    answers: Answers<'a>,
+}
+
+/// How a permission question gets answered.
+struct Answers<'a> {
+    /// Standard input, for a session with no terminal to read keys from.
+    input: &'a mut dyn BufRead,
+    /// Whether keys are being read rather than lines.
+    keys: bool,
+}
+
+/// One answer to one question.
+///
+/// A key where there is a keyboard, because raw mode is held for the whole
+/// session now and a line-reading terminal is not collecting one. The letter is
+/// written out afterwards, since nothing echoed it: an answer that left no mark
+/// would leave the record showing a question and no reply.
+///
+/// This is the one place in the session that waits on a key with no clock on
+/// it: the question stands until somebody decides. So it is also the longest a
+/// window can change without anybody noticing, which is why the key that says
+/// it did is acted on here rather than passed over with the arrows.
+fn answered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    answers: &mut Answers<'_>,
+    writable: bool,
+) -> Result<Answer, Fatal> {
+    if !answers.keys {
+        return Ok(verdict(read(answers.input)?.as_deref(), writable));
+    }
+
+    loop {
+        let said = match heard(pressed()?) {
+            Heard::Said(said) => said,
+
+            // The renderer is holding a size the screen no longer has, and
+            // everything it draws after this rewinds by the row count that size
+            // implies — for the rest of the turn, over rows it never drew.
+            // Nothing is redrawn here: the question is committed, so it is the
+            // terminal's to reflow, and the row the answer goes on is one the
+            // renderer counts none of and therefore leaves alone.
+            Heard::Resized => {
+                renderer.resized()?;
+                continue;
+            }
+
+            Heard::Ignored => continue,
+        };
+
+        draw::answered(renderer, &said)?;
+        return Ok(verdict(Some(&said), writable));
+    }
+}
+
+/// What one key pressed at a question means.
+///
+/// Three answers rather than two, and the third is the whole reason this is a
+/// function: a key that is not an answer is not therefore nothing. Written apart
+/// from the loop above because that loop cannot be driven from a test — the
+/// keyboard it reads is the process's own — and this much of the reading can be.
+enum Heard {
+    /// What was typed, to be read as a verdict. Empty is a refusal.
+    Said(String),
+    /// The window changed under the question.
+    Resized,
+    /// Not an answer and not news. Wait for the next key.
+    Ignored,
+}
+
+/// Reads one key as an answer, as news, or as neither.
+///
+/// Anything that is not one of the letters is a refusal, which is what an
+/// unrecognised line already meant. Escape and Ctrl-C are spelled out among
+/// them so that the way out of a question is the way out of everything else.
+///
+/// Every remaining key is named rather than caught by a rest arm. A key that
+/// arrives while a permission question is on screen is either an answer or
+/// something this has decided to ignore, and a new one added to `Pressed` must
+/// be decided about here rather than silently join the second group.
+fn heard(arrived: Pressed) -> Heard {
+    match arrived {
+        Pressed::Key(Key::Char(letter)) => Heard::Said(letter.to_string()),
+        Pressed::Key(Key::Interrupt | Key::Eof | Key::Enter) | Pressed::Escape => {
+            Heard::Said(String::new())
+        }
+
+        Pressed::Resized => Heard::Resized,
+
+        // An arrow, a click, a mode step, a key that means nothing here. None
+        // of them is an answer, and none of them may be read as one.
+        Pressed::Key(_)
+        | Pressed::Up
+        | Pressed::Down
+        | Pressed::Cycle
+        | Pressed::Clicked { .. }
+        | Pressed::Ignored => Heard::Ignored,
+    }
+}
+
 /// Draws one thing the worker sent, and answers it if it was a question.
 fn shown<T: Terminal>(
     one: Seen,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    input: &mut dyn BufRead,
+    answers: &mut Answers<'_>,
     reply: &Sender<Answer>,
 ) -> Result<(), Fatal> {
     let style = terms.style;
@@ -264,7 +507,7 @@ fn shown<T: Terminal>(
             let rule = narrowest(&call, &sensitivity);
 
             draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
-            let answer = verdict(read(input)?.as_deref(), rule.is_some());
+            let answer = answered(renderer, answers, rule.is_some())?;
 
             // Before the answer goes back, so the file is written by the time
             // the tool it allowed runs. `always` is only ever answered where a

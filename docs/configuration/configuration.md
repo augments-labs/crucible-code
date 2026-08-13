@@ -59,11 +59,11 @@ crucible at another variable also points it away from the usual one: with
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
 ```
 
-That model is reached by naming the provider and no model — `crucible --model
-openai/`. A bare `crucible` uses `anthropic`, so it takes
-`providers.anthropic.model`, and falls back to `claude-sonnet-5` if nothing set
-one. Each provider has its own fallback, so `--model openai/` with nothing
-configured asks for `gpt-5.6-terra` rather than a model openai does not serve. See [Providers and models](../providers/providers.md).
+There is no model built in, so this is where a bare `crucible` gets one. It is
+read for the provider whose key this machine holds, and `/model <name>` writes
+it here for you. With nothing set here and nothing on the command line, crucible
+starts and asks rather than picking a model on your behalf. See
+[Providers and models](../providers/providers.md).
 
 ### `permissions`
 
@@ -110,6 +110,7 @@ means nothing to anyone else who clones the repository.
 | --- | --- | --- |
 | `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
+| `mouse` | `off`, `click` | Who the mouse belongs to for the length of a session. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
@@ -117,6 +118,36 @@ is a font missing that character, and nothing about that reaches crucible — th
 bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
+
+`mouse` is one trade with two ends rather than a preference. Left `off`, the
+terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
+the middle button pastes. Set to `click`, crucible asks the terminal to forward
+buttons for the whole session, so a click in the box places the cursor between
+turns — and the wheel is a button too, so it stops scrolling until crucible
+exits, a turn included, where a click places nothing. crucible draws inline,
+which means the transcript above the box belongs to the terminal, so it cannot
+scroll that for you in exchange.
+
+### `updates`
+
+| Key | Means |
+| --- | --- |
+| `check` | `auto` to find out when a newer release exists, `never` to leave the network alone. |
+
+```json
+{ "updates": { "check": "never" } }
+```
+
+`auto` is the default and is the only thing crucible reaches the network for
+besides a turn. At most once a day, on a thread of its own, it asks GitHub which
+release is newest and writes the answer to `~/.crucible/release`; nothing waits
+for it, so the answer is drawn under the welcome the *next* time you start. No
+part of your session, your directory or your configuration is sent — the request
+is a plain GET for the repository's latest release, carrying a user agent that
+names crucible and its version.
+
+`never` stops the asking. crucible then never contacts GitHub, and never says
+anything about releases.
 
 ### `env`
 
@@ -306,7 +337,8 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, glyphs, toolDetail
+crucible has at line 3, column 5 — accepted here: color, glyphs, mouse,
+toolDetail
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

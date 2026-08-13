@@ -101,6 +101,11 @@ fn described(field: &Field) -> Value {
         about,
         shape,
         examples,
+        // Which layers a key may be written in is not something one schema can
+        // say: this file is served to all three, and a key refused in one of
+        // them is a key everywhere else. The sentence above says it in words
+        // instead, which is what an editor shows.
+        widens: _,
     } = field;
 
     let mut described = of(shape);

@@ -27,12 +27,14 @@ Implement `Tool`, and answer three questions in code rather than in a comment:
    and the only one: a shell reaches whatever the user can, so what bounds it is
    question 2 rather than the workspace.
 
-A `SpawnsProcess` also carries a `Reach`, which is a claim a mode is entitled to
-act on without asking. Answer `Anything` unless the tool proved otherwise, and
-prove it only from words the shell will not change before the program sees them.
-A `Reach::Workspace` that turns out to be wrong is a file changed outside the
-workspace with nobody asked, so widening what counts as proved is a security
-change and is reviewed as one.
+A `SpawnsProcess` is asked about in every mode but `fullAccess`, and nothing a
+tool can say about the line changes that. Containment here is a descriptor held
+open, not a name found to be safe: the file tools keep the directory they proved
+and never look a path up twice, and a program handed a path looks it up itself,
+after the check and outside this process. So a reading of a command line is
+worth a rule somebody wrote and a question somebody answers, and it is not worth
+a grant — a check that decided otherwise would be a file changed outside the
+workspace with nobody asked.
 
 ## Grants
 

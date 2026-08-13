@@ -97,23 +97,41 @@ asking, and where. Under the card is the box:
 ask mode on (shift+tab to cycle)
 ```
 
-The box is as wide as the terminal, and a line longer than it scrolls inside it
-rather than wrapping. The arrows move a character, <kbd>Ctrl</kbd> or
-<kbd>Alt</kbd> held with one moves a word — as do <kbd>Alt-B</kbd> and
-<kbd>Alt-F</kbd> — and <kbd>Home</kbd> and <kbd>End</kbd> reach the two ends. A
-word here is a run of anything that is not a space, so a path is one word.
+The box is as wide as the terminal, and a line longer than it wraps onto the
+next row rather than scrolling sideways — so the box grows downwards as you
+write. It stops at about half the window; past that the line scrolls under the
+top edge and what you are writing stays in view.
+
+The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
+moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</kbd>
+and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
+not a space, so a path is one word.
+
+The mouse belongs to the terminal: the wheel scrolls, dragging selects, the
+middle button pastes. Set `output.mouse` to `click` and crucible takes the
+buttons instead, for the whole session, so clicking in the box between turns
+puts the cursor where you clicked — at the price of the wheel, because the wheel
+is a button and the scrollback it scrolls is where crucible's transcript lives.
+An inline renderer cannot have both, which is why it is a choice rather than a
+default.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
 you type, and the row and the colour of the box both follow it.
 [Permissions](../permissions/index.md) is where all three are.
 
-Type a prompt and press enter. The box goes, the line stays where it was, and
-the answer streams in under it. The mode does not go with the box: it stands on
-its own row under whatever is being written, so a tool call arriving ten minutes
-into a turn is read beside the mode that let it through. The key is not offered
-there — nothing is reading one until the turn ends. Tool calls appear as they
-run:
+Type a prompt and press enter. The line stays where it was and the answer
+streams in under it, with the box and the mode still standing at the bottom of
+the screen — so a tool call arriving ten minutes into a turn is read beside the
+mode that let it through, and the screen looks the same whether or not crucible
+happens to be working.
+
+You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
+queues what you wrote as the next prompt, and it is run the moment the turn
+ends. <kbd>Ctrl-C</kbd> asks the turn to stop. The key that steps the mode is
+not offered there, because the mode is away with the turn until it finishes.
+
+Tool calls appear as they run:
 
 ```
 › what does the runner do when a tool fails?
@@ -166,11 +184,16 @@ session.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/model` | The model this session is asking |
+| `/model` | The model this session is asking, or the one to ask from now on |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |
 | `/exit` | Ends the session |
+
+`/model` on its own says which model is being asked. `/model <name>` asks that
+one from the next turn on, and writes it to `~/.crucible/config.json` under the
+provider this run is set up for — so the next crucible started anywhere begins
+with it. See [Providers and models](../providers/providers.md).
 
 `/clear` empties the transcript: the next prompt is the first one the model
 sees, and the turns before it are neither sent nor paid for again. It is the
@@ -239,14 +262,17 @@ transcript that already holds this much. Without the line, all three look
 exactly like an answer that finished.
 
 A turn that ended normally says nothing at all. There is a fourth line,
-`! stopped`, for a turn that was cancelled — but nothing in 0.0.x can cancel
-one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
+`! stopped`, for a turn you stopped yourself:
 
-<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.x input is left
-in the terminal's cooked mode and no signal is caught, so there is no way to stop
-a single answer and keep the session. The session log is written as the turn
-goes, so `crucible --continue` picks the session up from wherever it
-stopped — see [Sessions](../sessions/sessions.md).
+```
+! stopped
+```
+
+<kbd>Ctrl-C</kbd> during a turn asks that turn to stop, and leaves the session
+where it was. Nothing is killed: the provider stops between reads and a command
+stops between the steps it takes, so a file a tool was writing is either
+untouched or finished. What was on screen stays on screen, what you had typed
+stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
@@ -264,3 +290,9 @@ Six tools, advertised in the order a model tends to reach for them:
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see
 [Permissions](../permissions/index.md).
+
+`bash` runs its command through a POSIX shell in the workspace root, and starts
+it with a short list of variables — `PATH`, `HOME`, the locale — rather than the
+environment crucible is running in. Your provider key is not on that list, so a
+command that prints the environment prints no key. Anything else a command needs
+is named in [`env`](../configuration/configuration.md#env).

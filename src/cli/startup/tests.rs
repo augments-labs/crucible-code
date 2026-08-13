@@ -5,6 +5,11 @@ use std::cell::RefCell;
 use super::*;
 use crate::cli::sample::Sample;
 
+/// The entry the wiring resolves before it builds anything.
+fn serving(named: &str) -> Served {
+    served(named).expect("a provider this build has")
+}
+
 #[test]
 fn each_provider_reads_the_key_belonging_to_it() {
     // The pairing is the whole of this function, and both arms build whichever
@@ -17,8 +22,8 @@ fn each_provider_reads_the_key_belonging_to_it() {
     };
     let nothing = Settings::default();
 
-    let anthropic = provider("anthropic", &nothing, &from).expect("a provider");
-    let openai = provider("openai", &nothing, &from).expect("a provider");
+    let anthropic = provider(Some(serving("anthropic")), &nothing, &from).expect("a provider");
+    let openai = provider(Some(serving("openai")), &nothing, &from).expect("a provider");
 
     assert_eq!(anthropic.name(), "anthropic");
     assert_eq!(openai.name(), "openai");
@@ -34,7 +39,7 @@ fn a_provider_reads_the_variable_its_configuration_names() {
         sample.settings(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
 
     let read = RefCell::new(Vec::new());
-    provider("anthropic", &settings, &|name: &str| {
+    provider(Some(serving("anthropic")), &settings, &|name: &str| {
         read.borrow_mut().push(name.to_owned());
         Some("a-key".to_owned())
     })
@@ -48,26 +53,50 @@ fn a_provider_reads_the_variable_its_configuration_names() {
 #[test]
 fn a_missing_key_names_the_variable_to_set_and_not_its_value() {
     // The name is configuration; the value is the secret. Only one of them is
-    // allowed to reach a terminal.
-    let problem = provider("openai", &Settings::default(), &|_| None).expect_err("no key was set");
+    // allowed to reach a terminal. Reachable because the flag can name a
+    // provider outright — a provider chosen from the keys held has one by
+    // construction.
+    let problem = provider(Some(serving("openai")), &Settings::default(), &|_| None)
+        .expect_err("no key was set");
 
     assert_eq!(problem.to_string(), "OPENAI_API_KEY is not set");
 }
 
 #[test]
-fn a_provider_this_build_does_not_serve_reads_no_key_at_all() {
-    // Reading one first would report a missing key for a provider that could
-    // not have been used even with the key in place.
+fn a_machine_with_no_key_at_all_gets_the_provider_that_answers_nothing() {
+    // Not a refusal to start. The session is the place the key gets set up, and
+    // ending the process takes away the screen that is done on.
     let read = RefCell::new(Vec::new());
 
-    let problem = provider("ollama", &Settings::default(), &|name: &str| {
+    let nowhere = provider(None, &Settings::default(), &|name: &str| {
         read.borrow_mut().push(name.to_owned());
+        Some("a-key".to_owned())
+    })
+    .expect("a provider that refuses rather than a refusal to build one");
+
+    assert_eq!(nowhere.name(), "none");
+    assert!(
+        read.into_inner().is_empty(),
+        "a key was read for a provider there is none of"
+    );
+}
+
+#[test]
+fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
+    // The list and the match are two halves of one change. A provider added to
+    // the list alone reaches here as a name nothing can build, and this is the
+    // arm that says so instead of returning a provider for the wrong vendor.
+    let unarmed = Served {
+        name: "ollama",
+        key: "OLLAMA_API_KEY",
+    };
+
+    let problem = provider(Some(unarmed), &Settings::default(), &|_| {
         Some("a-key".to_owned())
     })
     .expect_err("this build has no such provider");
 
     assert!(problem.to_string().contains("ollama"), "{problem}");
-    assert!(read.into_inner().is_empty(), "a key was read anyway");
 }
 
 #[test]
@@ -77,7 +106,7 @@ fn every_name_the_check_accepts_is_one_an_arm_can_build() {
     // announced its model and then said the provider does not exist.
     for one in PROVIDERS {
         served(one.name).expect("a check that agrees with the arm");
-        provider(one.name, &Settings::default(), &|_| {
+        provider(Some(one), &Settings::default(), &|_| {
             Some("a-key".to_owned())
         })
         .expect("an arm for every name the check accepts");
@@ -88,39 +117,10 @@ fn every_name_the_check_accepts_is_one_an_arm_can_build() {
 }
 
 #[test]
-fn a_startup_that_cannot_reach_a_provider_leaves_no_session_behind() {
-    // An empty session written for a run that never happened is then the
-    // newest one for this directory, so --continue would offer it instead
-    // of the last real session.
-    let sample = Sample::new("no-provider");
-    let (logs, workspace) = (sample.logs(), sample.workspace());
-
-    let Err(problem) = assemble(&Startup {
-        provider: "nowhere",
-        model: "gpt-5.6-terra",
-        resuming: false,
-        mode: Mode::Ask,
-        settings: &Settings::default(),
-        sessions: &logs,
-        workspace: &workspace,
-        cancel: &Cancel::new(),
-        from: &|_| Some("a-key".to_owned()),
-    }) else {
-        panic!("a provider this build does not have was accepted");
-    };
-
-    assert!(matches!(problem, Fatal::Provider { .. }), "{problem:?}");
-    assert!(
-        !logs.exists(),
-        "a session was written for a startup that failed"
-    );
-}
-
-#[test]
 fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
-    // The same invariant, through the other way a startup fails: an unserved
-    // provider is caught by a match, a missing key by a lookup, and the two
-    // return from different places.
+    // An empty session written for a run that never happened is then the newest
+    // one for this directory, so --continue would offer it instead of the last
+    // real session.
     let sample = Sample::new("no-key");
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
@@ -128,8 +128,8 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // key — and the lookup says there is none regardless of what the shell
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
-        provider: "openai",
-        model: "gpt-5.6-terra",
+        provider: Some(serving("openai")),
+        model: Some("gpt-5.6-terra"),
         resuming: false,
         mode: Mode::Ask,
         settings: &Settings::default(),
@@ -146,4 +146,27 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         !logs.exists(),
         "a session was written for a startup that failed"
     );
+}
+
+#[test]
+fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
+    // The state the warning under the welcome describes. Everything but the
+    // turn works, which is what leaves `/model` somewhere to be typed.
+    let sample = Sample::new("no-model");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    let runner = assemble(&Startup {
+        provider: None,
+        model: None,
+        resuming: false,
+        mode: Mode::Ask,
+        settings: &Settings::default(),
+        sessions: &logs,
+        workspace: &workspace,
+        cancel: &Cancel::new(),
+        from: &|_| None,
+    })
+    .expect("a session with nothing set up still starts");
+
+    assert_eq!(runner.model(), "", "an unnamed model is the empty name");
 }

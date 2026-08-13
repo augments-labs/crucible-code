@@ -12,6 +12,10 @@ use super::Settings;
 
 impl Settings {
     /// Which mode to start in, when the command line does not say.
+    ///
+    /// Never from `.crucible/config.json`, which the document refused while it
+    /// was still one file. Nothing is re-checked here: what a layer may say is
+    /// decided where the file is open and the position can be pointed at.
     #[must_use]
     pub fn mode(&self) -> Option<Mode> {
         read(self.permissions("mode")?.as_str()?)
@@ -115,7 +119,7 @@ mod tests {
         let user = Document::sample(r#"{"permissions":{"deny":["bash(curl *)"]}}"#, Origin::User);
         let project = Document::sample(
             r#"{"permissions":{"allow":["bash(cargo test)"]}}"#,
-            Origin::Project,
+            Origin::ProjectLocal,
         );
 
         let settings = Settings::resolve(vec![project, user]);
@@ -189,6 +193,26 @@ mod tests {
         assert_eq!(
             settings.extra_directories().collect::<Vec<_>>(),
             [shared, vendor]
+        );
+    }
+
+    #[test]
+    fn the_layer_that_travels_with_a_clone_cannot_name_the_mode() {
+        // The mode this module reads is authority: `fullAccess` approves every
+        // call in every session before the user has typed anything. Nearness
+        // would hand it to `.crucible/config.json`, which is a file the person
+        // running crucible never wrote — so the document refuses it, and this
+        // is the reader that would otherwise have believed it.
+        let err = Document::parse(
+            r#"{"permissions":{"mode":"fullAccess"}}"#,
+            ".crucible/config.json",
+            Origin::Project,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, crate::error::ConfigError::Widening { .. }),
+            "got {err:?}"
         );
     }
 

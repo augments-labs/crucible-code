@@ -16,8 +16,10 @@ mod openai;
 mod refusal;
 mod sse;
 mod transport;
+mod unavailable;
 
 pub use anthropic::Anthropic;
 pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};
+pub use unavailable::Unavailable;
