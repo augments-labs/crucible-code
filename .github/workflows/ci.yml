@@ -43,11 +43,12 @@ jobs:
       - env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          # Where it is going decides whether the ceiling blocks. `main`, `dev`
-          # and a release branch are read by somebody other than the author and
-          # are what a release is cut from. Anywhere else is a branch somebody
-          # is assembling, and the review that matters happens when it asks for
-          # one of these — measured then, over everything it collected.
+          # Named for the message rather than for the verdict: the ceiling
+          # blocks wherever a pull request is going. A branch collecting
+          # sub-branches was once let past on the argument that the review that
+          # matters happens when it asks for `main` — but that measures the
+          # collection and never the pieces, so the reader of each piece, who is
+          # the one the ceiling is for, met an unbounded diff either way.
           INTO: ${{ github.event.pull_request.base.ref }}
           # Code that only moves is the diff this measures wrongly, and no diff
           # can prove that about itself. The label is somebody saying so, and it
@@ -78,17 +79,10 @@ jobs:
               exit 0
           fi
 
-          case "$INTO" in
-              main | dev | release/*)
-                  echo "$changed changed lines into $INTO; the ceiling is 400"
-                  echo "split it into pull requests that each stand on their own,"
-                  echo "or label it moves-only if nothing changed but where it lives"
-                  exit 1
-                  ;;
-          esac
-
-          echo "$changed changed lines into $INTO, over the 400-line ceiling"
-          echo "not blocked here — $INTO is measured in turn when it asks for main"
+          echo "$changed changed lines into $INTO; the ceiling is 400"
+          echo "split it into pull requests that each stand on their own,"
+          echo "or label it moves-only if nothing changed but where it lives"
+          exit 1
 
   platforms:
     name: cargo test (${{ matrix.os }})

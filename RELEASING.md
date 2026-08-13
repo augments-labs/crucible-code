@@ -66,9 +66,12 @@ the workspace ships as one unit and there is no per-crate version to drift.
 ## Cutting it
 
 Nothing reaches `main` except through a pull request, and none merges until
-`scripts/check.sh` and `scripts/bench.sh` are green on it. That is a repository
-ruleset with no bypass, so it holds for the person cutting the release too — the
-tired push at the end of a long day is the one it exists to catch.
+`scripts/check.sh`, `scripts/bench.sh` and `400 changed lines` are green on it.
+That is a repository ruleset with no bypass, so it holds for the person cutting
+the release too — the tired push at the end of a long day is the one it exists
+to catch. A required check is the only kind there is: one that merely runs is a
+red mark beside a merge button that still works, which is what the size check
+was until it was added to that list.
 
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.
