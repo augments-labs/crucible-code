@@ -214,6 +214,15 @@ fn notice(stop: StopReason) -> Option<&'static str> {
         StopReason::Paused => Some("! unfinished: the provider paused this turn; ask it to go on"),
 
         StopReason::Cancelled => Some("! stopped"),
+
+        // The provider named a reason this build has not heard of. Whatever it
+        // was, it was not one of the two endings above that mean the answer is
+        // whole — so it is reported as unfinished rather than passed over,
+        // which is the one way a truncated answer reaches the reader looking
+        // complete.
+        StopReason::Unknown => {
+            Some("! unfinished: the provider stopped for a reason this build does not know")
+        }
     }
 }
 
