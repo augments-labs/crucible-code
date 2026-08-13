@@ -595,7 +595,7 @@ mod tests {
             ))
             .unwrap();
 
-        let search = crate::Grep::new(workspace);
+        let search = crate::Grep::new(workspace, Cancel::new());
         let searched = search
             .run(allowed(
                 &search,
