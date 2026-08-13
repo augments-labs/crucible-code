@@ -1,0 +1,25 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+52x20 cursor 15,47 scrolled 4
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
+|│                                  │ ───────────────|
+|│  no model selected               │                |
+|│                                  │ Tips           |
+|│  /…/workspace                    │                |
+|│                                  │ · /          op|
+|│                                  │ · shift+tab  st|
+|│                                  │ · ctrl-c     cl|
+|╰───────────────────────────────────────────────────|
+|                                                    |
+|                                                    |
+|Warning: No models available. Use /login or set an A|
+|variable. Then use /model to select a model.        |
+|                                                    |
+|╭──────────────────────────────────────────────────╮|
+|│ › the quick brown fox jumps over the lazy dog    │|
+|╰──────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                    |
+|                                                    |
+|                                                    |

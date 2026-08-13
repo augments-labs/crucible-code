@@ -66,6 +66,33 @@ rather than that the file got long. Splitting to be under a number produces the
 failure no number can see: a directory of files too small to have a subject,
 where learning what one of them does means opening all of them.
 
+## The whole-screen test
+
+`tests/whole_screen` starts the real binary on a real pseudo terminal, sends
+keystrokes and asserts on the screen it drew. It is the only test that sees the
+arithmetic turning rows into a screen — how far a frame rewinds, where the
+cursor parks, how tall the live region may be — because every other one is
+handed rows and never a terminal. `scripts/check.sh` runs it with the rest; on
+its own it is
+
+```bash
+cargo test --test whole_screen
+```
+
+Linux only, and `setsid` from util-linux has to be on the path. The child needs
+the pty as its *controlling* terminal or it reads the size of your window
+instead of the one the case asked for, and claiming one without `unsafe` means
+handing that job to `setsid --ctty`.
+
+The screens are `insta` snapshots, so anything that moves the layout fails them
+— including a release, which changes the version on the welcome. Read the diff
+as a screen, and accept it once it is the screen you meant:
+
+```bash
+cargo insta accept                                    # with cargo-insta
+INSTA_UPDATE=always cargo test --test whole_screen    # without it
+```
+
 ## Making a change
 
 1. Branch from `main`. Name it for the change: `feat/session-resume`,

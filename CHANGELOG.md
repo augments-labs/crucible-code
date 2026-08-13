@@ -125,6 +125,13 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The renderer is watched on a real screen.** A test drives the shipped
+  binary through a pseudo terminal and asserts on the picture it draws, so the
+  frame arithmetic no component test can see — how far a frame rewinds, where
+  the cursor parks, how tall the live region may be — is checked at six window
+  sizes, against a screen that refuses any escape sequence the renderer does
+  not promise to emit. Linux, and it needs `setsid`. Test-only.
+
 - **Component pictures in the test suite.** The welcome, prompt, notice and
   command list are checked against a drawing of each one — the rows as text,
   with the colour slot named inline — so a layout change shows up as a diff of

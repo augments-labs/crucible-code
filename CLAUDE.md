@@ -76,29 +76,7 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
 5. **Ideas travel; a body of expression does not.** What another harness *does*
-   is free to learn from — its features, its documentation, its behaviour under
-   your own hands. What it *wrote* is not: its code, its prompt text, its help
-   and error pages as written, its art and its palette are not copied or
-   adapted, and a permissive licence does not change that. My own prior code is
-   mine to reuse.
-
-   A short functional string is not a body of expression, and this rule stops
-   short of it. `press ctrl+c again to exit`, the name of a key, the name of a
-   command: copyright does not reach a phrase that short, there is only so much
-   room to say the thing, and a reader made to relearn what every other terminal
-   already taught them is paying for our scruple. Where the words are forced,
-   use the words. Where there is a choice worth making, crucible makes its own —
-   that is taste rather than law, and it is the weaker of the two claims.
-
-   Reading another harness is allowed, and its source is not a special case.
-   Understanding how something works is how software gets written, and what you
-   carry away from reading is knowledge; what you may not carry away is the
-   text. The safeguard is not a closed door but a declared one — having read
-   something closely, say so before you write that part, in the pull request or
-   in the conversation, so it can be written from the spec, or by somebody else,
-   or written and then read back against what you saw. What is fatal is finding
-   out afterwards. `.claude/skills/prior-art` holds the procedure and the worked
-   cases.
+   is free to learn from — its features, its documentation, its behaviour, etc.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
@@ -126,33 +104,18 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
 10. **A change owes its documentation in the same commit.** `docs/` for anything
     a user meets, `README.md` for the first minute of it, `CONTRIBUTING.md` and
     `docs/building/` for what a contributor has to install, the changelog for
-    anything that ships. Written a release later, a page documents a memory of
-    the change rather than the change — and the reader who needed it met the
-    gap first.
-
-    The module doc comment is on that list, and it is the one most often left
-    behind. This project states its invariants in the prose at the top of a
-    file rather than in a design document, so a comment its code has outgrown
-    is not a stale note: it is a false statement of the invariant, sitting
-    where the next reader goes to learn it, and the closer it sits to the code
-    that broke it the more it is believed. So read the prose above what you
-    changed — and the prose above whatever now does something else because you
-    changed it, which is the copy nobody opens.
+    anything that ships. The module doc comment is on that list and is the one
+    most often left behind: this project states its invariants in the prose at
+    the top of a file, so one the code has outgrown is a false statement of the
+    invariant sitting where the next reader goes to learn it. Read the prose
+    above what you changed, and above whatever now behaves differently because
+    you changed it.
 11. **A pull request over 400 changed lines into `main` is sent back.**
-    Additions plus deletions across the whole diff, generated files aside —
-    `Cargo.lock` and `schema/` are output, and nobody reads output line by line.
-    Past that a review stops being one: the reader is agreeing that it looks
-    plausible rather than checking that it is right. The remedy is a sequence of
-    pull requests that each stand on their own, not one larger one with a note
-    apologising for its size. Code that only moves is the diff this measures
-    wrongly, and a diff cannot prove that about itself, so that exception is a
-    label on the pull request — granted, and visible afterwards.
-
-    `dev` and a release branch hold it too, being what a release is cut from.
-    Into a branch somebody is assembling it is printed and not enforced: that
-    branch is measured in turn when it asks for `main`, over everything it
-    collected, so nothing arrives there unmeasured.
-
+    Additions plus deletions, generated files aside. Past that a review stops
+    being one. The remedy is a sequence of pull requests that each stand on
+    their own; code that only moves is measured wrongly by this and takes the
+    `moves-only` label. `CONTRIBUTING.md` has the rest, including which
+    branches enforce it.
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym

@@ -1,0 +1,306 @@
+//! crucible, running in a terminal of a known size.
+//!
+//! The pair is opened here, the real binary is started against the far side of
+//! it, keystrokes go in and bytes come back. Nothing is mocked: what the
+//! [`Screen`] draws is what a terminal would have drawn.
+//!
+//! Three things about the arrangement are not obvious and all three are load
+//! bearing.
+//!
+//! The child is started through `setsid --ctty` rather than directly. It needs
+//! this pty as its *controlling* terminal, because `crossterm` reads the window
+//! size by opening `/dev/tty` and only falls back to standard output when that
+//! fails — a child that kept the developer's terminal would lay its frames out
+//! for whatever size that window happens to be, and the same test would draw
+//! something different on every machine. It is also what makes the kernel
+//! deliver `SIGWINCH` when the size changes, so the resize case is a resize
+//! rather than a simulation of one. Claiming a controlling terminal from inside
+//! a child means `setsid` and `TIOCSCTTY` between the fork and the exec, which
+//! is `unsafe` and denied in this workspace, so the one program whose whole job
+//! is to do that safely does it instead.
+//!
+//! The far side is put in raw mode here, before the child starts. Otherwise the
+//! kernel's own line discipline rewrites what crucible wrote — `\r\n` arrives
+//! as `\r\r\n` — and the screen would be asserting on the kernel's version of
+//! the frame rather than on crucible's.
+//!
+//! The far side is then closed. While anything in this process still holds it
+//! open, a read of the near side blocks forever instead of ending when the
+//! child does, and a test that hangs is worse than one that fails.
+
+use std::ffi::OsStr;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read as _, Write as _};
+use std::os::unix::ffi::OsStrExt as _;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::{Duration, Instant};
+
+use rustix::pty::{self, OpenptFlags};
+use rustix::termios::{self, OptionalActions, Winsize};
+
+use crate::screen::Screen;
+
+/// How long the terminal must go without a byte before the screen is settled.
+///
+/// Generous, because the alternative to waiting long enough is a test that
+/// fails one run in twenty and then gets switched off.
+const QUIET: Duration = Duration::from_millis(400);
+
+/// How long one step may take before the screen is called stuck.
+const CEILING: Duration = Duration::from_secs(20);
+
+/// What is on screen once crucible has finished opening a session.
+///
+/// The opening is several frames with real work between them — a directory of
+/// session logs read, a runner assembled — and quiet alone cannot tell the gap
+/// between two of them from the end of the last. This is the row drawn under
+/// the box, which is the last thing written before crucible waits for a key.
+const READY: &str = "ask mode on";
+
+/// The configuration every case is given.
+///
+/// `updates.check` reaches GitHub, and a test that asks a network for anything
+/// is a test that fails when the network does. Written rather than left to the
+/// default so that the answer is in the tree next to the cases.
+const NEVER: &str = "{\n  \"updates\": {\n    \"check\": \"never\"\n  }\n}\n";
+
+/// crucible, and the terminal it is drawing into.
+#[derive(Debug)]
+pub(crate) struct Window {
+    /// The near side of the pair: what a terminal emulator would hold.
+    terminal: File,
+    /// The process being watched.
+    child: Child,
+    /// What has been read off the terminal and not yet drawn.
+    bytes: Receiver<Vec<u8>>,
+    /// What it has drawn.
+    screen: Screen,
+    /// The directory this case was given to itself.
+    scratch: PathBuf,
+}
+
+impl Window {
+    /// Starts crucible in a window that size and waits for it to finish
+    /// drawing.
+    ///
+    /// `case` names the directory this run is given, so two cases running at
+    /// once share no session log, no configuration and no working directory.
+    pub(crate) fn open(case: &str, columns: u16, rows: u16) -> Self {
+        // One flat directory per case, so the last thing a case does can take
+        // the whole of what it made with it.
+        let scratch = std::env::temp_dir().join(format!(
+            "crucible-whole-screen-{}-{case}",
+            std::process::id()
+        ));
+        let home = scratch.join("home");
+
+        // Deep enough that the welcome always shortens it to its last part.
+        // A path short enough to be drawn whole would carry this run's process
+        // id onto the screen and into the snapshot.
+        let workspace = scratch
+            .join("a-directory-to-be-working-in")
+            .join("workspace");
+        fs::create_dir_all(&home).expect("a scratch home directory");
+        fs::create_dir_all(&workspace).expect("a scratch working directory");
+        fs::write(home.join("config.json"), NEVER).expect("a configuration file");
+
+        let (terminal, inside) = pair(columns, rows);
+        let child = start(&scratch, &home, &workspace, inside);
+        let (sender, bytes) = mpsc::channel();
+        let reading = terminal
+            .try_clone()
+            .expect("a second handle on the terminal");
+        std::thread::spawn(move || read(reading, &sender));
+
+        let mut window = Self {
+            terminal,
+            child,
+            bytes,
+            screen: Screen::new(columns as usize, rows as usize),
+            scratch,
+        };
+        window.settle("crucible started", Some(READY));
+        window
+    }
+
+    /// Types `keys` and waits for the screen to stop changing.
+    pub(crate) fn types(&mut self, keys: &str) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.settle(&format!("{keys:?} was typed"), None);
+    }
+
+    /// Changes the size of the window, the way dragging its corner would.
+    ///
+    /// The kernel is what tells crucible: setting the size on the near side of
+    /// the pair raises `SIGWINCH` in the session on the far side of it.
+    pub(crate) fn resize(&mut self, columns: u16, rows: u16) {
+        termios::tcsetwinsize(&self.terminal, size(columns, rows)).expect("a new window size");
+        self.screen.resize(columns as usize, rows as usize);
+        self.settle(&format!("the window became {columns}x{rows}"), None);
+    }
+
+    /// The screen, ready to be compared against the one checked in beside it.
+    pub(crate) fn picture(&self) -> String {
+        self.screen.picture()
+    }
+
+    /// Reads until the screen settles, and fails plainly when it never does.
+    ///
+    /// Settled means two things at once: the terminal has gone [`QUIET`], and
+    /// the screen is far enough along to be looked at — which is `wanted` on
+    /// screen where a step has something it is waiting for, and otherwise a
+    /// single byte having arrived since whatever was last sent. Quiet alone is
+    /// not enough for a step drawn in several frames with work between them,
+    /// because the gap between two frames and the end of the last one look the
+    /// same from here; `wanted` is what tells them apart.
+    ///
+    /// Quiet is measured in bytes rather than in visible change, which is the
+    /// stricter of the two: a frame that redrew the same rows still has to be
+    /// read, because the sequences inside it are half of what is asserted.
+    ///
+    /// It terminates because every turn of the loop either takes bytes off a
+    /// stream a stopped process cannot add to, or waits [`QUIET`] for one, and
+    /// [`CEILING`] bounds the whole wait either way. Past it the step fails and
+    /// says which one it was, rather than going on to compare a half-drawn
+    /// screen against a picture and blaming the renderer for the difference.
+    fn settle(&mut self, step: &str, wanted: Option<&str>) {
+        let deadline = Instant::now() + CEILING;
+        let mut arrived = false;
+
+        loop {
+            match self.bytes.recv_timeout(QUIET) {
+                Ok(bytes) => {
+                    self.screen.feed(&bytes);
+                    arrived = true;
+                }
+                Err(RecvTimeoutError::Timeout) if self.ready(arrived, wanted) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!(
+                        "crucible left the terminal while {step}\n{}",
+                        self.picture()
+                    )
+                }
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "the screen never settled after {step}, in {CEILING:?}{}\n{}",
+                wanted.map_or(String::new(), |mark| format!(" — no {mark:?} on it")),
+                self.picture()
+            );
+        }
+
+        assert!(
+            self.screen.refusals().is_empty(),
+            "crucible wrote what it does not promise to write, {step}:\n{}\n{}",
+            self.screen.refusals().join("\n"),
+            self.picture()
+        );
+    }
+
+    /// Whether a quiet screen is one worth looking at yet.
+    fn ready(&self, arrived: bool, wanted: Option<&str>) -> bool {
+        wanted.map_or(arrived, |mark| self.picture().contains(mark))
+    }
+}
+
+impl Drop for Window {
+    /// Takes the process and the directory back, however the case ended.
+    ///
+    /// In `Drop` rather than at the end of a case because the interesting exits
+    /// are the other ones: a failed assertion unwinds, and a crucible left
+    /// running would hold a terminal open and go on writing into a test run
+    /// that has moved on.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.scratch);
+    }
+}
+
+/// Opens the pair, sets its size, and puts the far side in raw mode.
+fn pair(columns: u16, rows: u16) -> (File, File) {
+    let terminal = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
+        .expect("a pseudo terminal");
+    pty::grantpt(&terminal).expect("the far side is ours");
+    pty::unlockpt(&terminal).expect("the far side is unlocked");
+
+    let named = pty::ptsname(&terminal, Vec::new()).expect("the far side has a name");
+    let inside = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(OsStr::from_bytes(named.as_bytes()))
+        .expect("the far side opens");
+
+    let mut mode = termios::tcgetattr(&inside).expect("the far side has a mode");
+    mode.make_raw();
+    termios::tcsetattr(&inside, OptionalActions::Now, &mode).expect("the far side goes raw");
+    termios::tcsetwinsize(&terminal, size(columns, rows)).expect("a window size");
+
+    (File::from(terminal), inside)
+}
+
+/// Starts crucible against the far side of the pair, with nothing in its
+/// environment that this test did not put there.
+///
+/// `HOME` is inside the scratch directory as well: `CRUCIBLE_CODE_HOME` is what
+/// crucible reads, but a run that fell back for any reason must not fall back
+/// into the developer's own files. `PATH` is the one thing carried over, since
+/// it is how `setsid` is found.
+fn start(scratch: &Path, home: &Path, workspace: &Path, inside: File) -> Child {
+    let second = inside.try_clone().expect("a second handle on the far side");
+    let third = inside.try_clone().expect("a third handle on the far side");
+
+    Command::new("setsid")
+        .arg("--ctty")
+        .arg(env!("CARGO_BIN_EXE_crucible"))
+        .current_dir(workspace)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", scratch)
+        .env("TERM", "xterm-256color")
+        .env("NO_COLOR", "1")
+        .env("CRUCIBLE_CODE_HOME", home)
+        .stdin(Stdio::from(inside))
+        .stdout(Stdio::from(second))
+        .stderr(Stdio::from(third))
+        .spawn()
+        .expect("setsid --ctty starts crucible; util-linux provides it")
+}
+
+/// Reads the terminal until it goes away, which is what killing crucible does.
+///
+/// A thread rather than a poll: `std` has no wait-with-timeout on a descriptor,
+/// and a timeout is what makes "the screen has settled" something a test can
+/// decide. The read ends when the last handle on the far side is closed, so
+/// this ends with the process rather than outliving it.
+fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
+    let mut buffer = [0_u8; 8192];
+
+    while let Ok(read) = terminal.read(&mut buffer) {
+        if read == 0 {
+            break;
+        }
+        if sender
+            .send(buffer.get(..read).unwrap_or_default().to_vec())
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+/// A window size, in the shape the terminal takes one.
+fn size(columns: u16, rows: u16) -> Winsize {
+    Winsize {
+        ws_row: rows,
+        ws_col: columns,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    }
+}
