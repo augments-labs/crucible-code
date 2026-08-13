@@ -1,6 +1,6 @@
 # crucible — contributor guide
 
-A terminal coding agent in Rust. Original, clean-room implementation.
+A terminal coding agent in Rust. Original implementation.
 
 This is the always-on agent-facing rules file. `AGENTS.md` is a symlink to it,
 so Claude Code, Codex and anything else that looks for either name reads the
@@ -90,10 +90,15 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    use the words. Where there is a choice worth making, crucible makes its own —
    that is taste rather than law, and it is the weaker of the two claims.
 
-   Its *source and prompt files* stay closed as well, for a reason of its own:
-   the claim at the top of this file is that crucible is clean-room, and access
-   is the one thing that cannot be given back. `.claude/skills/clean-room` holds
-   the procedure and the worked cases.
+   Reading another harness is allowed, and its source is not a special case.
+   Understanding how something works is how software gets written, and what you
+   carry away from reading is knowledge; what you may not carry away is the
+   text. The safeguard is not a closed door but a declared one — having read
+   something closely, say so before you write that part, in the pull request or
+   in the conversation, so it can be written from the spec, or by somebody else,
+   or written and then read back against what you saw. What is fatal is finding
+   out afterwards. `.claude/skills/prior-art` holds the procedure and the worked
+   cases.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
