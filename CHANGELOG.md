@@ -27,6 +27,12 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **Authentication can fail where it is used, not only where it is looked up.**
+  A credential is applied on the way into every request, so one that has to
+  renew something first now has a way to say the renewal was refused — the turn
+  ends before a request goes out, naming what happened rather than a variable
+  that was set all along.
+
 - **The prompt box takes typing while a turn is running.** Raw mode is held for
   the whole session rather than for each prompt, so the box goes on being
   written in while the answer arrives above it; <kbd>Enter</kbd> queues the line
@@ -98,6 +104,13 @@ Notable changes to crucible. Format follows
 - **`cargo run` starts crucible.** The bench probes under `src/bin/` are targets
   too, so cargo refused to choose between six binaries and asked for `--bin` —
   including for the `cargo run -- --help` the documentation gives you.
+
+- **`grep` and `glob` can be stopped, and bound what they say.** Neither took
+  notice of a cancel, so nothing stopped a walk over an enormous tree, and
+  neither capped the number of results a caller could ask for. Killing a `bash`
+  tool now takes the whole pipeline with it rather than leaving its members
+  running, and the shell is resolved to an absolute path rather than found on
+  `PATH`.
 
 ### Security
 

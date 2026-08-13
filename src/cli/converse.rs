@@ -21,6 +21,7 @@
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 
+use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
@@ -112,9 +113,10 @@ pub(crate) fn converse<T: Terminal>(
     // line grew to is the one the next starts in.
     let mut editor = Editor::new();
 
-    // A line finished while a turn was still running. It is the next prompt,
-    // and it is taken without asking for another.
-    let mut queued: Option<String> = None;
+    // Lines finished while a turn was still running. They are the next prompts,
+    // in the order they were typed, and each is taken without asking for
+    // another.
+    let mut queued: VecDeque<String> = VecDeque::new();
 
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
@@ -131,21 +133,20 @@ pub(crate) fn converse<T: Terminal>(
         // asked. It is committed here rather than where it was typed: at that
         // moment the answer above it was still arriving, and a line written
         // into the middle of one is a line in the wrong place.
-        if let Some(said) = queued.take() {
+        if let Some(said) = queued.pop_front() {
             draw::queued(renderer, &said, style)?;
 
-            let (back, over) = take(
+            runner = take(
                 runner,
                 renderer,
                 terms,
                 Taking {
                     prompt: said,
                     editor: &mut editor,
+                    queued: &mut queued,
                     answers: Answers { input, keys },
                 },
             )?;
-            runner = back;
-            queued = over;
 
             if !told && let Some(problem) = runner.session().trouble() {
                 draw::trouble(renderer, &problem, style)?;
@@ -211,18 +212,17 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let (back, over) = take(
+        runner = take(
             runner,
             renderer,
             terms,
             Taking {
                 prompt,
                 editor: &mut editor,
+                queued: &mut queued,
                 answers: Answers { input, keys },
             },
         )?;
-        runner = back;
-        queued = over;
 
         if !told && let Some(problem) = runner.session().trouble() {
             draw::trouble(renderer, &problem, style)?;
@@ -265,7 +265,7 @@ fn take<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     mut taking: Taking<'_>,
-) -> Result<(Runner, Option<String>), Fatal> {
+) -> Result<Runner, Fatal> {
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = channel();
@@ -304,7 +304,6 @@ fn take<T: Terminal>(
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
     let mut held = typing::stand(renderer, taking.editor, mode, terms.style);
-    let mut queued = None;
 
     // Ends when the worker drops both senders, which happens when the turn is
     // over. The wait is bounded rather than blocking so that the keyboard is
@@ -335,7 +334,7 @@ fn take<T: Terminal>(
         // turn inside this one.
         if held.is_ok() && taking.answers.keys {
             match typing::during(renderer, taking.editor, mode, terms.style, &terms.cancel) {
-                Ok(said) => queued = said.or(queued),
+                Ok(said) => queue(taking.queued, said),
                 Err(problem) => held = Err(problem),
             }
         }
@@ -351,7 +350,22 @@ fn take<T: Terminal>(
     }
 
     let runner = working.join().map_err(|_| Fatal::Lost)?;
-    held.map(|()| (runner, queued))
+    held.map(|()| runner)
+}
+
+/// Adds a line finished mid turn behind whatever is already waiting.
+///
+/// Kept in order, and every one of them kept. The other two answers were both
+/// wrong for the same reason: keeping one line and dropping the rest loses
+/// something the user typed, watched the box take, and never sees again, and
+/// joining them into one prompt puts a message in the transcript nobody wrote —
+/// two lines typed a minute apart are two things asked, and the second is often
+/// what to do about the answer to the first. A queue costs a turn each and
+/// loses none of it.
+fn queue(waiting: &mut VecDeque<String>, said: Option<String>) {
+    if let Some(said) = said {
+        waiting.push_back(said);
+    }
 }
 
 /// What one turn is being taken with, beyond the runner and the terminal.
@@ -364,6 +378,9 @@ struct Taking<'a> {
     /// The line being written while the turn runs. It outlives the turn, so
     /// what was typed during one is still in the box after it.
     editor: &'a mut Editor,
+    /// The prompts waiting behind this turn, which this one adds to as lines
+    /// are finished in the box under it. The loop above takes them.
+    queued: &'a mut VecDeque<String>,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
 }
@@ -383,9 +400,10 @@ struct Answers<'a> {
 /// written out afterwards, since nothing echoed it: an answer that left no mark
 /// would leave the record showing a question and no reply.
 ///
-/// Anything that is not one of the letters is a refusal, which is what an
-/// unrecognised line already meant. Escape and Ctrl-C are spelled out among
-/// them so that the way out of a question is the way out of everything else.
+/// This is the one place in the session that waits on a key with no clock on
+/// it: the question stands until somebody decides. So it is also the longest a
+/// window can change without anybody noticing, which is why the key that says
+/// it did is acted on here rather than passed over with the arrows.
 fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     answers: &mut Answers<'_>,
@@ -396,17 +414,70 @@ fn answered<T: Terminal>(
     }
 
     loop {
-        let said = match pressed()? {
-            Pressed::Key(Key::Char(letter)) => letter.to_string(),
-            Pressed::Key(Key::Interrupt | Key::Eof | Key::Enter) | Pressed::Escape => String::new(),
+        let said = match heard(pressed()?) {
+            Heard::Said(said) => said,
 
-            // A resize, an arrow, a click. None of them is an answer, and none
-            // of them may be read as one.
-            _ => continue,
+            // The renderer is holding a size the screen no longer has, and
+            // everything it draws after this rewinds by the row count that size
+            // implies — for the rest of the turn, over rows it never drew.
+            // Nothing is redrawn here: the question is committed, so it is the
+            // terminal's to reflow, and the row the answer goes on is one the
+            // renderer counts none of and therefore leaves alone.
+            Heard::Resized => {
+                renderer.resized()?;
+                continue;
+            }
+
+            Heard::Ignored => continue,
         };
 
         draw::answered(renderer, &said)?;
         return Ok(verdict(Some(&said), writable));
+    }
+}
+
+/// What one key pressed at a question means.
+///
+/// Three answers rather than two, and the third is the whole reason this is a
+/// function: a key that is not an answer is not therefore nothing. Written apart
+/// from the loop above because that loop cannot be driven from a test — the
+/// keyboard it reads is the process's own — and this much of the reading can be.
+enum Heard {
+    /// What was typed, to be read as a verdict. Empty is a refusal.
+    Said(String),
+    /// The window changed under the question.
+    Resized,
+    /// Not an answer and not news. Wait for the next key.
+    Ignored,
+}
+
+/// Reads one key as an answer, as news, or as neither.
+///
+/// Anything that is not one of the letters is a refusal, which is what an
+/// unrecognised line already meant. Escape and Ctrl-C are spelled out among
+/// them so that the way out of a question is the way out of everything else.
+///
+/// Every remaining key is named rather than caught by a rest arm. A key that
+/// arrives while a permission question is on screen is either an answer or
+/// something this has decided to ignore, and a new one added to `Pressed` must
+/// be decided about here rather than silently join the second group.
+fn heard(arrived: Pressed) -> Heard {
+    match arrived {
+        Pressed::Key(Key::Char(letter)) => Heard::Said(letter.to_string()),
+        Pressed::Key(Key::Interrupt | Key::Eof | Key::Enter) | Pressed::Escape => {
+            Heard::Said(String::new())
+        }
+
+        Pressed::Resized => Heard::Resized,
+
+        // An arrow, a click, a mode step, a key that means nothing here. None
+        // of them is an answer, and none of them may be read as one.
+        Pressed::Key(_)
+        | Pressed::Up
+        | Pressed::Down
+        | Pressed::Cycle
+        | Pressed::Clicked { .. }
+        | Pressed::Ignored => Heard::Ignored,
     }
 }
 

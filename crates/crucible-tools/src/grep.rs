@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_core::{
-    Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
+    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
@@ -27,6 +27,20 @@ const NAME: &str = "grep";
 
 /// How many matching lines one call answers with when it does not say.
 const MATCHES: usize = 200;
+
+/// The most lines a call can ask for, however large a number it sends.
+///
+/// [`MATCHES`] is a default and a caller may raise it; this it cannot. The
+/// number arrives from the model like every other argument, and `"limit":
+/// 100000` is a thing a model writes — where what it costs is not the answer,
+/// which [`crate::bound`] cuts, but the walk that builds one: every hit is held
+/// until the sort, at up to [`WIDTH`] characters each.
+///
+/// A thousand is where the two bounds meet. Even a match reported as
+/// `src/a.rs:1:x` runs to some twenty bytes, so a thousand of them is already
+/// the whole of what an answer carries — past this the bytes have cut it and a
+/// larger number buys nothing but the work of finding lines nobody will read.
+const CEILING: usize = 1_000;
 
 /// Where a matching line is cut. A match inside a minified bundle is worth
 /// reporting; the bundle is not worth sending.
@@ -86,7 +100,7 @@ const SCHEMA: &str = r#"{
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many matching lines to return. Defaults to 200."
+      "description": "How many matching lines to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
     }
   },
   "required": ["pattern"]
@@ -96,6 +110,7 @@ const SCHEMA: &str = r#"{
 #[derive(Debug)]
 pub struct Grep {
     workspace: Workspace,
+    cancel: Cancel,
 }
 
 /// What one call is looking for: the expression, the files it restricts itself
@@ -127,6 +142,9 @@ struct Found {
     /// go and look for itself. Sorted, because the walk is parallel and the
     /// same search has to answer the same way twice.
     partly: Vec<String>,
+    /// Whether the user stopped the turn while the walk was running, which
+    /// makes everything above a prefix of what the tree holds.
+    stopped: bool,
 }
 
 /// What one file gave up: its matching lines, and its name if the search
@@ -137,10 +155,11 @@ struct Searched {
 }
 
 impl Grep {
-    /// Searches inside `workspace`, and nowhere else.
+    /// Searches inside `workspace` and nowhere else, and stops when `cancel`
+    /// says to.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
+        Self { workspace, cancel }
     }
 
     /// Walks `from` and searches every file the ignore rules keep and no rule
@@ -186,6 +205,16 @@ impl Grep {
             // values are rebound above so it takes references to them rather
             // than the values themselves.
             Box::new(move |entry| {
+                // Nothing below notices a flag on its own, and a walk is the
+                // slowest thing this crate does: a tree with a million files in
+                // it, or one somebody wrote to be walked slowly, is exactly
+                // where Ctrl-C has to arrive. What was found before this point
+                // is real and is reported, so stopping costs the turn nothing
+                // it had already paid for.
+                if self.cancel.requested() {
+                    return WalkState::Quit;
+                }
+
                 // One past the limit, so what comes back can say whether it was
                 // cut. Quitting *at* the limit leaves files unvisited and no way
                 // to tell a complete answer from a truncated one.
@@ -236,13 +265,24 @@ impl Grep {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        Found { hits, more, partly }
+        Found {
+            hits,
+            more,
+            partly,
+            // Read after the walk rather than recorded inside it: a request that
+            // arrived is what makes this answer a prefix, whether the walk was
+            // still running when it landed or had just finished.
+            stopped: self.cancel.requested(),
+        }
     }
 
     /// The matching lines of one file, and whether the search reached the end
     /// of it.
     ///
-    /// Three things stop it early. The file cannot be read — no permission, a
+    /// Four things stop it early. The user stopped the turn, which the walk
+    /// answers between files and this answers inside one — a single file can be
+    /// the size of a tree, and a search of it is the wait a stopped turn would
+    /// otherwise sit through. The file cannot be read — no permission, a
     /// device, gone since the walk saw it. A line the matcher hit is not text,
     /// because `UTF8` decodes before it hands anything over and only a NUL byte
     /// quits the searcher, so a Latin-1 file is searched as the text it nearly
@@ -264,6 +304,7 @@ impl Grep {
         let shown = crate::tree::named(&self.workspace, path);
 
         let mut hits = Vec::new();
+        let mut halted = false;
         let found = searcher.search_path(
             matcher,
             path,
@@ -273,6 +314,10 @@ impl Grep {
                     line,
                     text: cut(text.trim_end()),
                 });
+                if self.cancel.requested() {
+                    halted = true;
+                    return Ok(false);
+                }
                 // One past the limit for the same reason the walk goes one file
                 // past it: the answer has to be able to say it was cut, and a
                 // file stopped exactly at the limit cannot tell anyone whether
@@ -282,8 +327,8 @@ impl Grep {
         );
 
         Searched {
+            partly: (found.is_err() || halted).then_some(shown),
             hits,
-            partly: found.err().map(|_| shown),
         }
     }
 
@@ -319,7 +364,7 @@ impl Tool for Grep {
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = crate::args::Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
-        let limit = args.count("limit", MATCHES)?;
+        let limit = args.count("limit", MATCHES)?.min(CEILING);
 
         let matcher = RegexMatcherBuilder::new()
             .case_insensitive(args.flag("ignore_case", false)?)
@@ -354,7 +399,7 @@ impl Tool for Grep {
 
 /// The hits, as lines the model can hand straight back to `read`.
 fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
-    let note = unread(&found.partly);
+    let note = unread(&found.partly) + halted(found.stopped);
 
     if found.hits.is_empty() {
         // The note belongs on this branch too. "Nothing matched" is a claim
@@ -363,20 +408,46 @@ fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
         return ToolOutput::failed(format!("nothing matched {pattern}{note}"));
     }
 
-    let lines = found
-        .hits
-        .iter()
-        .map(|hit| format!("{}:{}:{}\n", hit.path, hit.line, hit.text))
-        .collect::<Vec<_>>()
-        .concat();
+    // Bounded in bytes here rather than in lines above, because the two are not
+    // the same promise: the lines are cut at `WIDTH` characters each, so the
+    // count a call sets says how many lines come back and nothing about how
+    // much text that is.
+    let (lines, over) = crate::bound::within(
+        found
+            .hits
+            .iter()
+            .map(|hit| format!("{}:{}:{}\n", hit.path, hit.line, hit.text)),
+    );
 
-    let tail = if found.more {
+    let tail = if over > 0 {
+        // Raising the limit would not help: what filled up is the answer, not
+        // the list.
+        format!(
+            "\n[stopped at {} matches: the answer was full at {} bytes, narrow the pattern]",
+            found.hits.len().saturating_sub(over),
+            crate::bound::OUTPUT
+        )
+    } else if found.more {
         format!("\n[stopped at {limit} matches: narrow the pattern or raise limit]")
     } else {
         String::new()
     };
 
     ToolOutput::ok(lines + &tail + &note)
+}
+
+/// What a search the user stopped says about itself.
+///
+/// It answers rather than failing. Half a tree searched is half a tree
+/// searched, and the lines it found are what the turn was spent on — but an
+/// answer that stops early looks exactly like one that finished, so the
+/// difference has to be in the text.
+fn halted(stopped: bool) -> &'static str {
+    if stopped {
+        "\n[stopped before the walk finished: a match in a file it did not reach is not here]"
+    } else {
+        ""
+    }
 }
 
 /// The files the search stopped partway through, said out loud.

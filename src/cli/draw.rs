@@ -23,6 +23,16 @@ pub(crate) use opening::{Opening, opening};
 const DIM: &str = "\x1b[2m";
 const PLAIN: &str = "\x1b[0m";
 
+/// What every row of a question after the first is written behind.
+///
+/// The mark that opens a question sits at the first column, and this is what
+/// keeps it the only thing there: a question long enough to wrap spills the
+/// model's own text onto the rows below, and a row of that reading `? bash
+/// wants to run: ls` must not be able to stand where the genuine one stands.
+/// The same two columns the reason and the answers are written behind, so the
+/// whole question reads as one block.
+const UNDER: &str = "  ";
+
 /// Draws one event.
 pub(crate) fn event<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -144,6 +154,12 @@ pub(crate) fn trouble<T: Terminal>(
 ///
 /// `rule` is what an answer of `always` would write down, and `None` where this
 /// call is one no rule can be minted for.
+///
+/// The window is what bounds this rather than the compact ceiling a tool call
+/// and its result are drawn to. Those two are reports of something that is
+/// happening; this is the moment somebody decides whether it may, and a
+/// decision taken on a command's leading columns is a decision about the
+/// padding in front of the payload.
 pub(crate) fn question<T: Terminal>(
     renderer: &mut Renderer<T>,
     call: &ToolCall,
@@ -151,10 +167,12 @@ pub(crate) fn question<T: Terminal>(
     rule: Option<&Minted>,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let width = style.args(renderer.columns());
+    let columns = renderer.columns();
 
     renderer.settle()?;
-    renderer.commit(&asked(call, sensitivity, width))?;
+    for row in asked(call, sensitivity, columns) {
+        renderer.commit(&row)?;
+    }
 
     if let Some(because) = why(sensitivity) {
         renderer.commit(because)?;
@@ -308,30 +326,66 @@ fn notice(stop: StopReason) -> Option<&'static str> {
     }
 }
 
-/// What the user is being asked to allow.
-fn asked(call: &ToolCall, sensitivity: &Sensitivity, width: usize) -> String {
-    match sensitivity {
+/// What the user is being asked to allow, in the rows a window `columns` wide
+/// needs for it.
+///
+/// Wrapped rather than clipped, unlike everything else this file draws. What is
+/// named here is the thing being consented to — the whole command, the whole
+/// path — and a name with its tail cut off is one the reader agrees to without
+/// having read it. Rows are what that costs, and rows are affordable: the
+/// renderer measures every line it commits, so a question three rows tall is
+/// three rows it knows it drew.
+fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<String> {
+    let said = match sensitivity {
         // Never reached through the permission engine, which allows or refuses
         // a read and never asks about one. Here so that a tool reclassified
         // later still has a question to show rather than a blank one.
-        Sensitivity::ReadOnly { target } => {
-            format!("? {} wants to read: {}", call.name, clipped(target, width))
-        }
+        Sensitivity::ReadOnly { target } => format!("? {} wants to read: {target}", call.name),
 
-        Sensitivity::MutatesFile { target } => format!(
-            "? {} wants to change: {}",
-            call.name,
-            clipped(target, width)
-        ),
+        Sensitivity::MutatesFile { target } => format!("? {} wants to change: {target}", call.name),
 
-        // Clipped like the others, and for a stronger reason. What runs is the
-        // model's text to choose. Unclipped, a newline in it commits a second
-        // row, and the last two rows on screen become a question the attacker
-        // wrote and the genuine answer mark underneath it.
         Sensitivity::SpawnsProcess { command } => {
-            format!("? {} wants to run: {}", call.name, clipped(command, width))
+            format!("? {} wants to run: {command}", call.name)
         }
-    }
+    };
+
+    wrapped(&said, columns)
+}
+
+/// One question, folded to the window and written behind [`UNDER`] from the
+/// second row on.
+///
+/// Both halves of that are load-bearing, because the text being folded is the
+/// model's. The flattening comes first: a newline in it would otherwise break a
+/// row nothing here counted, and the renderer would be moving the cursor back
+/// over rows it did not write. The indent is what the flattening alone does not
+/// buy — a command long enough to wrap puts the model's text on rows of its
+/// own, and one of them saying `? bash wants to run: ls` directly above the
+/// answer mark is consent for something nobody read.
+///
+/// Every row is folded to the width of the narrowest, so the indent cannot push
+/// one past the last column. The first row pays two columns it did not have to;
+/// a question is the wrong place to spend care on that.
+fn wrapped(said: &str, columns: usize) -> Vec<String> {
+    // A window with no room for the indent and something after it is folded
+    // without one. Two columns of margin on a window three wide would leave a
+    // row of one character, and rows wider than the window are rows the
+    // terminal wraps itself — which is the one thing this may not produce.
+    let under = if columns > UNDER.len() { UNDER } else { "" };
+
+    // Never zero, or a window too narrow to fold into would leave the question
+    // with no rows at all — and a mark with nothing above it is one somebody
+    // answers blind.
+    let room = columns.saturating_sub(under.len()).max(1);
+
+    fold(&flattened(said), room)
+        .into_iter()
+        .enumerate()
+        .map(|(row, text)| match row {
+            0 => text.to_owned(),
+            _ => format!("{under}{text}"),
+        })
+        .collect()
 }
 
 /// The answers on offer, and the mark to type one after.
@@ -383,19 +437,10 @@ fn kept(rule: &Minted, outcome: Result<&Path, &RememberError>, width: usize) -> 
 /// either direction. Sharing the counting is what keeps this and the tail that
 /// wraps the result from disagreeing about how wide the same string is.
 ///
-/// Control characters become spaces first, before anything is counted: a
-/// newline inside JSON arguments would otherwise break the line in two, and the
-/// tail would be counting rows that the caller did not mean to write. A space
-/// rather than nothing because that is what the row will show — [`cut`] drops
-/// what a terminal will not draw, and this has already decided to draw
-/// something.
+/// Flattened before it is measured, for the reason [`flattened`] gives: what is
+/// counted has to be what will be drawn.
 fn clipped(text: impl fmt::Display, width: usize) -> String {
-    let mut line: String = text
-        .to_string()
-        .trim()
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
+    let mut line = flattened(text);
 
     if cut(&line, width).is_none() {
         return line;
@@ -412,6 +457,22 @@ fn clipped(text: impl fmt::Display, width: usize) -> String {
 
     line.push('…');
     line
+}
+
+/// `text` with everything the terminal would not draw turned into a space.
+///
+/// How many rows a line costs is this file's to decide and the renderer's to
+/// count, so a control character in text that arrived from somewhere else is
+/// the one thing that could take that decision away: a newline in a tool's
+/// arguments is a second row nobody wrote. A space rather than nothing because
+/// that is what the row will show — [`cut`] and [`fold`] drop what a terminal
+/// will not draw, and this has already decided to draw something.
+fn flattened(text: impl fmt::Display) -> String {
+    text.to_string()
+        .trim()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 #[cfg(test)]

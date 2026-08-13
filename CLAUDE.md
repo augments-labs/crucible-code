@@ -185,7 +185,12 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   enums *because* a new variant should break every `match`.
 - **The schema has a second home, and it does not follow this one.**
   `schema/crucible-code-schema.json` is generated from the parser and gated, so
-  it is always right here; SchemaStore serves its own copy, and nothing in this
+  it is always right here — by a test rather than by a section of the gate, and
+  that test rewrites the file before it fails. It is the one thing a run of
+  `scripts/check.sh` writes; everything else about that script only reads. So a
+  stale schema fails once and is green the second time, with the file changed
+  underneath you: read the diff before you commit it. SchemaStore serves its own
+  copy, and nothing in this
   repository can make that one move. A release that changes the file owes a pull
   request against `SchemaStore/schemastore`, raised from the fork
   `NjoyimPeguy/schemastore`, which already exists — `RELEASING.md` has the

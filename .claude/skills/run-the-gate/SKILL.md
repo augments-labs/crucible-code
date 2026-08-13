@@ -12,7 +12,7 @@ description: >-
 scripts/check.sh
 ```
 
-One command, fourteen sections, no arguments. CI runs this exact script, so a green
+One command, sixteen sections, no arguments. CI runs this exact script, so a green
 run here is a green run there. It is also the whole standard: a rule that cannot
 be expressed here, in `Cargo.toml [workspace.lints]`, or in `clippy.toml` is not
 enforceable and does not exist.
@@ -21,22 +21,32 @@ Every section is a property of the source, which is what lets that promise hold:
 the same tree gives the same answer on any machine on any day. A check whose
 answer moves on its own does not belong here — see below.
 
+**Every section runs, every time.** A failure does not end the run, so one run
+reports everything that is wrong with the tree, and the list at the foot names
+the sections that failed. Work up that list rather than re-running after each
+fix: the sections are independent, and only the list is the whole answer.
+
+**One section writes.** The `schema` section is the exception to read-only, and
+it says so when it fires — see its row below.
+
 ## Reading a failure
 
 | Section | What it means when it fails |
 | --- | --- |
+| `merge conflict markers` | A tracked file still holds what a merge left behind. Every tracked file is read, not just the shipped ones: in a `.rs` file the compiler would catch it, in a changelog or a workflow nothing would. |
 | `rustfmt` | `cargo fmt --all` fixes it. Never hand-format around it. |
 | `clippy` | Warnings are errors. Fix the code; an `#[allow]` needs a comment saying what the lint got wrong. |
 | `tests` | Read the assertion, not the count. |
+| `schema` | `schema/crucible-code-schema.json` was stale, and the test that gates it has already rewritten the file — that test rewrites and then fails, so the tree in front of you now differs from the one you ran against. Read the diff, confirm it is what your `shape.rs` change should have produced, and commit it. Never hand-edit that file; it is output. |
 | `file length` | Split by responsibility, not by line count. Two halves that must always change together are still one file. |
-| `no process memory in shipped files` | A file under `crates/`, `src/`, `docs/`, `schema/` or `README.md` names something only this repository can resolve — a decision identifier, an assumption label, a planning directory. Say the thing instead of citing where it was decided. It also fails when the scan could not finish, which means a directory it was told to read is not there. |
+| `no process memory in shipped files` | A file under `crates/`, `src/`, `docs/`, `schema/`, `README.md` or any `Cargo.toml` names something only this repository can resolve — a decision identifier of any prefix, an assumption label, or one of the four planning and harness directories (`.claude/`, `.agents/`, `.codex/`, `.sdlc-skills/`). Say the thing instead of citing where it was decided. A published standard that happens to share the shape — `UTF-8`, `RFC-2119` — is subtracted by name inside the check; adding a name there is widening a hole, so do it only when the tree really needs it. It also fails when the scan could not finish, which means a directory it was told to read is not there. |
 | `documentation links` | A repository-relative link leads nowhere. Follow it: either the target moved and the link needs updating, or the target should exist and does not. External links are deliberately unchecked. |
 | `agent rules files` | `AGENTS.md` stopped being a symlink to `CLAUDE.md`. Restore it; never let two copies exist. |
 | `agent rules scope` | A file in `.claude/rules/` has no `paths:` frontmatter, or aims at a directory that no longer exists — either way nothing loads it. Or a package has no rule aimed at it: every crate, and `src/`, needs one. |
 | `agent skills` | A skill under `.claude/skills/` lost its `.agents/skills/` symlink, or one of those became a real directory. |
 | `workspace lints` | A manifest is missing `[lints] workspace = true`, so `Cargo.toml [workspace.lints]` does not apply to it. Every lint denied there is allow-by-default, which means `.unwrap()`, `panic!()` and `unsafe {}` are all legal in that crate and clippy stays green. |
 | `dependency pinning` | A crate is not `=`-pinned. Checked in every manifest, in each spelling cargo accepts, wherever the `version` key ends up when an inline table wraps. See the `add-a-dependency` skill. |
-| `dependency justification` | A crate has no comment above it saying why it is needed. One comment covers the group beneath it; a blank line starts a new group. A member crate taking `.workspace = true` inherits the reason with the pin and needs no second copy. |
+| `dependency justification` | A crate has no comment above it saying why it is needed. A comment is spent on the first dependency under it; to put a second crate in the same group, name that crate in the comment — a reason that never mentions it was not written about it, and a crate pasted under an existing one is exactly the case a comment cannot name. A member crate taking `.workspace = true` inherits the reason with the pin, and a `path = "crates/…"` dependency on a workspace member needs none: it is this project depending on itself. |
 | `github actions pinning` | An action is referenced by tag. Pin the commit sha, keep the version in a trailing `# vX.Y.Z` comment. |
 | `benchmark gate` | You wrote the first bench probe, so `scripts/bench.sh` can now fail for a real reason. Delete `continue-on-error` from the budgets job in `.github/workflows/ci.yml` and let the budget block the merge. |
 

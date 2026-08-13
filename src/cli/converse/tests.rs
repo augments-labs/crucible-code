@@ -134,6 +134,21 @@ fn two_prompts_are_two_turns() {
 }
 
 #[test]
+fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
+    // Return pressed twice while a long turn ran. The box takes the second
+    // line as readily as the first and clears itself both times, so a queue
+    // that kept only one of them loses a prompt the user watched it accept --
+    // and it never runs, and nothing says so.
+    let mut waiting = VecDeque::new();
+
+    queue(&mut waiting, Some("run the tests".to_owned()));
+    queue(&mut waiting, None);
+    queue(&mut waiting, Some("now fix what failed".to_owned()));
+
+    assert_eq!(waiting, ["run the tests", "now fix what failed"]);
+}
+
+#[test]
 fn a_blank_line_is_not_a_turn() {
     // Otherwise the return key alone sends an empty prompt and costs a
     // request. Counted at the provider rather than in what was drawn: the
@@ -406,6 +421,51 @@ fn a_question_left_unanswered_at_end_of_input_is_refused() {
     );
 
     assert!(written.contains("was not allowed"), "{written}");
+}
+
+#[test]
+fn a_window_that_changed_while_a_question_stood_is_news_rather_than_nothing() {
+    // The one read in the session with no clock on it: the question stands
+    // until somebody decides, which makes it the longest stretch a window can
+    // change over without anybody noticing. Passed over with the arrows, the
+    // renderer keeps a size the screen no longer has and every frame for the
+    // rest of the turn rewinds by that many rows -- over rows it never drew.
+    assert!(matches!(heard(Pressed::Resized), Heard::Resized));
+}
+
+#[test]
+fn a_key_that_answers_nothing_is_not_read_as_an_answer() {
+    // An arrow through a list there is none of, a click, a mode step. The
+    // question is still standing after each of them.
+    for arrived in [
+        Pressed::Up,
+        Pressed::Down,
+        Pressed::Cycle,
+        Pressed::Clicked { row: 4, column: 2 },
+        Pressed::Ignored,
+    ] {
+        assert!(matches!(heard(arrived), Heard::Ignored), "{arrived:?}");
+    }
+}
+
+#[test]
+fn every_way_out_of_a_question_leaves_the_tool_unrun() {
+    // Escape, Ctrl-C and Ctrl-D are the way out of everything else in a
+    // session, so they are the way out of this; return is a line nobody typed.
+    // Every one of them is a refusal rather than a key to wait past, or the
+    // question would stand with no way to say no to it.
+    for arrived in [
+        Pressed::Escape,
+        Pressed::Key(Key::Interrupt),
+        Pressed::Key(Key::Eof),
+        Pressed::Key(Key::Enter),
+    ] {
+        let Heard::Said(said) = heard(arrived) else {
+            panic!("{arrived:?} was not an answer");
+        };
+
+        assert_eq!(verdict(Some(&said), true), (Verdict::Deny, Remember::Never));
+    }
 }
 
 #[test]

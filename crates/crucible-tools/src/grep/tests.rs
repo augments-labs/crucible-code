@@ -4,17 +4,20 @@ use std::path::Path;
 
 use crucible_core::Disposition;
 
-use super::{Grep, MAX_LINE, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
+use super::{
+    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, RegexMatcherBuilder, SearcherBuilder, Sensitivity,
+    Tool, ToolArgs, ToolOutput, WIDTH, report,
+};
 use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Grep::new(sample.workspace());
+    let tool = Grep::new(sample.workspace(), Cancel::new());
     tool.run(allowed(&tool, args)).unwrap()
 }
 
 /// The same search, with rules standing about files below the one searched.
 fn grep_under(sample: &Sample, args: &str, rules: &[(Disposition, &str)]) -> ToolOutput {
-    let tool = Grep::new(sample.workspace());
+    let tool = Grep::new(sample.workspace(), Cancel::new());
     tool.run(under(&tool, args, rules)).unwrap()
 }
 
@@ -121,6 +124,140 @@ fn a_limit_stops_and_says_that_it_did() {
         3
     );
     assert!(output.text().contains("stopped at 3 matches"));
+}
+
+#[test]
+fn a_limit_past_the_ceiling_is_the_ceiling() {
+    // A number the model wrote is an argument like any other. Left unbounded it
+    // decides how many hits the walk holds and how long an answer the next
+    // request carries.
+    let sample = Sample::new("grep-ceiling");
+    sample.write("many.txt", &"needle\n".repeat(CEILING + 50));
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":100000}"#);
+
+    assert_eq!(
+        output
+            .text()
+            .lines()
+            .filter(|line| line.starts_with("many.txt:"))
+            .count(),
+        CEILING
+    );
+    assert!(
+        output
+            .text()
+            .contains(&format!("stopped at {CEILING} matches")),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn an_answer_is_bounded_in_bytes_as_well_as_in_lines() {
+    // Two hundred matching lines is the default, and a line is cut at `WIDTH`
+    // characters — so the count says how many lines come back and nothing at
+    // all about how much text that is.
+    let sample = Sample::new("grep-bytes");
+    sample.write(
+        "wide.txt",
+        &format!("needle{}\n", "x".repeat(WIDTH)).repeat(300),
+    );
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":100000}"#);
+
+    assert!(
+        output.text().len() < crate::bound::OUTPUT + 200,
+        "the answer was {} bytes",
+        output.text().len()
+    );
+    assert!(
+        output.text().contains("narrow the pattern"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_search_the_user_stopped_never_reaches_the_files() {
+    // A walk is the slowest thing this crate does and the one place Ctrl-C had
+    // nothing to stop: the tree here holds two matches, and a search that
+    // answers with neither of them is one that stopped before it opened
+    // anything.
+    let sample = tree("grep-stopped");
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let tool = Grep::new(sample.workspace(), cancel);
+    let output = tool.run(allowed(&tool, r#"{"pattern":"needle"}"#)).unwrap();
+
+    assert!(output.is_failed());
+    assert!(
+        output.text().starts_with("nothing matched needle"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output.text().contains("stopped before the walk finished"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_search_the_user_stopped_answers_with_what_it_had() {
+    // Half a tree searched is half a tree searched. Failing instead would throw
+    // away lines the turn had already been spent on — and what the answer owes
+    // is that it does not come back looking complete.
+    let found = Found {
+        hits: vec![Hit {
+            path: "src/main.rs".to_owned(),
+            line: 2,
+            text: "let needle = 1;".to_owned(),
+        }],
+        more: false,
+        partly: Vec::new(),
+        stopped: true,
+    };
+
+    let output = report(&found, "needle", 200);
+
+    assert!(!output.is_failed());
+    assert!(
+        output.text().starts_with("src/main.rs:2:let needle = 1;\n"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output.text().contains("stopped before the walk finished"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
+    // The walk answers between files, which leaves one file the size of a tree
+    // as the wait a stopped turn would otherwise sit through. Stopping inside
+    // one makes it a file the search did not finish, which the answer already
+    // has a way to say.
+    let sample = Sample::new("grep-stopped-inside");
+    sample.write("many.txt", &"needle\n".repeat(50));
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let tool = Grep::new(sample.workspace(), cancel);
+    let mut searcher = SearcherBuilder::new().line_number(true).build();
+    let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
+    let found = tool.lines(
+        &mut searcher,
+        &matcher,
+        &sample.root().join("many.txt"),
+        1_000,
+    );
+
+    assert_eq!(found.hits.len(), 1, "it read the whole file");
+    assert_eq!(found.partly.as_deref(), Some("many.txt"));
 }
 
 #[test]
@@ -341,7 +478,7 @@ fn a_path_the_walk_could_not_have_reached_is_refused() {
     // pinned here. The one that costs nothing is the one that keeps a file out
     // of an answer.
     let sample = tree("grep-elsewhere");
-    let tool = Grep::new(sample.workspace());
+    let tool = Grep::new(sample.workspace(), Cancel::new());
     let approved = under(
         &tool,
         r#"{"pattern":"needle"}"#,
@@ -398,7 +535,7 @@ fn a_search_with_no_path_named_covers_the_whole_workspace() {
     // The honest answer to what it acts on, and a wider one than a file: see
     // the note on searching in the permissions documentation.
     let sample = Sample::new("grep-sensitivity");
-    let tool = Grep::new(sample.workspace());
+    let tool = Grep::new(sample.workspace(), Cancel::new());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
 

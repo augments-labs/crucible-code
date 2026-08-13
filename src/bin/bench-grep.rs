@@ -174,7 +174,7 @@ impl fmt::Display for Spread {
 /// One search through the tool, timed, with rules standing behind it or not.
 fn ours(corpus: &Corpus, ruled: bool) -> Result<Duration, Problem> {
     let workspace = Workspace::open(corpus.path())?;
-    let grep = Grep::new(workspace);
+    let grep = Grep::new(workspace, crucible_core::Cancel::new());
     let args = ToolArgs::new(format!(r#"{{"pattern":"{PATTERN}","limit":100000}}"#));
 
     // Read outside the clock. What the two runs are being compared on is what a

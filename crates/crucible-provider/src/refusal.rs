@@ -4,6 +4,17 @@
 //! the same: a status, and a sentence under `error.message` explaining it. A
 //! wrong model name and a key without access are both diagnosed from that
 //! sentence, so losing it costs a user the only clue they get.
+//!
+//! Every refusal ends the turn, and that includes the one saying the credential
+//! was not accepted. Renewing a credential happens earlier than here:
+//! [`authorize`] runs on the way into every request, which is where a token's
+//! age can still be answered about, where no part of a response has been read
+//! yet, and where failing costs no round trip. Sending again from this side
+//! would repeat a request the vendor has already answered — with a refusal, but
+//! answered — and would need a bound of its own so the second refusal could not
+//! ask for a third.
+//!
+//! [`authorize`]: crucible_core::Credential::authorize
 
 use std::io::{self, Read};
 use std::time::{Duration, Instant};

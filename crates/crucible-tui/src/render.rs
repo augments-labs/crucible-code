@@ -381,6 +381,12 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        // Before the erase rather than after it. An erase is counted in rows of
+        // the screen it is written to, and by now that is the new one: the
+        // region below has to be measured against the window the cursor is
+        // sitting in, not the one it was drawn on.
+        self.size = size;
+
         // The size comes from the terminal, not from the stream, so a run whose
         // output is redirected still sees the window change. There is no live
         // region in a pipe to wipe, and an erase sequence written into one ends
@@ -388,13 +394,21 @@ impl<T: Terminal> Renderer<T> {
         // back, so what is live there is written out instead of dropped. The
         // rewrap below applies either way.
         if self.terminal.is_terminal() {
-            self.erase()?;
-            self.terminal.flush()?;
+            // Only ever what this renderer drew, which is what `drawn` counts.
+            // With nothing counted there is nothing of its own on screen to
+            // drop, and the row the cursor is on is one a prompt was written
+            // verbatim onto -- a row this promised no frame would move back
+            // over. A question waiting to be answered is exactly that state,
+            // and erasing it takes the offer off the screen while somebody is
+            // still reading it.
+            if self.drawn > 0 {
+                self.erase()?;
+                self.terminal.flush()?;
+            }
         } else {
             self.settle_plain()?;
         }
 
-        self.size = size;
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
         // Dropped for the reason the live rows are: it was laid out for a width
@@ -516,9 +530,20 @@ impl<T: Terminal> Renderer<T> {
     /// How many rows a rewind has to move back over to reach the top of the
     /// live region.
     ///
-    /// The rows on screen, less the ones below wherever the cursor was parked.
+    /// The rows on screen, less the ones below wherever the cursor was parked,
+    /// and never more than the window is tall. A rewind moves the cursor
+    /// through rows of the screen it is written to; above the top of that
+    /// screen there is no live region left to reach, only scrollback that has
+    /// been committed and is still being read.
+    ///
+    /// The two counts come apart when the window gets shorter: the rows were
+    /// drawn on the taller one, the terminal has already scrolled the top of
+    /// them away, and what is left to take back is one screen of them at most.
+    /// Clamping here rather than at the one caller that resizes, because this
+    /// is the whole of the answer to how far back a frame may reach, and a
+    /// second answer beside it is one that would go on being right by accident.
     fn region(&self) -> usize {
-        self.drawn.saturating_sub(self.parked)
+        self.drawn.saturating_sub(self.parked).min(self.size.rows)
     }
 }
 

@@ -64,7 +64,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::Delta { text } => Some(text.to_string()),
-                _ => None,
+                Event::TurnStarted { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -75,7 +79,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::TurnStarted { turn } => Some(turn.get()),
-                _ => None,
+                Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -86,7 +94,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::TurnFinished { stop, .. } => Some(stop),
-                _ => None,
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -489,7 +501,7 @@ fn the_calls_of_a_round_are_recorded_before_the_tools_run() {
         Some(Message::ToolResults(results)) => results
             .first()
             .map(|result| result.output.text().to_owned()),
-        _ => None,
+        Some(Message::User(_) | Message::Agent { .. }) | None => None,
     }
     .expect("the tool ran and its result was recorded");
 
@@ -591,7 +603,11 @@ fn a_call_is_announced_before_it_runs() {
         .try_iter()
         .filter_map(|event| match event {
             Event::ToolRequested { call } => Some(call),
-            _ => None,
+            Event::TurnStarted { .. }
+            | Event::Delta { .. }
+            | Event::ToolFinished { .. }
+            | Event::TurnFinished { .. }
+            | Event::Failed { .. } => None,
         })
         .collect();
 

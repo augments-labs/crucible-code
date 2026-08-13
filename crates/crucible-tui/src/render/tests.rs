@@ -291,6 +291,48 @@ fn a_window_that_only_got_shorter_is_still_a_resize() {
 }
 
 #[test]
+fn a_window_that_shrank_erases_no_further_back_than_it_is_tall() {
+    // The region was counted on the old window and the erase is written to the
+    // new one. Past the top of that screen the rows belong to scrollback: they
+    // are committed, they are still being read, and this is the renderer's one
+    // promise -- it never reaches above what it drew.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    for row in 0..20 {
+        render.stream(&format!("line {row}\n")).unwrap();
+    }
+    render.terminal.take();
+
+    render.terminal.resize(80, 8);
+    render.resized().unwrap();
+
+    let written = render.terminal.written();
+    for up in 8..24 {
+        assert!(
+            !written.contains(&format!("\x1b[{up}A")),
+            "the cursor moved {up} rows up an eight-row screen: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_resize_leaves_a_row_the_renderer_never_counted_alone() {
+    // A prompt is written verbatim onto a row no frame will ever move back
+    // over, and the renderer says so by counting none of it. So there is
+    // nothing of its own on screen to drop here -- and what is on that row is
+    // a question waiting to be answered, which erasing would leave somebody
+    // deciding from memory.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.prompt("  [y]es  [s]ession  [n]o › ").unwrap();
+    render.terminal.take();
+
+    render.terminal.resize(40, 24);
+    render.resized().unwrap();
+
+    assert_eq!(render.terminal.written(), "");
+    assert_eq!(render.columns(), 40, "the new width still has to arrive");
+}
+
+#[test]
 fn settling_blank_rows_does_not_leave_them_in_the_tail() {
     // They were erased from the screen; keeping them draws them again on the
     // next frame and settles them into the record as blank lines the model

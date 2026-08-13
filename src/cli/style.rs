@@ -118,6 +118,12 @@ impl Style {
     }
 
     /// How much of a tool's arguments to show, in a terminal this wide.
+    ///
+    /// For the line that says a call is about to run, and not for the question
+    /// that asks whether it may. That one is wrapped to the window instead: a
+    /// report is read at a glance and can afford a ceiling, and a decision
+    /// cannot — a command padded past the cut would be consented to by its
+    /// leading columns and do whatever the rest of it does.
     pub(crate) fn args(self, columns: usize) -> usize {
         self.width(ARGS, columns)
     }

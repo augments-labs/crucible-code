@@ -23,9 +23,40 @@ cd "$(dirname "$0")/.."
 # follows from that.
 readonly MAX_FILE_LINES=1000
 
+# Every section runs, and the run reports all of them together.
+#
+# The three cargo sections used to run bare under `errexit`, so a formatting slip
+# ended the script before the file-length cap, the process-memory scan, the link
+# check, the agent-rules checks and both dependency gates had run at all. Nobody
+# was told they had been skipped; the run simply stopped. That made the answer
+# depend on how much was already fixed — fix clippy, re-run, meet a different set
+# of checks — and it meant only a fully green run had ever executed all of them,
+# which is the one run that had nothing to report.
+#
+# `section` closes the previous one before opening the next, so `failed` is a
+# per-section flag every check can set the same way, and `failures` collects the
+# names. A failing run prints hundreds of lines of cargo output, so the list at
+# the foot is what makes the FAIL lines above it findable.
 failed=0
+any=0
+current=""
+failures=()
 
-echo "==> merge conflict markers"
+section() {
+    close_section
+    current=$1
+    failed=0
+    echo "==> $1"
+}
+
+close_section() {
+    if [[ -n "$current" ]] && ((failed)); then
+        failures+=("$current")
+        any=1
+    fi
+}
+
+section "merge conflict markers"
 # First, because it is the cheapest check here and because everything after it
 # is measuring a tree that a marker has already made meaningless.
 #
@@ -63,8 +94,11 @@ case $scan in
         ;;
 esac
 
-echo "==> rustfmt"
-cargo fmt --all --check
+section "rustfmt"
+if ! cargo fmt --all --check; then
+    printf '    FAIL cargo fmt --all rewrites the files above; never hand-format around it\n'
+    failed=1
+fi
 
 # `--locked` on both, because CI passes it and a release builds with it. Without
 # it cargo rewrites `Cargo.lock` on the way past whenever the manifest asks for
@@ -73,13 +107,38 @@ cargo fmt --all --check
 # without the lock, and the first machine to build it with `--locked` is a
 # release runner. A green run here has to mean a green run there, and that is
 # only true if both are answering the same question.
-echo "==> clippy"
-cargo clippy --workspace --all-targets --locked -- -D warnings
+section "clippy"
+if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
+    printf '    FAIL clippy warnings are errors; an #[allow] needs a comment saying what the lint got wrong\n'
+    failed=1
+fi
 
-echo "==> tests"
-cargo test --workspace --locked
+# Captured before the tests, because one of them is the schema gate and that one
+# writes: `the_checked_in_schema_is_what_this_generates` regenerates
+# `schema/crucible-code-schema.json` from `shape.rs`, and when the checked-in
+# copy has gone stale it rewrites the file and then fails. Every other section
+# here only reads the tree. That one does not, and a run that edited a tracked
+# file has to say which file rather than leave it to be found in `git status`.
+schema=schema/crucible-code-schema.json
+before=$(cksum "$schema" 2>/dev/null || true)
 
-echo "==> file length (<= ${MAX_FILE_LINES} lines)"
+section "tests"
+if ! cargo test --workspace --locked; then
+    printf '    FAIL read the assertion, not the count\n'
+    failed=1
+fi
+
+section "schema"
+# Not a second comparison — the test above is the comparison, and this is the
+# report of what it did to the tree. The distinction matters because the rewrite
+# means a stale schema fails once and passes on the next run, so the only run
+# that ever mentions it is the one somebody may not have read to the end.
+if [[ "$before" != "$(cksum "$schema" 2>/dev/null || true)" ]]; then
+    printf '    FAIL %s was stale; the tests regenerated it — review the diff and commit it\n' "$schema"
+    failed=1
+fi
+
+section "file length (<= ${MAX_FILE_LINES} lines)"
 # `find` printing nothing would walk this loop zero times and pass. The error
 # stream is not discarded either: a renamed source directory is exactly the way
 # this check would go quiet, and quiet is the failure it cannot afford.
@@ -97,7 +156,7 @@ if ((counted == 0)); then
     failed=1
 fi
 
-echo "==> no process memory in shipped files"
+section "no process memory in shipped files"
 # `docs/` is published as a website and `crates/`, `src/` and `schema/` are the
 # program, so all four are read by people who have never opened this repository.
 # `README.md` is read by more of them than any of the four: crates.io renders it
@@ -108,10 +167,30 @@ echo "==> no process memory in shipped files"
 # someone who has the repository open, and naming its own machinery is what they
 # are for.
 #
+# The manifests are read with them, because they leave too: crates.io renders
+# what `[package]` declares, and `cargo package` puts both the manifest and its
+# unedited original inside the `.crate` file, comments and all. A reason written
+# above a dependency is addressed to a reviewer here, but it ships either way, so
+# it is held to the same rule as a doc comment.
+#
 # A decision identifier, an assumption label or the name of a planning directory
 # is this repository talking to itself: a stranger cannot resolve it and has no
 # reason to want to. Those notes are allowed to exist — just not to travel — so
-# the files that hold them are deliberately not scanned here.
+# the files that hold them are deliberately not scanned here. There are four of
+# those directories now rather than one: `.claude/` and `.agents/` are the two
+# harnesses' rules and skills, `.codex/` is a third harness's settings, and
+# `.sdlc-skills/` is where the briefs, designs, decisions and audits live. All
+# four are excluded from the operands and named in the pattern, which is the
+# whole arrangement: they may hold this, and a shipped file may not cite them.
+#
+# The identifier shape is a prefix of one to six capitals. It was a single
+# capital, which matched `R-1` and let `REQ-001`, `FR-12`, `NFR-3` and `AC-14`
+# past — every spelling anybody actually writes. Widening it reaches real
+# standards too, so the ones this tree can be expected to name are subtracted
+# afterwards by token rather than by line, and `-o` is what makes that possible:
+# a line holding `UTF-8` and `REQ-001` yields two matches and only the first is
+# dropped. Each name on that list is a deliberate hole, so add one only when the
+# tree actually needs it.
 #
 # The exit code is read rather than the command being used as the condition
 # directly. `grep` answers 0 for a match, 1 for none and 2 for "I could not
@@ -123,14 +202,21 @@ echo "==> no process memory in shipped files"
 # `memory=$(grep ...)` would exit 1 with nothing printed on precisely the clean
 # tree this is meant to wave through.
 scan=0
-memory=$(grep -rInE '\b[A-Z]-[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/' \
-    --include='*.rs' --include='*.md' --include='*.json' \
-    crates src docs schema README.md) || scan=$?
+memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|sdlc-skills|\bADR\b|\.claude/|\.agents/|\.codex/' \
+    --include='*.rs' --include='*.md' --include='*.json' --include='*.toml' \
+    crates src docs schema README.md Cargo.toml) || scan=$?
 case $scan in
     0)
-        printf '%s\n' "$memory"
-        printf '    FAIL the lines above name something only this repository can resolve\n'
-        failed=1
+        # Published standards that share the identifier's shape. Subtracted here
+        # rather than written into the pattern above, because a negative match is
+        # the one thing an extended regular expression cannot say.
+        memory=$(printf '%s\n' "$memory" |
+            grep -vE ':(UTF|SHA|ISO|IEC|RFC|IEEE|ECMA|ANSI|CVE|AES)-[0-9]+$') || memory=""
+        if [[ -n "$memory" ]]; then
+            printf '%s\n' "$memory"
+            printf '    FAIL the lines above name something only this repository can resolve\n'
+            failed=1
+        fi
         ;;
     1) ;;
     *)
@@ -140,7 +226,7 @@ case $scan in
         ;;
 esac
 
-echo "==> documentation links"
+section "documentation links"
 # Every topic under `docs/` is a directory whose path is a public URL, so a
 # rename that misses one link publishes a dead page rather than failing a build.
 # The markdown at the root is read with it: GitHub renders those pages too, and
@@ -203,7 +289,7 @@ done < <(
     } | grep -v '://'
 )
 
-echo "==> agent rules files"
+section "agent rules files"
 # One set of rules, one file. CLAUDE.md is the original everywhere in this
 # repo; AGENTS.md is a symlink beside it, so no tool reads a stale copy.
 linked=0
@@ -222,7 +308,7 @@ if ((linked == 0)); then
     failed=1
 fi
 
-echo "==> agent rules scope"
+section "agent rules scope"
 # A rule under .claude/rules/ is read only when a file it claims is opened, so
 # one without `paths:` is dead text that nothing ever loads — and it fails by
 # staying quiet, which is the same silent shape the symlink check above exists
@@ -317,7 +403,7 @@ for package in crates/*/ src/; do
     fi
 done
 
-echo "==> agent skills"
+section "agent skills"
 # A skill is written once under .claude/skills/ and reaches Codex through a
 # symlink, exactly as CLAUDE.md reaches it through AGENTS.md. A copy drifts; a
 # missing link means Codex users silently lose the skill.
@@ -361,12 +447,15 @@ done
 # statement about one seventh of this tree phrased as a statement about the
 # tree.
 manifests=(Cargo.toml crates/*/Cargo.toml)
+
+section "workspace lints"
+# Reported under the first of the three that reads it, so that "this check
+# measured nothing" belongs to a section rather than to the gap between two.
 if ((${#manifests[@]} < 2)); then
-    printf '    FAIL no manifest under crates/; every manifest gate below would read the root alone\n'
+    printf '    FAIL no manifest under crates/; every manifest gate here would read the root alone\n'
     failed=1
 fi
 
-echo "==> workspace lints"
 # `[workspace.lints]` in the root manifest is where the standard is written, but
 # a lint table binds only the crates that ask for it — `[lints] workspace = true`,
 # once per manifest. A crate without that line is not held to a weaker rule 1;
@@ -391,7 +480,7 @@ for manifest in "${manifests[@]}"; do
     fi
 done
 
-echo "==> dependency pinning"
+section "dependency pinning"
 # Exact pins keep a release reproducible and make a version bump a reviewed
 # change rather than a side effect of somebody else's publish.
 #
@@ -459,12 +548,22 @@ if [[ -n "$unpinned" ]]; then
     failed=1
 fi
 
-echo "==> dependency justification"
+section "dependency justification"
 # And a comment above it saying why it is there. A dependency is a permanent
 # cost paid for what is usually a temporary convenience, so the reason has to
 # outlive the pull request that added it — whoever later asks whether it can go
-# is never the person who knew. One comment covers the group beneath it, since
-# the four ripgrep crates are one decision rather than four.
+# is never the person who knew.
+#
+# One comment still covers a group, since the ripgrep crates are one decision
+# rather than four. What it may no longer do is cover a crate it never mentions:
+# the flag used to be raised by a comment and lowered only by a blank line, so a
+# crate pasted straight under an existing one inherited its reason and passed —
+# which made the sentence in `CLAUDE.md` true of the `=` pin and theatre for the
+# comment. A comment is now spent on the first dependency beneath it, and any
+# further member of the same run has to be named in it. That is the property
+# worth having anyway: a reason that does not name the crate is not a reason
+# about that crate, and a paste is exactly the case a comment cannot name.
+#
 # The table starts unjustified. Seeding it from whatever line preceded the
 # header meant the comment block explaining the crate layering counted as a
 # reason for the first crate beneath it, so a dependency added there needed no
@@ -478,15 +577,34 @@ unjustified=$(awk '
         print "        " FILENAME ": " text
     }
 
+    # Whole-word, so that `grep-searcher` in the prose cannot answer for
+    # `grep-regex`. Backticks, commas and full stops are all boundaries.
+    function names(crate) {
+        return block ~ ("(^|[^a-zA-Z0-9_-])" crate "([^a-zA-Z0-9_-]|$)")
+    }
+
+    # A comment run starts a new block once the previous one has met a
+    # dependency, so a reason written between two crates belongs to the second.
+    function collect() {
+        if (spent) { block = ""; spent = 0 }
+        block = block " " $0
+        covers = 1
+    }
+
+    FNR == 1 { table = 0; covers = 0; block = ""; spent = 0; depth = 0; named = ""; last = "" }
+
     /^[[:space:]]*\[/ {
         header = $0
         sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
         sub(/[[:space:]]*\]+.*$/, "", header)
-        above = justified
+        above = covers
         table = 0
         named = ""
         depth = 0
-        justified = 0
+        covers = 0
+        block = ""
+        spent = 0
+        last = ""
         if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
             table = 1
         } else if (header ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)\.[^.]+$/) {
@@ -498,17 +616,22 @@ unjustified=$(awk '
         next
     }
 
-    table == 0 { justified = ($0 ~ /^[[:space:]]*#/); next }
+    table == 0 {
+        if ($0 ~ /^[[:space:]]*#/) collect()
+        else { covers = 0; block = ""; spent = 0 }
+        next
+    }
 
-    /^[[:space:]]*#/ { justified = 1; next }
-    /^[[:space:]]*$/ { justified = 0; next }
+    /^[[:space:]]*#/ { collect(); next }
+    /^[[:space:]]*$/ { covers = 0; block = ""; spent = 0; next }
 
     {
         # Inside `[dependencies.foo]` the header is the dependency and the
         # comment above it is the reason; the keys beneath belong to that one
         # crate, so asking each of them for a justification names lines that
         # never could carry one. The same goes for the body of an inline table
-        # that wrapped onto a second line.
+        # that wrapped onto a second line — and that body must not spend the
+        # comment either, or the first line after the closing brace inherits it.
         wrapped = (depth > 0)
         depth += opens($0) - closes($0)
         if (depth < 0) depth = 0
@@ -520,17 +643,47 @@ unjustified=$(awk '
         # in two files and make one of them wrong later.
         if ($0 ~ /workspace[[:space:]]*=[[:space:]]*true/) next
 
-        # A dotted key declares a dependency too, and one comment covers the
-        # group beneath it exactly as it does for the bare spelling.
-        if (justified == 0 && $0 ~ /^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*[[:space:]]*=/) report($0)
+        # A dotted key declares a dependency too, and is read the same way.
+        if ($0 !~ /^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*[[:space:]]*=/) next
+
+        crate = $0
+        sub(/[[:space:]]*=.*$/, "", crate)
+        sub(/\..*$/, "", crate)
+
+        # `some-crate.features` under `some-crate.version` is the same
+        # dependency saying one more thing about itself, not a second one
+        # arriving without a reason. TOML forbids the same key twice, so equal
+        # names here can only be the dotted spelling continuing.
+        if (crate == last) next
+        last = crate
+
+        spent = 1
+
+        # A path dependency on a member of this workspace is this project
+        # depending on itself. There is no publisher whose release could move it
+        # and nobody to ask whether it can go, which is what the reason is for —
+        # the layering comment above `[workspace.dependencies]` is the whole
+        # answer, and it is one answer rather than six. It still spends the
+        # comment, so a third-party crate pasted under the run does not inherit
+        # it. `crates/` and not any path: outside the workspace it is a third
+        # party again, on a path with no version for the pin to check.
+        if ($0 ~ /path[[:space:]]*=[[:space:]]*"crates\//) { covers = 0; next }
+
+        if (covers) { covers = 0; next }
+
+        if (names(crate)) next
+
+        report($0)
     }
 ' "${manifests[@]}")
 if [[ -n "$unjustified" ]]; then
     printf '    FAIL no comment saying why it is needed:\n%s\n' "$unjustified"
+    printf '         a comment covers the first dependency under it; name the crate in that\n'
+    printf '         comment to add it to the group, or give it a comment of its own\n'
     failed=1
 fi
 
-echo "==> github actions pinning"
+section "github actions pinning"
 # Same rule as the crates, for the same reason. An action referenced by tag is
 # a moving dependency, and a release workflow runs it with write access to the
 # repository — so pin the commit and keep the version in a trailing comment.
@@ -543,7 +696,7 @@ if [[ -d .github/workflows ]]; then
     fi
 fi
 
-echo "==> benchmark gate"
+section "benchmark gate"
 # CI is allowed to tolerate a failing budgets job only while there is nothing
 # to measure — every probe is still unwritten, so `scripts/bench.sh` exits 1 by
 # design and would block every pull request. The first probe makes that failure
@@ -560,9 +713,12 @@ if compgen -G 'src/bin/bench-*.rs' >/dev/null; then
     fi
 fi
 
-if ((failed)); then
+close_section
+
+if ((any)); then
     echo
-    echo "FAILED — see the lines marked FAIL above."
+    echo "FAILED — see the lines marked FAIL above, under:"
+    printf '    %s\n' "${failures[@]}"
     exit 1
 fi
 

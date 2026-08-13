@@ -26,6 +26,10 @@
 //! way it points. That is its own answer and not an escape, because a dangling
 //! link may well point back inside.
 //!
+//! What a tool answers with is bounded before it leaves, because it goes into
+//! the next request whole. [`bound`] holds the one figure they share and says
+//! why that figure is in bytes rather than in lines.
+//!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. What bounds that tool is the permission engine, which is
@@ -33,6 +37,7 @@
 
 mod args;
 mod bash;
+mod bound;
 mod edit;
 mod glob;
 mod grep;

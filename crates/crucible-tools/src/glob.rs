@@ -2,7 +2,9 @@
 
 use std::collections::BinaryHeap;
 
-use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{
+    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+};
 use globset::GlobBuilder;
 
 use crate::args::Args;
@@ -13,6 +15,20 @@ const NAME: &str = "glob";
 
 /// How many paths one call answers with when it does not say.
 const PATHS: usize = 200;
+
+/// The most paths a call can ask for, however large a number it sends.
+///
+/// [`PATHS`] is a default and a caller may raise it; this it cannot. The number
+/// arrives from the model like every other argument, and it is the one figure
+/// in the call that decides how much the walk holds — a heap of that many
+/// strings, kept for as long as the tree takes to finish.
+///
+/// A thousand is where the count stops being the bound that matters. Paths in a
+/// real tree run to some thirty bytes, so a thousand of them is already the
+/// whole of what an answer carries and [`crate::bound`] is what cuts the rest.
+/// A listing that long is also not a listing anybody reads: past this the model
+/// wants a narrower pattern, not a longer answer.
+const CEILING: usize = 1_000;
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
@@ -31,7 +47,7 @@ const SCHEMA: &str = r#"{
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many paths to return. Defaults to 200."
+      "description": "How many paths to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
     }
   },
   "required": ["pattern"]
@@ -41,6 +57,7 @@ const SCHEMA: &str = r#"{
 #[derive(Debug)]
 pub struct Glob {
     workspace: Workspace,
+    cancel: Cancel,
 }
 
 /// What one walk came back with: the lowest paths it matched, and how many it
@@ -61,6 +78,10 @@ struct Found {
     kept: BinaryHeap<String>,
     limit: usize,
     seen: usize,
+    /// Whether the user stopped the turn while the walk was running, which
+    /// costs the answer the one property it is otherwise sorted for: these are
+    /// then the lowest paths reached rather than the lowest in the tree.
+    stopped: bool,
 }
 
 impl Found {
@@ -70,6 +91,7 @@ impl Found {
             kept: BinaryHeap::new(),
             limit,
             seen: 0,
+            stopped: false,
         }
     }
 
@@ -103,10 +125,11 @@ impl Found {
 }
 
 impl Glob {
-    /// Searches inside `workspace`, and nowhere else.
+    /// Searches inside `workspace` and nowhere else, and stops when `cancel`
+    /// says to.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
+        Self { workspace, cancel }
     }
 }
 
@@ -128,7 +151,7 @@ impl Tool for Glob {
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
-        let limit = args.count("limit", PATHS)?;
+        let limit = args.count("limit", PATHS)?.min(CEILING);
 
         // `literal_separator` is what makes `*` stop at a directory boundary,
         // so `src/*.rs` means the files in `src` and `**/*.rs` means the ones
@@ -154,6 +177,10 @@ impl Tool for Glob {
         // files the directory order happened to reach first — and could not say
         // how many more there were, only that there were some. The walk is the
         // one `grep` runs and the ignore rules are what bound it.
+        //
+        // Which is exactly why the user has to be able to stop it: running to
+        // the end is a promise about the answer, not about how long a tree may
+        // take. A stopped walk keeps what it had and says what that cost.
         let mut found = Found::new(limit);
         for entry in crate::tree::walk(from.as_path())
             .build()
@@ -165,6 +192,11 @@ impl Tool for Glob {
             // about what is in the workspace.
             .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
         {
+            if self.cancel.requested() {
+                found.stopped = true;
+                break;
+            }
+
             // Matched against the name it will be reported under, which is the
             // one `grep` reports too. Dropping every entry that would not strip
             // to a relative path answered "no path matched" for a directory the
@@ -183,21 +215,51 @@ impl Tool for Glob {
 fn report(found: Found, pattern: &str) -> ToolOutput {
     // Read before the paths are taken out of it, while it can still tell a
     // walk that matched nothing from one whose answer is full.
-    let more = found.more();
+    let matched = found.more();
+    let note = halted(found.stopped);
     let shown = found.sorted();
 
     if shown.is_empty() {
-        return ToolOutput::failed(format!("no path matched {pattern}"));
+        // The note belongs on this branch too: "no path matched" is a claim
+        // about a tree that was walked to the end.
+        return ToolOutput::failed(format!("no path matched {pattern}{note}"));
     }
 
-    let lines = shown.join("\n") + "\n";
+    // Bounded in bytes as well as in paths, because the length of a path is
+    // the depth of the tree and not something this tool sets: a thousand of
+    // them is thirty kilobytes in this repository and four megabytes in one
+    // written to make it so.
+    let (lines, over) = crate::bound::within(shown.into_iter().map(|path| path + "\n"));
+    let more = matched + over;
+
     let tail = if more == 0 {
         String::new()
+    } else if over > 0 {
+        // Raising the limit would not help: what filled up is the answer, not
+        // the list.
+        format!(
+            "\n[{more} more: the answer was full at {} bytes, narrow the pattern]",
+            crate::bound::OUTPUT
+        )
     } else {
         format!("\n[{more} more: narrow the pattern or raise limit]")
     };
 
-    ToolOutput::ok(lines + &tail)
+    ToolOutput::ok(lines + &tail + note)
+}
+
+/// What a walk the user stopped says about itself.
+///
+/// It answers rather than failing: the paths it had are paths, and they are
+/// what the turn was spent on. What goes with them is the property they lost —
+/// the answer is sorted, so it reads as the lowest paths in the tree, and a
+/// walk that stopped short only reached some of the tree to be lowest in.
+fn halted(stopped: bool) -> &'static str {
+    if stopped {
+        "\n[stopped before the walk finished: these are the lowest paths it reached, not the lowest there are]"
+    } else {
+        ""
+    }
 }
 
 #[cfg(test)]
@@ -208,7 +270,7 @@ mod tests {
     use crate::sample::{Sample, allowed, under};
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
-        let tool = Glob::new(sample.workspace());
+        let tool = Glob::new(sample.workspace(), Cancel::new());
         tool.run(allowed(&tool, args)).unwrap()
     }
 
@@ -361,6 +423,104 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_past_the_ceiling_is_the_ceiling() {
+        // A number the model wrote is an argument like any other. Left
+        // unbounded it decides how many strings the walk holds and how long an
+        // answer the next request carries.
+        let sample = Sample::new("glob-ceiling");
+        for n in 0..CEILING + 50 {
+            sample.write(&format!("src/f{n:04}.rs"), "");
+        }
+
+        let output = glob(&sample, r#"{"pattern":"**/*.rs","limit":100000}"#);
+
+        assert_eq!(
+            output
+                .text()
+                .lines()
+                .filter(|line| line.starts_with("src/"))
+                .count(),
+            CEILING
+        );
+        assert!(output.text().contains("[50 more"), "{}", output.text());
+    }
+
+    #[test]
+    fn an_answer_is_bounded_in_bytes_as_well_as_in_paths() {
+        // The length of a path is the depth of the tree, which is the model's
+        // to decide: a thousand of them is thirty kilobytes here and megabytes
+        // in a tree written to make it so.
+        let sample = Sample::new("glob-bytes");
+        for n in 0..150 {
+            sample.write(&format!("src/{}{n:03}.rs", "long".repeat(60)), "");
+        }
+
+        let output = glob(&sample, r#"{"pattern":"**/*.rs","limit":100000}"#);
+
+        assert!(
+            output.text().len() < crate::bound::OUTPUT + 200,
+            "the answer was {} bytes",
+            output.text().len()
+        );
+        assert!(
+            output.text().contains("the answer was full"),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn a_walk_the_user_stopped_never_reaches_the_files() {
+        // The walk deliberately runs to the end even once the answer is full,
+        // so that it can report the lowest paths rather than the first ones
+        // reached — which made it the one thing here Ctrl-C could not stop.
+        let sample = tree("glob-stopped");
+        let cancel = Cancel::new();
+        cancel.request();
+
+        let tool = Glob::new(sample.workspace(), cancel);
+        let output = tool
+            .run(allowed(&tool, r#"{"pattern":"**/*.rs"}"#))
+            .unwrap();
+
+        assert!(output.is_failed());
+        assert!(
+            output.text().starts_with("no path matched"),
+            "{}",
+            output.text()
+        );
+        assert!(
+            output.text().contains("stopped before the walk finished"),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn a_walk_the_user_stopped_answers_with_the_paths_it_had() {
+        // Failing would throw away paths the turn was already spent finding.
+        // What goes with them is the property they lost: they are the lowest
+        // paths the walk reached rather than the lowest in the tree.
+        let mut found = Found::new(5);
+        found.keep("src/main.rs".to_owned());
+        found.stopped = true;
+
+        let output = report(found, "**/*.rs");
+
+        assert!(!output.is_failed());
+        assert!(
+            output.text().starts_with("src/main.rs\n"),
+            "{}",
+            output.text()
+        );
+        assert!(
+            output.text().contains("not the lowest there are"),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
     fn a_pattern_that_is_not_a_glob_says_so() {
         let sample = tree("glob-bad");
 
@@ -402,7 +562,7 @@ mod tests {
         let sample = tree("glob-denied");
         sample.write("private/key.rs", "");
 
-        let tool = Glob::new(sample.workspace());
+        let tool = Glob::new(sample.workspace(), Cancel::new());
         let output = tool
             .run(under(
                 &tool,
@@ -427,7 +587,7 @@ mod tests {
             .expect("a writable temporary directory");
 
         let workspace = sample.reaching(&beside);
-        let listing = Glob::new(workspace.clone());
+        let listing = Glob::new(workspace.clone(), Cancel::new());
         let listed = listing
             .run(allowed(
                 &listing,
@@ -435,7 +595,7 @@ mod tests {
             ))
             .unwrap();
 
-        let search = crate::Grep::new(workspace);
+        let search = crate::Grep::new(workspace, Cancel::new());
         let searched = search
             .run(allowed(
                 &search,
@@ -453,7 +613,7 @@ mod tests {
     fn listing_names_the_directory_it_would_walk() {
         let sample = Sample::new("glob-sensitivity");
         sample.write("src/main.rs", "");
-        let tool = Glob::new(sample.workspace());
+        let tool = Glob::new(sample.workspace(), Cancel::new());
 
         let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"src"}"#));
 

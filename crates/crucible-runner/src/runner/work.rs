@@ -7,8 +7,8 @@
 //! saying why there is nothing in it.
 
 use crucible_core::{
-    Ask, Cancel, Event, Permission, Post, Settled, StopReason, ToolCall, ToolError, ToolOutput,
-    ToolResult,
+    Approved, Ask, Cancel, Event, Permission, Post, Settled, StopReason, ToolCall, ToolError,
+    ToolOutput, ToolResult,
 };
 
 use crate::tools::Tools;
@@ -113,15 +113,33 @@ impl Work<'_> {
         };
 
         let sensitivity = tool.sensitivity(&call.args);
-        let approved = match self.permission.decide(call, &sensitivity, self.ask) {
-            Settled::Approved(approved) => approved,
+        match self.permission.decide(call, &sensitivity, self.ask) {
+            Settled::Approved(approved) => self.run(approved),
             // Standing policy, which the model can read and work around. It
             // costs nothing to hit twice, so the turn carries on.
-            Settled::Forbidden => return Ran::Output(ToolOutput::failed(FORBIDDEN)),
+            Settled::Forbidden => Ran::Output(ToolOutput::failed(FORBIDDEN)),
             // A person, about this moment. The turn ends, because a model that
             // is told no and left running will ask the same thing in a shape
             // the rules happen not to cover.
-            Settled::Refused => return Ran::Refused,
+            Settled::Refused => Ran::Refused,
+        }
+    }
+
+    /// Runs the tool the approval names.
+    ///
+    /// Looked up from the approval rather than kept from before the verdict.
+    /// The handle above answered how dangerous the call was; the one that runs
+    /// comes out of the same value as the arguments and the proof, so a verdict
+    /// reached about one tool cannot arrive at another with that tool's
+    /// arguments beside it — which is the guarantee the whole mechanism is for,
+    /// and it should not rest on two lines staying next to each other.
+    fn run(&self, approved: Approved) -> Ran {
+        let Some(tool) = self.tools.find(approved.tool()) else {
+            // A name that reached a verdict is a name a lookup already
+            // answered to, so this is the arm nothing takes. Answered rather
+            // than asserted: the model can read a result, and a session is
+            // worth more than a proof about a branch.
+            return Ran::Output(failure(&ToolError::Unknown(approved.tool().into())));
         };
 
         match tool.run(approved) {
@@ -214,6 +232,21 @@ mod tests {
 
         assert_eq!(texts(&results), ["fn main() {}"]);
         assert!(matches!(went, Went::On), "the turn should carry on");
+    }
+
+    #[test]
+    fn the_tool_that_runs_is_the_one_the_verdict_was_reached_about() {
+        // The name is dispatched on out of the approval, beside the arguments
+        // and the proof. Two tools answering differently are how a round can
+        // say which of them ran.
+        let mut round = Round::new(Verdict::Allow)
+            .offering(Fixed::new("read").answering("what read produced"))
+            .offering(Fixed::new("grep").answering("what grep produced"));
+
+        let (results, went) = round.round(&[call("a", "grep")]);
+
+        assert_eq!(texts(&results), ["what grep produced"]);
+        assert!(matches!(went, Went::On));
     }
 
     #[test]
@@ -321,7 +354,11 @@ mod tests {
             .try_iter()
             .filter_map(|event| match event {
                 Event::ToolFinished { call, .. } => Some(call.to_string()),
-                _ => None,
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect();
 

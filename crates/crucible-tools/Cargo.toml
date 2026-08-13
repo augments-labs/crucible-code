@@ -16,5 +16,14 @@ grep-searcher.workspace = true
 ignore.workspace = true
 serde_json.workspace = true
 
+# `kill` on a process group, which is how a command's whole pipeline is stopped
+# rather than the shell at the head of it. `std` signals the one child it
+# spawned; the negated group id reaches the rest, and there is no call in `std`
+# that takes one. Unix targets only, and already in the tree under
+# `crucible-core`, so this turns a feature on rather than adding a crate.
+# Confined to `bash/output.rs`.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
 [lints]
 workspace = true

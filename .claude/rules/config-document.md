@@ -18,9 +18,21 @@ against that declaration and the schema is generated from it, so adding a
 a property, and the editor completes it.
 
 Never add a key by teaching `check.rs` about it, and never hand-edit
-`schema/crucible-code-schema.json`. That file is output. `scripts/check.sh`
-regenerates it and compares, so an edit to it is reverted by the next run at
-best and fails the gate at worst.
+`schema/crucible-code-schema.json`. That file is output.
+
+What holds that is a test, `the_checked_in_schema_is_what_this_generates`, at the
+foot of `shape/schema.rs` — not a section of `scripts/check.sh`, though the gate
+runs it along with everything else `cargo test` runs. Knowing which it is matters
+because of what the test does when the two disagree: it **rewrites the checked-in
+file and then fails**. So a hand-edit is reverted, a stale schema is repaired,
+and the run that repaired it is the only one that says so — the next run is
+green, with the file already changed underneath you. `scripts/check.sh` is
+read-only over the whole tree except here, which is why it has a `schema` section
+that reports the rewrite by name rather than leaving it to be found in
+`git status`.
+
+The remedy is always the same: read the diff, satisfy yourself it is what your
+`shape.rs` change should have produced, and commit it with that change.
 
 Every `Field` needs an `about` that reads as a sentence to somebody who has
 never opened this repository — it is what an editor shows in the completion

@@ -65,9 +65,11 @@ ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
 # to do what rg does rather than to re-derive it: `ignore` reads .gitignore the
 # way git does, `globset` compiles many patterns into one automaton instead of
-# testing each in turn, and `grep-searcher` owns the buffering, the binary
-# sniffing and the line-terminator handling that read-to-string-and-split gets
-# wrong on exactly the large files where the budget is decided.
+# testing each in turn, `grep-searcher` owns the buffering, the binary sniffing
+# and the line-terminator handling that read-to-string-and-split gets wrong on
+# exactly the large files where the budget is decided, and `grep-regex` is the
+# matcher it runs with — the half that turns a pattern into something applied to
+# a buffer rather than to a string.
 ignore = "=0.4.33"
 globset = "=0.4.20"
 grep-searcher = "=0.1.17"
@@ -97,6 +99,11 @@ unicode-width = "=0.2.2"
 # wrapper for it. Unix targets only, where `openat` is the platform's own idea;
 # already in the tree under `crossterm`, so this turns a feature on rather than
 # adding a crate. Confined to `workspace/open/descent.rs`.
+#
+# `process` is the same argument about a second call. Stopping a command means
+# stopping the pipeline it started rather than the shell at the head of it, and
+# that is `kill` on a negated process group id — which `std` has no call for
+# either. Confined to `bash/output.rs`.
 rustix = { version = "=1.1.4", features = ["fs"] }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be

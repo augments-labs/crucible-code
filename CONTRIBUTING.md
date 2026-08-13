@@ -132,9 +132,11 @@ trade. A budget change is a decision, not a side effect.
 ## New dependencies
 
 Every dependency is `=`-pinned and carries a comment in `Cargo.toml` saying why
-it is needed; `scripts/check.sh` fails without both. One comment covers the
-group beneath it, since the four ripgrep crates are one decision rather than
-four. Prefer the standard library, then a few lines of your own, then a
+it is needed; `scripts/check.sh` fails without both. One comment covers a group
+— the four ripgrep crates are one decision rather than four — but it has to name
+every crate it covers, because otherwise it is spent on the first dependency
+beneath it and the next one inherits a justification nobody wrote for it.
+Prefer the standard library, then a few lines of your own, then a
 dependency. A crate added for one function is a permanent cost for a temporary
 convenience.
 

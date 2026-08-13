@@ -8,8 +8,8 @@ use crucible_core::{
     Ask, Command, Mode, Permission, Reach, Remember, Rules, ToolCall, ToolId, Verdict,
 };
 
-use super::output::OUTPUT;
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
+use crate::bound::OUTPUT;
 use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
@@ -89,11 +89,15 @@ fn a_command_that_runs_too_long_is_stopped() {
 }
 
 #[test]
-fn a_command_stopped_for_running_too_long_says_so_once() {
-    // Both facts hold here: the command was killed for taking too long, and the
-    // thing it left running still holds the pipe open. Reported as two notes
-    // they read as two separate problems, and the second one names a cause that
-    // is not why this stopped.
+fn what_a_stopped_command_left_running_is_stopped_with_it() {
+    // A backgrounded process is disowned by the shell and reparented, so it
+    // used to outlive the command and go on holding the pipe — which is why the
+    // report has a note for output that is still arriving. It is in the group
+    // the command was killed with, so what the model gets here is the timeout
+    // and nothing else, and the machine is left with nothing running.
+    //
+    // What the note is still for is a process that left that group of its own
+    // accord, and `output::tests` pins how that reads.
     let sample = Sample::new("bash-timeout-background");
 
     let output = ran(
@@ -107,6 +111,11 @@ fn a_command_stopped_for_running_too_long_says_so_once() {
         output.text().matches("\n\n[").count(),
         1,
         "one marker, not two: {}",
+        output.text()
+    );
+    assert!(
+        !output.text().contains("still holds the output open"),
+        "{}",
         output.text()
     );
 }
@@ -143,6 +152,30 @@ fn output_that_was_still_arriving_does_not_come_back_looking_complete() {
         output.text().contains("still arriving"),
         "{}",
         output.text()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pipeline_the_command_started_is_stopped_with_it() {
+    // `kill` reaches the shell alone. Every other member of a pipeline is a
+    // child of it, so they reparent and go on running after the tool has
+    // returned — `yes > /dev/null | cat` burns a core until the session ends.
+    // What is signalled is the process group, and the marker is what proves it:
+    // written by a member of the pipeline after the command was stopped, it can
+    // only exist if that member outlived the kill.
+    let sample = Sample::new("bash-pipeline");
+
+    let output = ran(
+        &sample,
+        r#"{"command":"(sleep 2; touch outlived) | cat","timeout":1}"#,
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    thread::sleep(Duration::from_secs(3));
+    assert!(
+        !sample.root().join("outlived").exists(),
+        "a member of the pipeline outlived the command"
     );
 }
 
@@ -195,6 +228,38 @@ fn a_turn_already_stopped_never_starts_the_command() {
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
     assert!(!sample.root().join("should-not-exist").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_shell_is_not_something_the_workspace_can_supply() {
+    // An empty element on the PATH means the current directory to whatever
+    // resolves a bare name, and the current directory of every command this
+    // tool runs is the workspace. So a file the model wrote called `sh` would
+    // be the shell that reads every command line after it — including the ones
+    // a user was asked about and allowed.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("bash-shell");
+    sample.write("sh", "#!/bin/sh\necho owned\n");
+    std::fs::set_permissions(
+        sample.root().join("sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("a writable temporary directory");
+
+    let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
+    let empty_element_first = move |name: &str| match name {
+        "PATH" => Some(OsString::from(format!(":{inherited}"))),
+        other => std::env::var_os(other),
+    };
+
+    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
+    let output = tool
+        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
+        .expect("the command ran");
+
+    assert_eq!(output.text(), "hello");
 }
 
 #[test]
