@@ -9,7 +9,7 @@
 //! builds a request may be one bad assumption away from taking the process
 //! down.
 
-use crucible_core::{Message, Request, ToolResult, ToolSchema, Transcript};
+use crucible_core::{Message, Request, StopReason, ToolResult, ToolSchema, Transcript};
 use serde_json::{Map, Value, json};
 
 use crate::json::{described, object};
@@ -50,8 +50,8 @@ fn messages(transcript: &Transcript) -> Vec<Value> {
 fn message(message: &Message) -> Option<Value> {
     match message {
         Message::User(text) => Some(json!({ "role": "user", "content": &**text })),
-        Message::Agent { text, calls, .. } => {
-            let mut content = Vec::with_capacity(calls.len() + 1);
+        Message::Agent { text, calls, stop } => {
+            let mut content = Vec::with_capacity(calls.len() + 2);
 
             // An empty text block is refused by the API, and the model produces
             // one every time it calls a tool without saying anything first.
@@ -74,6 +74,14 @@ fn message(message: &Message) -> Option<Value> {
             // one bad turn making the session refuse to continue at all.
             if content.is_empty() {
                 return None;
+            }
+
+            // A block of its own after the answer, and only where there is an
+            // answer for it to be about. Left off, the model reads its own
+            // half-sentence as a turn it chose to end — on the next turn of
+            // this session and on every turn of a continued one.
+            if let Some(said) = StopReason::cut(*stop) {
+                content.push(json!({ "type": "text", "text": said }));
             }
 
             Some(json!({ "role": "assistant", "content": content }))
@@ -117,7 +125,7 @@ fn tool(schema: &ToolSchema) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{StopReason, ToolArgs, ToolCall, ToolId, ToolOutput};
+    use crucible_core::{ToolArgs, ToolCall, ToolId, ToolOutput};
 
     use super::*;
 
@@ -191,13 +199,13 @@ mod tests {
         // that follows answers a question it never asked.
         let mut transcript = said("read it");
         transcript.push(Message::Agent {
-            stop: Some(StopReason::WantsTools),
             text: "let me look".into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),
                 name: "read".into(),
                 args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
             }],
+            stop: Some(StopReason::WantsTools),
         });
 
         let body = build(&request(transcript));
@@ -224,13 +232,13 @@ mod tests {
         // to a tool produces one on every turn it does so.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
-            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),
                 name: "read".into(),
                 args: ToolArgs::new("{}"),
             }],
+            stop: Some(StopReason::WantsTools),
         });
 
         let body = build(&request(transcript));
@@ -249,9 +257,9 @@ mod tests {
         // permanently unusable, and nothing about the failure would say why.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
-            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: Vec::new(),
+            stop: Some(StopReason::Cancelled),
         });
 
         let body = build(&request(transcript));
@@ -270,18 +278,61 @@ mod tests {
         // through as an empty string is a 400.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
-            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),
                 name: "pwd".into(),
                 args: ToolArgs::new(""),
             }],
+            stop: Some(StopReason::WantsTools),
         });
 
         let body = build(&request(transcript));
 
         assert_eq!(at(&body, "/messages/1/content/0/input"), &json!({}));
+    }
+
+    #[test]
+    fn a_turn_that_was_cut_off_is_not_sent_back_as_one_the_model_finished() {
+        // The live notice tells the user; nothing told the model. So the next
+        // turn — and every turn of a continued session — showed it its own
+        // half-sentence as an answer it had chosen to end there.
+        let mut transcript = said("write it all out");
+        transcript.push(Message::Agent {
+            text: "as I was say".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::OutOfTokens),
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/1/content/0/text"),
+            &json!("as I was say")
+        );
+        assert_eq!(
+            at(&body, "/messages/1/content/1/text"),
+            &json!(StopReason::cut(Some(StopReason::OutOfTokens)).expect("a cut-off turn")),
+        );
+    }
+
+    #[test]
+    fn a_turn_the_model_ended_itself_carries_no_note() {
+        // The path taken every time. A note under each answer would be spent
+        // on the ordinary ending and teach the model nothing.
+        let mut transcript = said("hello");
+        transcript.push(Message::Agent {
+            text: "hello back".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+
+        let body = build(&request(transcript));
+
+        assert_eq!(
+            at(&body, "/messages/1/content").as_array().map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]

@@ -8,6 +8,29 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **OpenAI sessions that call tools work again.** A model that reasons before
+  answering refuses function tools on Chat Completions outright — the request
+  came back `Function tools with reasoning_effort are not supported for
+  <model>`, naming an effort crucible never sent, because it is that model's own
+  default. crucible speaks the Responses API now. The two answers were to turn
+  the reasoning off or to move, and turning it off would have left every OpenAI
+  session running a thinking model told not to think.
+
+- **A cut answer is marked as cut where the model can see it.** The reason a
+  turn stopped is recorded, and both wire protocols now put a line after the
+  answer saying so. Without it the model reads its own half-sentence as a turn
+  it chose to end, every time the transcript goes back.
+
+### Changed
+
+- **Other vendors serving an OpenAI-compatible API are no longer reached by the
+  `openai` provider.** They implement Chat Completions and not Responses. One of
+  them gets a provider of its own the day it is written; the seam is already the
+  right shape, since a wire protocol is a module and nothing above the provider
+  crate learns which endpoint answered.
+
+### Fixed
+
 - **A turn that was cut short no longer comes back looking finished.** The
   transcript kept what the model said and not why it stopped, so an answer ended
   by the token ceiling, a filter, a pause or <kbd>Ctrl-C</kbd> was replayed to

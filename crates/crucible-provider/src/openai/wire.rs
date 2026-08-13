@@ -1,14 +1,15 @@
 //! A response, from OpenAI's shape.
 //!
-//! One chunk in, however many deltas out. Zero for the keep-alives and for the
-//! marker that closes the stream; more than one when a chunk both opens a tool
-//! call and starts its arguments, which the first chunk of every call does.
-//! That plural is the difference from the other protocol, where a delta is an
-//! event and an event is a delta.
+//! One event in, however many deltas out. Zero for most of them: this endpoint
+//! narrates a response item by item, and the majority of what it sends is the
+//! narration rather than the answer.
 //!
 //! Read by field lookup rather than into mirror structs. The payload is
-//! consumed once, here, and a struct per chunk shape would be more code to say
+//! consumed once, here, and a struct per event shape would be more code to say
 //! the same thing while still needing a fallback for what it does not know.
+//!
+//! Every event says its own `type`, so that is what is read rather than the SSE
+//! event name beside it. One name, one place it is spelled.
 
 use crucible_core::{Delta, ProviderError, StopReason, ToolId};
 use serde_json::Value;
@@ -16,182 +17,239 @@ use serde_json::Value;
 use crate::openai::NAME;
 use crate::sse::SseEvent;
 
-/// The marker that closes a stream. Not JSON, and not a stop reason.
-const DONE: &str = "[DONE]";
-
-/// What a chunk means, or nothing if it means nothing to us.
+/// The tool call the response has open, and whether its arguments have started
+/// arriving.
 ///
-/// `open` is which tool call the response has open, by the index its vendor
-/// gave it. The caller carries it between chunks because a call is opened in
-/// one chunk and its arguments arrive in the ones after it — so no single chunk
-/// can tell whether a fragment belongs where it is about to be assembled.
+/// Carried between events because a call is opened in one and its arguments
+/// arrive in the ones after it — so no single event can tell whether a fragment
+/// belongs where it is about to be assembled. The flag is what decides whether
+/// the finished item repeats arguments already streamed or supplies ones that
+/// never were.
+#[derive(Debug, Default)]
+pub(super) struct Open {
+    /// The item id this endpoint keys its fragments by, empty where none is
+    /// open.
+    item: String,
+    /// Whether a fragment has arrived for it.
+    streamed: bool,
+}
+
+/// What an event means, or nothing if it means nothing to us.
 ///
 /// # Errors
 ///
-/// [`ProviderError::Upstream`] when the chunk is the provider reporting a
+/// [`ProviderError::Upstream`] when the event is the provider reporting a
 /// failure inside a response it had already started, and
-/// [`ProviderError::Protocol`] when a chunk does not parse.
-pub(super) fn deltas(
-    event: &SseEvent,
-    open: &mut Option<i64>,
-) -> Result<Vec<Delta>, ProviderError> {
-    // Not JSON, and the one thing every response ends with. Reading it as a
-    // chunk would fail every turn at the last moment.
-    if event.data.trim() == DONE {
-        return Ok(Vec::new());
-    }
-
+/// [`ProviderError::Protocol`] when an event does not parse, announces a tool
+/// call by part of its identity, or contradicts what is open.
+pub(super) fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
     // A heartbeat, which a proxy may spell any way it likes and may send with
-    // no data line at all. There is nothing to parse; reading it as a chunk
+    // no data line at all. There is nothing to parse; reading it as an event
     // fails the turn and discards the answer that had already arrived.
     if event.data.trim().is_empty() {
         return Ok(Vec::new());
     }
 
     let payload = parse(&event.data)?;
-
-    if let Some(error) = payload.get("error").filter(|error| !error.is_null()) {
-        return Err(upstream(error));
-    }
-
-    let mut out = Vec::new();
-
-    // One choice, because one is what a request without `n` asks for. A chunk
-    // with none carries a usage report, which this build never asks for and
-    // which the endpoint sends only to a request that opted in. Other servers
-    // speaking this protocol send one anyway, so it is skipped rather than
-    // refused.
-    let Some(choice) = payload
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-    else {
-        return Ok(out);
+    let Some(kind) = text(&payload, "type") else {
+        return Ok(Vec::new());
     };
 
-    if let Some(delta) = choice.get("delta") {
-        said(delta, &mut out, open)?;
-    }
+    match kind {
+        // The answer as it is written, and the other thing a model writes in
+        // its place. A model that declines produces no output text at all, and
+        // a refusal left unread is a turn that shows nothing and then reports
+        // that it finished normally.
+        "response.output_text.delta" | "response.refusal.delta" => Ok(said(&payload)),
 
-    // Last, and in the same chunk as whatever came with it: a reason shares a
-    // chunk with the final word or arrives in one of its own, and both shapes
-    // are ordinary. Pushing it after the content is what makes either safe.
-    if let Some(reason) = text(choice, "finish_reason") {
-        out.push(Delta::Stopped(stop(reason)));
-    }
+        "response.output_item.added" => started(&payload, open),
+        "response.function_call_arguments.delta" => arguing(&payload, open),
+        "response.output_item.done" => finished(&payload, open),
 
-    Ok(out)
+        // The three ways a response ends. `completed` is the only one that is
+        // not a failure, and which of the two finishes it is depends on what
+        // the response turned out to hold.
+        "response.completed" => Ok(vec![Delta::Stopped(stop(&payload))]),
+        "response.incomplete" => Ok(vec![Delta::Stopped(cut(&payload))]),
+        "response.failed" => Err(failed(&payload)),
+
+        // A failure outside any response, which arrives flat rather than under
+        // one.
+        "error" => Err(upstream(&payload)),
+
+        // Everything else this endpoint narrates: the response opening, content
+        // parts being framed, reasoning being done. A stream that failed on an
+        // event it had not heard of would fail every turn the day a field is
+        // added.
+        _ => Ok(Vec::new()),
+    }
 }
 
-/// What the model produced in one chunk.
-fn said(delta: &Value, out: &mut Vec<Delta>, open: &mut Option<i64>) -> Result<(), ProviderError> {
-    // Empty is what the opening chunk carries, the one that only announces the
-    // role. Emitting it would put a blank line in front of every answer.
-    if let Some(content) = text(delta, "content").filter(|content| !content.is_empty()) {
-        out.push(Delta::Text(content.into()));
+/// A fragment of what the model is saying.
+fn said(payload: &Value) -> Vec<Delta> {
+    match text(payload, "delta").filter(|delta| !delta.is_empty()) {
+        Some(delta) => vec![Delta::Text(delta.into())],
+        None => Vec::new(),
     }
-
-    // A model that declines says so here, and leaves `content` null for the
-    // whole response. Unread, a refusal is a turn that shows nothing at all
-    // and then reports that it finished normally.
-    if let Some(refusal) = text(delta, "refusal").filter(|refusal| !refusal.is_empty()) {
-        out.push(Delta::Text(refusal.into()));
-    }
-
-    for call in delta
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        calling(call, out, open)?;
-    }
-
-    Ok(())
 }
 
-/// One entry of a chunk's tool calls: an opening, a fragment, or both.
+/// An item the response has started, which is a tool call or is not.
 ///
-/// Both is why this appends rather than returns. Nothing on this wire promises
-/// that the chunk carrying a call's name carries no arguments with it, and
-/// dropping that first fragment leaves the model's arguments unparsable.
-///
-/// Fragments carry no identity, so the runner appends them to whichever call it
-/// opened last. That works because a provider sends each call's fragments
-/// before opening the next one — an assumption, and the one this parser rests
-/// on. What it will not do is assemble a fragment onto a call that is visibly
-/// the wrong one, which is what the two guards below are for. `open` is the
-/// call the fragments belong to, and outlives the chunk it was opened in.
-fn calling(
-    call: &Value,
-    out: &mut Vec<Delta>,
-    open: &mut Option<i64>,
-) -> Result<(), ProviderError> {
-    let function = call.get("function");
-    let index = call.get("index").and_then(Value::as_i64);
-
-    let id = text(call, "id").filter(|id| !id.is_empty());
-    let name = function
-        .and_then(|function| text(function, "name"))
-        .filter(|name| !name.is_empty());
-
-    match (id, name) {
-        (Some(id), Some(name)) => {
-            *open = index;
-            out.push(Delta::ToolStarted {
-                id: ToolId::new(id),
-                name: name.into(),
-            });
-        }
-
-        // Half an identity. Letting it through would send the arguments below
-        // to whichever call was open before it, which is one tool running on
-        // another tool's arguments rather than a failure anyone can see.
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ProviderError::Protocol {
-                provider: NAME,
-                problem: "a tool call arrived with an id or a name but not both".into(),
-            });
-        }
-
-        // Neither: a fragment of a call already open.
-        (None, None) => {}
+/// A message item opening is nothing to report: its text arrives as fragments
+/// and this would put a delta in front of it saying so.
+fn started(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+    let Some(item) = payload.get("item") else {
+        return Ok(Vec::new());
+    };
+    if text(item, "type") != Some("function_call") {
+        return Ok(Vec::new());
     }
 
-    let args = function
-        .and_then(|function| text(function, "arguments"))
-        .filter(|args| !args.is_empty());
-    let Some(args) = args else { return Ok(()) };
+    // The two identities this endpoint gives a call, and they are not
+    // interchangeable. `id` is what its own fragments are keyed by; `call_id`
+    // is what a result is answered against, and it is the one the transcript
+    // has to carry.
+    //
+    // A call missing either of them, or its name, is refused rather than
+    // skipped. Skipped, nothing opens: the fragments that follow are assembled
+    // onto the call before it — one tool running on another tool's arguments —
+    // and the call that was half announced leaves no trace, so the turn ends
+    // looking like a clean finish with a tool the model asked for never run.
+    let (Some(id), Some(name), Some(call)) =
+        (text(item, "id"), text(item, "name"), text(item, "call_id"))
+    else {
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a tool call arrived without both of its identities and a name".into(),
+        });
+    };
 
-    // Arguments under any index but the open call's would be assembled onto
-    // that call. The call may have been opened chunks ago, which is the whole
-    // reason `open` is not a local of this parse.
-    if let (Some(open), Some(index)) = (*open, index)
-        && open != index
-    {
+    *open = Open {
+        item: id.to_owned(),
+        streamed: false,
+    };
+
+    Ok(vec![Delta::ToolStarted {
+        id: ToolId::new(call),
+        name: name.into(),
+    }])
+}
+
+/// A fragment of the open call's arguments.
+///
+/// Fragments carry the item they belong to, so unlike the older endpoint this
+/// can say when one does not belong to the call in hand. It refuses rather than
+/// assembling it anyway, which would be one tool running on another tool's
+/// arguments rather than a failure anyone can see.
+fn arguing(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+    let Some(delta) = text(payload, "delta").filter(|delta| !delta.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    if text(payload, "item_id").is_none_or(|item| item != open.item) {
         return Err(ProviderError::Protocol {
             provider: NAME,
             problem: "arguments arrived for a tool call other than the one open".into(),
         });
     }
 
-    out.push(Delta::ToolArgs(args.into()));
-    Ok(())
+    open.streamed = true;
+    Ok(vec![Delta::ToolArgs(delta.into())])
 }
 
-/// The model saying why it stopped.
-fn stop(reason: &str) -> StopReason {
+/// An item the response has finished.
+///
+/// The finished call carries its whole argument text. Where fragments arrived it
+/// is what they add up to and repeating it would double the arguments; where
+/// none did — a server that narrates only the ends of things — it is the only
+/// copy there is.
+///
+/// Which of those it is can only be answered about the call in hand, so the item
+/// is checked against the open one first — the same check [`arguing`] makes, for
+/// the same reason. Taken on trust, the arguments of one call would be emitted
+/// under whichever call happens to be open and against the `streamed` flag of
+/// that other call: one tool running on another tool's arguments, and the flag
+/// deciding whether they arrive twice or not at all.
+fn finished(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+    let Some(item) = payload.get("item") else {
+        return Ok(Vec::new());
+    };
+    if text(item, "type") != Some("function_call") {
+        return Ok(Vec::new());
+    }
+
+    if text(item, "id").is_none_or(|item| item != open.item) {
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a tool call finished that was not the one open".into(),
+        });
+    }
+
+    let streamed = std::mem::take(open).streamed;
+    let arguments = text(item, "arguments").filter(|arguments| !arguments.is_empty());
+
+    Ok(match arguments {
+        Some(arguments) if !streamed => vec![Delta::ToolArgs(arguments.into())],
+        _ => Vec::new(),
+    })
+}
+
+/// Why a response that finished finished.
+///
+/// There is no field for it: a response that wants tools and a response that
+/// has answered both complete, and what tells them apart is whether the output
+/// holds a call. Read from the finished response rather than remembered from
+/// the items, so the two cannot disagree.
+fn stop(payload: &Value) -> StopReason {
+    let calls = payload
+        .get("response")
+        .and_then(|response| response.get("output"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|item| text(item, "type") == Some("function_call"));
+
+    if calls {
+        StopReason::WantsTools
+    } else {
+        StopReason::Yielded
+    }
+}
+
+/// Why a response that did not finish stopped.
+///
+/// Neither of these is a finish. An answer cut off by a ceiling or withheld by a
+/// filter reads as a complete answer unless the turn says otherwise, and that is
+/// the one failure the user cannot see for themselves.
+fn cut(payload: &Value) -> StopReason {
+    let reason = payload
+        .get("response")
+        .and_then(|response| response.get("incomplete_details"))
+        .and_then(|details| text(details, "reason"));
+
     match reason {
-        "tool_calls" | "function_call" => StopReason::WantsTools,
-        "length" => StopReason::OutOfTokens,
-        // Content was withheld, so the answer on screen is not the whole one.
-        // Reporting it as a finish would show a cut-off answer as a complete
-        // one, which is the same mistake `length` is spelled out to avoid.
-        "content_filter" => StopReason::Filtered,
-        // `stop`, and anything added later. A reason this build has not heard
-        // of is treated as a finish, which is the only safe guess: it hands the
-        // turn back rather than asking the provider for more.
-        _ => StopReason::Yielded,
+        Some("content_filter") => StopReason::Filtered,
+        // `max_output_tokens`, and any reason this build has not heard of.
+        // Falling through to a ceiling rather than to a finish is the whole
+        // point: the response has already said it is incomplete, and the only
+        // question left is which way to say so.
+        _ => StopReason::OutOfTokens,
+    }
+}
+
+/// A response the provider gave up on part-way through.
+fn failed(payload: &Value) -> ProviderError {
+    let error = payload
+        .get("response")
+        .and_then(|response| response.get("error"));
+
+    match error {
+        Some(error) => upstream(error),
+        None => ProviderError::Upstream {
+            provider: NAME,
+            kind: "error".into(),
+            message: "the provider reported a failure and did not say what".into(),
+        },
     }
 }
 
@@ -199,7 +257,10 @@ fn stop(reason: &str) -> StopReason {
 fn upstream(error: &Value) -> ProviderError {
     ProviderError::Upstream {
         provider: NAME,
-        kind: text(error, "type").unwrap_or("error").into(),
+        kind: text(error, "code")
+            .or_else(|| text(error, "type"))
+            .unwrap_or("error")
+            .into(),
         message: text(error, "message")
             .unwrap_or("the provider reported a failure and did not say what")
             .into(),
@@ -215,9 +276,9 @@ fn text<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 fn parse(data: &str) -> Result<Value, ProviderError> {
     serde_json::from_str(data).map_err(|problem| ProviderError::Protocol {
         provider: NAME,
-        // The payload itself is not carried: it is up to a whole chunk long and
+        // The payload itself is not carried: it is up to a whole event long and
         // this message ends up in front of a user.
-        problem: format!("a chunk was not JSON: {problem}").into(),
+        problem: format!("an event was not JSON: {problem}").into(),
     })
 }
 

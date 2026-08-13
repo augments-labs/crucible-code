@@ -3,7 +3,7 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::{StopReason, ToolArgs, ToolId, ToolOutput, Transcript};
+use crucible_core::{ToolArgs, ToolId, ToolOutput, Transcript};
 
 use super::*;
 
@@ -40,221 +40,251 @@ fn a_request_streams_and_names_its_model() {
     // which is the whole experience this harness is built around.
     let body = build(&request(said("hello")));
 
-    assert_eq!(at(&body, "/model"), &json!("gpt-test"));
-    assert_eq!(at(&body, "/stream"), &json!(true));
+    assert_eq!(at(&body, "/model"), "gpt-test");
+    assert_eq!(at(&body, "/stream"), true);
 }
 
 #[test]
-fn the_token_ceiling_is_sent_under_the_name_every_model_accepts() {
-    // `max_tokens` means the same thing and is refused outright by the
-    // models that reason before answering. This one is taken by all of them.
+fn a_request_asks_the_vendor_not_to_keep_it() {
+    // This endpoint retains a response for later retrieval unless told
+    // otherwise, and what a coding agent sends is somebody's source. The
+    // default is the one setting here that has to be overridden rather than
+    // accepted.
+    assert_eq!(at(&build(&request(said("hello"))), "/store"), false);
+}
+
+#[test]
+fn no_ceiling_is_sent_at_all() {
+    // One number bounds the reasoning and the answer together on this
+    // endpoint, and these models reason before they answer. A figure chosen
+    // for an answer is one the model can spend entirely on thinking, and the
+    // turn then ends having said nothing.
     let body = build(&request(said("hello")));
 
-    assert_eq!(at(&body, "/max_completion_tokens"), &json!(1024));
-    assert!(
-        body.get("max_tokens").is_none(),
-        "the older name went out too: {body}"
-    );
+    assert_eq!(at(&body, "/max_output_tokens"), &NOTHING);
+    assert_eq!(at(&body, "/max_completion_tokens"), &NOTHING);
+    assert_eq!(at(&body, "/max_tokens"), &NOTHING);
 }
 
 #[test]
-fn a_system_prompt_is_the_first_message_rather_than_a_field() {
-    // There is no field for it in this protocol. Sending one would be
-    // ignored, and the model would work without its instructions.
-    let mut request = request(said("hello"));
-    request.system = Some("be brief".into());
+fn a_system_prompt_is_a_field_rather_than_a_message() {
+    // Sent as a message it would be one more thing the model may answer,
+    // rather than the instructions it answers under.
+    let mut asking = request(said("hello"));
+    asking.system = Some("be brief".into());
 
-    let body = build(&request);
+    let body = build(&asking);
 
-    assert_eq!(at(&body, "/messages/0/role"), &json!("system"));
-    assert_eq!(at(&body, "/messages/0/content"), &json!("be brief"));
-    assert_eq!(at(&body, "/messages/1/role"), &json!("user"));
-    assert!(body.get("system").is_none(), "{body}");
+    assert_eq!(at(&body, "/instructions"), "be brief");
+    assert_eq!(at(&body, "/input/0/role"), "user");
+    assert_eq!(at(&body, "/input/0/content"), "hello");
+    assert_eq!(at(&body, "/input/1"), &NOTHING);
 }
 
 #[test]
-fn a_session_without_a_system_prompt_starts_at_what_was_typed() {
+fn a_session_without_a_system_prompt_sends_no_instructions() {
     let body = build(&request(said("hello")));
 
-    assert_eq!(at(&body, "/messages/0/role"), &json!("user"));
-    assert_eq!(at(&body, "/messages/0/content"), &json!("hello"));
+    assert_eq!(at(&body, "/instructions"), &NOTHING);
+    assert_eq!(at(&body, "/input/0/content"), "hello");
 }
 
 #[test]
-fn a_tool_call_goes_back_with_its_arguments_as_the_text_the_model_wrote() {
-    // The field is a string on this wire. Handing back a re-encoded object
-    // would give the model something it did not write, and the arguments it
-    // sees would stop matching the ones it produced.
+fn a_tool_call_is_an_item_of_its_own_beside_what_was_said() {
+    // The shape that differs most from the older endpoint: a call is not part
+    // of the message that made it, and its result is not part of a message
+    // either. Both are items in one flat list.
     let mut transcript = said("read it");
     transcript.push(Message::Agent {
-        stop: Some(StopReason::WantsTools),
-        text: "let me look".into(),
+        text: "reading".into(),
         calls: vec![ToolCall {
             id: ToolId::new("call_1"),
             name: "read".into(),
-            args: ToolArgs::new(r#"{"path":"src/main.rs"}"#),
+            args: ToolArgs::new("{\"path\":\"a.rs\"}"),
         }],
+        stop: Some(StopReason::WantsTools),
     });
 
     let body = build(&request(transcript));
 
-    assert_eq!(at(&body, "/messages/1/role"), &json!("assistant"));
-    assert_eq!(at(&body, "/messages/1/content"), &json!("let me look"));
-    assert_eq!(
-        at(&body, "/messages/1/tool_calls/0"),
-        &json!({
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "read", "arguments": r#"{"path":"src/main.rs"}"#},
-        })
-    );
+    assert_eq!(at(&body, "/input/1/role"), "assistant");
+    assert_eq!(at(&body, "/input/1/content"), "reading");
+    assert_eq!(at(&body, "/input/2/type"), "function_call");
+    assert_eq!(at(&body, "/input/2/call_id"), "call_1");
+    assert_eq!(at(&body, "/input/2/name"), "read");
+
+    // Text, not an object. Re-encoding would hand the model back something it
+    // did not write.
+    assert_eq!(at(&body, "/input/2/arguments"), "{\"path\":\"a.rs\"}");
 }
 
 #[test]
-fn a_tool_call_with_no_words_before_it_sends_no_content() {
+fn a_tool_call_with_no_words_before_it_sends_no_message_at_all() {
     // A model that goes straight to a tool says nothing first, and an empty
-    // string is not the same as having said nothing.
-    let mut transcript = said("go");
+    // message is an item with no content for it to read back.
+    let mut transcript = said("read it");
     transcript.push(Message::Agent {
-        stop: Some(StopReason::WantsTools),
         text: String::new().into(),
         calls: vec![ToolCall {
             id: ToolId::new("call_1"),
             name: "read".into(),
             args: ToolArgs::new("{}"),
         }],
+        stop: Some(StopReason::WantsTools),
     });
 
     let body = build(&request(transcript));
 
-    assert_eq!(at(&body, "/messages/1/content"), &NOTHING);
-    assert_eq!(
-        at(&body, "/messages/1/tool_calls/0/function/name"),
-        &json!("read")
-    );
+    assert_eq!(at(&body, "/input/1/type"), "function_call");
 }
 
 #[test]
 fn a_turn_that_produced_nothing_at_all_still_sends_something_to_hold() {
-    // The pair of the test above, and the reason its condition names the
-    // calls as well as the text. A turn cancelled or filtered before the
-    // model's first word has neither, and null with no calls to carry it is
-    // a message this wire has no use for. It is recorded, so it would go
-    // out on every turn after it rather than once.
-    let mut transcript = said("go");
+    // A cancelled turn and a filtered one both reach here with no text and no
+    // calls. Sending neither would leave a gap in the transcript where a turn
+    // was.
+    let mut transcript = said("hello");
     transcript.push(Message::Agent {
-        stop: Some(StopReason::WantsTools),
         text: String::new().into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Cancelled),
     });
 
     let body = build(&request(transcript));
 
-    assert_eq!(at(&body, "/messages/1/content"), &json!(""));
-    assert_eq!(at(&body, "/messages/1/tool_calls"), &NOTHING);
+    assert_eq!(at(&body, "/input/1"), &NOTHING);
 }
 
 #[test]
-fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
-    // No arguments means no argument text arrived at all, and an empty
-    // string is not JSON on the other side.
-    let mut transcript = said("go");
+fn a_turn_that_was_cut_off_is_not_sent_back_as_one_the_model_finished() {
+    // The live notice tells the user; nothing told the model. So the next turn
+    // — and every turn of a continued session — showed it its own half-sentence
+    // as an answer it had chosen to end there.
+    let mut transcript = said("write it all out");
     transcript.push(Message::Agent {
-        stop: Some(StopReason::WantsTools),
-        text: String::new().into(),
-        calls: vec![ToolCall {
-            id: ToolId::new("call_1"),
-            name: "pwd".into(),
-            args: ToolArgs::new(""),
-        }],
+        text: "as I was say".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::OutOfTokens),
     });
 
     let body = build(&request(transcript));
 
+    assert_eq!(at(&body, "/input/1/content"), "as I was say");
     assert_eq!(
-        at(&body, "/messages/1/tool_calls/0/function/arguments"),
-        &json!("{}")
+        at(&body, "/input/2/content"),
+        StopReason::cut(Some(StopReason::OutOfTokens)).expect("a cut-off turn")
     );
 }
 
 #[test]
-fn every_result_of_a_turn_is_its_own_message() {
-    // The other protocol carries them together. Here each one names the
-    // call it answers, so two results are two messages or the second one
-    // has nowhere to say which call it belongs to.
-    let mut transcript = said("go");
+fn a_turn_the_model_ended_itself_carries_no_note() {
+    // The path taken every time. A note under each answer would be spent on
+    // the ordinary ending and teach the model nothing.
+    let mut transcript = said("hello");
+    transcript.push(Message::Agent {
+        text: "hello back".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+
+    let body = build(&request(transcript));
+
+    assert_eq!(at(&body, "/input/2"), &NOTHING);
+}
+
+#[test]
+fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
+    // An empty string is not JSON on the other side, and the model is handed
+    // this back as the arguments it wrote.
+    let mut transcript = said("what time is it");
+    transcript.push(Message::Agent {
+        text: String::new().into(),
+        calls: vec![ToolCall {
+            id: ToolId::new("call_1"),
+            name: "clock".into(),
+            args: ToolArgs::new("  "),
+        }],
+        stop: Some(StopReason::WantsTools),
+    });
+
+    let body = build(&request(transcript));
+
+    assert_eq!(at(&body, "/input/1/arguments"), "{}");
+}
+
+#[test]
+fn every_result_of_a_turn_is_its_own_item_naming_the_call_it_answers() {
+    let mut transcript = said("read them");
     transcript.push(Message::ToolResults(vec![
         ToolResult {
             id: ToolId::new("call_1"),
-            output: ToolOutput::ok("fn main() {}"),
+            output: ToolOutput::ok("first"),
         },
         ToolResult {
             id: ToolId::new("call_2"),
-            output: ToolOutput::ok("src/main.rs"),
+            output: ToolOutput::ok("second"),
         },
     ]));
 
     let body = build(&request(transcript));
 
-    assert_eq!(
-        at(&body, "/messages/1"),
-        &json!({"role": "tool", "tool_call_id": "call_1", "content": "fn main() {}"})
-    );
-    assert_eq!(
-        at(&body, "/messages/2"),
-        &json!({"role": "tool", "tool_call_id": "call_2", "content": "src/main.rs"})
-    );
+    assert_eq!(at(&body, "/input/1/type"), "function_call_output");
+    assert_eq!(at(&body, "/input/1/call_id"), "call_1");
+    assert_eq!(at(&body, "/input/1/output"), "first");
+    assert_eq!(at(&body, "/input/2/call_id"), "call_2");
+    assert_eq!(at(&body, "/input/2/output"), "second");
 }
 
 #[test]
 fn a_failed_result_says_so_in_the_only_place_this_wire_has() {
     // There is no field for it. Unmarked, "no such file: x" reads as the
     // contents of a file that was read successfully.
-    let mut transcript = said("go");
+    let mut transcript = said("read it");
     transcript.push(Message::ToolResults(vec![ToolResult {
         id: ToolId::new("call_1"),
-        output: ToolOutput::failed("no such file"),
+        output: ToolOutput::failed("no such file: a.rs"),
     }]));
 
     let body = build(&request(transcript));
 
-    assert_eq!(
-        at(&body, "/messages/1/content"),
-        &json!("error: no such file")
-    );
+    assert_eq!(at(&body, "/input/1/output"), "error: no such file: a.rs");
 }
 
 #[test]
-fn a_tool_is_advertised_with_its_schema_and_its_description() {
-    let mut request = request(said("go"));
-    request.tools = vec![ToolSchema {
+fn a_tool_is_advertised_flat_with_its_schema_and_its_description() {
+    // Flat is the difference from the older endpoint, where the same three
+    // fields sit nested under a `function` object. Sent that way here the
+    // request is refused outright.
+    let mut asking = request(said("hello"));
+    asking.tools = vec![ToolSchema {
         name: "read",
-        schema: r#"{"description":"Reads a file.","type":"object","properties":{"path":{"type":"string"}}}"#,
+        schema: r#"{"description":"Reads a file","type":"object",
+                    "properties":{"path":{"type":"string"}}}"#,
     }];
 
-    let body = build(&request);
+    let body = build(&asking);
 
-    assert_eq!(at(&body, "/tools/0/type"), &json!("function"));
-    assert_eq!(at(&body, "/tools/0/function/name"), &json!("read"));
+    assert_eq!(at(&body, "/tools/0/type"), "function");
+    assert_eq!(at(&body, "/tools/0/name"), "read");
+    assert_eq!(at(&body, "/tools/0/description"), "Reads a file");
+    assert_eq!(at(&body, "/tools/0/parameters/type"), "object");
     assert_eq!(
-        at(&body, "/tools/0/function/description"),
-        &json!("Reads a file.")
+        at(&body, "/tools/0/parameters/properties/path/type"),
+        "string"
     );
-    assert_eq!(
-        at(&body, "/tools/0/function/parameters/type"),
-        &json!("object")
-    );
-    assert_eq!(
-        at(&body, "/tools/0/function/parameters/description"),
-        &NOTHING,
-        "the description belongs to the tool, not to its arguments"
-    );
+
+    // The description is the tool's, not the schema's: a schema that carried
+    // one into `parameters` would describe the arguments object.
+    assert_eq!(at(&body, "/tools/0/parameters/description"), &NOTHING);
+
+    // Said rather than left out. Strict mode requires every property to be
+    // required and additional ones refused, which is not what these schemas
+    // say, so a default that changed would change how a tool is validated.
+    assert_eq!(at(&body, "/tools/0/strict"), false);
 }
 
 #[test]
 fn a_session_with_no_tools_sends_no_tools_field() {
-    // An empty array is refused rather than treated as none.
-    let body = build(&request(said("hello")));
-
-    assert!(body.get("tools").is_none(), "an empty tool list is not one");
+    // An empty array is refused rather than read as a session with no tools.
+    assert_eq!(at(&build(&request(said("hello"))), "/tools"), &NOTHING);
 }

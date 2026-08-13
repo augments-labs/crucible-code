@@ -1,16 +1,34 @@
 //! The OpenAI provider.
 //!
 //! Four parts, and the split is the direction data travels: [`body`] builds a
-//! request, [`wire`] reads one chunk of a response, [`stream`] delivers a whole
+//! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
 //! one, and this file is the request itself — the headers and the status.
 //!
 //! It names no HTTP client and no credential kind. A [`Transport`] is handed in
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.
 //!
-//! Chat Completions rather than the newer endpoint, because it is the shape the
-//! other vendors serving an OpenAI-compatible API implement, and one adapter
-//! reaching all of them is worth more here than the newest fields.
+//! Responses rather than Chat Completions, and not for the newer fields. A
+//! model that reasons before answering refuses function tools on the older
+//! endpoint outright — it answers a request carrying both with
+//!
+//! ```text
+//! Function tools with reasoning_effort are not supported for <model> in
+//! /v1/chat/completions. To use function tools, use /v1/responses or set
+//! reasoning_effort to 'none'.
+//! ```
+//!
+//! and the effort it names is the vendor's own default rather than anything
+//! sent from here. A harness whose whole purpose is calling tools has two
+//! answers to that: turn the reasoning off, or move. Turning it off would leave
+//! every OpenAI session running a thinking model told not to think, which is
+//! the worse of the two by some way.
+//!
+//! What that costs is the other vendors serving an OpenAI-compatible API, which
+//! implement the older endpoint and not this one. They are reached by a
+//! provider of their own the day one is written, and the seam is already the
+//! right shape for it: a wire protocol is a module here, and nothing above this
+//! crate learns which endpoint answered.
 
 mod body;
 mod stream;
@@ -26,9 +44,9 @@ use crate::transport::Transport;
 const NAME: &str = "openai";
 
 /// Where requests go.
-const URL: &str = "https://api.openai.com/v1/chat/completions";
+const URL: &str = "https://api.openai.com/v1/responses";
 
-/// OpenAI's Chat Completions API.
+/// OpenAI's Responses API.
 #[derive(Debug)]
 pub struct OpenAi {
     credential: Box<dyn Credential>,
@@ -146,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn a_request_goes_to_chat_completions_and_asks_for_a_stream() {
+    fn a_request_goes_to_responses_and_asks_for_a_stream() {
         let (openai, replay) = provider(200, ANSWER);
 
         openai.stream(asking("hello"), &Cancel::new()).unwrap();
