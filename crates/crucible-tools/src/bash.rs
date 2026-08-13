@@ -15,15 +15,18 @@
 //! to say what it will run — that is [`command`], which recognises the shapes a
 //! rule can honestly cover and refuses the rest. Refusing means being asked.
 //!
-//! Reading it that far also makes a narrower question answerable for a few
-//! lines: whether this one changes nothing outside the workspace. That is
-//! [`reach`], and it is the only thing `allowEdits` needs from a shell to treat
-//! a `mkdir` the way it already treats a `write`.
+//! Reading it that far says what will run and not where it will land, and no
+//! amount of reading could say the second. Whatever a word in the line was
+//! found to point at, the shell looks it up again by name when the command
+//! runs, so a symbolic link put there in between sends the write somewhere
+//! else and nobody was asked. The file tools have no such gap — they keep hold
+//! of the directory they proved — and `sh` cannot be made to work that way, so
+//! the mode that runs a command without a question is `fullAccess` and there
+//! is no other.
 
 mod command;
 mod environment;
 mod output;
-mod reach;
 mod shell;
 mod wrapper;
 
@@ -180,7 +183,7 @@ impl Tool for Bash {
         let command = match Args::parse(NAME, args)
             .and_then(|args| args.text("command").map(str::to_owned))
         {
-            Ok(line) => command::read(&line, &self.workspace),
+            Ok(line) => command::read(&line),
             // A call this malformed will be refused by `run`, but it still has
             // to be given a sensitivity first — and the safe answer to "what is
             // about to run" when nobody can read it is everything that was

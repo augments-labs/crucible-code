@@ -32,6 +32,14 @@ Notable changes to crucible. Format follows
   tools that change files change them, and anything that starts a process asks.
   A command you run constantly wants an `allow` rule, or `fullAccess`.
 
+### Removed
+
+- **The reach analysis.** crucible used to read a command line and work out
+  whether everything it touched was inside the working directory, so that
+  `allowEdits` could run some commands without asking. Nothing reads that
+  answer now, and it could not be made sound: a shell reopens paths by name, so
+  a symbolic link put there afterwards moved the write and nobody was asked.
+
 ## [0.0.9] - 2026-08-12
 
 ### Added

@@ -72,7 +72,6 @@ fn running(parts: &[&str]) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
             parts: parts.iter().map(|part| (*part).into()).collect(),
-            reach: Reach::Anything,
         },
     }
 }

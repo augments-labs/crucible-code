@@ -1,8 +1,6 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{
-    Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError, Workspace,
-};
+use crucible_core::{Command, ProviderError, Target, ToolArgs, ToolId, TurnError, Workspace};
 use crucible_tui::Recording;
 
 use super::*;
@@ -36,7 +34,6 @@ fn rule(command: &str) -> Minted {
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from(command)]),
-                reach: Reach::Anything,
             },
         },
     )
@@ -128,7 +125,6 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from("rm -rf build")]),
-                reach: Reach::Anything,
             },
         },
         args(),

@@ -38,7 +38,7 @@ pub use grant::{Approved, Grant};
 pub use mode::Mode;
 pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
-pub use sensitivity::{Command, Reach, Sensitivity, Target};
+pub use sensitivity::{Command, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
 
 /// What the engine settled on for one call.
