@@ -28,12 +28,52 @@ const NAME: &str = "grep";
 /// How many matching lines one call answers with when it does not say.
 const MATCHES: usize = 200;
 
+/// The most lines a call can ask for, however large a number it sends.
+///
+/// [`MATCHES`] is a default and a caller may raise it; this it cannot. The
+/// number arrives from the model like every other argument, and `"limit":
+/// 100000` is a thing a model writes — where what it costs is not the answer,
+/// which [`crate::bound`] cuts, but the walk that builds one: every hit is held
+/// until the sort, at up to [`WIDTH`] characters each.
+///
+/// A thousand is where the two bounds meet. Even a match reported as
+/// `src/a.rs:1:x` runs to some twenty bytes, so a thousand of them is already
+/// the whole of what an answer carries — past this the bytes have cut it and a
+/// larger number buys nothing but the work of finding lines nobody will read.
+const CEILING: usize = 1_000;
+
 /// Where a matching line is cut. A match inside a minified bundle is worth
 /// reporting; the bundle is not worth sending.
 const WIDTH: usize = 400;
 
 /// How many files the answer names before it starts counting them instead.
 const NAMED: usize = 5;
+
+/// The most heap one searcher may hold a line in.
+///
+/// The searcher scans a line at a time, so its buffer has to grow to the longest
+/// line in the file. Left unbounded that is the default, and the default is
+/// "limited only by available memory": a committed minified bundle — one ASCII
+/// line and no newline, the case [`WIDTH`] is cut for — is read whole. Nothing
+/// else stops it. `MmapChoice::never` moves those bytes onto the heap rather
+/// than avoiding them, and `BinaryDetection::quit` never fires on a long line of
+/// text. Measured, a 200 MB bundle takes the process to 413 MB, which against
+/// the 35 MB this program is allowed is not a slow search but a dead one.
+///
+/// A quarter of a megabyte, and the arithmetic is over the whole walk rather
+/// than one file: the walk is parallel, one searcher is built per thread, and
+/// `ignore` takes a thread per core up to twelve. So the worst case is 3 MB — a
+/// fixed cost under a tenth of the budget, which does not move with the size of
+/// the tree, the number of files or the length of the session.
+///
+/// Generous against a real line for the same reason it is small against the
+/// budget. A matching line is cut at [`WIDTH`] characters before anyone sees it,
+/// so this is some six hundred times what is ever reported, and five times the
+/// longest line in a machine-written source file in this program's own
+/// dependency tree. A file with a line longer than this is searched as far as
+/// that line and then named in the note [`unread`] writes, which is what the
+/// model needs to know to go and look for itself.
+const MAX_LINE: usize = 256 * 1024;
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
@@ -60,7 +100,7 @@ const SCHEMA: &str = r#"{
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many matching lines to return. Defaults to 200."
+      "description": "How many matching lines to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
     }
   },
   "required": ["pattern"]
@@ -111,7 +151,7 @@ struct Searched {
 }
 
 impl Grep {
-    /// Searches inside `workspace`, and nowhere else.
+    /// Searches inside `workspace` and nowhere else.
     #[must_use]
     pub fn new(workspace: Workspace) -> Self {
         Self { workspace }
@@ -150,6 +190,9 @@ impl Grep {
                 // the walk and the ignore rules, which is where `rg` wins most
                 // of it too.
                 .memory_map(MmapChoice::never())
+                // Which is also why this has to be said: with no map, a line is
+                // held on the heap, and with no limit the heap is the machine.
+                .heap_limit(Some(MAX_LINE))
                 .build();
             let (hits, partly, so_far) = (&hits, &partly, &so_far);
 
@@ -213,11 +256,15 @@ impl Grep {
     /// The matching lines of one file, and whether the search reached the end
     /// of it.
     ///
-    /// Two things stop it early. The file cannot be read — no permission, a
-    /// device, gone since the walk saw it — or a line the matcher hit is not
-    /// text, because `UTF8` decodes before it hands anything over and only a
-    /// NUL byte quits the searcher, so a Latin-1 file is searched as the text
-    /// it nearly is until one of its bytes is not.
+    /// Four things stop it early. The user stopped the turn, which the walk
+    /// answers between files and this answers inside one — a single file can be
+    /// the size of a tree, and a search of it is the wait a stopped turn would
+    /// otherwise sit through. The file cannot be read — no permission, a
+    /// device, gone since the walk saw it. A line the matcher hit is not text,
+    /// because `UTF8` decodes before it hands anything over and only a NUL byte
+    /// quits the searcher, so a Latin-1 file is searched as the text it nearly
+    /// is until one of its bytes is not. Or a line is longer than [`MAX_LINE`],
+    /// which the searcher reports as the allocation it was refused.
     ///
     /// Either way what came back before that point is real and is kept, and the
     /// name goes back with it. Dropping the lot is what makes a file holding a
@@ -252,8 +299,8 @@ impl Grep {
         );
 
         Searched {
+            partly: found.is_err().then_some(shown),
             hits,
-            partly: found.err().map(|_| shown),
         }
     }
 
@@ -289,7 +336,7 @@ impl Tool for Grep {
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = crate::args::Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
-        let limit = args.count("limit", MATCHES)?;
+        let limit = args.count("limit", MATCHES)?.min(CEILING);
 
         let matcher = RegexMatcherBuilder::new()
             .case_insensitive(args.flag("ignore_case", false)?)
@@ -333,14 +380,26 @@ fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
         return ToolOutput::failed(format!("nothing matched {pattern}{note}"));
     }
 
-    let lines = found
-        .hits
-        .iter()
-        .map(|hit| format!("{}:{}:{}\n", hit.path, hit.line, hit.text))
-        .collect::<Vec<_>>()
-        .concat();
+    // Bounded in bytes here rather than in lines above, because the two are not
+    // the same promise: the lines are cut at `WIDTH` characters each, so the
+    // count a call sets says how many lines come back and nothing about how
+    // much text that is.
+    let (lines, over) = crate::bound::within(
+        found
+            .hits
+            .iter()
+            .map(|hit| format!("{}:{}:{}\n", hit.path, hit.line, hit.text)),
+    );
 
-    let tail = if found.more {
+    let tail = if over > 0 {
+        // Raising the limit would not help: what filled up is the answer, not
+        // the list.
+        format!(
+            "\n[stopped at {} matches: the answer was full at {} bytes, narrow the pattern]",
+            found.hits.len().saturating_sub(over),
+            crate::bound::OUTPUT
+        )
+    } else if found.more {
         format!("\n[stopped at {limit} matches: narrow the pattern or raise limit]")
     } else {
         String::new()
