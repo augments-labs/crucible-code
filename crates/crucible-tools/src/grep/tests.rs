@@ -246,15 +246,17 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let tool = Grep::new(sample.workspace(), cancel);
+    // Reached from the workspace root rather than from the directory it was
+    // made in, which is what the walk does — and on a machine where the one is
+    // a symbolic link to the other, a path built the other way is a path the
+    // walk could never hand over, so the file would be named in full.
+    let workspace = sample.workspace();
+    let reached = workspace.root().join("many.txt");
+
+    let tool = Grep::new(workspace.clone(), cancel);
     let mut searcher = SearcherBuilder::new().line_number(true).build();
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
-    let found = tool.lines(
-        &mut searcher,
-        &matcher,
-        &sample.root().join("many.txt"),
-        1_000,
-    );
+    let found = tool.lines(&mut searcher, &matcher, &reached, 1_000);
 
     assert_eq!(found.hits.len(), 1, "it read the whole file");
     assert_eq!(found.partly.as_deref(), Some("many.txt"));
