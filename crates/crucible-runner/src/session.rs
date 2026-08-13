@@ -1,18 +1,21 @@
-//! The session log: what makes a session survive the process.
+//! One file per session, one line per message, appended in order. Nothing
+//! already written is ever changed, which is what makes a crash cost the last
+//! line rather than the file: there is no offset to seek to, no length to
+//! update, and nothing half-changed to leave behind.
 //!
-//! One file per session, one line per message, appended in order and never
-//! rewritten. Append-only is what makes a crash cost the last line rather than
-//! the file: there is no offset to seek to, no length to update, and nothing
-//! that has already been written can be left half-changed.
+//! One file *per session* is a claim about the name as much as about the
+//! writing. A session starting creates its log rather than opening it, so the
+//! name it recorded under is one no other crucible was handed — see [`taking`],
+//! which is where the two ways of already having a name are refused.
 //!
-//! Writing happens on the session's own thread. The thread that draws must not
-//! wait for a disk, and a queue is how it stops having to.
-//!
-//! Durability here means "survives the process", not "survives the machine":
-//! each line reaches the operating system as it is recorded, and nothing calls
-//! `fsync`. Paying milliseconds per message to also survive a power cut is not
-//! the trade a coding session wants.
+//! The one cut is where continuing starts. `--continue` shortens the file to
+//! the end of the last message the replay could settle on — before a line a
+//! crash tore in half, before a tool call nothing ever answered — and does it
+//! before the handle that appends exists. A log already ending there loses
+//! nothing, which is every ordinary run. It is a truncation and not a rewrite:
+//! what survives is byte for byte what was written.
 
+use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
@@ -30,7 +33,7 @@ mod replay;
 mod wire;
 
 use claim::{Claim, Claimed, claim};
-use log::{Trouble, open, shorten};
+use log::{Trouble, make, open, shorten};
 pub use recent::{Recorded, recent};
 use replay::{belongs, newest, replay};
 
@@ -43,6 +46,16 @@ const QUEUE: usize = 256;
 
 /// What a session log is called.
 const SUFFIX: &str = "jsonl";
+
+/// How many names a new session tries before it gives up.
+///
+/// A name carries twenty-four bits of randomness inside one millisecond, so a
+/// second attempt is already a rarity and a third is one nobody will see. What
+/// the bound is really for is the other reason every name comes back taken — a
+/// directory that has stopped behaving — where a loop with no end to it is a
+/// start-up that hangs with nothing on screen instead of a session that says
+/// what went wrong.
+const NAMES: usize = 8;
 
 /// Why a session could not be recorded or continued.
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +109,19 @@ pub enum SessionError {
         at: Box<str>,
     },
 
+    /// Every name a new session tried was already spoken for.
+    ///
+    /// A name carries a millisecond and twenty-four bits of randomness, so one
+    /// collision is rare and a run of them says something else is wrong with
+    /// the directory. Reported rather than retried for ever: a session that
+    /// cannot be named is one the user can be told about, and a loop that never
+    /// gives up is a start-up that hangs with nothing on screen.
+    #[error("could not find a free name for a new session in {at}")]
+    Taken {
+        /// The directory it tried in.
+        at: Box<str>,
+    },
+
     /// A session named outright that this directory has no log of.
     #[error("no session {id} recorded for {at}")]
     Unknown {
@@ -133,42 +159,52 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// [`SessionError`] when the directory or the file cannot be made.
+    /// [`SessionError`] when the directory or the file cannot be made, and
+    /// [`SessionError::Taken`] where every name it minted was already spoken
+    /// for.
     pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
         privacy::directory(directory).map_err(|source| SessionError::Directory {
             at: directory.display().to_string().into(),
             source,
         })?;
 
-        let id = SessionId::new();
-        let path = directory.join(format!("{}.{SUFFIX}", id.as_str()));
-        let mut file = open(&path)?;
+        Self::naming(directory, workspace, SessionId::new)
+    }
 
-        let header = wire::header(&id, workspace.root());
-        writeln!(file, "{header}").map_err(|source| SessionError::Log {
-            at: path.display().to_string().into(),
-            source,
-        })?;
+    /// Starts a session under the first name `name` mints that nothing holds.
+    ///
+    /// The minting is a parameter so that a test can hand over one that is
+    /// already taken. A collision is one name in sixteen million, so this is
+    /// the path no ordinary run reaches — and code nothing has ever run is code
+    /// nobody knows the behaviour of.
+    fn naming(
+        directory: &Path,
+        workspace: &Workspace,
+        mut name: impl FnMut() -> SessionId,
+    ) -> Result<Self, SessionError> {
+        for _ in 0..NAMES {
+            let id = name();
+            let path = directory.join(format!("{}.{SUFFIX}", id.as_str()));
 
-        // Nothing can be holding a log this run has just named, so there is
-        // nothing to refuse here. It is claimed so that a crucible started
-        // afterwards in the same directory finds this session open for as long
-        // as it is being written, rather than continuing it underneath.
-        //
-        // A mark that cannot be made stops the session, unlike the two answers
-        // below it. It goes beside a log this call has just written a line to,
-        // in a directory this call has just made, so the failure is that
-        // directory rather than anything about locks — and the next line to be
-        // recorded would meet it too.
-        let held = match claimed(&path)? {
-            Claimed::Taken(held) => Some(held),
-            Claimed::Busy | Claimed::Lockless => None,
-        };
+            let Some((mut file, held)) = taking(&path)? else {
+                continue;
+            };
 
-        let mut session = Self::writing(path, file);
-        session.claim = held;
+            let header = wire::header(&id, workspace.root());
+            writeln!(file, "{header}").map_err(|source| SessionError::Log {
+                at: path.display().to_string().into(),
+                source,
+            })?;
 
-        Ok(session)
+            let mut session = Self::writing(path, file);
+            session.claim = held;
+
+            return Ok(session);
+        }
+
+        Err(SessionError::Taken {
+            at: directory.display().to_string().into(),
+        })
     }
 
     /// Continues the newest session recorded for `workspace`, and hands back
@@ -392,6 +428,49 @@ impl Session {
             trouble,
         }
     }
+}
+
+/// Takes `path` for a session starting now, or `None` where the name is
+/// already spoken for.
+///
+/// Two things have to be true of a name, and they are two because they fail
+/// apart. Nothing may be holding a claim on it: a mark another crucible has
+/// locked is a session that name belongs to, whatever the directory shows,
+/// since the log it belongs to can be renamed or deleted underneath it.
+/// `--continue` meets that same answer and stops, because there the busy
+/// session is the one the user asked for; nobody asked for this one, so it is a
+/// name to step over rather than a refusal to report. Read instead as the third
+/// answer — a filesystem with no locks — a session would start unguarded on a
+/// name another crucible believes is its own.
+///
+/// And no log may stand there already. That is the filesystem's own answer
+/// rather than a lock's, which is what makes it the one that holds between two
+/// crucibles minting the same name in the same millisecond: exactly one of them
+/// creates the file, and the loser is told so. It is also the only guard left
+/// where locks are not to be had.
+///
+/// The claim goes first so that a name refused here leaves nothing behind to
+/// clean up. The mark it makes sits beside a log that already exists, or beside
+/// the one written a line later; a log created before a claim was tried would
+/// have to be deleted again, which is the one operation on a session directory
+/// that can take somebody else's file with it.
+///
+/// # Errors
+///
+/// [`SessionError`] when the claim could not be attempted at all — see
+/// [`claim`] — or when the log could not be made for any reason other than
+/// already being there. A mark that cannot be made stops the session rather
+/// than costing it a name: it goes in a directory the caller has just made, so
+/// what failed is that directory, and every name minted after this one would
+/// fail in the same place.
+fn taking(path: &Path) -> Result<Option<(File, Option<Claim>)>, SessionError> {
+    let held = match claimed(path)? {
+        Claimed::Taken(held) => Some(held),
+        Claimed::Busy => return Ok(None),
+        Claimed::Lockless => None,
+    };
+
+    Ok(make(path)?.map(|file| (file, held)))
 }
 
 /// Claims `log`, with the one thing that is not an answer about it named as an

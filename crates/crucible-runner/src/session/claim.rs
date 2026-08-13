@@ -45,8 +45,15 @@ impl Drop for Claim {
 /// What claiming a log came back with.
 ///
 /// Three answers rather than two, because the two that hold no claim are not
-/// the same answer and call for opposite decisions: one refuses the session and
+/// the same answer and call for opposite decisions: one stops the caller and
 /// the other carries on without a guard.
+///
+/// What stopping means depends on which caller asked, and the two are worth
+/// keeping apart. Continuing a session names the log it wants, so a busy one is
+/// the answer to the question and the run says so. A session starting named
+/// nothing — it minted a name and this is the news that the name is somebody
+/// else's — so it mints another. Both refuse to write; only one of them has a
+/// user to tell.
 #[derive(Debug)]
 pub(super) enum Claimed {
     /// This process holds the log.

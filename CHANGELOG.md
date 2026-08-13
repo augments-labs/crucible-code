@@ -8,6 +8,15 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A session no longer starts on a log another crucible already holds.** The
+  name came from a timestamp, so two crucibles started in the same directory in
+  the same second opened the same file and appended into each other's
+  transcript — and `--continue` then replayed one conversation made of two. A
+  log is now created exclusively: the one that loses the race takes the next
+  name rather than joining what it found.
+
+### Fixed
+
 - **A <kbd>Ctrl-C</kbd> at the very start of a turn is no longer lost.** The
   flag was cleared by the turn, on the turn's own thread, which left a window as
   wide as a thread takes to start: a press raised in it was wiped by the turn it

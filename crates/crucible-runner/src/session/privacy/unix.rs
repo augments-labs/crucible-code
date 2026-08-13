@@ -39,6 +39,30 @@ pub(in crate::session) fn log(path: &Path) -> Result<File, io::Error> {
     Ok(file)
 }
 
+/// Makes a log that was not there a moment ago, out of reach.
+///
+/// `create_new` rather than `create`, which is what makes the name a session
+/// starts under its own: two crucibles that minted one identifier both arrive
+/// here, and the filesystem decides between them — one creates the file and the
+/// other is told it exists. Opened the way [`log`] opens one, the loser would
+/// write its header onto the winner's log and the two would then interleave a
+/// session each into one file, with neither of them able to tell.
+///
+/// The mode is what [`log`] holds one at. A log is a log whichever call made
+/// it, and the one difference between these two is what they do about a name
+/// that is already there.
+pub(in crate::session) fn fresh(path: &Path) -> Result<File, io::Error> {
+    let file = OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .mode(LOG)
+        .open(path)?;
+
+    narrow(path, LOG)?;
+
+    Ok(file)
+}
+
 /// Opens the mark beside a log, making it if it is not there, out of reach.
 ///
 /// Held at what a log is held at. It is named for a session and sits in the
