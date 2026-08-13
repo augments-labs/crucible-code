@@ -8,6 +8,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A refusal that never finishes arriving no longer wedges the turn.** The
+  message under a refused response is read to the end so it can be shown, and a
+  body that stalled with the connection still open was read forever — the turn
+  sat there with nothing on screen explaining it. The read is bounded now; what
+  arrived is reported, and a refusal that simply pauses mid-sentence is still
+  read whole.
+
 - **<kbd>Ctrl-C</kbd> lands while a model is thinking.** The socket read had no
   bound, so a provider that stopped sending mid-answer kept the turn inside it
   and the press waited for the next token — which might never come. The read is

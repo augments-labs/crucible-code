@@ -4,8 +4,20 @@
 //! the same: a status, and a sentence under `error.message` explaining it. A
 //! wrong model name and a key without access are both diagnosed from that
 //! sentence, so losing it costs a user the only clue they get.
+//!
+//! Every refusal ends the turn, and that includes the one saying the credential
+//! was not accepted. Renewing a credential happens earlier than here:
+//! [`authorize`] runs on the way into every request, which is where a token's
+//! age can still be answered about, where no part of a response has been read
+//! yet, and where failing costs no round trip. Sending again from this side
+//! would repeat a request the vendor has already answered — with a refusal, but
+//! answered — and would need a bound of its own so the second refusal could not
+//! ask for a third.
+//!
+//! [`authorize`]: crucible_core::Credential::authorize
 
-use std::io::Read;
+use std::io::{self, Read};
+use std::time::{Duration, Instant};
 
 use crucible_core::ProviderError;
 
@@ -15,19 +27,55 @@ use crucible_core::ProviderError;
 /// reading all of it to print a paragraph of HTML helps nobody.
 const MAX_REFUSAL: u64 = 8 * 1024;
 
+/// The longest reading one may take altogether.
+///
+/// A different failure from the one above, and the reason [`read_to_end`] is not
+/// what reads this body. Bodies arrive through a reader that reports a wait that
+/// expired as an interruption — the kind the `Read` contract says to retry — so
+/// a gateway that answers 429 and then stalls without closing is a reader that
+/// neither ends nor errors, and `read_to_end` retries it for ever. That leaves
+/// the turn wedged here, which is the one place in it with no cancel to consult:
+/// the runner's is not reachable from this side, because by now the turn is
+/// already failing and what is being assembled is the sentence saying why.
+///
+/// The whole read rather than the gaps in it, which is the stronger of the two
+/// bounds: a peer trickling one byte per gap satisfies every gap and still holds
+/// the thread for as long as it likes.
+///
+/// Ten seconds because what this competes with is the user learning nothing. A
+/// refusal is a sentence, and one that has not finished arriving in that long is
+/// not going to.
+///
+/// [`read_to_end`]: Read::read_to_end
+const MAX_WAIT: Duration = Duration::from_secs(10);
+
 /// A refusal, with the sentence the provider sent.
 pub(crate) fn refused(
     provider: &'static str,
     status: u16,
     body: Box<dyn Read + Send>,
 ) -> ProviderError {
+    said(provider, status, body, MAX_WAIT)
+}
+
+/// The same, with a wait a test can hand over as none.
+///
+/// The wait rather than the deadline it makes, so nothing here adds to an
+/// `Instant` — that addition panics where it overflows, and a bound against
+/// hanging is a poor place to put a new way to fail.
+fn said(
+    provider: &'static str,
+    status: u16,
+    body: Box<dyn Read + Send>,
+    wait: Duration,
+) -> ProviderError {
     let mut said = Vec::new();
-    let read = body.take(MAX_REFUSAL).read_to_end(&mut said);
+    let read = fill(&mut body.take(MAX_REFUSAL), &mut said, wait);
 
     let message = match read {
         // Lossy on purpose: this is already the failure path, and a message
         // that is not quite text is still better than no message.
-        Ok(_) => explain(&String::from_utf8_lossy(&said)),
+        Ok(()) => explain(&String::from_utf8_lossy(&said)),
         Err(problem) => format!("the response could not be read: {problem}"),
     };
 
@@ -35,6 +83,34 @@ pub(crate) fn refused(
         provider,
         status,
         message: message.into(),
+    }
+}
+
+/// Reads until the body ends, its bytes run out, or `wait` does.
+///
+/// The clock is looked at only where a read said to retry, so a body arriving
+/// steadily is never cut short by it — [`MAX_REFUSAL`] is what ends that one,
+/// and a refusal that fits arrives in a round trip. Nothing spins here either: a
+/// retry means a reader that waited, and how long it waited is that reader's
+/// business.
+fn fill(body: &mut dyn Read, said: &mut Vec<u8>, wait: Duration) -> io::Result<()> {
+    let since = Instant::now();
+    let mut into = [0_u8; 1024];
+
+    loop {
+        match body.read(&mut into) {
+            Ok(0) => return Ok(()),
+            Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {
+                if since.elapsed() >= wait {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "it stopped part-way through",
+                    ));
+                }
+            }
+            Err(problem) => return Err(problem),
+        }
     }
 }
 
@@ -55,6 +131,7 @@ fn explain(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::{Paused, Said};
 
     fn reading(body: &str) -> Box<dyn Read + Send> {
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes()))
@@ -79,6 +156,48 @@ mod tests {
             problem.to_string(),
             "test: HTTP 502: upstream connect error"
         );
+    }
+
+    /// A gateway that answered and then stalled without closing: every read is
+    /// a wait that expired, spelled the way the transport spells one.
+    struct Stalled;
+
+    impl Read for Stalled {
+        fn read(&mut self, _into: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::Interrupted.into())
+        }
+    }
+
+    #[test]
+    fn a_body_that_stalls_and_never_closes_gives_up_rather_than_holding_the_turn() {
+        // The turn thread is inside this function with no cancel to look at, so
+        // a reader that only ever says "retry" is a session that never comes
+        // back and never says why. `read_to_end` is what used to read this, and
+        // it retries that answer for ever.
+        let problem = said("test", 429, Box::new(Stalled), Duration::ZERO);
+
+        assert_eq!(
+            problem.to_string(),
+            "test: HTTP 429: the response could not be read: it stopped part-way through"
+        );
+    }
+
+    #[test]
+    fn a_refusal_that_pauses_before_the_rest_of_it_is_still_read_whole() {
+        // The other half, and why the deadline is looked at only where a read
+        // said to retry: a refusal that arrives in two pieces is the ordinary
+        // case, and giving up on it costs the user the sentence naming what went
+        // wrong. The pause here is a read that expired, which is exactly what
+        // the arm above gives up on once the wait has run out.
+        let body = Paused::saying([
+            Said::Bytes(br#"{"error":{"message":"upstream"#.to_vec()),
+            Said::Nothing,
+            Said::Bytes(br#" is unwell"}}"#.to_vec()),
+        ]);
+
+        let problem = said("test", 502, Box::new(body), MAX_WAIT);
+
+        assert_eq!(problem.to_string(), "test: HTTP 502: upstream is unwell");
     }
 
     #[test]
