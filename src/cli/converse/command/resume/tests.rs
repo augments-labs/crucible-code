@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use crucible_core::{Cancel, Message};
+use crucible_core::{Cancel, Message, StopReason};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tui::{Recording, Renderer};
 
@@ -22,6 +22,7 @@ fn recorded(sample: &Sample, asked: &str) -> Session {
 
     session.append(&Message::User(asked.into()));
     session.append(&Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: "an answer".into(),
         calls: Vec::new(),
     });

@@ -77,8 +77,26 @@ impl Answer {
     }
 
     /// Why the model stopped, or `None` if it never said.
+    ///
+    /// What goes on the transcript, including where the answer broke off: the
+    /// message has to say the turn did not reach an ending, and `None` is how
+    /// it says so.
     pub(crate) fn stop(&self) -> Option<StopReason> {
         self.stop
+    }
+
+    /// Why the model stopped, as a turn cannot go on without.
+    ///
+    /// A stream that ends having said nothing is a truncated answer with
+    /// nothing to mark it as one — see [`crucible_core::DeltaStream::next`],
+    /// which forbids it. Both providers here prevent it and prove it; a third
+    /// that forgot would produce half an answer that reads as a whole one, and
+    /// this is what stops that being silent.
+    pub(crate) fn reached(&self) -> Result<StopReason, ProviderError> {
+        self.stop.ok_or_else(|| ProviderError::Protocol {
+            provider: self.provider,
+            problem: "the response ended without saying why the model stopped".into(),
+        })
     }
 
     /// What it said, and what it asked to run.
@@ -184,6 +202,23 @@ mod tests {
 
         answer.stopped(StopReason::WantsTools);
         assert_eq!(answer.stop(), Some(StopReason::WantsTools));
+    }
+
+    #[test]
+    fn an_answer_that_never_stopped_is_not_carried_on_as_a_finished_one() {
+        // A stream that ends having said nothing looks exactly like one that
+        // finished. Guessed at, the guess is "finished", and the user is handed
+        // half an answer with nothing saying it is half.
+        let mut answer = answer();
+
+        let problem = answer.reached().unwrap_err();
+        assert!(
+            matches!(problem, ProviderError::Protocol { provider, .. } if provider == "test"),
+            "expected a protocol failure naming the provider, got {problem:?}"
+        );
+
+        answer.stopped(StopReason::Yielded);
+        assert_eq!(answer.reached().unwrap(), StopReason::Yielded);
     }
 
     #[test]

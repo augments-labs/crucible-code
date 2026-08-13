@@ -50,7 +50,7 @@ fn messages(transcript: &Transcript) -> Vec<Value> {
 fn message(message: &Message) -> Option<Value> {
     match message {
         Message::User(text) => Some(json!({ "role": "user", "content": &**text })),
-        Message::Agent { text, calls } => {
+        Message::Agent { text, calls, .. } => {
             let mut content = Vec::with_capacity(calls.len() + 1);
 
             // An empty text block is refused by the API, and the model produces
@@ -117,7 +117,7 @@ fn tool(schema: &ToolSchema) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ToolArgs, ToolCall, ToolId, ToolOutput};
+    use crucible_core::{StopReason, ToolArgs, ToolCall, ToolId, ToolOutput};
 
     use super::*;
 
@@ -191,6 +191,7 @@ mod tests {
         // that follows answers a question it never asked.
         let mut transcript = said("read it");
         transcript.push(Message::Agent {
+            stop: Some(StopReason::WantsTools),
             text: "let me look".into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),
@@ -223,6 +224,7 @@ mod tests {
         // to a tool produces one on every turn it does so.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
+            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),
@@ -247,6 +249,7 @@ mod tests {
         // permanently unusable, and nothing about the failure would say why.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
+            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: Vec::new(),
         });
@@ -267,6 +270,7 @@ mod tests {
         // through as an empty string is a 400.
         let mut transcript = said("go");
         transcript.push(Message::Agent {
+            stop: Some(StopReason::WantsTools),
             text: String::new().into(),
             calls: vec![ToolCall {
                 id: ToolId::new("call_1"),

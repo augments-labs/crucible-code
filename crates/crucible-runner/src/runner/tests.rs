@@ -64,7 +64,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::Delta { text } => Some(text.to_string()),
-                _ => None,
+                Event::TurnStarted { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -75,7 +79,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::TurnStarted { turn } => Some(turn.get()),
-                _ => None,
+                Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -86,7 +94,11 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::TurnFinished { stop, .. } => Some(stop),
-                _ => None,
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::Failed { .. } => None,
             })
             .collect()
     }
@@ -157,6 +169,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
             Message::Agent {
                 text: "Hello, world".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
             },
         ]
     );
@@ -246,6 +259,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
             Message::Agent {
                 text: "looking".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Cancelled),
             },
         ]
     );
@@ -303,6 +317,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
             Message::Agent {
                 text: "let me look at src/main.rs".into(),
                 calls: Vec::new(),
+                stop: None,
             },
         ]
     );
@@ -319,13 +334,69 @@ fn the_tools_a_runner_offers_are_advertised_on_every_request() {
 }
 
 #[test]
-fn a_turn_starts_with_the_stop_the_last_one_left_behind_cleared() {
-    // Otherwise the next turn is cancelled before it sends anything.
+fn a_turn_that_finds_the_flag_raised_stops_without_sending_anything() {
+    // The press arrived after the caller cleared the flag and before this
+    // thread reached its first instruction. Clearing it here instead would wipe
+    // it: the user would have pressed Ctrl-C and watched the turn carry on.
     let script = Script::new(vec![saying("done")]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.cancel.request();
 
-    assert_eq!(scripted.turn("go").unwrap(), StopReason::Yielded);
+    assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
+
+    assert!(
+        scripted.asked().is_empty(),
+        "a request went out for a turn the user had already stopped"
+    );
+    assert_eq!(
+        scripted.finished(),
+        [StopReason::Cancelled],
+        "the turn ended without saying so"
+    );
+    assert!(
+        scripted.runner.transcript().is_empty(),
+        "a turn that never ran recorded a prompt the model was never told"
+    );
+}
+
+#[test]
+fn the_number_a_stopped_turn_announced_is_the_one_the_next_turn_takes() {
+    // The count follows the transcript, and a turn stopped before it began adds
+    // nothing to it. So the number it announced is still free, and the prompt
+    // after it is that turn — taken for real this time. Numbering the next one
+    // higher would leave a gap nothing in the log or on screen accounts for.
+    let script = Script::new(vec![saying("first"), saying("second")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    scripted.turn("one").unwrap();
+
+    scripted.cancel.request();
+    scripted.turn("stopped on the way in").unwrap();
+
+    // What the loop does before it hands the next turn over, and the reason the
+    // runner does not do it for itself.
+    scripted.cancel.reset();
+    scripted.turn("two").unwrap();
+
+    assert_eq!(scripted.started(), [1, 2, 2]);
+}
+
+#[test]
+fn a_turn_leaves_the_flag_to_the_thread_that_raises_it() {
+    // Clearing it is the caller's, on the thread reading the keyboard, before
+    // this turn's thread exists. A turn that cleared it as well would be
+    // clearing whatever arrived in between, which is the one press nothing else
+    // can see.
+    let script = Script::new(vec![saying("done")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.cancel.request();
+
+    scripted.turn("go").unwrap();
+
+    assert!(
+        scripted.cancel.requested(),
+        "the turn cleared a request that was not made of it"
+    );
 }
 
 #[test]
@@ -434,6 +505,7 @@ fn a_session_that_forgot_is_continued_from_where_it_started_again() {
             Message::Agent {
                 text: "after".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
             },
         ]
     );
@@ -485,7 +557,7 @@ fn the_calls_of_a_round_are_recorded_before_the_tools_run() {
         Some(Message::ToolResults(results)) => results
             .first()
             .map(|result| result.output.text().to_owned()),
-        _ => None,
+        Some(Message::User(_) | Message::Agent { .. }) | None => None,
     }
     .expect("the tool ran and its result was recorded");
 
@@ -559,11 +631,13 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
     earlier.push(Message::Agent {
         text: "first".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
     earlier.push(Message::User("two".into()));
     earlier.push(Message::Agent {
         text: "second".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
     scripted.runner = scripted.runner.resuming(earlier);
 
@@ -585,7 +659,11 @@ fn a_call_is_announced_before_it_runs() {
         .try_iter()
         .filter_map(|event| match event {
             Event::ToolRequested { call } => Some(call),
-            _ => None,
+            Event::TurnStarted { .. }
+            | Event::Delta { .. }
+            | Event::ToolFinished { .. }
+            | Event::TurnFinished { .. }
+            | Event::Failed { .. } => None,
         })
         .collect();
 
@@ -608,6 +686,73 @@ fn a_turn_reports_why_it_stopped() {
     assert_eq!(scripted.turn("go").unwrap(), StopReason::OutOfTokens);
 
     assert_eq!(scripted.finished(), [StopReason::OutOfTokens]);
+}
+
+#[test]
+fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
+    // The live notice covers the session; the log is what covers the restart.
+    // Without the reason on the line, the user hits the ceiling mid-sentence,
+    // quits, continues, and replay hands the half-sentence back as a finished
+    // turn — so the model is shown its own truncation as an answer it chose to
+    // end.
+    let sample = Sample::new("runner-cut-off");
+    let script = Script::new(vec![vec![
+        Delta::Text("as I was say".into()),
+        Delta::Stopped(StopReason::OutOfTokens),
+    ]]);
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+
+    scripted.turn("write it all out").unwrap();
+
+    // Dropping the runner drops the session, which is what waits for the queue.
+    drop(scripted);
+    let (_session, replayed) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        replayed.messages(),
+        [
+            Message::User("write it all out".into()),
+            Message::Agent {
+                text: "as I was say".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::OutOfTokens),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_it() {
+    // Silence is what a finished response and one that stopped arriving have in
+    // common. Read as a finish, half an answer reaches the user looking whole —
+    // and reaches the model that way on every turn afterwards. Both providers
+    // here prevent it; this is what a third one that forgot would meet.
+    let script = Script::new(vec![vec![Delta::Text("as I was say".into())]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(
+        matches!(problem, TurnError::Provider(ProviderError::Protocol { .. })),
+        "{problem:?}"
+    );
+
+    // What the user already read is still recorded, and it is recorded as an
+    // answer that never reached an ending.
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::User("go".into()),
+            Message::Agent {
+                text: "as I was say".into(),
+                calls: Vec::new(),
+                stop: None,
+            },
+        ]
+    );
+    assert_eq!(scripted.finished(), [], "a failed turn has no ending");
 }
 
 #[test]
@@ -657,6 +802,7 @@ fn earlier(sample: &Sample) -> SessionId {
     session.append(&Message::Agent {
         text: "an answer from before".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
 
     // Dropping is what waits for the queue, so the log is complete after it.

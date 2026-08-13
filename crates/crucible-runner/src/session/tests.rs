@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{Message, SessionId, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+use crucible_core::{
+    Message, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+};
 use serde_json::Value;
 
 use super::{Session, SessionError, wire};
@@ -17,6 +19,7 @@ fn said(text: &str) -> Message {
 
 fn calling(id: &str, name: &str, args: &str) -> Message {
     Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: "on it".into(),
         calls: vec![ToolCall {
             id: ToolId::new(id),

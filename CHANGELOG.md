@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A turn that was cut short no longer comes back looking finished.** The
+  transcript kept what the model said and not why it stopped, so an answer ended
+  by the token ceiling, a filter, a pause or <kbd>Ctrl-C</kbd> was replayed to
+  the model as a turn it had chosen to end — on the next turn of that session,
+  and on every turn of a continued one. The reason is recorded with the message
+  and travels in the session log, and a cut answer is marked as cut when it goes
+  back.
+
 ### Changed
 
 - **The runner runs the tool the verdict was reached about.** It looked the name

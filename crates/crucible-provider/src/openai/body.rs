@@ -70,7 +70,7 @@ fn messages(request: &Request) -> Vec<Value> {
 fn append(messages: &mut Vec<Value>, message: &Message) {
     match message {
         Message::User(text) => messages.push(json!({ "role": "user", "content": &**text })),
-        Message::Agent { text, calls } => messages.push(agent(text, calls)),
+        Message::Agent { text, calls, .. } => messages.push(agent(text, calls)),
         Message::ToolResults(results) => messages.extend(results.iter().map(result)),
     }
 }
