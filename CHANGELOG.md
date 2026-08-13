@@ -8,6 +8,14 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The workspace can no longer supply the shell.** The shell was spawned under
+  a bare name, resolved wherever the spawn happened — and a command runs with
+  the workspace as its working directory. An empty element on the `PATH` means
+  the current directory to everything that resolves a name, so a file called
+  `sh` written into the tree would have read every command line after it,
+  including ones you were asked about and allowed. The shell is now resolved
+  once, to an absolute path, when the tool is built.
+
 - **A command no longer inherits crucible's environment.** `env` and `printenv`
   are ordinary things for a model to run, and every variable crucible was
   started with — your provider key among them — came back as tool output, onto

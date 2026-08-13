@@ -74,6 +74,9 @@ const SCHEMA: &str = r#"{
 pub struct Bash {
     workspace: Workspace,
     cancel: Cancel,
+    /// Where the shell is, resolved once and absolute — `None` on a machine
+    /// that has none, which is a failure the first call reports.
+    shell: Option<std::path::PathBuf>,
     /// The whole of what a command is started with: the names [`environment`]
     /// inherits, with the `env` block laid over them by [`Bash::exporting`].
     env: Vec<(Box<str>, OsString)>,
@@ -90,6 +93,7 @@ impl std::fmt::Debug for Bash {
         f.debug_struct("Bash")
             .field("workspace", &self.workspace)
             .field("cancel", &self.cancel)
+            .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
             .finish()
     }
@@ -121,6 +125,10 @@ impl Bash {
     /// writes to its environment — that is `unsafe` in edition 2024 and denied
     /// in this workspace — so the answer cannot have changed by the time a
     /// command runs, and the spawn path is left with nothing to ask.
+    ///
+    /// The shell is found the same way and for a second reason: a bare name is
+    /// resolved wherever it is spawned, and a command here is spawned in the
+    /// workspace. [`shell`] says what that costs.
     fn inheriting(
         workspace: Workspace,
         cancel: Cancel,
@@ -129,6 +137,7 @@ impl Bash {
         Self {
             workspace,
             cancel,
+            shell: shell::find(&lookup),
             env: environment::inherited(lookup),
         }
     }
@@ -197,14 +206,14 @@ impl Tool for Bash {
             return Err(ToolError::Cancelled(NAME));
         }
 
-        let shell = shell::find().ok_or_else(|| {
+        let shell = self.shell.as_ref().ok_or_else(|| {
             io(
                 "no POSIX shell to run it with",
                 std::io::Error::new(std::io::ErrorKind::NotFound, shell::ABSENT),
             )
         })?;
 
-        let child = std::process::Command::new(&shell)
+        let child = std::process::Command::new(shell)
             .arg("-c")
             .arg(command)
             .current_dir(self.workspace.root())
