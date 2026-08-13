@@ -6,6 +6,20 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`edit` holds one open file for the read and the write.** It used to name the
+  path twice, and the text it wrote was decided from the text it had read a
+  moment earlier — so if the name was made to lead somewhere else in between,
+  the change landed on a file nobody had looked at.
+
+### Changed
+
+- **A proven path becomes an open file in one place.** The tools no longer open
+  by path themselves; they ask the value that carries the proof. What that open
+  refuses is now stated once instead of at each call site, which is what lets it
+  be strengthened once.
+
 ## [0.0.10] - 2026-08-13
 
 ### Fixed

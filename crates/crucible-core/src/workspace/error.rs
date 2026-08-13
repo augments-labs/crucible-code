@@ -48,6 +48,27 @@ pub enum PathError {
         requested: Box<str>,
     },
 
+    /// The name led to a different file by the time it was opened than the one
+    /// containment was settled about.
+    #[error("{at} was replaced after it was checked, so it was not opened")]
+    Swapped {
+        /// The resolved path rather than the caller's spelling, which is the
+        /// one thing that did not change. Naming the file is what says what
+        /// happened; naming the request would describe a path that is still
+        /// perfectly good to ask for again.
+        at: Box<str>,
+    },
+
+    /// The operating system refused to open a path that resolved inside the
+    /// workspace.
+    #[error("{at} could not be opened: {source}")]
+    Unopened {
+        /// The resolved path, for the reason above.
+        at: Box<str>,
+        /// What the operating system reported.
+        source: std::io::Error,
+    },
+
     /// The root resolves to a name that is not valid UTF-8, so it cannot be
     /// written down and read back as the same directory.
     #[error("{resolved} is not a directory name this can write down: it is not valid UTF-8")]
