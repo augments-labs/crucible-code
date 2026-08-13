@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "clap",
  "crucible-config",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-core"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "globset",
  "rustix",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "crucible-core",
  "serde_json",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "crucible-core",
  "globset",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.0.9"
+version = "0.0.15"
 dependencies = [
  "crossterm",
  "insta",

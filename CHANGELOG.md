@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-08-13
+
 ### Fixed
 
 - **A rule allowing one thing no longer quietly allows another.** A verdict was
@@ -1005,7 +1007,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/augments-labs/crucible-code/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/augments-labs/crucible-code/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/augments-labs/crucible-code/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/augments-labs/crucible-code/compare/v0.0.11...v0.0.12
