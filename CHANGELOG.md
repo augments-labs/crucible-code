@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Stopping a command stops the pipeline it started.** Only the shell was
+  signalled, and every other process on the line is a child of it — so they were
+  reparented and kept running. `yes > /dev/null | cat`, timed out or cancelled,
+  burned a core for the rest of the session with nothing left holding a handle
+  to it. The signal now goes to the process group the command was given.
+
 - **`edit` holds one open file for the read and the write.** It used to name the
   path twice, and the text it wrote was decided from the text it had read a
   moment earlier — so if the name was made to lead somewhere else in between,
