@@ -12,10 +12,11 @@
 //!
 //! What such a check settles is where a name led at the instant it ran, and a
 //! second writer on the machine can move it afterwards. So the open that acts
-//! on a resolved path is done here as well, in `open`, rather than wherever a
-//! caller happened to be holding the path — one place where a proven path
-//! becomes an open file, which is what lets that promise be stated once and
-//! strengthened once. `open` says what it refuses today and what is left over.
+//! on a resolved path is done here as well, and on Unix it does not use the
+//! name at all: it walks down from the directory containment was settled
+//! against, one component at a time, against descriptors it already holds.
+//! `open` says what that closes, what it costs on a platform without that call,
+//! and what is left over on both.
 //!
 //! A workspace reaches the directory crucible was started in and any further
 //! directories configuration named. Which of them a path lands in makes no
