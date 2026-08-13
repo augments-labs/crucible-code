@@ -18,7 +18,7 @@ use std::io::{BufReader, Read};
 use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
 
 use crate::openai::{NAME, wire};
-use crate::sse::Events;
+use crate::sse::{Events, Framed};
 
 /// A response being read.
 pub(super) struct Stream {
@@ -105,8 +105,9 @@ impl DeltaStream for Stream {
                 return None;
             }
 
-            // Between chunks rather than during one: the read below blocks
-            // until the provider says something.
+            // Between reads, and the read below is bounded — so a provider
+            // that has gone quiet hands the turn back here rather than holding
+            // it on the socket for as long as it stays quiet.
             if self.cancel.requested() {
                 self.finished = true;
                 return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
@@ -120,7 +121,10 @@ impl DeltaStream for Stream {
                         problem: problem.to_string().into(),
                     }));
                 }
-                Some(Ok(event)) => event,
+                // Nothing yet. Round the loop to the cancel above, which is
+                // the whole of what a bounded wait is for.
+                Some(Ok(Framed::Quiet)) => continue,
+                Some(Ok(Framed::Event(event))) => event,
             };
 
             match wire::deltas(&event, &mut self.open) {

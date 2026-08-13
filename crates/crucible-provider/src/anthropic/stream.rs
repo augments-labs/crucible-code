@@ -4,6 +4,13 @@
 //! out. It exists apart from the request because it outlives it — the request
 //! is over in a round trip, and this is what runs for as long as the model is
 //! talking.
+//!
+//! The cancel is looked at between events, and what makes that prompt is that
+//! the framing below gives up waiting and hands the turn back rather than
+//! blocking on the socket. So a provider that has stopped talking costs one
+//! bounded wait and not an indefinite one, and a wait that expired ends
+//! nothing: the response is still open, and only the user or the socket closes
+//! it. The other provider streams the same way, through the same framing.
 
 use std::fmt;
 use std::io::{BufReader, Read};
@@ -11,7 +18,7 @@ use std::io::{BufReader, Read};
 use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
 
 use crate::anthropic::{NAME, wire};
-use crate::sse::Events;
+use crate::sse::{Events, Framed};
 
 /// A response being read.
 pub(super) struct Stream {
@@ -78,9 +85,8 @@ impl DeltaStream for Stream {
                 return None;
             }
 
-            // Between events rather than during one: the read below blocks
-            // until the provider says something, and the keep-alive it sends
-            // while thinking is what makes that a short wait.
+            // Between events rather than during one, which is prompt because
+            // the read below comes back whether or not anything arrived.
             if self.cancel.requested() {
                 self.finished = true;
                 return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
@@ -94,7 +100,10 @@ impl DeltaStream for Stream {
                         problem: problem.to_string().into(),
                     }));
                 }
-                Some(Ok(event)) => event,
+                // Nothing yet. Round the loop to the cancel above, which is the
+                // whole of what a bounded wait is for.
+                Some(Ok(Framed::Quiet)) => continue,
+                Some(Ok(Framed::Event(event))) => event,
             };
 
             match wire::delta(&event) {
@@ -114,6 +123,10 @@ pub(super) mod tests {
     use crucible_core::ToolId;
 
     use super::*;
+    use crate::transport::{Paused, Said};
+
+    /// One delta, and then the model stops talking.
+    const HALF: &str = "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n";
 
     /// A complete answer, as the API streams one.
     pub(in crate::anthropic) const ANSWER: &str = concat!(
@@ -261,6 +274,51 @@ pub(super) mod tests {
             Delta::Stopped(StopReason::Cancelled)
         );
         assert!(stream.next().is_none(), "the stream continued after a stop");
+    }
+
+    #[test]
+    fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
+        // The provider went quiet mid-answer and the user pressed stop. Raised
+        // from inside the wait, because that is where a user raises one and the
+        // only place the answer was ever in doubt: a cancel seen before the
+        // read is one the read never had to be interrupted for.
+        let cancel = Cancel::new();
+        let raise = cancel.clone();
+        let silent = Paused::saying([
+            Said::Bytes(HALF.into()),
+            Said::Nothing,
+            Said::Nothing,
+            Said::Nothing,
+        ])
+        .meanwhile(move || raise.request());
+        let mut stream = Stream::new(Box::new(silent), cancel);
+
+        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
+
+        assert_eq!(
+            stream.next().unwrap().unwrap(),
+            Delta::Stopped(StopReason::Cancelled),
+            "the stream waited out a silent provider with a cancel raised"
+        );
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
+        // The regression a bounded wait buys its promptness with, if the wait
+        // expiring is read as a connection that broke: every pause in a long
+        // answer becomes a failed turn. Nothing here fails, and this body
+        // pauses between every five bytes of itself.
+        let mut stream = Stream::new(Box::new(Paused::dawdling(ANSWER, 5)), Cancel::new());
+
+        assert_eq!(
+            deltas(&mut stream),
+            vec![
+                Delta::Text("Hello".into()),
+                Delta::Text(", world".into()),
+                Delta::Stopped(StopReason::Yielded),
+            ]
+        );
     }
 
     #[test]

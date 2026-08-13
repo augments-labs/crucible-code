@@ -138,6 +138,86 @@ impl Transport for Replay {
     }
 }
 
+/// A response body with pauses in it.
+///
+/// A recorded body in a `Cursor` never pauses and never goes quiet, so every
+/// test that reads one is a test about an answer that had already arrived. This
+/// is the other half: it says its pieces in order, reports a wait that expired
+/// the way [`http`] does — an interruption, the kind the `Read` contract says to
+/// retry — and closes when it runs out.
+#[cfg(test)]
+pub(crate) struct Paused {
+    said: std::collections::VecDeque<Said>,
+    meanwhile: Box<dyn FnMut() + Send>,
+}
+
+/// One thing a paused body does when it is read from.
+#[cfg(test)]
+pub(crate) enum Said {
+    /// These bytes, as one read delivers them.
+    Bytes(Vec<u8>),
+    /// Nothing, for as long as one read waits for it.
+    Nothing,
+}
+
+#[cfg(test)]
+impl Paused {
+    /// Says these, in order, and then closes.
+    pub(crate) fn saying(said: impl IntoIterator<Item = Said>) -> Self {
+        Self {
+            said: said.into_iter().collect(),
+            meanwhile: Box::new(|| {}),
+        }
+    }
+
+    /// Says `text` in pieces of `at_a_time` bytes, quiet between each, so that
+    /// a pause falls in the middle of a line as well as between events.
+    pub(crate) fn dawdling(text: &str, at_a_time: usize) -> Self {
+        let said = text
+            .as_bytes()
+            .chunks(at_a_time)
+            .flat_map(|piece| [Said::Nothing, Said::Bytes(piece.to_vec())]);
+
+        Self::saying(said)
+    }
+
+    /// Runs `meanwhile` every time it goes quiet.
+    ///
+    /// Where a test raises a cancel: inside the wait, which is where a user
+    /// raises one and the only place worth proving anything about.
+    pub(crate) fn meanwhile(mut self, meanwhile: impl FnMut() + Send + 'static) -> Self {
+        self.meanwhile = Box::new(meanwhile);
+        self
+    }
+}
+
+#[cfg(test)]
+impl Read for Paused {
+    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
+        match self.said.pop_front() {
+            // Everything it had, said: the socket closed.
+            None => Ok(0),
+            Some(Said::Nothing) => {
+                (self.meanwhile)();
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+            Some(Said::Bytes(bytes)) => {
+                let took = bytes.len().min(into.len());
+                let (taken, left) = bytes.split_at(took);
+                into.get_mut(..took)
+                    .unwrap_or_default()
+                    .copy_from_slice(taken);
+
+                if !left.is_empty() {
+                    self.said.push_front(Said::Bytes(left.to_vec()));
+                }
+
+                Ok(took)
+            }
+        }
+    }
+}
+
 /// A shared transport is still a transport.
 ///
 /// Only tests need this: a provider takes ownership of the one it sends
