@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 21,5 scrolled 5
+|│                                  │ ───────────────────────────────────────── │|
+|│  no model selected               │                                           │|
+|│                                  │ Tips                                      │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl-c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment          |
+|variable. Then use /model to select a model.                                    |
+|                                                                                |
+|› /help     what these are                                                      |
+|  /model    which model answers, or set one                                     |
+|  /mode     ask · allowEdits · fullAccess                                       |
+|  /resume   pick up an earlier session here                                     |
+|  /clear    forget what has been said                                           |
+|  /exit     leave                                                               |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ › /                                                                          │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                |

@@ -6,6 +6,18 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Internal
+
+- The renderer is watched on a real screen. A test starts the shipped binary on
+  a pseudo terminal, sends keystrokes and asserts on the screen it drew — the
+  only test that sees the arithmetic turning rows into a screen, since every
+  other one is handed rows and never a terminal. It is what would have caught
+  the box scrolling off the bottom before a release did.
+
+- **`cargo run` starts crucible.** The bench probes under `src/bin/` are targets
+  too, so cargo could not tell which binary was meant and refused to run any.
+  `default-run` names the one a person means.
+
 ### Fixed
 
 - **A session no longer starts on a log another crucible already holds.** The
