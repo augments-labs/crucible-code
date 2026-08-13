@@ -243,3 +243,40 @@ fn nothing_comes_between_a_turns_tool_calls_and_their_results() {
         "a message came between the calls and their results: {body}"
     );
 }
+
+#[test]
+fn a_tool_is_advertised_under_the_function_this_endpoint_nests_it_in() {
+    let mut asking = request(said("hello"));
+    asking.tools = vec![ToolSchema {
+        name: "read",
+        schema: r#"{"description":"Reads a file","type":"object",
+                    "properties":{"path":{"type":"string"}}}"#,
+    }];
+
+    let body = build(&asking);
+
+    assert_eq!(at(&body, "/tools/0/type"), &json!("function"));
+    assert_eq!(at(&body, "/tools/0/function/name"), &json!("read"));
+    assert_eq!(
+        at(&body, "/tools/0/function/description"),
+        &json!("Reads a file")
+    );
+    assert_eq!(
+        at(&body, "/tools/0/function/parameters/properties/path/type"),
+        &json!("string")
+    );
+    assert!(
+        at(&body, "/tools/0/function/parameters")
+            .get("description")
+            .is_none(),
+        "the description belongs to the tool, not to its arguments: {body}"
+    );
+}
+
+#[test]
+fn a_session_with_no_tools_sends_no_tools_field() {
+    // An empty array is refused rather than read as a session without tools.
+    let body = build(&request(said("hello")));
+
+    assert!(body.get("tools").is_none(), "an empty tool list was sent");
+}

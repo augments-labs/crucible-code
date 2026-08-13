@@ -11,8 +11,10 @@
 //! a message of its own with a role of its own, and argument text travels as
 //! JSON *text* rather than as an object.
 
-use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult};
+use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
+
+use crate::json::described;
 
 /// The whole request body.
 pub(super) fn build(request: &Request) -> Value {
@@ -21,6 +23,13 @@ pub(super) fn build(request: &Request) -> Value {
     body.insert("max_tokens".to_owned(), json!(request.max_tokens));
     body.insert("stream".to_owned(), json!(true));
     body.insert("messages".to_owned(), json!(messages(request)));
+
+    // Absent rather than empty: an empty array is refused rather than read as
+    // a session with no tools.
+    if !request.tools.is_empty() {
+        let tools = request.tools.iter().map(tool).collect();
+        body.insert("tools".to_owned(), Value::Array(tools));
+    }
 
     Value::Object(body)
 }
@@ -139,6 +148,23 @@ fn result(result: &ToolResult) -> Value {
         "role": "tool",
         "tool_call_id": result.id.as_str(),
         "content": content,
+    })
+}
+
+/// One tool, as advertised.
+///
+/// Nested under a `function` object, which is where this endpoint keeps a
+/// tool's name and schema and where the newer one does not.
+fn tool(schema: &ToolSchema) -> Value {
+    let (parameters, description) = described(schema.schema);
+
+    json!({
+        "type": "function",
+        "function": {
+            "name": schema.name,
+            "description": description,
+            "parameters": Value::Object(parameters),
+        },
     })
 }
 
