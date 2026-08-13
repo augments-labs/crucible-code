@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`providers.<name>.baseUrl` points a provider at a gateway.** For a proxy or
+  a gateway speaking the vendor's protocol. It must be `https`, or `http` on
+  `localhost` — the key rides in a header on every request, so the address is
+  who receives it. Refused in `.crucible/config.json` for that reason, since
+  that file travels to everyone who clones the repository.
+
 ## [0.0.16] - 2026-08-13
 
 ### Fixed

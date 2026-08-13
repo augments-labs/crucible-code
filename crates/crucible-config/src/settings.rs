@@ -94,6 +94,21 @@ impl Settings {
             .as_str()
     }
 
+    /// Where this provider's requests go, when the vendor's own address is not
+    /// where they should.
+    ///
+    /// Read back as the string it was written as. What it may be is decided
+    /// where it is applied — the wiring parses it into an address a provider
+    /// can be built at, and a value this returns is not yet one.
+    #[must_use]
+    pub fn base_url(&self, provider: &str) -> Option<&str> {
+        self.value
+            .get("providers")?
+            .get(provider)?
+            .get("baseUrl")?
+            .as_str()
+    }
+
     /// The name of the variable this provider's key is read from.
     ///
     /// The name only. A key has no path into a configuration file: this is the

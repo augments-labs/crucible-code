@@ -49,11 +49,18 @@ Keyed by provider name — `anthropic`, `openai`.
 | --- | --- |
 | `model` | The model to ask when `--model` does not name one. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
+| `baseUrl` | Where to send that provider's requests instead of the vendor's. |
 
 `apiKeyEnv` takes a **name**, never a key. A key is read from the environment at
 startup and has no path into a document, a session file or a log line. Pointing
 crucible at another variable also points it away from the usual one: with
 `"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at all.
+
+`baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
+`https`, or `http` on `localhost` — the key travels in a header on every
+request, so the address decides who receives it, and plain `http` to anywhere
+else is that key on somebody's network in the clear. For the same reason it is
+one of the keys [the file that travels](#the-file-that-travels) may not set.
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
@@ -210,6 +217,14 @@ The exception is crucible's own names, which begin with `CRUCIBLE_CODE_`. One of
 those is not arbitrary — it is a knob crucible declares and whose meaning
 crucible fixes — so a project may set one for everybody who clones it, and that
 is still not a way to ship somebody's key.
+
+The same refusal covers every key that could loosen what crucible does unasked:
+`permissions.mode`, `permissions.allow`, `permissions.extraDirectories`, and
+`providers.<name>.baseUrl`. The last of those is not a permission, and it is
+here for the same reason — the address a request goes to is who receives the key
+that goes with it, and nothing on that path stops to ask. Each is read from your
+home file and from `.crucible/config.local.json`, and refused in the one file
+git carries.
 
 The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is

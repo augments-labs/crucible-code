@@ -257,7 +257,8 @@ fn measure() -> Result<f64, ProbeError> {
     tools.add(Box::new(Read::new(workspace.clone())));
 
     let mut runner = Runner::new(
-        Box::new(Anthropic::new(
+        Box::new(Anthropic::at(
+            Anthropic::VENDOR,
             Box::new(HeaderKey::new(
                 ApiKey::new("bench-not-a-key"),
                 Header::bare("x-api-key"),

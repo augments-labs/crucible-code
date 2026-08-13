@@ -51,6 +51,47 @@ fn a_provider_reads_the_variable_its_configuration_names() {
 }
 
 #[test]
+fn a_provider_is_built_at_the_address_its_configuration_names() {
+    // A gateway or a proxy speaking the vendor's protocol. What the address
+    // then does with a request is the provider's own test; what this one
+    // watches is that a configured address is read and accepted rather than
+    // refused on the way past.
+    let sample = Sample::new("base-url");
+    let settings =
+        sample.local(r#"{"providers": {"anthropic": {"baseUrl": "https://gateway.example/v1"}}}"#);
+
+    let built = provider(Some(serving("anthropic")), &settings, &|_| {
+        Some("a-key".to_owned())
+    })
+    .expect("a provider pointed at a gateway");
+
+    assert_eq!(built.name(), "anthropic");
+}
+
+#[test]
+fn an_address_that_would_put_the_key_on_the_wire_stops_the_run() {
+    // Not a warning that carries on at the vendor's address: somebody who set
+    // this has a reason not to reach the vendor, and going there anyway would
+    // send the key somewhere they did not ask for.
+    let sample = Sample::new("base-url-insecure");
+    let settings =
+        sample.local(r#"{"providers": {"anthropic": {"baseUrl": "http://gateway.example"}}}"#);
+
+    let problem = provider(Some(serving("anthropic")), &settings, &|_| {
+        Some("a-key".to_owned())
+    })
+    .expect_err("plain http to somewhere else to be refused");
+
+    let said = problem.to_string();
+    assert!(matches!(problem, Fatal::Address { .. }), "{problem:?}");
+
+    // The dotted path and the value, because whoever reads this has the file
+    // open and needs to find the line.
+    assert!(said.contains("providers.anthropic.baseUrl"), "{said}");
+    assert!(said.contains("http://gateway.example"), "{said}");
+}
+
+#[test]
 fn a_missing_key_names_the_variable_to_set_and_not_its_value() {
     // The name is configuration; the value is the secret. Only one of them is
     // allowed to reach a terminal. Reachable because the flag can name a
