@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A command no longer inherits crucible's environment.** `env` and `printenv`
+  are ordinary things for a model to run, and every variable crucible was
+  started with — your provider key among them — came back as tool output, onto
+  the screen and into the next request. A command is now started with a short
+  list of what a program needs to run at all, plus whatever the `env` setting
+  adds. A command that needs more is told about it there.
+
 ### Changed
 
 - **`allowEdits` asks before every command.** It used to run a shell command
