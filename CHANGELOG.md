@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-08-13
+
 ### Fixed
 
 - **A `grep` walk stops when the turn does.** The same as `glob`'s: a tree
@@ -810,7 +812,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/augments-labs/crucible-code/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/augments-labs/crucible-code/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/augments-labs/crucible-code/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/augments-labs/crucible-code/compare/v0.0.7...v0.0.8
