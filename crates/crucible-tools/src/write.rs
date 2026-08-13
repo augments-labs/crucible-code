@@ -1,6 +1,7 @@
 //! Putting a whole file down.
 
 use std::fs;
+use std::io::Write as _;
 
 use crucible_core::{
     Approved, PathError, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
@@ -77,17 +78,39 @@ impl Tool for Write {
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        if path.as_path().is_dir() {
+        // What is at the name now, asked about the name itself rather than
+        // through it: `creatable` proved the last component was not a symbolic
+        // link, so one there now arrived since, and `symlink_metadata` is the
+        // question that sees it rather than the far end. All this decides is
+        // which of the two opens the write is — both of them refuse a name that
+        // has become a link, so nothing rests on getting it right.
+        let already = fs::symlink_metadata(&path);
+        if already.as_ref().is_ok_and(fs::Metadata::is_dir) {
             return Ok(ToolOutput::failed(format!("{requested} is a directory")));
         }
 
-        let replaced = path.as_path().exists();
+        let replaced = already.is_ok();
+        let opened = if replaced {
+            path.open_to_change()
+        } else {
+            path.create()
+        };
 
-        fs::write(&path, content).map_err(|source| ToolError::Io {
-            tool: NAME,
-            problem: format!("could not write {requested}").into(),
-            source,
-        })?;
+        let mut file = match opened {
+            Ok(file) => file,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+        };
+
+        // Both of these are about the descriptor rather than the name, so the
+        // file that was opened is the file that gets the text — there is no
+        // second lookup here for anything to arrive in.
+        file.set_len(0)
+            .and_then(|()| file.write_all(content.as_bytes()))
+            .map_err(|source| ToolError::Io {
+                tool: NAME,
+                problem: format!("could not write {requested}").into(),
+                source,
+            })?;
 
         let lines = content.lines().count();
         let what = if replaced { "replaced" } else { "created" };
@@ -104,6 +127,12 @@ impl Write {
     /// way, by the check that follows this; what one call would leave behind is
     /// the *directories* — `../stray/one.txt` is refused at the end, after
     /// `stray` has already been made outside the tree.
+    ///
+    /// Making a level is the one step here that a second writer cannot race:
+    /// the operating system refuses `create_dir` when anything at all is
+    /// already at the name, a symbolic link included, so a link planted at a
+    /// level between the check and the make is an error rather than a way out
+    /// of the tree.
     fn prepare(&self, requested: &str) -> Result<Option<ToolOutput>, ToolError> {
         let Some(parent) = std::path::Path::new(requested).parent() else {
             return Ok(None);

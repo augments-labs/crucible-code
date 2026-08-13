@@ -1,0 +1,99 @@
+//! Opening the file a proven path was proven about.
+//!
+//! Containment is settled about a name, and a name is not a file. Between the
+//! moment [`existing`](super::Workspace::existing) or
+//! [`creatable`](super::Workspace::creatable) established where a name led and
+//! the moment something opens it, anything else on the machine that can write
+//! into the workspace can make the same name lead elsewhere — replace the last
+//! component with a symbolic link, or swap a directory above it for one. A
+//! [`WorkspacePath`] holds a string rather than an open file, so nothing it
+//! carries closes that gap; the check is true of the instant it ran and of no
+//! other instant.
+//!
+//! So the open happens here, beside the proof, rather than wherever a caller
+//! happened to hold the path. That is what this module is for: one place where
+//! a proven path becomes an open file, so what the open promises is stated once
+//! and can be strengthened once.
+//!
+//! Today it opens the path by name, and `name` says what that does and does not
+//! refuse: a link at the last component is refused and a creation will not
+//! follow one, and a directory *above* the file can still be replaced between
+//! the check and the call. Closing that means never handing the whole path over
+//! — walking down from the directory containment was settled against, against
+//! descriptors already held — which is a Unix notion and arrives next.
+
+use std::fs::File;
+use std::io::Error;
+
+use super::{PathError, WorkspacePath, written};
+
+mod name;
+use name::{created, opened};
+
+/// What the caller means to do with the file it asked for.
+///
+/// The two shapes below differ in this and in nothing else, and how it is said
+/// differs per platform — a set of flags on one side, an `OpenOptions` on the
+/// other. Naming the intent rather than either spelling is what keeps the two
+/// implementations answering the same question.
+#[derive(Clone, Copy)]
+enum Access {
+    /// Read what is there.
+    Read,
+    /// Read what is there and rewrite it where it lies.
+    Change,
+}
+
+impl WorkspacePath {
+    /// Opens the proven file for reading.
+    ///
+    /// # Errors
+    ///
+    /// [`PathError::Swapped`] if the path no longer leads through the
+    /// directories containment was settled about, and [`PathError::Unopened`]
+    /// if the operating system refused.
+    pub fn open(&self) -> Result<File, PathError> {
+        opened(self, Access::Read)
+    }
+
+    /// Opens the proven file for reading and rewriting where it lies.
+    ///
+    /// One descriptor for both halves, because naming the file to read it and
+    /// naming it again to write it is two lookups with a gap between them — and
+    /// a caller that decides what to write from what it read must not put the
+    /// answer somewhere else. Truncating and seeking act on the descriptor
+    /// rather than the name, so they cannot arrive at a different file either.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_to_change(&self) -> Result<File, PathError> {
+        opened(self, Access::Change)
+    }
+
+    /// Creates the proven file, which nothing may be occupying.
+    ///
+    /// # Errors
+    ///
+    /// [`PathError::Swapped`] if something is already at the name — which, to a
+    /// caller that has just seen nothing there, is something that arrived
+    /// since — and [`PathError::Unopened`] if the operating system refused.
+    pub fn create(&self) -> Result<File, PathError> {
+        created(self)
+    }
+
+    /// The path led somewhere else by the time it was opened.
+    fn swapped(&self) -> PathError {
+        PathError::Swapped {
+            at: written(self.as_path()).into(),
+        }
+    }
+
+    /// The operating system refused, and the reason is its own.
+    fn unopened(&self, source: Error) -> PathError {
+        PathError::Unopened {
+            at: written(self.as_path()).into(),
+            source,
+        }
+    }
+}
