@@ -76,7 +76,10 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
 5. **Ideas travel; a body of expression does not.** What another harness *does*
-   is free to learn from — its features, its documentation, its behaviour, etc.
+   is free to learn from — its features, its documentation, its behaviour. Read
+   it to understand how it works; that understanding is yours. What it wrote is
+   not: its code, its prompts, its help pages, its art. Learn from it, never
+   copy it.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
