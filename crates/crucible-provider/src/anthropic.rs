@@ -15,14 +15,15 @@ mod wire;
 use crucible_core::{Cancel, Credential, DeltaStream, Outgoing, Provider, ProviderError, Request};
 
 use crate::anthropic::stream::Stream;
+use crate::endpoint::Endpoint;
 use crate::refusal::refused;
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "anthropic";
 
-/// Where requests go.
-const URL: &str = "https://api.anthropic.com/v1/messages";
+/// Where requests go unless a setting says otherwise.
+const URL: Endpoint = Endpoint::fixed("https://api.anthropic.com/v1/messages");
 
 /// The API version this speaks. Anthropic pins behaviour to it, so a new one is
 /// a deliberate change here rather than something that drifts.
@@ -33,16 +34,33 @@ const VERSION: &str = "2023-06-01";
 pub struct Anthropic {
     credential: Box<dyn Credential>,
     transport: Box<dyn Transport>,
+    endpoint: Endpoint,
 }
 
 impl Anthropic {
     /// A provider that authenticates with `credential` and sends over
-    /// `transport`.
+    /// `transport`, to the address this API is served at.
     #[must_use]
     pub fn new(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {
+        Self::at(URL, credential, transport)
+    }
+
+    /// The same, sending to `endpoint` instead.
+    ///
+    /// For a gateway, a proxy or a local server standing in for the vendor. The
+    /// address is an [`Endpoint`] rather than a string because what decides who
+    /// receives the key must be checked before it is one, and this is the only
+    /// way in for an address that came from a setting.
+    #[must_use]
+    pub fn at(
+        endpoint: Endpoint,
+        credential: Box<dyn Credential>,
+        transport: Box<dyn Transport>,
+    ) -> Self {
         Self {
             credential,
             transport,
+            endpoint,
         }
     }
 
@@ -85,7 +103,7 @@ impl Provider for Anthropic {
 
         let response = self
             .transport
-            .post(URL, outgoing.headers(), &body)
+            .post(self.endpoint.as_str(), outgoing.headers(), &body)
             .map_err(|problem| ProviderError::Transport {
                 provider: NAME,
                 problem: problem.to_string().into(),
@@ -123,6 +141,27 @@ mod tests {
         )
     }
 
+    #[test]
+    fn a_configured_endpoint_is_where_the_request_goes() {
+        // The point of the setting: a gateway standing in for the vendor. What
+        // this asserts is that the address reaches the transport, because a
+        // provider that read it and still posted to the constant would be a
+        // setting that looks applied and does nothing.
+        let replay = std::sync::Arc::new(Replay::new(200, ANSWER));
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bare("x-api-key"));
+        let endpoint = Endpoint::parse("http://localhost:8080/v1").expect("a local address");
+
+        let provider = Anthropic::at(
+            endpoint,
+            Box::new(credential),
+            Box::new(std::sync::Arc::clone(&replay)),
+        );
+
+        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+
+        assert_eq!(replay.sent().url, "http://localhost:8080/v1");
+    }
+
     fn asking(text: &str) -> Request {
         let mut transcript = Transcript::new();
         transcript.push(Message::User(text.into()));
@@ -150,7 +189,7 @@ mod tests {
         anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
 
         let sent = replay.sent();
-        assert_eq!(sent.url, URL);
+        assert_eq!(sent.url, URL.as_str());
         assert_eq!(header(&sent, "anthropic-version"), VERSION);
         assert_eq!(header(&sent, "accept"), "text/event-stream");
         assert_eq!(header(&sent, "content-type"), "application/json");
