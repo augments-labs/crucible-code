@@ -8,12 +8,16 @@
 //! half-written file cannot happen: the write either did not start or ran to
 //! completion.
 //!
-//! What raises it is the half that is missing. `crucible` leaves standard input
-//! in cooked mode, so nothing in the binary calls [`Cancel::request`] and the
-//! only stop a user has is ending the process; the callers it has are the tests
-//! that pin each consumer. This is a seam waiting for a producer rather than a
-//! mechanism that works and goes unused, and a reader adding one should expect
-//! to find no keystroke handling to hang it off.
+//! What raises it is Ctrl-C during a turn. Raw mode is held for the whole
+//! session, so that key arrives at the loop reading the keyboard rather than
+//! becoming a signal the terminal sends, and [`Cancel::request`] is what the
+//! loop does with it. One producer, on the thread that draws; the consumers are
+//! all on the thread the turn runs on.
+//!
+//! The producer clears it too, and that is what keeps a press from being lost
+//! rather than merely tidy — see [`Cancel::reset`]. One thread raises the flag
+//! and clears it, so there is no moment at which a press can be overwritten by
+//! a clearing that was decided before it happened.
 //!
 //! It lives in core because [`crate::provider::Provider`] takes one, and core
 //! owns every type its own traits name.
@@ -48,10 +52,19 @@ impl Cancel {
         self.0.load(Ordering::Acquire)
     }
 
-    /// Clears the flag, ready for the next turn.
+    /// Clears the flag, ready for the turn about to run.
     ///
-    /// Called by the runner between turns, on the one thread that owns the
-    /// loop, so there is no window where a worker sees a stale request.
+    /// Called on the thread that reads the keyboard, before the thread the turn
+    /// runs on exists. Both halves of that are load-bearing: whatever stopped
+    /// the last turn is spent, and the only hand that can raise the flag is the
+    /// one making this call, so nothing can be raised in the moment this call
+    /// then clears.
+    ///
+    /// Cleared inside the turn instead — by the turn, on the turn's own thread
+    /// — it would leave a window as wide as a thread takes to start, in which a
+    /// Ctrl-C is raised by the loop and then wiped by the very turn it was
+    /// pressed to stop. A turn that finds the flag raised is a turn somebody
+    /// stopped, and it stops.
     pub fn reset(&self) {
         self.0.store(false, Ordering::Release);
     }

@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A <kbd>Ctrl-C</kbd> at the very start of a turn is no longer lost.** The
+  flag was cleared by the turn, on the turn's own thread, which left a window as
+  wide as a thread takes to start: a press raised in it was wiped by the turn it
+  was meant to stop. It is cleared by the thread that reads the keyboard,
+  before the turn's thread exists, so the only hand that can raise it is the one
+  clearing it.
+
 ### Added
 
 - **`/model <name>` chooses the model and writes the choice down.** It goes to
