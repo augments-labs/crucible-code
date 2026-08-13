@@ -1,6 +1,6 @@
 # crucible — contributor guide
 
-A terminal coding agent in Rust. Original, clean-room implementation.
+A terminal coding agent in Rust. Original implementation.
 
 This is the always-on agent-facing rules file. `AGENTS.md` is a symlink to it,
 so Claude Code, Codex and anything else that looks for either name reads the
@@ -76,24 +76,10 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    files or panic payloads. Types holding a key implement `Debug` by hand and
    redact. Config stores env var *names*, never values.
 5. **Ideas travel; a body of expression does not.** What another harness *does*
-   is free to learn from — its features, its documentation, its behaviour under
-   your own hands. What it *wrote* is not: its code, its prompt text, its help
-   and error pages as written, its art and its palette are not copied or
-   adapted, and a permissive licence does not change that. My own prior code is
-   mine to reuse.
-
-   A short functional string is not a body of expression, and this rule stops
-   short of it. `press ctrl+c again to exit`, the name of a key, the name of a
-   command: copyright does not reach a phrase that short, there is only so much
-   room to say the thing, and a reader made to relearn what every other terminal
-   already taught them is paying for our scruple. Where the words are forced,
-   use the words. Where there is a choice worth making, crucible makes its own —
-   that is taste rather than law, and it is the weaker of the two claims.
-
-   Its *source and prompt files* stay closed as well, for a reason of its own:
-   the claim at the top of this file is that crucible is clean-room, and access
-   is the one thing that cannot be given back. `.claude/skills/clean-room` holds
-   the procedure and the worked cases.
+   is free to learn from — its features, its documentation, its behaviour. Read
+   it to understand how it works; that understanding is yours. What it wrote is
+   not: its code, its prompts, its help pages, its art. Learn from it, never
+   copy it.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
    commits/s under burst. No blocking I/O on the startup path or the render
@@ -121,24 +107,18 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
 10. **A change owes its documentation in the same commit.** `docs/` for anything
     a user meets, `README.md` for the first minute of it, `CONTRIBUTING.md` and
     `docs/building/` for what a contributor has to install, the changelog for
-    anything that ships. Written a release later, a page documents a memory of
-    the change rather than the change — and the reader who needed it met the
-    gap first.
+    anything that ships. The module doc comment is on that list and is the one
+    most often left behind: this project states its invariants in the prose at
+    the top of a file, so one the code has outgrown is a false statement of the
+    invariant sitting where the next reader goes to learn it. Read the prose
+    above what you changed, and above whatever now behaves differently because
+    you changed it.
 11. **A pull request over 400 changed lines into `main` is sent back.**
-    Additions plus deletions across the whole diff, generated files aside —
-    `Cargo.lock` and `schema/` are output, and nobody reads output line by line.
-    Past that a review stops being one: the reader is agreeing that it looks
-    plausible rather than checking that it is right. The remedy is a sequence of
-    pull requests that each stand on their own, not one larger one with a note
-    apologising for its size. Code that only moves is the diff this measures
-    wrongly, and a diff cannot prove that about itself, so that exception is a
-    label on the pull request — granted, and visible afterwards.
-
-    `dev` and a release branch hold it too, being what a release is cut from.
-    Into a branch somebody is assembling it is printed and not enforced: that
-    branch is measured in turn when it asks for `main`, over everything it
-    collected, so nothing arrives there unmeasured.
-
+    Additions plus deletions, generated files aside. Past that a review stops
+    being one. The remedy is a sequence of pull requests that each stand on
+    their own; code that only moves is measured wrongly by this and takes the
+    `moves-only` label. `CONTRIBUTING.md` has the rest, including which
+    branches enforce it.
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym
@@ -176,7 +156,12 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   enums *because* a new variant should break every `match`.
 - **The schema has a second home, and it does not follow this one.**
   `schema/crucible-code-schema.json` is generated from the parser and gated, so
-  it is always right here; SchemaStore serves its own copy, and nothing in this
+  it is always right here — by a test rather than by a section of the gate, and
+  that test rewrites the file before it fails. It is the one thing a run of
+  `scripts/check.sh` writes; everything else about that script only reads. So a
+  stale schema fails once and is green the second time, with the file changed
+  underneath you: read the diff before you commit it. SchemaStore serves its own
+  copy, and nothing in this
   repository can make that one move. A release that changes the file owes a pull
   request against `SchemaStore/schemastore`, raised from the fork
   `NjoyimPeguy/schemastore`, which already exists — `RELEASING.md` has the
