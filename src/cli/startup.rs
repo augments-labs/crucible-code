@@ -13,7 +13,7 @@ use std::path::Path;
 
 use crucible_config::Settings;
 use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
-use crucible_provider::{Anthropic, Https, OpenAi, Unavailable};
+use crucible_provider::{Anthropic, Endpoint, Https, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
@@ -163,16 +163,19 @@ fn provider(
 
     let named = serving.name;
     let variable = settings.api_key_env(named).unwrap_or(serving.key);
+    let sending = sending_to(settings, named)?;
 
     match named {
         // Two protocols, one credential kind pointed at different headers.
         // Authentication is a separate axis, and this is what that buys.
-        "anthropic" => Ok(Box::new(Anthropic::new(
+        "anthropic" => Ok(Box::new(Anthropic::at(
+            sending.unwrap_or(Anthropic::VENDOR),
             key(variable, Header::bare("x-api-key"), from)?,
             Box::new(Https::new()),
         ))),
 
-        "openai" => Ok(Box::new(OpenAi::new(
+        "openai" => Ok(Box::new(OpenAi::at(
+            sending.unwrap_or(OpenAi::VENDOR),
             key(variable, Header::bearer(), from)?,
             Box::new(Https::new()),
         ))),
@@ -181,6 +184,25 @@ fn provider(
             named: named.into(),
         }),
     }
+}
+
+/// Where a setting says this provider's requests should go, where one does.
+///
+/// The address is parsed here rather than carried as the string it was written
+/// as: this is the boundary, and what it decides is who receives the key. A
+/// value that cannot be one ends the run — a provider quietly left pointing at
+/// the vendor would be a setting that looks applied and does nothing, and this
+/// particular one is set by somebody who has a reason to not reach the vendor.
+fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fatal> {
+    settings
+        .base_url(named)
+        .map(|written| {
+            Endpoint::parse(written).map_err(|source| Fatal::Address {
+                provider: named.into(),
+                source,
+            })
+        })
+        .transpose()
 }
 
 /// A key from the environment, ready to sign a request with.

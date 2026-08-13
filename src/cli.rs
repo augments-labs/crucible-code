@@ -30,6 +30,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
+use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
@@ -197,6 +198,19 @@ pub(crate) enum Fatal {
     Provider {
         /// What was asked for.
         named: Box<str>,
+    },
+
+    /// `providers.<name>.baseUrl` is not an address requests can be sent to.
+    ///
+    /// Fatal rather than a warning that carries on at the vendor's address:
+    /// somebody who set this has a reason not to reach the vendor, and sending
+    /// there anyway would be a refusal that took the key with it.
+    #[error("providers.{provider}.baseUrl: {source}")]
+    Address {
+        /// Which provider was pointed somewhere it could not go.
+        provider: Box<str>,
+        /// What was wrong with the address.
+        source: EndpointError,
     },
 
     /// The command line put nothing before the slash.

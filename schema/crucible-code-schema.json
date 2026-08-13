@@ -161,6 +161,13 @@
               "description": "Name of the environment variable holding this provider's API key — the name, never the key",
               "type": "string"
             },
+            "baseUrl": {
+              "description": "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
+              "examples": [
+                "https://gateway.example/v1/messages"
+              ],
+              "type": "string"
+            },
             "model": {
               "description": "The model to ask when --model does not name one",
               "type": "string"

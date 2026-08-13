@@ -99,6 +99,17 @@ const PROVIDER: Shape = Shape::Fields(&[
         examples: &[],
         widens: false,
     },
+    // The one key here that decides *who* the request goes to, which is who
+    // receives the API key with it. `widens` is what keeps that out of the
+    // layer a clone brings: a repository able to set this would be a repository
+    // that reads the key of everyone who opens it.
+    Field {
+        name: "baseUrl",
+        about: "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
+        shape: Shape::Text,
+        examples: &["https://gateway.example/v1/messages"],
+        widens: true,
+    },
 ]);
 
 /// What a variable in the `env` block may be: a value, applied verbatim.

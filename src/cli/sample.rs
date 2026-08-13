@@ -47,9 +47,25 @@ impl Sample {
     /// test hands the wiring is a document that went through the parser the same
     /// way a user's would.
     pub(super) fn settings(&self, document: &str) -> Settings {
+        self.written("config.json", document)
+    }
+
+    /// The same, from `.crucible/config.local.json` instead.
+    ///
+    /// The file git ignores, which is where the keys that could loosen what
+    /// crucible does unasked are allowed to be written. A test about one of
+    /// those cannot use the file above: the parser refuses it there, which is
+    /// the property, and a test that met the refusal would be testing it twice
+    /// rather than testing what the setting does.
+    pub(super) fn local(&self, document: &str) -> Settings {
+        self.written("config.local.json", document)
+    }
+
+    /// Resolves `document`, written as the project's `.crucible/<file>`.
+    fn written(&self, file: &str, document: &str) -> Settings {
         let project = self.base.join("work").join(".crucible");
         fs::create_dir_all(&project).expect("a temporary directory");
-        fs::write(project.join("config.json"), document).expect("a temporary directory");
+        fs::write(project.join(file), document).expect("a temporary directory");
 
         // Pointed at a directory that does not exist, so the user layer is
         // absent rather than whatever the machine running this test has at home.

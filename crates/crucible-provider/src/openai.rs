@@ -45,7 +45,7 @@ use crate::transport::Transport;
 const NAME: &str = "openai";
 
 /// Where requests go unless a setting says otherwise.
-const URL: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
+const VENDOR: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
 
 /// OpenAI's Responses API.
 #[derive(Debug)]
@@ -56,19 +56,18 @@ pub struct OpenAi {
 }
 
 impl OpenAi {
-    /// A provider that authenticates with `credential` and sends over
-    /// `transport`, to the address this API is served at.
-    #[must_use]
-    pub fn new(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {
-        Self::at(URL, credential, transport)
-    }
+    /// The address this API is served at, for a caller with no reason to send
+    /// anywhere else.
+    pub const VENDOR: Endpoint = VENDOR;
 
-    /// The same, sending to `endpoint` instead.
+    /// A provider that authenticates with `credential`, sends over `transport`
+    /// and posts to `endpoint`.
     ///
-    /// For a gateway, a proxy or a local server standing in for the vendor. The
-    /// address is an [`Endpoint`] rather than a string because what decides who
-    /// receives the key must be checked before it is one, and this is the only
-    /// way in for an address that came from a setting.
+    /// The address is named by the caller rather than defaulted here, because
+    /// the wiring is where a decision like that belongs and there is one
+    /// constructor rather than a defaulting one beside an explicit one. It is
+    /// an [`Endpoint`] rather than a string because what decides who receives
+    /// the key is checked before it is one.
     #[must_use]
     pub fn at(
         endpoint: Endpoint,
@@ -153,7 +152,8 @@ mod tests {
         let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
 
         (
-            OpenAi::new(
+            OpenAi::at(
+                OpenAi::VENDOR,
                 Box::new(credential),
                 Box::new(std::sync::Arc::clone(&replay)),
             ),
@@ -209,7 +209,7 @@ mod tests {
         openai.stream(asking("hello"), &Cancel::new()).unwrap();
 
         let sent = replay.sent();
-        assert_eq!(sent.url, URL.as_str());
+        assert_eq!(sent.url, OpenAi::VENDOR.as_str());
         assert_eq!(header(&sent, "accept"), "text/event-stream");
         assert_eq!(header(&sent, "content-type"), "application/json");
     }
