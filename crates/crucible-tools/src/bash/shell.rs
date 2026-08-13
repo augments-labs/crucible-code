@@ -8,9 +8,20 @@
 //! in one language and answer it in another, which is a permission engine that
 //! is wrong rather than one that is strict.
 //!
-//! So the shell is the same everywhere, and Windows is only where it has to be
-//! found rather than assumed.
+//! So the shell is the same everywhere, and what differs is where it is found.
+//!
+//! Found is the word: on both platforms this ends at an absolute path, worked
+//! out once when the tool is built. A bare `sh` handed to a spawn is resolved
+//! wherever that spawn happens to be — and a command here runs with the
+//! workspace as its working directory, which the model writes files into. An
+//! empty element on the `PATH` means the current directory to everything that
+//! resolves a name, so `PATH=/usr/bin:` and a file called `sh` in the tree are
+//! together enough to make the model's own file the shell that reads every
+//! command line after it, including the ones a user was asked about and
+//! allowed. Resolving once, against absolute directories only, is what closes
+//! that.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// What to say when there is no shell to run anything with.
@@ -23,24 +34,24 @@ pub(super) const ABSENT: &str =
 
 /// What to say when there is no shell to run anything with.
 #[cfg(not(windows))]
-pub(super) const ABSENT: &str = "no sh on the PATH";
+pub(super) const ABSENT: &str = "no sh on the PATH or in the places one lives";
 
-/// Where a POSIX shell is.
+/// Where a POSIX shell is, read through `lookup`.
 ///
-/// Unix has one under a name the loader resolves, so there is nothing to look
-/// for.
+/// Unix has one under a name every system puts in the same two places, so the
+/// `PATH` is asked first and those are the fallback — which is also the answer
+/// when `lookup` has no `PATH` to give.
 #[cfg(not(windows))]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "the answer is always yes here and sometimes no on Windows. One \
-              signature is what keeps the caller from having to know which \
-              platform it is on to know whether it has a shell."
-)]
-pub(super) fn find() -> Option<PathBuf> {
-    Some(PathBuf::from("sh"))
+pub(super) fn find(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    on_path(&lookup, "sh").or_else(|| {
+        ["/bin/sh", "/usr/bin/sh"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|candidate| candidate.is_file())
+    })
 }
 
-/// Where a POSIX shell is.
+/// Where a POSIX shell is, read through `lookup`.
 ///
 /// Windows ships none, so this is the one Git for Windows carries. Its
 /// installer puts `sh.exe` under `usr\bin` and leaves that directory off the
@@ -48,8 +59,8 @@ pub(super) fn find() -> Option<PathBuf> {
 /// where an MSYS, Cygwin or Git Bash session answers, and the two places the
 /// installer actually writes to are tried after.
 #[cfg(windows)]
-pub(super) fn find() -> Option<PathBuf> {
-    if let Some(found) = on_path("sh.exe") {
+pub(super) fn find(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    if let Some(found) = on_path(&lookup, "sh.exe") {
         return Some(found);
     }
 
@@ -60,7 +71,7 @@ pub(super) fn find() -> Option<PathBuf> {
     ]
     .into_iter()
     .filter_map(|(variable, under)| {
-        let root = std::env::var_os(variable)?;
+        let root = lookup(variable)?;
         Some(
             std::path::Path::new(&root)
                 .join(under)
@@ -72,11 +83,69 @@ pub(super) fn find() -> Option<PathBuf> {
     .find(|candidate| candidate.is_file())
 }
 
-/// The first directory on the PATH holding `program`.
-#[cfg(windows)]
-fn on_path(program: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+/// The first absolute directory on the PATH holding `program`.
+///
+/// Absolute is the whole of the check. An empty element is what a `PATH` picks
+/// up from a shell profile that appended to an unset variable, and a relative
+/// one is rarer and worse; both mean "resolve this against wherever you happen
+/// to be", and where this program happens to be is a directory the model can
+/// write to. A directory that cannot be named from the root is not one crucible
+/// takes a shell from.
+fn on_path(lookup: impl Fn(&str) -> Option<OsString>, program: &str) -> Option<PathBuf> {
+    let path = lookup("PATH")?;
     std::env::split_paths(&path)
+        .filter(|directory| directory.is_absolute())
         .map(|directory| directory.join(program))
         .find(|candidate| candidate.is_file())
+}
+
+// Unix only: what they pin is the arm above them, and a Windows machine
+// carrying no Git installation has no shell for them to find. Spelled as two
+// attributes because `cfg(test)` is also how the lints that forbid a panic know
+// they are looking at a test, and they read it literally.
+#[cfg(test)]
+#[cfg(not(windows))]
+mod tests {
+    use super::*;
+
+    /// A `PATH` with `text` at the front of crucible's own.
+    fn ahead_of_the_real_one(text: &str) -> impl Fn(&str) -> Option<OsString> {
+        let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
+        let path = OsString::from(format!("{text}{inherited}"));
+
+        move |name: &str| match name {
+            "PATH" => Some(path.clone()),
+            other => std::env::var_os(other),
+        }
+    }
+
+    #[test]
+    fn the_shell_is_named_from_the_root() {
+        let found = find(ahead_of_the_real_one("")).expect("a machine with a shell on it");
+
+        assert!(found.is_absolute(), "{}", found.display());
+    }
+
+    #[test]
+    fn an_empty_element_is_not_a_directory_to_take_a_shell_from() {
+        // It means the current directory to every call that resolves a name,
+        // and the current directory of a command this tool runs is the
+        // workspace.
+        let found = find(ahead_of_the_real_one(":")).expect("a machine with a shell on it");
+
+        assert!(found.is_absolute(), "{}", found.display());
+    }
+
+    #[test]
+    fn a_relative_element_is_not_one_either() {
+        let found = find(ahead_of_the_real_one("./bin:")).expect("a machine with a shell on it");
+
+        assert!(found.is_absolute(), "{}", found.display());
+    }
+
+    #[test]
+    fn a_machine_with_no_path_still_has_the_places_a_shell_lives() {
+        // A `PATH` this tool cannot read is not a machine without a shell.
+        assert!(find(|_| None).is_some(), "a machine with a shell on it");
+    }
 }

@@ -418,3 +418,35 @@ fn a_name_crucible_has_no_value_for_is_left_unset_rather_than_given_one() {
     // crate deciding where a command's programs come from.
     assert!(environment::inherited(|_| None).is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn the_shell_is_not_something_the_workspace_can_supply() {
+    // An empty element on the PATH means the current directory to whatever
+    // resolves a bare name, and the current directory of every command this
+    // tool runs is the workspace. So a file the model wrote called `sh` would
+    // be the shell that reads every command line after it — including the ones
+    // a user was asked about and allowed.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("bash-shell");
+    sample.write("sh", "#!/bin/sh\necho owned\n");
+    std::fs::set_permissions(
+        sample.root().join("sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("a writable temporary directory");
+
+    let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
+    let empty_element_first = move |name: &str| match name {
+        "PATH" => Some(OsString::from(format!(":{inherited}"))),
+        other => std::env::var_os(other),
+    };
+
+    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
+    let output = tool
+        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
+        .expect("the command ran");
+
+    assert_eq!(output.text(), "hello");
+}
