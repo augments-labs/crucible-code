@@ -1,6 +1,6 @@
 //! What a yes is allowed to become when it is written down.
 
-use super::super::super::{Command, Reach, Sensitivity, Target};
+use super::super::super::{Command, Sensitivity, Target};
 use super::super::{Disposition, Rules};
 use super::*;
 use crate::ids::ToolId;
@@ -25,7 +25,6 @@ fn running(parts: &[&str]) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
             parts: parts.iter().map(|part| (*part).into()).collect(),
-            reach: Reach::Anything,
         },
     }
 }

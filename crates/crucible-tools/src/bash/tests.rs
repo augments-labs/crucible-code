@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Command, Reach};
+use crucible_core::Command;
 
 use super::output::OUTPUT;
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
@@ -239,7 +239,6 @@ fn the_sensitivity_carries_what_the_call_will_run() {
         Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from("/usr/bin/git status")]),
-                reach: Reach::Anything,
             }
         }
     );
