@@ -181,6 +181,7 @@ impl Listed<'_> {
 #[cfg(test)]
 mod tests {
     use crate::color::Palette;
+    use crate::dump::dump;
 
     use super::*;
 
@@ -216,6 +217,27 @@ mod tests {
             .collect()
     }
 
+    /// The list at `columns`, against the picture checked in beside it under
+    /// `name@columns`.
+    ///
+    /// The width is the suffix rather than something written into the name, so
+    /// that a picture cannot end up checked against a drawing of some other
+    /// terminal: one argument decides both what was drawn and which file it is
+    /// read from.
+    fn pictured(
+        name: &str,
+        shown: &[Listed<'_>],
+        chosen: Option<usize>,
+        columns: usize,
+        glyphs: Glyphs,
+    ) {
+        let menu = Menu { shown, chosen };
+
+        insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+            insta::assert_snapshot!(name, dump(&menu.rows(columns, glyphs), columns));
+        });
+    }
+
     /// A palette that writes every hue it has.
     fn colourful() -> Palette {
         Palette::resolve(true, &|name| {
@@ -225,14 +247,7 @@ mod tests {
 
     #[test]
     fn every_command_is_a_row_of_its_name_and_what_it_does() {
-        assert_eq!(
-            art(&every(), 60),
-            [
-                "/help     what these are",
-                "/model    which model answers",
-                "/resume   pick up an earlier session here",
-            ]
-        );
+        pictured("every", &every(), None, 60, Glyphs::Unicode);
     }
 
     #[test]
@@ -243,10 +258,7 @@ mod tests {
         // shown put it.
         let shown = every().into_iter().take(2).collect::<Vec<_>>();
 
-        assert_eq!(
-            art(&shown, 60),
-            ["/help    what these are", "/model   which model answers"]
-        );
+        pictured("filtered", &shown, None, 60, Glyphs::Unicode);
     }
 
     #[test]
@@ -262,13 +274,7 @@ mod tests {
             },
         ];
 
-        assert_eq!(
-            art(&shown, 60),
-            [
-                "/mode   ask mode on",
-                "        ask · allowEdits · fullAccess"
-            ]
-        );
+        pictured("carried_on", &shown, None, 60, Glyphs::Unicode);
     }
 
     #[test]
@@ -352,15 +358,11 @@ mod tests {
     #[test]
     fn the_row_being_chosen_is_marked_and_the_rest_stand_in_the_same_column() {
         // The mark moves down the list and the names do not move with it, which
-        // is what the room in front of every row is for.
-        assert_eq!(
-            drawn(&every(), 60, Some(1)),
-            [
-                "  /help     what these are",
-                "› /model    which model answers",
-                "  /resume   pick up an earlier session here",
-            ]
-        );
+        // is what the room in front of every row is for. The picture carries
+        // the other half of it: the chosen row is the loud one and the rows the
+        // choice has passed over are quiet, so the row a key is about to act on
+        // is said twice.
+        pictured("chosen", &every(), Some(1), 60, Glyphs::Unicode);
     }
 
     #[test]
@@ -377,20 +379,9 @@ mod tests {
 
     #[test]
     fn a_font_without_the_mark_still_says_which_row_it_is_on() {
-        let rows: Vec<String> = Menu {
-            shown: &every(),
-            chosen: Some(0),
-        }
-        .rows(60, Glyphs::Ascii)
-        .iter()
-        .map(Row::text)
-        .collect();
-
-        let chosen = rows.first().expect("the row it is on");
-        let passed = rows.get(1).expect("a row it has passed over");
-
-        assert!(chosen.starts_with("> /help"), "{chosen:?}");
-        assert!(passed.starts_with("  /model"), "{passed:?}");
+        // The set changes what the mark is drawn with and nothing about the
+        // column it stands in, so the names below it do not move either.
+        pictured("chosen_ascii", &every(), Some(0), 60, Glyphs::Ascii);
     }
 
     #[test]
