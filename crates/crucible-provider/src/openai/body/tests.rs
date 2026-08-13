@@ -3,7 +3,7 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::{ToolArgs, ToolId, ToolOutput, Transcript};
+use crucible_core::{StopReason, ToolArgs, ToolId, ToolOutput, Transcript};
 
 use super::*;
 
@@ -87,6 +87,7 @@ fn a_tool_call_goes_back_with_its_arguments_as_the_text_the_model_wrote() {
     // sees would stop matching the ones it produced.
     let mut transcript = said("read it");
     transcript.push(Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: "let me look".into(),
         calls: vec![ToolCall {
             id: ToolId::new("call_1"),
@@ -115,6 +116,7 @@ fn a_tool_call_with_no_words_before_it_sends_no_content() {
     // string is not the same as having said nothing.
     let mut transcript = said("go");
     transcript.push(Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: String::new().into(),
         calls: vec![ToolCall {
             id: ToolId::new("call_1"),
@@ -141,6 +143,7 @@ fn a_turn_that_produced_nothing_at_all_still_sends_something_to_hold() {
     // out on every turn after it rather than once.
     let mut transcript = said("go");
     transcript.push(Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: String::new().into(),
         calls: Vec::new(),
     });
@@ -157,6 +160,7 @@ fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
     // string is not JSON on the other side.
     let mut transcript = said("go");
     transcript.push(Message::Agent {
+        stop: Some(StopReason::WantsTools),
         text: String::new().into(),
         calls: vec![ToolCall {
             id: ToolId::new("call_1"),

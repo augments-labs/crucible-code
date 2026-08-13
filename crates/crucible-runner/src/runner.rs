@@ -169,9 +169,26 @@ impl Runner {
     }
 
     /// The model this session is asking, as the provider spells it.
+    ///
+    /// Empty where nothing has chosen one. That is a session that can do
+    /// everything except take a turn, and the caller is what refuses the turn —
+    /// this crate is handed a name and does not decide which names are real.
     #[must_use]
     pub fn model(&self) -> &str {
         &self.model.name
+    }
+
+    /// Asks a different model from the next turn on.
+    ///
+    /// The provider is not changed and cannot be: which vendor is being written
+    /// to was settled by which credential the wiring resolved, and a name that
+    /// vendor does not serve comes back as its own refusal rather than as a
+    /// silent redirection to one that does.
+    ///
+    /// Reachable between turns, where [`Runner::switch`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub fn ask(&mut self, model: &str) {
+        self.model.name = model.into();
     }
 
     /// Hands the session out, for the caller that is finished driving turns.
@@ -195,6 +212,13 @@ impl Runner {
 
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
+    /// `cancel` arrives cleared: [`Cancel::reset`] is the caller's to call, on
+    /// the thread that reads the keyboard, before the thread this runs on
+    /// exists. Clearing it here would clear a Ctrl-C pressed in between, so a
+    /// flag found raised belongs to this turn and stops it — before the prompt
+    /// is recorded and before a request goes out, whatever a given provider
+    /// makes of being handed a cancel that is already up.
+    ///
     /// # Errors
     ///
     /// [`TurnError`] when the provider failed or the user refused a tool. A
@@ -207,14 +231,21 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<StopReason, TurnError> {
-        // Whatever stopped the last turn is spent. Clearing it here, on the one
-        // thread that owns the loop, means no worker starts against a stale
-        // request.
-        cancel.reset();
+        // The number this turn would have, worked out before it is known
+        // whether the turn gets to take it. One expression rather than two, so
+        // that the turn which runs and the turn which is stopped on the way in
+        // cannot come to disagree about what the next one is called.
+        let turn = if self.transcript.is_empty() {
+            self.turn
+        } else {
+            self.turn.next()
+        };
 
-        if !self.transcript.is_empty() {
-            self.turn = self.turn.next();
+        if cancel.requested() {
+            return Ok(Self::stopped(turn, events));
         }
+
+        self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
         self.record(Message::User(prompt.into()));
 
@@ -231,6 +262,29 @@ impl Runner {
         Ok(stop)
     }
 
+    /// Ends a turn the user stopped before it began, and says so twice.
+    ///
+    /// Nothing is recorded, and `turn` is not kept. The prompt was never sent,
+    /// so the transcript has no half of an exchange to explain and the model is
+    /// never told a question that was withdrawn a moment after it was asked —
+    /// which is what recording it would come to, since every request afterwards
+    /// carries it. The count follows the transcript, so a turn that adds
+    /// nothing to it leaves the number free: this announces the number it would
+    /// have had, and the next prompt is that turn, taken for real.
+    ///
+    /// Both events go out all the same, because the screen is the other record:
+    /// a start with no finish leaves the turn looking as though it is still
+    /// running, and a finish with no start is a shape nothing else here
+    /// produces.
+    fn stopped(turn: TurnId, events: &dyn Post) -> StopReason {
+        let stop = StopReason::Cancelled;
+
+        events.post(Event::TurnStarted { turn });
+        events.post(Event::TurnFinished { turn, stop });
+
+        stop
+    }
+
     /// Rounds of asking and running, until something ends the turn.
     ///
     /// A failure returns instead, and the caller posts nothing: the failure is
@@ -242,17 +296,22 @@ impl Runner {
         cancel: &Cancel,
     ) -> Result<StopReason, TurnError> {
         loop {
-            let answer = self.listen(events, cancel)?;
-            let said = answer.stop();
+            let (answer, said) = self.listen(events, cancel)?;
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Self::over(said, &calls) {
                 // Calls the model did not finish asking for go no further. A
                 // call is written to the transcript only once it has a result,
                 // and these will never get one.
+                //
+                // The reason is written down with them. It is what the session
+                // log carries into a replay and what the providers send back to
+                // the model, and both of those outlive the notice the user read
+                // while it happened.
                 self.record(Message::Agent {
                     text,
                     calls: Vec::new(),
+                    stop: Some(stop),
                 });
                 return Ok(stop);
             }
@@ -272,6 +331,7 @@ impl Runner {
             self.record(Message::Agent {
                 text,
                 calls: calls.clone(),
+                stop: Some(said),
             });
 
             let (results, went) = Work {
@@ -294,40 +354,65 @@ impl Runner {
     }
 
     /// Whether the turn is over, and why — or `None` to run the calls.
-    fn over(said: Option<StopReason>, calls: &[ToolCall]) -> Option<StopReason> {
+    ///
+    /// Every variant is named rather than caught by a rest pattern: a reason
+    /// added to [`StopReason`] has to stop the build here, where the decision
+    /// is whether a turn goes on, rather than be waved through as an ending.
+    fn over(said: StopReason, calls: &[ToolCall]) -> Option<StopReason> {
         match said {
-            Some(StopReason::WantsTools) if !calls.is_empty() => None,
+            StopReason::WantsTools if !calls.is_empty() => None,
             // Waiting on nothing is yielding, whatever the provider called it.
             // Believing it instead would re-send an unchanged transcript and
             // ask the same question until the user noticed.
-            Some(StopReason::WantsTools) | None => Some(StopReason::Yielded),
-            Some(stop) => Some(stop),
+            StopReason::WantsTools => Some(StopReason::Yielded),
+            StopReason::Yielded
+            | StopReason::OutOfTokens
+            | StopReason::Filtered
+            | StopReason::Paused
+            | StopReason::Cancelled
+            | StopReason::Unknown => Some(said),
         }
     }
 
-    /// One request, read to the end.
+    /// One request, read to the end, and the reason it ended.
     ///
     /// An answer that breaks off part way is recorded before the failure
     /// leaves: those deltas were posted as they arrived, so the user has
     /// already read them, and a transcript that does not hold them is one the
     /// user and the model disagree about — the next prompt would follow the
     /// last one with nothing in between. Calls the model never finished asking
-    /// for go no further, the same as when it stops early.
-    fn listen(&mut self, events: &dyn Post, cancel: &Cancel) -> Result<Answer, TurnError> {
+    /// for go no further, the same as when it stops early. What is recorded
+    /// says the answer never reached an ending, which is what keeps the next
+    /// request and a later replay from reading it as one that did.
+    ///
+    /// A stream that ends without saying why is that same failure: the socket
+    /// went quiet, and quiet is what a finished response and a truncated one
+    /// have in common.
+    fn listen(
+        &mut self,
+        events: &dyn Post,
+        cancel: &Cancel,
+    ) -> Result<(Answer, StopReason), TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
         let mut answer = Answer::new(self.provider.name());
 
-        if let Err(problem) = Self::hear(stream.as_mut(), &mut answer, events) {
-            let (text, _) = answer.finish();
-            self.record(Message::Agent {
-                text,
-                calls: Vec::new(),
-            });
+        let heard = Self::hear(stream.as_mut(), &mut answer, events)
+            .and_then(|()| answer.reached().map_err(TurnError::from));
 
-            return Err(problem);
+        match heard {
+            Ok(said) => Ok((answer, said)),
+            Err(problem) => {
+                let stop = answer.stop();
+                let (text, _) = answer.finish();
+                self.record(Message::Agent {
+                    text,
+                    calls: Vec::new(),
+                    stop,
+                });
+
+                Err(problem)
+            }
         }
-
-        Ok(answer)
     }
 
     /// Reads deltas into `answer` until the stream ends.
