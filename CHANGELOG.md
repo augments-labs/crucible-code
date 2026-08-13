@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Internal
+
+- **The 400-line ceiling now blocks, and blocks everywhere.** It was a CI job
+  that was never in the ruleset's required list, so a pull request over it
+  merged with a red mark beside the button; six did. It is required now, and the
+  branch a pull request targets no longer exempts it — a collecting branch was
+  measured only when it asked for `main`, which measured the collection and
+  never the pieces somebody actually read. `moves-only` remains the one way
+  past and stays visible on the pull request.
+
 ## [0.0.17] - 2026-08-13
 
 ### Added

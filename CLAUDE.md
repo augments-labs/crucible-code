@@ -113,12 +113,14 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
     invariant sitting where the next reader goes to learn it. Read the prose
     above what you changed, and above whatever now behaves differently because
     you changed it.
-11. **A pull request over 400 changed lines into `main` is sent back.**
+11. **A pull request over 400 changed lines is sent back, whatever it targets.**
     Additions plus deletions, generated files aside. Past that a review stops
-    being one. The remedy is a sequence of pull requests that each stand on
-    their own; code that only moves is measured wrongly by this and takes the
-    `moves-only` label. `CONTRIBUTING.md` has the rest, including which
-    branches enforce it.
+    being one, and that is true of the reader in front of a diff into a
+    collecting branch as much as one into `main`. The remedy is a sequence of
+    pull requests that each stand on their own; code that only moves is measured
+    wrongly by this and takes the `moves-only` label, which is the only way past
+    and stays visible on the pull request afterwards. `CONTRIBUTING.md` has the
+    rest.
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym
