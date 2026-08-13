@@ -56,7 +56,7 @@ pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
         }
 
         Sensitivity::SpawnsProcess {
-            command: Command::Understood { parts, .. },
+            command: Command::Understood { parts },
         } => match &**parts {
             [one] => one,
             _ => return None,

@@ -212,6 +212,13 @@ impl Runner {
 
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
+    /// `cancel` arrives cleared: [`Cancel::reset`] is the caller's to call, on
+    /// the thread that reads the keyboard, before the thread this runs on
+    /// exists. Clearing it here would clear a Ctrl-C pressed in between, so a
+    /// flag found raised belongs to this turn and stops it — before the prompt
+    /// is recorded and before a request goes out, whatever a given provider
+    /// makes of being handed a cancel that is already up.
+    ///
     /// # Errors
     ///
     /// [`TurnError`] when the provider failed or the user refused a tool. A
@@ -224,14 +231,21 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<StopReason, TurnError> {
-        // Whatever stopped the last turn is spent. Clearing it here, on the one
-        // thread that owns the loop, means no worker starts against a stale
-        // request.
-        cancel.reset();
+        // The number this turn would have, worked out before it is known
+        // whether the turn gets to take it. One expression rather than two, so
+        // that the turn which runs and the turn which is stopped on the way in
+        // cannot come to disagree about what the next one is called.
+        let turn = if self.transcript.is_empty() {
+            self.turn
+        } else {
+            self.turn.next()
+        };
 
-        if !self.transcript.is_empty() {
-            self.turn = self.turn.next();
+        if cancel.requested() {
+            return Ok(Self::stopped(turn, events));
         }
+
+        self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
         self.record(Message::User(prompt.into()));
 
@@ -246,6 +260,29 @@ impl Runner {
         });
 
         Ok(stop)
+    }
+
+    /// Ends a turn the user stopped before it began, and says so twice.
+    ///
+    /// Nothing is recorded, and `turn` is not kept. The prompt was never sent,
+    /// so the transcript has no half of an exchange to explain and the model is
+    /// never told a question that was withdrawn a moment after it was asked —
+    /// which is what recording it would come to, since every request afterwards
+    /// carries it. The count follows the transcript, so a turn that adds
+    /// nothing to it leaves the number free: this announces the number it would
+    /// have had, and the next prompt is that turn, taken for real.
+    ///
+    /// Both events go out all the same, because the screen is the other record:
+    /// a start with no finish leaves the turn looking as though it is still
+    /// running, and a finish with no start is a shape nothing else here
+    /// produces.
+    fn stopped(turn: TurnId, events: &dyn Post) -> StopReason {
+        let stop = StopReason::Cancelled;
+
+        events.post(Event::TurnStarted { turn });
+        events.post(Event::TurnFinished { turn, stop });
+
+        stop
     }
 
     /// Rounds of asking and running, until something ends the turn.

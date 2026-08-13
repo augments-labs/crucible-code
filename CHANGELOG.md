@@ -77,6 +77,17 @@ Notable changes to crucible. Format follows
   turn until `/model` answers it. Two keys and nothing choosing between them is
   now a question rather than a coin toss.
 
+- **A Ctrl-C at the very start of a turn is no longer lost.** The flag was
+  cleared by the turn itself, on the turn's own thread, so a press arriving
+  while that thread was starting was wiped by the turn it was meant to stop.
+  The loop clears it before handing the turn over, and a turn that finds it
+  raised stops without sending anything.
+
+- **A session no longer starts on a name another crucible already has.** The
+  log is created rather than opened, and a name that is taken — by a log, or by
+  a claim another crucible holds — is passed over for a fresh one. A collision
+  costs a name instead of appending one session's turns to another's file.
+
 - **Stopping a silent provider now works.** A response body read is bounded, so
   a cancel raised while nothing is arriving ends the stream within a quarter of
   a second instead of waiting on the socket indefinitely. A pause is not a
@@ -94,12 +105,12 @@ Notable changes to crucible. Format follows
   bottom — and every frame after that erased rows the terminal had already taken.
   The tail now gives back exactly the rows the footing needs.
 
-- **A command put to you says why it is being put to you.** A mode that allows
-  every change to a file still asks before a command unless the command was
-  proved to reach nowhere outside the working directory, which only a handful of
-  path-taking programs can be. So `allowEdits` waves a `write` through and stops
-  at `ls`, and the question now carries the reason rather than reading as a
-  setting that does not work.
+- **`allowEdits` asks before every command.** It used to run a shell command
+  unasked when the line had been read and every path in it found inside the
+  working directory — a proof a symbolic link could undo after the fact, since
+  a shell reopens those paths by name. The mode is now what its name says: the
+  tools that change files change them, and anything that starts a process asks.
+  A command you run constantly wants an `allow` rule, or `fullAccess`.
 
 - **`cargo run` starts crucible.** The bench probes under `src/bin/` are targets
   too, so cargo refused to choose between six binaries and asked for `--bin` —

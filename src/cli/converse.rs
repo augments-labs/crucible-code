@@ -288,6 +288,13 @@ fn take<T: Terminal>(
     let mode = runner.mode();
     let prompt = taking.prompt;
 
+    // Whatever stopped the last turn is spent, and this is the last moment at
+    // which clearing it can be certain of that: from the next line on there are
+    // two threads, one of them reading the keyboard. A press arriving after
+    // this is a press about the turn below, which is what the turn does with a
+    // flag it finds raised.
+    terms.cancel.reset();
+
     let working = thread::spawn(move || {
         let mut runner = runner;
 

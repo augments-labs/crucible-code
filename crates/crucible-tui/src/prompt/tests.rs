@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::dump::dump;
 
 use super::*;
 
@@ -11,6 +12,20 @@ const MODE: &str = "ask before edits";
 
 /// What is said quietly after it.
 const HINT: &str = "(shift+tab to cycle)";
+
+/// The three modes as the row under the box spells them, the colour each puts
+/// on the border, and the name of the picture each is checked against.
+///
+/// The words a session actually shows, unlike [`MODE`] above, which is a
+/// fixture for the tests that are about the row rather than about the mode.
+const MODES: [(&str, Slot, &str); 3] = [
+    ("ask mode on", Slot::Quiet, "ask"),
+    ("allow edits on", Slot::AllowEdits, "allow_edits"),
+    ("full access mode on", Slot::FullAccess, "full_access"),
+];
+
+/// What something waiting on the very next key says while it waits.
+const ASKING: &str = "press ctrl-c again to leave";
 
 /// How many rows of line the tests give a box, unless one is about the ceiling.
 ///
@@ -52,6 +67,14 @@ fn typed(said: &str) -> Prompt<'_> {
     typing(said, width::columns(said))
 }
 
+/// An empty box with something waiting on the very next key under it.
+fn asked() -> Prompt<'static> {
+    Prompt {
+        asking: Some(ASKING),
+        ..typed("")
+    }
+}
+
 /// What the component says, with no colour in it.
 fn drawn(prompt: &Prompt<'_>, columns: usize, glyphs: Glyphs) -> Vec<String> {
     prompt.rows(columns, glyphs).iter().map(Row::text).collect()
@@ -63,6 +86,18 @@ fn row(prompt: &Prompt<'_>, at: usize, columns: usize, glyphs: Glyphs) -> String
         .get(at)
         .cloned()
         .expect("a row the component drew")
+}
+
+/// The component at `columns`, against the picture checked in beside it under
+/// `name@columns`.
+///
+/// The width is the suffix rather than something written into the name, so that
+/// a picture cannot end up checked against a drawing of some other terminal:
+/// one argument decides both what was drawn and which file it is read from.
+fn pictured(name: &str, prompt: &Prompt<'_>, columns: usize, glyphs: Glyphs) {
+    insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+        insta::assert_snapshot!(name, dump(&prompt.rows(columns, glyphs), columns));
+    });
 }
 
 /// A palette that writes every hue it has.
@@ -169,43 +204,53 @@ fn how_much_room_a_window_gives_a_box_is_about_half_of_it() {
 
 #[test]
 fn the_line_is_typed_after_the_mark_inside_the_frame() {
-    let rows = drawn(&typed("hello"), 30, Glyphs::Unicode);
+    pictured("short", &typed("hello"), 30, Glyphs::Unicode);
+}
 
-    assert_eq!(
-        rows,
-        vec![
-            format!("╭{}╮", "─".repeat(28)),
-            "│ › hello                    │".to_owned(),
-            format!("╰{}╯", "─".repeat(28)),
-            MODE.to_owned(),
-        ]
-    );
+#[test]
+fn a_box_nothing_has_been_typed_into_is_the_same_box() {
+    // The one on screen for longer than any other, and the one every keystroke
+    // is drawn over. It is a row of line either way: an empty box that closed
+    // up would open again on the first character and move what is above it.
+    pictured("empty", &typed(""), FRAMED_AT, Glyphs::Unicode);
+    pictured("empty", &typed(""), 80, Glyphs::Unicode);
 }
 
 #[test]
 fn a_font_with_no_box_drawing_in_it_gets_a_box_of_the_same_shape() {
     // Same width, same rows, same columns held for the mark: the set changes
     // what a border is drawn with and nothing about where anything sits.
-    let rows = drawn(&typed("hello"), 30, Glyphs::Ascii);
-
-    assert_eq!(
-        rows,
-        vec![
-            format!("+{}+", "-".repeat(28)),
-            "| > hello                    |".to_owned(),
-            format!("+{}+", "-".repeat(28)),
-            MODE.to_owned(),
-        ]
-    );
+    pictured("short_ascii", &typed("hello"), 30, Glyphs::Ascii);
 }
 
 #[test]
 fn a_terminal_too_narrow_for_a_frame_gets_the_mark_and_the_mode() {
     // The border would cost a quarter of the screen to say what the mark
-    // already says.
-    let rows = drawn(&typed("hello"), 20, Glyphs::Unicode);
+    // already says. Both sets, because the mark is the last chrome left and it
+    // is drawn out of whichever one is in force.
+    pictured("bare", &typed("hello"), FRAMED_AT - 1, Glyphs::Unicode);
+    pictured("bare_ascii", &typed("hello"), FRAMED_AT - 1, Glyphs::Ascii);
+}
 
-    assert_eq!(rows, vec!["› hello".to_owned(), MODE.to_owned()]);
+#[test]
+fn a_mode_is_a_colour_on_the_border_and_a_sentence_under_the_box() {
+    // Three pictures rather than three assertions about a slot: what the reader
+    // meets is the border and the row under it changing together, and a mode
+    // given one and not the other is a screen that says two things.
+    for (mode, tone, name) in MODES {
+        let prompt = Prompt {
+            mode,
+            tone,
+            ..typed("")
+        };
+
+        pictured(name, &prompt, 80, Glyphs::Unicode);
+    }
+}
+
+#[test]
+fn a_question_waiting_on_the_next_key_is_drawn_under_the_status_row() {
+    pictured("asking", &asked(), 80, Glyphs::Unicode);
 }
 
 #[test]

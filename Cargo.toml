@@ -45,6 +45,17 @@ clap = { version = "=4.6.5", features = ["derive"] }
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.19"
 
+# `insta` compares what a component drew against a file checked in beside it.
+# A test only reaches for it where the thing under test is a *picture*: what a
+# row looks like at forty columns, in ascii, under a mode's colour. Those are
+# assertions this repository was already making by hand — a `vec!` of formatted
+# strings inline in the test — and a hand-written one is the same claim in a
+# form nobody can review, because a diff of it is a diff of Rust rather than of
+# the screen. What it must not be reached for is an invariant: "no row is wider
+# than the terminal" is a property, it is tested as one, and a snapshot would
+# assert the answer instead of the rule. Dev-only, so nothing here ships.
+insta = "=1.48.0"
+
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
 # window size, which is an `unsafe` libc call this workspace forbids writing by
 # hand. The escape sequences the renderer emits are plain ANSI, so `crossterm`
@@ -227,6 +238,18 @@ thiserror.workspace = true
 # turns the feature on for `cargo test` and for nothing that ships.
 [dev-dependencies]
 crucible-runner = { workspace = true, features = ["proof"] }
+insta.workspace = true
+
+# The one test that runs crucible the way a person does. It opens a pseudo
+# terminal, spawns the binary against it, sends keystrokes and reads back the
+# bytes — which is the only way to reach the arithmetic this program does that
+# a framework would otherwise do for it: how far a frame rewinds, where the
+# cursor parks, how tall the live region is allowed to be. Every one of those
+# is invisible to a test that calls a component directly, and one of them was
+# wrong in a shipped release. `pty` opens the pair and `termios` sets the window
+# size on it; `std` has neither. Already in the tree for `crucible-core`, so
+# this turns features on rather than adding a crate, and it is dev-only.
+rustix = { workspace = true, features = ["pty", "termios"] }
 
 [lints]
 workspace = true

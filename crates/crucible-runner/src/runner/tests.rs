@@ -334,13 +334,69 @@ fn the_tools_a_runner_offers_are_advertised_on_every_request() {
 }
 
 #[test]
-fn a_turn_starts_with_the_stop_the_last_one_left_behind_cleared() {
-    // Otherwise the next turn is cancelled before it sends anything.
+fn a_turn_that_finds_the_flag_raised_stops_without_sending_anything() {
+    // The press arrived after the caller cleared the flag and before this
+    // thread reached its first instruction. Clearing it here instead would wipe
+    // it: the user would have pressed Ctrl-C and watched the turn carry on.
     let script = Script::new(vec![saying("done")]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.cancel.request();
 
-    assert_eq!(scripted.turn("go").unwrap(), StopReason::Yielded);
+    assert_eq!(scripted.turn("go").unwrap(), StopReason::Cancelled);
+
+    assert!(
+        scripted.asked().is_empty(),
+        "a request went out for a turn the user had already stopped"
+    );
+    assert_eq!(
+        scripted.finished(),
+        [StopReason::Cancelled],
+        "the turn ended without saying so"
+    );
+    assert!(
+        scripted.runner.transcript().is_empty(),
+        "a turn that never ran recorded a prompt the model was never told"
+    );
+}
+
+#[test]
+fn the_number_a_stopped_turn_announced_is_the_one_the_next_turn_takes() {
+    // The count follows the transcript, and a turn stopped before it began adds
+    // nothing to it. So the number it announced is still free, and the prompt
+    // after it is that turn — taken for real this time. Numbering the next one
+    // higher would leave a gap nothing in the log or on screen accounts for.
+    let script = Script::new(vec![saying("first"), saying("second")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    scripted.turn("one").unwrap();
+
+    scripted.cancel.request();
+    scripted.turn("stopped on the way in").unwrap();
+
+    // What the loop does before it hands the next turn over, and the reason the
+    // runner does not do it for itself.
+    scripted.cancel.reset();
+    scripted.turn("two").unwrap();
+
+    assert_eq!(scripted.started(), [1, 2, 2]);
+}
+
+#[test]
+fn a_turn_leaves_the_flag_to_the_thread_that_raises_it() {
+    // Clearing it is the caller's, on the thread reading the keyboard, before
+    // this turn's thread exists. A turn that cleared it as well would be
+    // clearing whatever arrived in between, which is the one press nothing else
+    // can see.
+    let script = Script::new(vec![saying("done")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.cancel.request();
+
+    scripted.turn("go").unwrap();
+
+    assert!(
+        scripted.cancel.requested(),
+        "the turn cleared a request that was not made of it"
+    );
 }
 
 #[test]

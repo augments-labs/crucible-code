@@ -49,17 +49,43 @@ pub(super) fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, troub
     }
 }
 
-/// Opens a log for appending, making it if it is not there.
+/// Opens a log that is already there for appending, making it if it is not.
 ///
 /// Reachable by this account and no other — see [`super::privacy`], which is
 /// where what that means on each platform is written down. A log holds what was
 /// typed, what the model said, the contents of the files that were read and
 /// everything a command printed.
+///
+/// What reaches this is a session being continued, which found its log before
+/// it got here. A session starting takes [`make`] instead: it is the call that
+/// must not open a log somebody else is writing.
 pub(super) fn open(path: &Path) -> Result<File, SessionError> {
     super::privacy::log(path).map_err(|source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
     })
+}
+
+/// Makes the log for a session starting now, or says one is already there.
+///
+/// `None` is not a failure: it is the filesystem answering that this name
+/// belongs to somebody else, which is the answer [`super::taking`] asked for.
+/// Every other way the call can fail is one, and is reported against the log
+/// the same as any other.
+///
+/// The creation is exclusive — see the platform module — which is what settles
+/// the name between two crucibles that minted it in the same millisecond.
+/// [`open`] is the other half of the pair and does the opposite on purpose: a
+/// session being continued has a log and must find it.
+pub(super) fn make(path: &Path) -> Result<Option<File>, SessionError> {
+    match super::privacy::fresh(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(problem) if problem.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(source) => Err(SessionError::Log {
+            at: path.display().to_string().into(),
+            source,
+        }),
+    }
 }
 
 /// Cuts a log back to `bytes`, through a handle opened for that and nothing

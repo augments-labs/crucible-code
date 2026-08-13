@@ -15,3 +15,8 @@ unicode-width.workspace = true
 
 [lints]
 workspace = true
+
+# What a component drew, against a file checked in beside it. See the comment
+# in the root manifest for when a test may reach for this and when it may not.
+[dev-dependencies]
+insta.workspace = true

@@ -1,8 +1,6 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{
-    Command, ProviderError, Reach, Target, ToolArgs, ToolId, TurnError, Workspace,
-};
+use crucible_core::{Command, ProviderError, Target, ToolArgs, ToolId, TurnError, Workspace};
 use crucible_tui::Recording;
 
 use super::*;
@@ -36,7 +34,6 @@ fn rule(command: &str) -> Minted {
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from(command)]),
-                reach: Reach::Anything,
             },
         },
     )
@@ -128,7 +125,6 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from("rm -rf build")]),
-                reach: Reach::Anything,
             },
         },
         WIDE,
@@ -441,31 +437,6 @@ fn questioned(sensitivity: &Sensitivity) -> String {
     renderer.terminal().written().to_string()
 }
 
-/// A command the reach table could not read.
-fn unproved() -> Sensitivity {
-    Sensitivity::SpawnsProcess {
-        command: Command::Understood {
-            parts: Box::from([Box::from("ls src")]),
-            reach: Reach::Anything,
-        },
-    }
-}
-
-#[test]
-fn a_command_nothing_proved_anything_about_is_asked_about_with_the_reason() {
-    // The row that stops a permission mode being reported as broken. A mode
-    // that allows every change to a file still asks before a command unless
-    // the command was proved to reach nowhere outside — so it waves a `write`
-    // through and stops at `ls`, which reads as backwards until the question
-    // says what is being weighed.
-    let written = questioned(&unproved());
-
-    assert!(
-        written.contains("nothing here proved this stays inside the working directory"),
-        "{written}"
-    );
-}
-
 #[test]
 fn a_padded_command_is_put_to_the_user_whole_rather_than_cut_short() {
     // The row where somebody decides whether to let a process run. Cut at a
@@ -476,36 +447,10 @@ fn a_padded_command_is_put_to_the_user_whole_rather_than_cut_short() {
     let written = questioned(&Sensitivity::SpawnsProcess {
         command: Command::Understood {
             parts: Box::from([Box::from(padded.as_str())]),
-            reach: Reach::Anything,
         },
     });
 
     assert!(written.contains("rm -rf /"), "{written}");
-}
-
-#[test]
-fn a_command_proved_to_stay_inside_needs_no_such_reason() {
-    // It is only ever put to somebody by a mode that asks about everything,
-    // and that mode's answer to "why" is its own name.
-    let proved = Sensitivity::SpawnsProcess {
-        command: Command::Understood {
-            parts: Box::from([Box::from("mkdir demo")]),
-            reach: Reach::Workspace,
-        },
-    };
-
-    assert!(!questioned(&proved).contains("nothing here proved"));
-}
-
-#[test]
-fn a_change_to_a_file_is_asked_about_without_one() {
-    // A mode that asks about changes to files is asking about exactly what it
-    // says it asks about, so there is nothing to explain.
-    let changing = Sensitivity::MutatesFile {
-        target: Target::unresolved(),
-    };
-
-    assert!(!questioned(&changing).contains("nothing here proved"));
 }
 
 #[test]

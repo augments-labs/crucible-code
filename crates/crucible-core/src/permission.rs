@@ -15,10 +15,10 @@
 //! configured from. A single write there could allow everything from the next
 //! start on, so that answer cannot be entrusted to the rules and modes it
 //! would defeat. A tool that runs programs arrives here as a command rather
-//! than as a path, so it meets the same wall one step earlier: a line that
-//! could reach those files is one [`reaches_configuration`] refuses to let it
-//! prove anything about, and an unproved line is asked about in every mode
-//! that asks about anything.
+//! than as the paths it will touch, so the refusal cannot be spelled for it.
+//! What stands in its place is that a command is put to the user in every mode
+//! but `fullAccess`, so a line that would write one of those files is one
+//! somebody was shown first.
 //!
 //! A refusal has two shapes on purpose. A rule is standing policy and stops one
 //! call; the model meets the wall, is told, and gets on with something else. A
@@ -42,15 +42,11 @@ pub use grant::{Approved, Grant};
 pub use mode::Mode;
 pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
-pub use sensitivity::{Command, Reach, Sensitivity, Target};
+pub use sensitivity::{Command, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
 
 /// The directory the permission configuration is read from, and the files
 /// inside it that are read.
-///
-/// Written once because two questions are asked about them — whether a path is
-/// one of them, and whether a call reaching a path could reach one — and a
-/// second copy of the list is how the two answers start disagreeing.
 const DIRECTORY: &str = ".crucible";
 const FILES: [&str; 2] = ["config.json", "config.local.json"];
 
@@ -65,9 +61,8 @@ const FILES: [&str; 2] = ["config.json", "config.local.json"];
 ///
 /// It is a check on the path and not on the file behind it, so a second name
 /// for the same inode — a hard link, which resolving does not undo — is not
-/// this file as far as this is concerned. Making one is what holds that closed:
-/// no program `bash` can prove stays inside the workspace creates a hard link,
-/// so a line that would is one somebody is asked about, in every mode.
+/// this file as far as this is concerned. Making one takes a program, and a
+/// program is put to the user in every mode but `fullAccess`.
 fn configuration(path: &Path) -> bool {
     let file = path.file_name().and_then(|name| name.to_str());
     let directory = path
@@ -76,25 +71,6 @@ fn configuration(path: &Path) -> bool {
         .and_then(|name| name.to_str());
 
     directory == Some(DIRECTORY) && file.is_some_and(|file| FILES.contains(&file))
-}
-
-/// Whether a program handed this resolved path could change one of those files.
-///
-/// The question `bash` has to ask, and a wider one, because a program is handed
-/// a directory and works the filename out itself: `cp c .crucible` names no
-/// configuration file and writes one. So the directory counts, and so does
-/// anything under it. Whether it holds a configuration right now is not asked —
-/// an empty one is a single copy away from holding one, and a proof that read
-/// the directory's contents would be answering about the instant it read them.
-///
-/// Wider is affordable here and would not be affordable in [`configuration`].
-/// This answer costs a proof, and a line that loses one is a line somebody is
-/// asked about; that one is a refusal no rule and no mode can get past, and one
-/// covering the whole directory would wall `.crucible` off for good.
-#[must_use]
-pub fn reaches_configuration(path: &Path) -> bool {
-    path.components()
-        .any(|component| component.as_os_str().to_str() == Some(DIRECTORY))
 }
 
 /// What the engine settled on for one call.
@@ -211,10 +187,9 @@ impl Permission {
         // Writes only, and file tools only: reading configuration is how a
         // session begins, and a process is shown here as a command rather than
         // as the paths it will touch. What keeps that from being the way round
-        // this is `reaches_configuration`, which the proof a command line
-        // carries is answered against — a line that could reach these files is
-        // one nothing was proved about, so it arrives at the rules and the mode
-        // as something to ask about rather than as an edit.
+        // this is the mode itself — a command is put to the user in every mode
+        // but `fullAccess`, so a line that would write one of these files is
+        // one somebody was shown first.
         if let Sensitivity::MutatesFile { target } = sensitivity
             && target
                 .absolute()

@@ -111,7 +111,7 @@ fn refused() -> Answer {
 mod tests {
     use std::sync::mpsc::channel;
 
-    use crucible_core::{Command, Reach, ToolArgs, ToolId};
+    use crucible_core::{Command, ToolArgs, ToolId};
 
     use super::*;
 
@@ -127,7 +127,6 @@ mod tests {
         Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from("ls")]),
-                reach: Reach::Anything,
             },
         }
     }

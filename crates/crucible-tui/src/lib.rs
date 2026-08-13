@@ -19,6 +19,8 @@
 
 mod clear;
 mod color;
+#[cfg(test)]
+mod dump;
 mod editor;
 mod escape;
 mod glyphs;

@@ -115,6 +115,19 @@ impl Row {
         said
     }
 
+    /// The runs the row is made of: the slot each asked for, and what it says.
+    ///
+    /// The one thing neither [`Row::text`] nor [`Row::paint`] can answer. A
+    /// test picturing a component has to see the slot the component *chose*,
+    /// where paint shows the hue a palette settled on for one terminal — so
+    /// this is how [`crate::dump`] writes a run's job into the picture beside
+    /// the run. Tests only: shipped code has a palette in hand and asks for
+    /// paint.
+    #[cfg(test)]
+    pub(crate) fn spans(&self) -> impl Iterator<Item = (Slot, &str)> {
+        self.0.iter().map(|span| (span.slot, span.text.as_str()))
+    }
+
     /// The row as a terminal is sent it.
     ///
     /// A slot the palette has no colour for — [`Slot::Plain`] always, and every

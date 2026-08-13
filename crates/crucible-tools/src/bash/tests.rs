@@ -4,9 +4,7 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Ask, Command, Mode, Permission, Reach, Remember, Rules, ToolCall, ToolId, Verdict,
-};
+use crucible_core::{Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Verdict};
 
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::bound::OUTPUT;
@@ -306,50 +304,6 @@ fn the_sensitivity_carries_what_the_call_will_run() {
         Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from("/usr/bin/git status")]),
-                reach: Reach::Anything,
-            }
-        }
-    );
-}
-
-#[test]
-fn the_sensitivity_says_when_a_command_was_proved_to_stay_inside() {
-    // What `allowEdits` reads. It is computed here rather than in the engine
-    // because only this tool can parse its own arguments, and only a workspace
-    // can say what is inside it.
-    let sample = Sample::new("bash-reach");
-    sample.write("src/a.rs", "");
-    let tool = Bash::new(sample.workspace(), Cancel::new());
-
-    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"mkdir -p src/net"}"#));
-
-    assert_eq!(
-        sensitivity,
-        Sensitivity::SpawnsProcess {
-            command: Command::Understood {
-                parts: Box::from([Box::from("mkdir -p src/net")]),
-                reach: Reach::Workspace,
-            }
-        }
-    );
-}
-
-#[test]
-fn a_recursive_delete_reaches_the_engine_as_a_command_that_gets_asked_about() {
-    // The seam `allowEdits` reads. `Reach::Workspace` is the claim that mode
-    // acts on without a question, so this is where the line between `rm one.txt`
-    // and `rm -rf .` either holds or does not.
-    let sample = Sample::new("bash-recursive");
-    let tool = Bash::new(sample.workspace(), Cancel::new());
-
-    let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"command":"rm -rf ."}"#));
-
-    assert_eq!(
-        sensitivity,
-        Sensitivity::SpawnsProcess {
-            command: Command::Understood {
-                parts: Box::from([Box::from("rm -rf .")]),
-                reach: Reach::Anything,
             }
         }
     );
@@ -358,10 +312,9 @@ fn a_recursive_delete_reaches_the_engine_as_a_command_that_gets_asked_about() {
 /// Whether a mode puts this command line to the user, decided the way a turn
 /// decides one.
 ///
-/// Over the sensitivity this tool worked out rather than a [`Reach`] written
-/// down here. The two halves are a table that proves a line stays inside and a
-/// mode that acts on the proof, and a stand-in for either would leave them
-/// agreeing about a value nothing computed.
+/// Over the sensitivity this tool worked out rather than one written down here,
+/// so what the tests below pin is the whole route a call takes: the words of
+/// the line, the sensitivity handed over, and the arm the mode answers with.
 fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     struct Watching(bool);
 
@@ -389,55 +342,59 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     watching.0
 }
 
+/// The lines a mode is asked about here: ones naming nothing but paths that
+/// exist inside the workspace, and ones nobody would call an edit.
+///
+/// The first group is the point. Each of them changes what `write` may change
+/// and names it in words a reader could check, and each is still put to the
+/// user — because `sh` looks those words up again when the command runs, and
+/// what it finds then is not what a check on the text found.
+const LINES: [&str; 9] = [
+    "mkdir demo",
+    "touch src/b.rs",
+    "cp src/a.rs src/b.rs",
+    "mv src/a.rs src/b.rs",
+    "rm src/a.rs",
+    "ls src",
+    "cargo test",
+    "rm -rf build",
+    "mkdir demo; touch src/b.rs",
+];
+
 #[test]
-fn allow_edits_runs_a_line_this_tool_proved_stays_inside_without_asking() {
-    // The join the reach table exists for, over the whole route a call takes:
-    // the words of the line, the workspace they resolve against, the
-    // sensitivity handed over, and the arm the mode answers with.
-    let sample = Sample::new("bash-allow-edits-inside");
+fn allow_edits_asks_before_every_command_line() {
+    // What the mode's name says, with nothing behind it about what a line was
+    // read to be. A shell is what `allowEdits` stops at, whatever it was given
+    // to run.
+    let sample = Sample::new("bash-allow-edits");
     sample.write("src/a.rs", "");
 
-    for line in [
-        "mkdir demo",
-        "touch src/b.rs",
-        "cp src/a.rs src/b.rs",
-        "mv src/a.rs src/b.rs",
-        "rm src/a.rs",
-    ] {
-        assert!(!asks(&sample, Mode::AllowEdits, line), "{line}");
-    }
-}
-
-#[test]
-fn allow_edits_asks_before_running_an_everyday_command_line() {
-    // What the mode costs, and it is most of what anybody types. Six programs
-    // taking nothing but paths are the whole of what can be proved, so a line
-    // that merely looks harmless is asked about like any other — the failure
-    // direction the proof is worth having is this one.
-    let sample = Sample::new("bash-allow-edits-everyday");
-    sample.write("src/a.rs", "");
-
-    for line in [
-        "ls src",
-        "cat src/a.rs",
-        "cargo test",
-        "git status",
-        "rm -rf build",
-        "mkdir demo; touch src/b.rs",
-    ] {
+    for line in LINES {
         assert!(asks(&sample, Mode::AllowEdits, line), "{line}");
     }
 }
 
 #[test]
+fn ask_asks_before_the_same_ones() {
+    // `allowEdits` and `ask` answer a command identically, which is the whole
+    // of the difference between them being about files.
+    let sample = Sample::new("bash-ask");
+    sample.write("src/a.rs", "");
+
+    for line in LINES {
+        assert!(asks(&sample, Mode::Ask, line), "{line}");
+    }
+}
+
+#[test]
 fn full_access_asks_before_none_of_them() {
-    // The same lines under the mode that reads no reach at all, so the two
-    // tests above are pinning what `allowEdits` proved rather than something
-    // every mode would have done anyway.
+    // The same lines under the one mode that runs a command unasked, so the
+    // two tests above are pinning the mode rather than something the tool or
+    // the engine would have done to every call anyway.
     let sample = Sample::new("bash-full-access");
     sample.write("src/a.rs", "");
 
-    for line in ["mkdir demo", "cargo test", "rm -rf build"] {
+    for line in LINES {
         assert!(!asks(&sample, Mode::FullAccess, line), "{line}");
     }
 }

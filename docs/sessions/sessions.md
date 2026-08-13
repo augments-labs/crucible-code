@@ -97,7 +97,7 @@ Continuing a session cuts its log back to what was replayed, so without this the
 second crucible would delete the turns the first had already written and still
 believes are there, and both would append to one file from then on.
 
-Starting a session is never refused. Two crucibles in one directory are two
+Starting a session is refused only if it cannot find itself a free name — eight tries, each a millisecond and twenty-four bits of randomness. Two crucibles in one directory are two
 sessions, each recording a log of its own — it is only continuing that has to
 pick one, and only continuing that can be told no.
 

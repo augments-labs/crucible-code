@@ -14,6 +14,11 @@
 //! loop does with it. One producer, on the thread that draws; the consumers are
 //! all on the thread the turn runs on.
 //!
+//! The producer clears it too, and that is what keeps a press from being lost
+//! rather than merely tidy — see [`Cancel::reset`]. One thread raises the flag
+//! and clears it, so there is no moment at which a press can be overwritten by
+//! a clearing that was decided before it happened.
+//!
 //! It lives in core because [`crate::provider::Provider`] takes one, and core
 //! owns every type its own traits name.
 
@@ -49,17 +54,17 @@ impl Cancel {
 
     /// Clears the flag, ready for the turn about to run.
     ///
-    /// Called by the runner at the top of a turn, so whatever stopped the last
-    /// one is spent and no turn begins against a request that was not made of
-    /// it.
+    /// Called on the thread that reads the keyboard, before the thread the turn
+    /// runs on exists. Both halves of that are load-bearing: whatever stopped
+    /// the last turn is spent, and the only hand that can raise the flag is the
+    /// one making this call, so nothing can be raised in the moment this call
+    /// then clears.
     ///
-    /// That leaves a window, and the window is open rather than closed. The
-    /// binary runs a turn on a thread of its own and goes on reading the
-    /// keyboard on the thread that spawned it, so a Ctrl-C pressed between the
-    /// spawn and this call is raised and then cleared here: the turn carries on
-    /// and the press is lost. It is as wide as a thread takes to start, and
-    /// pressing again stops the turn. Closing it would mean clearing the flag
-    /// before the worker is spawned rather than inside the turn it runs.
+    /// Cleared inside the turn instead — by the turn, on the turn's own thread
+    /// — it would leave a window as wide as a thread takes to start, in which a
+    /// Ctrl-C is raised by the loop and then wiped by the very turn it was
+    /// pressed to stop. A turn that finds the flag raised is a turn somebody
+    /// stopped, and it stops.
     pub fn reset(&self) {
         self.0.store(false, Ordering::Release);
     }

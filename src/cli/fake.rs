@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Reach, Request,
-    Sensitivity, Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
+    Target, Tool, ToolArgs, ToolError, ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -143,22 +143,6 @@ pub(crate) fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
             parts: Box::from([Box::from(command)]),
-            reach: Reach::Anything,
-        },
-    }
-}
-
-/// The same, with the one claim `allowEdits` acts on without asking: this line
-/// changes nothing outside the workspace.
-///
-/// Written down here because what proves it is the tool's own reading of its
-/// own arguments, which these tests do not have and are not about. Which lines
-/// earn the claim is settled where they are read.
-pub(crate) fn confined(command: &str) -> Sensitivity {
-    Sensitivity::SpawnsProcess {
-        command: Command::Understood {
-            parts: Box::from([Box::from(command)]),
-            reach: Reach::Workspace,
         },
     }
 }

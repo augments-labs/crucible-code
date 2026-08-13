@@ -8,8 +8,8 @@
 
 use std::fmt;
 
+use super::Sensitivity;
 use super::rule::Disposition;
-use super::{Reach, Sensitivity};
 
 /// What happens to a call no rule spoke about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -17,8 +17,8 @@ pub enum Mode {
     /// Ask before anything is changed or run.
     #[default]
     Ask,
-    /// Change files without asking, by whichever tool changes them; still ask
-    /// before running anything that was not proved to stay inside.
+    /// Change files without asking, through the tools that change them; ask
+    /// before anything that starts a process.
     AllowEdits,
     /// Do not ask.
     FullAccess,
@@ -82,17 +82,18 @@ impl Mode {
                 Self::AllowEdits | Self::FullAccess => Disposition::Allow,
             },
 
-            Sensitivity::SpawnsProcess { command } => match self {
-                Self::Ask => Disposition::Ask,
-                // The one place a mode reads more than the kind of call. A
-                // program is not asked about because it is a program; it is
-                // asked about because of what it can reach, and `allowEdits`
-                // is a sentence about reach. One proved to stay inside is
-                // doing what this mode already allows `write` to do.
-                Self::AllowEdits => match command.reach() {
-                    Reach::Workspace => Disposition::Allow,
-                    Reach::Anything => Disposition::Ask,
-                },
+            // A program is asked about however closely its line was read.
+            // Reading one can say where its words pointed at the moment they
+            // were read, and that is not the moment they are used: a shell
+            // opens every one of them again by name when the command runs, so
+            // a symbolic link put at one of those names in between sends the
+            // write somewhere else and nobody was asked. The file tools have
+            // no such gap — they hold on to the directory they proved and
+            // never look a path up twice — and a shell cannot be made to work
+            // that way, so a proof about a command line is a statement about
+            // the past rather than a licence to skip the question.
+            Sensitivity::SpawnsProcess { .. } => match self {
+                Self::Ask | Self::AllowEdits => Disposition::Ask,
                 Self::FullAccess => Disposition::Allow,
             },
         }

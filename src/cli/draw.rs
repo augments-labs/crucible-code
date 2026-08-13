@@ -8,7 +8,7 @@
 use std::fmt;
 use std::path::Path;
 
-use crucible_core::{Event, Minted, Reach, Sensitivity, StopReason, ToolCall, ToolOutput};
+use crucible_core::{Event, Minted, Sensitivity, StopReason, ToolCall, ToolOutput};
 use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, cut, fold};
 
 use super::remember::RememberError;
@@ -174,37 +174,7 @@ pub(crate) fn question<T: Terminal>(
         renderer.commit(&row)?;
     }
 
-    if let Some(because) = why(sensitivity) {
-        renderer.commit(because)?;
-    }
-
     mark(renderer, answers(rule.is_some()), style)
-}
-
-/// Why this call is being put to somebody, where the answer is not evident from
-/// the call itself.
-///
-/// One case, and it is the one that reads as a broken setting: a permission
-/// mode that allows every change to a file still asks before a command,
-/// *unless* the command was proved to reach nowhere outside the workspace — and
-/// only a handful of programs taking nothing but paths can be proved. So
-/// `allowEdits` waves through a `write` and stops at `ls`, which looks
-/// backwards until you know that what is being weighed is reach rather than
-/// danger. Saying it here costs one row of a question already on screen, and it
-/// is the row that stops the mode being reported as not working.
-///
-/// Nothing is said about a change to a file: a mode that asks about those is
-/// asking about exactly what it says it asks about.
-fn why(sensitivity: &Sensitivity) -> Option<&'static str> {
-    match sensitivity {
-        Sensitivity::SpawnsProcess { command } => match command.reach() {
-            Reach::Anything => {
-                Some("  nothing here proved this stays inside the working directory")
-            }
-            Reach::Workspace => None,
-        },
-        Sensitivity::ReadOnly { .. } | Sensitivity::MutatesFile { .. } => None,
-    }
 }
 
 /// Says what an answer of `always` left behind, or why it left nothing.

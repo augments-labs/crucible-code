@@ -1,7 +1,7 @@
 //! What answering `always` leaves behind in a file somebody else writes too.
 
 use crucible_core::{
-    Ask, Command, Mode, Reach, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
+    Ask, Command, Mode, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
     narrowest,
 };
 
@@ -24,7 +24,6 @@ fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
             parts: Box::from([Box::from(command)]),
-            reach: Reach::Anything,
         },
     }
 }

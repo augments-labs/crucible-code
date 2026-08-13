@@ -70,7 +70,7 @@ fn read(found: &str) -> Option<Mode> {
 #[cfg(test)]
 mod tests {
     use crucible_core::{
-        Ask, Command, Reach, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
+        Ask, Command, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
     };
 
     use serde_json::json;
@@ -102,7 +102,6 @@ mod tests {
         let sensitivity = Sensitivity::SpawnsProcess {
             command: Command::Understood {
                 parts: Box::from([Box::from(command)]),
-                reach: Reach::Anything,
             },
         };
 
