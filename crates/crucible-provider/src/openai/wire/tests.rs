@@ -1,52 +1,68 @@
-//! What one chunk of the wire means.
+//! What one event means, event shape by event shape.
 //!
 //! Separate from the parser next door only because the parser reached the
-//! per-file cap. Everything here is about `deltas` and the two functions under
-//! it.
+//! per-file cap.
 
 use super::*;
 
+/// One event, as the framing above hands it over.
+///
+/// The name is left empty throughout: this endpoint repeats the type inside
+/// every payload, and the payload is what the parser reads. A test that set
+/// both could pass while the parser read a field nothing sends.
 fn event(data: &str) -> SseEvent {
     SseEvent {
-        // Chunks arrive on this wire as bare `data:` lines with no type in
-        // front of them, which the framing reports as an unnamed event.
         name: String::new(),
         data: data.to_owned(),
     }
 }
 
-/// One chunk of a response that has nothing open, which is every chunk here
-/// except where a test says otherwise: what spans chunks is pinned in `stream`.
-fn of(data: &str) -> Vec<Delta> {
-    deltas(&event(data), &mut None).unwrap()
+/// What one event yields, with nothing open before it.
+fn out(data: &str) -> Vec<Delta> {
+    deltas(&event(data), &mut Open::default()).expect("an event that parses")
 }
 
-#[test]
-fn text_arrives_as_it_is_produced() {
-    let out = of(r#"{"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}"#);
-
-    assert_eq!(out, vec![Delta::Text("Hel".into())]);
+/// A response holding whatever `output` says, finished.
+fn completed(output: &str) -> String {
+    format!(r#"{{"type":"response.completed","response":{{"output":{output}}}}}"#)
 }
 
-#[test]
-fn the_first_chunk_of_an_answer_carries_a_role_and_no_words() {
-    // Emitting something for it would put an empty line in front of every
-    // answer.
-    let out = of(r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#);
-
-    assert_eq!(out, Vec::new());
-}
+/// A tool call opening, with the two identities this endpoint gives one.
+const OPENED: &str = r#"{"type":"response.output_item.added","output_index":0,
+    "item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read","arguments":""}}"#;
 
 #[test]
-fn a_tool_call_announces_its_identity_before_its_arguments() {
-    // The name has to arrive first: the fragments that follow carry an
-    // index and nothing else saying which call they belong to.
-    let out = of(
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":""}}]}}]}"#,
-    );
-
+fn a_fragment_of_the_answer_is_text() {
     assert_eq!(
-        out,
+        out(r#"{"type":"response.output_text.delta","delta":"Hello"}"#),
+        vec![Delta::Text("Hello".into())]
+    );
+}
+
+#[test]
+fn an_empty_fragment_says_nothing() {
+    // The opening fragment of some responses carries nothing. Emitting it
+    // would put a blank line in front of every answer.
+    assert!(out(r#"{"type":"response.output_text.delta","delta":""}"#).is_empty());
+}
+
+#[test]
+fn a_refusal_is_shown_rather_than_swallowed() {
+    // A model that declines produces no output text at all. Unread, a refusal
+    // is a turn that shows nothing and then reports that it finished.
+    assert_eq!(
+        out(r#"{"type":"response.refusal.delta","delta":"I can't help with that"}"#),
+        vec![Delta::Text("I can't help with that".into())]
+    );
+}
+
+#[test]
+fn a_tool_call_opens_under_the_identity_a_result_is_answered_against() {
+    // Two identities and they are not interchangeable: `id` keys the
+    // fragments, `call_id` is what the next turn's result names. Sending the
+    // wrong one back is a result the vendor cannot match to a call.
+    assert_eq!(
+        out(OPENED),
         vec![Delta::ToolStarted {
             id: ToolId::new("call_1"),
             name: "read".into(),
@@ -55,225 +71,296 @@ fn a_tool_call_announces_its_identity_before_its_arguments() {
 }
 
 #[test]
-fn a_call_that_opens_with_arguments_already_in_it_yields_both() {
-    // Nothing on this wire promises the opening chunk is empty of them, and
-    // dropping the first fragment leaves the model's arguments unparsable.
-    let out = of(
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"pa"}}]}}]}"#,
-    );
+fn a_message_opening_is_not_a_tool_call() {
+    let said = r#"{"type":"response.output_item.added","output_index":0,
+        "item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}"#;
+
+    assert!(out(said).is_empty());
+}
+
+#[test]
+fn reasoning_is_narrated_and_never_drawn() {
+    // The item exists on every turn these models take. It is not the answer,
+    // and a trace nobody asked for is worse than none.
+    let thinking = r#"{"type":"response.output_item.added","output_index":0,
+        "item":{"type":"reasoning","id":"rs_1","summary":[]}}"#;
+
+    assert!(out(thinking).is_empty());
+    assert!(out(r#"{"type":"response.reasoning_text.delta","delta":"hmm"}"#).is_empty());
+}
+
+#[test]
+fn arguments_follow_the_call_they_were_opened_under() {
+    let mut open = Open::default();
+
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+    let fragment = r#"{"type":"response.function_call_arguments.delta",
+        "item_id":"fc_1","delta":"{\"path\":"}"#;
 
     assert_eq!(
-        out,
-        vec![
-            Delta::ToolStarted {
-                id: ToolId::new("call_1"),
-                name: "read".into(),
-            },
-            Delta::ToolArgs("{\"pa".into()),
-        ]
+        deltas(&event(fragment), &mut open).expect("a fragment of it"),
+        vec![Delta::ToolArgs("{\"path\":".into())]
     );
 }
 
 #[test]
-fn tool_arguments_arrive_in_fragments() {
-    let out = of(
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"a.rs\"}"}}]}}]}"#,
-    );
+fn arguments_for_a_call_that_is_not_open_are_refused() {
+    // Assembled anyway they would be one tool running on another tool's
+    // arguments, which is a failure nobody can see.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
 
-    assert_eq!(out, vec![Delta::ToolArgs("th\":\"a.rs\"}".into())]);
+    let elsewhere = r#"{"type":"response.function_call_arguments.delta",
+        "item_id":"fc_2","delta":"{}"}"#;
+    let problem = deltas(&event(elsewhere), &mut open).expect_err("a fragment of another call");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
 }
 
 #[test]
-fn two_calls_opened_in_one_chunk_are_two_calls() {
-    let out = of(r#"{"choices":[{"index":0,"delta":{"tool_calls":[
-            {"index":0,"id":"call_1","function":{"name":"read","arguments":""}},
-            {"index":1,"id":"call_2","function":{"name":"glob","arguments":""}}]}}]}"#);
+fn arguments_arriving_before_any_call_are_refused() {
+    let orphan = r#"{"type":"response.function_call_arguments.delta",
+        "item_id":"fc_1","delta":"{}"}"#;
+
+    let problem =
+        deltas(&event(orphan), &mut Open::default()).expect_err("a fragment of nothing at all");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
+}
+
+#[test]
+fn a_finished_call_does_not_repeat_the_arguments_that_were_streamed() {
+    // The finished item carries the whole argument text. Emitted after the
+    // fragments it would double them, and the JSON the model wrote would not
+    // parse.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+    deltas(
+        &event(
+            r#"{"type":"response.function_call_arguments.delta",
+                "item_id":"fc_1","delta":"{\"path\":\"a.rs\"}"}"#,
+        ),
+        &mut open,
+    )
+    .expect("its arguments");
+
+    let done = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read",
+                "arguments":"{\"path\":\"a.rs\"}"}}"#;
+
+    assert!(
+        deltas(&event(done), &mut open)
+            .expect("the call finishing")
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_finished_call_whose_arguments_never_streamed_supplies_them() {
+    // A server that narrates only the ends of things sends no fragments at
+    // all. Without this the tool would run on no arguments.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+
+    let done = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read",
+                "arguments":"{\"path\":\"a.rs\"}"}}"#;
 
     assert_eq!(
-        out,
-        vec![
-            Delta::ToolStarted {
-                id: ToolId::new("call_1"),
-                name: "read".into(),
-            },
-            Delta::ToolStarted {
-                id: ToolId::new("call_2"),
-                name: "glob".into(),
-            },
-        ]
+        deltas(&event(done), &mut open).expect("the call finishing"),
+        vec![Delta::ToolArgs("{\"path\":\"a.rs\"}".into())]
     );
 }
 
 #[test]
-fn an_identity_that_is_present_but_empty_does_not_open_a_second_call() {
-    // Sending `"id": ""` rather than leaving the field out is how some of this
-    // wire's speakers spell "a fragment of the call already open". Reading the
-    // empty string as an identity opens a nameless second call, and every
-    // argument after it is assembled onto that one instead of the real one.
-    let out = of(
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"","arguments":"th\":\"a.rs\"}"}}]}}]}"#,
-    );
+fn a_call_finishing_that_is_not_the_one_open_is_refused() {
+    // The finished item carries the whole argument text, and taken on trust it
+    // would be emitted under whichever call is open — one tool running on
+    // another tool's arguments, and read against that other call's `streamed`
+    // flag, so the arguments arrive twice or not at all.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
 
-    assert_eq!(out, vec![Delta::ToolArgs("th\":\"a.rs\"}".into())]);
+    let elsewhere = r#"{"type":"response.output_item.done","output_index":1,
+        "item":{"type":"function_call","id":"fc_2","call_id":"call_2","name":"write",
+                "arguments":"{\"path\":\"b.rs\"}"}}"#;
+    let problem = deltas(&event(elsewhere), &mut open).expect_err("another call finishing");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
 }
 
 #[test]
-fn a_call_carrying_half_an_identity_is_refused_rather_than_guessed() {
-    // Either half alone leaves the fragments that follow with nowhere they
-    // provably belong, and the parser would append them to whichever call was
-    // open before. That is one tool running on another tool's arguments —
-    // a `write` given a `read`'s path — rather than a failure anyone can see.
+fn a_call_finishing_with_nothing_open_is_refused() {
+    let done = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read",
+                "arguments":"{}"}}"#;
+
+    let problem =
+        deltas(&event(done), &mut Open::default()).expect_err("a call nothing ever opened");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
+}
+
+#[test]
+fn a_message_finishing_is_not_a_tool_call_and_leaves_the_open_one_alone() {
+    // The response narrates the end of every item, and a call is opened before
+    // the message beside it is closed. Read as a call, that would end the open
+    // one and the fragments still to come would have nothing to belong to.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+
+    let said = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}"#;
+
+    assert!(
+        deltas(&event(said), &mut open)
+            .expect("a message finishing")
+            .is_empty()
+    );
+
+    let fragment = r#"{"type":"response.function_call_arguments.delta",
+        "item_id":"fc_1","delta":"{}"}"#;
+    assert_eq!(
+        deltas(&event(fragment), &mut open).expect("the open call's arguments"),
+        vec![Delta::ToolArgs("{}".into())]
+    );
+}
+
+#[test]
+fn a_tool_call_carrying_half_an_identity_is_refused_rather_than_skipped() {
+    // Skipped, nothing opens: the fragments that follow are assembled onto the
+    // call before it, the half-announced call leaves no trace, and the turn
+    // ends looking like a clean finish with a tool the model asked for never
+    // run.
     for half in [
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":""}}]}}]}"#,
-        r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"read","arguments":""}}]}}]}"#,
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","call_id":"call_1","name":"read"}}"#,
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","id":"fc_1","name":"read"}}"#,
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","id":"fc_1","call_id":"call_1"}}"#,
     ] {
-        let problem = deltas(&event(half), &mut None).unwrap_err();
+        let problem = deltas(&event(half), &mut Open::default()).expect_err("half a call");
 
         assert!(
             matches!(problem, ProviderError::Protocol { .. }),
-            "expected a protocol failure, got {problem:?}"
+            "{problem:?}"
         );
     }
 }
 
 #[test]
-fn arguments_for_a_call_the_chunk_did_not_open_are_refused() {
-    // Fragments carry no identity of their own, so they are assembled onto the
-    // call opened last. A chunk that opens one call and then carries arguments
-    // under a different index is the case where that rule is visibly wrong, and
-    // the arguments would land on the call above.
-    let problem = deltas(
-        &event(
-            r#"{"choices":[{"index":0,"delta":{"tool_calls":[
-                {"index":0,"id":"call_1","function":{"name":"read","arguments":""}},
-                {"index":1,"function":{"arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
-        ),
-        &mut None,
-    )
-    .unwrap_err();
+fn a_response_that_asked_for_nothing_yielded() {
+    let output = r#"[{"type":"message","role":"assistant","content":[]}]"#;
 
-    assert!(
-        matches!(problem, ProviderError::Protocol { .. }),
-        "expected a protocol failure, got {problem:?}"
-    );
-}
-
-#[test]
-fn wanting_tools_is_distinguished_from_yielding() {
-    // The runner's whole loop turns on this: one runs the tools and goes
-    // back to the model, the other hands control to the user.
     assert_eq!(
-        of(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#),
-        vec![Delta::Stopped(StopReason::WantsTools)]
-    );
-    assert_eq!(
-        of(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+        out(&completed(output)),
         vec![Delta::Stopped(StopReason::Yielded)]
     );
 }
 
 #[test]
-fn running_out_of_tokens_is_its_own_reason() {
-    // A truncated answer looks finished. It is the one stop the user has to
-    // be told about.
-    assert_eq!(
-        of(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#),
-        vec![Delta::Stopped(StopReason::OutOfTokens)]
-    );
-}
-
-#[test]
-fn a_withheld_answer_is_not_reported_as_a_finished_one() {
-    // Named apart from the ceiling rather than folded into `stop`, because the
-    // two have opposite remedies: a shorter question fixes a ceiling and buys
-    // nothing here. Falling through to the catch-all would report the answer
-    // the filter cut as one the model chose to end.
-    assert_eq!(
-        of(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}"#),
-        vec![Delta::Stopped(StopReason::Filtered)]
-    );
-}
-
-#[test]
-fn a_refusal_is_shown_rather_than_left_as_a_silent_finish() {
-    // A model that declines writes it here and leaves `content` null for the
-    // whole response. Read only from `content`, the turn shows nothing at all
-    // and then reports that it finished normally.
-    let out = of(
-        r#"{"choices":[{"index":0,"delta":{"content":null,"refusal":"I can't help with that."},"finish_reason":"stop"}]}"#,
-    );
+fn a_response_holding_a_call_wants_tools() {
+    // There is no field for it: both shapes complete, and what tells them
+    // apart is what the response turned out to hold. Read the wrong way the
+    // turn would end with the tools the model asked for never run.
+    let output = r#"[{"type":"reasoning","id":"rs_1"},
+                     {"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}]"#;
 
     assert_eq!(
-        out,
-        vec![
-            Delta::Text("I can't help with that.".into()),
-            Delta::Stopped(StopReason::Yielded),
-        ]
+        out(&completed(output)),
+        vec![Delta::Stopped(StopReason::WantsTools)]
     );
 }
 
 #[test]
-fn a_last_word_and_a_stop_in_one_chunk_keeps_both() {
-    let out = of(r#"{"choices":[{"index":0,"delta":{"content":"!"},"finish_reason":"stop"}]}"#);
+fn a_response_cut_short_says_which_way_it_was_cut() {
+    // Neither is a finish. An answer stopped by a ceiling or withheld by a
+    // filter reads as a complete one unless the turn says otherwise.
+    let ceiling = r#"{"type":"response.incomplete","response":
+        {"incomplete_details":{"reason":"max_output_tokens"}}}"#;
+    let filtered = r#"{"type":"response.incomplete","response":
+        {"incomplete_details":{"reason":"content_filter"}}}"#;
 
-    assert_eq!(
-        out,
-        vec![Delta::Text("!".into()), Delta::Stopped(StopReason::Yielded)]
-    );
+    assert_eq!(out(ceiling), vec![Delta::Stopped(StopReason::OutOfTokens)]);
+    assert_eq!(out(filtered), vec![Delta::Stopped(StopReason::Filtered)]);
 }
 
 #[test]
-fn the_marker_that_closes_the_stream_is_not_parsed_as_a_chunk() {
-    // It is the literal text `[DONE]`. Reading it as JSON fails a turn on
-    // the one thing every response ends with.
-    assert_eq!(of(DONE), Vec::new());
+fn a_reason_this_build_has_not_heard_of_is_still_not_a_finish() {
+    // The response already said it is incomplete. The only question left is
+    // which way to say so, and a finish is the one answer that is wrong.
+    let strange = r#"{"type":"response.incomplete","response":
+        {"incomplete_details":{"reason":"something-new"}}}"#;
+
+    assert_eq!(out(strange), vec![Delta::Stopped(StopReason::OutOfTokens)]);
 }
 
 #[test]
-fn a_chunk_with_no_choices_is_not_a_failure() {
-    // The usage report that some accounts get after the last choice.
-    assert_eq!(
-        of(r#"{"choices":[],"usage":{"total_tokens":12}}"#),
-        Vec::new()
-    );
-}
+fn a_response_that_failed_carries_what_the_provider_said() {
+    let said = r#"{"type":"response.failed","response":{"error":
+        {"code":"server_error","message":"the model is overloaded"}}}"#;
 
-#[test]
-fn an_unknown_field_is_skipped_rather_than_fatal() {
-    assert_eq!(
-        of(r#"{"choices":[{"index":0,"delta":{"refusal":null,"whatever":true}}]}"#),
-        Vec::new()
-    );
-}
-
-#[test]
-fn a_failure_inside_the_response_carries_what_the_provider_called_it() {
-    // This arrives on a 200. Being over a rate limit is the usual cause,
-    // and the kind is what tells a caller it is worth trying again.
-    let problem = deltas(
-        &event(r#"{"error":{"type":"server_error","message":"The server had an error"}}"#),
-        &mut None,
-    )
-    .unwrap_err();
+    let problem = deltas(&event(said), &mut Open::default()).expect_err("a failure");
 
     assert_eq!(
         problem.to_string(),
-        "openai: server_error: The server had an error"
+        "openai: server_error: the model is overloaded"
     );
 }
 
 #[test]
-fn a_chunk_that_is_not_json_is_a_protocol_failure_that_does_not_quote_it() {
-    // The payload can be an entire chunk long, and this message is shown to
-    // a user.
-    let problem = deltas(&event("not json at all"), &mut None).unwrap_err();
+fn a_failure_outside_any_response_arrives_flat() {
+    let said = r#"{"type":"error","code":"rate_limit_exceeded","message":"slow down"}"#;
+
+    let problem = deltas(&event(said), &mut Open::default()).expect_err("a failure");
+
+    assert_eq!(
+        problem.to_string(),
+        "openai: rate_limit_exceeded: slow down"
+    );
+}
+
+#[test]
+fn an_event_this_build_has_not_heard_of_is_ignored() {
+    // Vendors add events. A stream that failed on one would fail every turn
+    // at the last moment, the day a field is added.
+    assert!(out(r#"{"type":"response.something.new","delta":"x"}"#).is_empty());
+    assert!(out(r#"{"type":"response.created","response":{"id":"resp_1"}}"#).is_empty());
+}
+
+#[test]
+fn a_keep_alive_with_nothing_in_it_is_not_a_failure() {
+    // A proxy may spell a heartbeat any way it likes and may send it with no
+    // data at all. Read as an event it fails the turn and discards the answer
+    // that had already arrived.
+    for blank in ["", "   ", "\n"] {
+        assert!(out(blank).is_empty(), "{blank:?}");
+    }
+}
+
+#[test]
+fn an_event_that_is_not_json_is_a_protocol_failure_naming_no_payload() {
+    let problem = deltas(&event("not json at all"), &mut Open::default()).expect_err("a failure");
 
     assert!(
         matches!(problem, ProviderError::Protocol { .. }),
-        "expected a protocol failure, got {problem:?}"
+        "{problem:?}"
     );
     assert!(
         !problem.to_string().contains("not json at all"),
-        "the payload was quoted back: {problem}"
+        "the payload reached the user: {problem}"
     );
 }

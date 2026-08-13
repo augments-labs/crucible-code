@@ -5,13 +5,14 @@
 //! change to one shape from quietly altering the other.
 //!
 //! What differs from the other protocol is here rather than spread through the
-//! crate: standing instructions are a message rather than a field, tool
-//! arguments travel as JSON *text* rather than as an object, a turn's tool
-//! results are one message each rather than one message together, the token
-//! ceiling has another name, and a failed result is marked by a prefix on the
-//! text because there is no field for it.
+//! crate: standing instructions are a field with another name, a transcript is
+//! a flat list of *items* rather than a list of messages, a tool call and its
+//! result are items of their own rather than parts of a message, tool arguments
+//! travel as JSON *text* rather than as an object, a tool is declared flat
+//! rather than nested under a `function` object, and a failed result is marked
+//! by a prefix on the text because there is no field for it.
 
-use crucible_core::{Message, Request, ToolCall, ToolResult, ToolSchema};
+use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
 
 use crate::json::described;
@@ -22,15 +23,27 @@ pub(super) fn build(request: &Request) -> Value {
     body.insert("model".to_owned(), json!(&*request.model));
     body.insert("stream".to_owned(), json!(true));
 
-    // `max_tokens` is the older name, now deprecated, and the models that
-    // reason before answering refuse it outright. Not quite a rename: this one
-    // bounds the reasoning as well as the visible answer, so the same number
-    // buys a shorter reply from a model that thinks first.
-    body.insert(
-        "max_completion_tokens".to_owned(),
-        json!(request.max_tokens),
-    );
-    body.insert("messages".to_owned(), Value::Array(messages(request)));
+    // Not kept by the vendor. This endpoint stores a response for retrieval
+    // unless told otherwise, and what a coding agent sends is somebody's source
+    // — so the default is the one setting here that has to be overridden rather
+    // than accepted.
+    body.insert("store".to_owned(), json!(false));
+
+    // No ceiling is sent, and the field is left off deliberately rather than
+    // forgotten. On this endpoint one number bounds the reasoning and the
+    // visible answer together, and the models this protocol is for reason
+    // before they answer: a figure chosen for an answer is one the model can
+    // spend entirely on thinking, and the turn then ends having said nothing.
+    // The model's own ceiling is the one that applies.
+
+    // A field rather than a message, which is the whole difference from the
+    // older endpoint. Sent as a message it would be one more thing the model
+    // may answer rather than the instructions it answers under.
+    if let Some(system) = &request.system {
+        body.insert("instructions".to_owned(), json!(&**system));
+    }
+
+    body.insert("input".to_owned(), Value::Array(input(request)));
 
     // Absent rather than empty: an empty array is refused rather than read as
     // a session with no tools.
@@ -42,73 +55,58 @@ pub(super) fn build(request: &Request) -> Value {
     Value::Object(body)
 }
 
-/// Every message, in order, behind the standing instructions.
-///
-/// The system prompt is a message here rather than a field of its own. There is
-/// no field for it on this wire, and one sent anyway is refused outright: this
-/// endpoint rejects a top-level field it does not know rather than skipping it,
-/// so the mistake would cost every turn rather than the instructions alone.
-fn messages(request: &Request) -> Vec<Value> {
-    let mut messages = Vec::new();
-
-    if let Some(system) = &request.system {
-        messages.push(json!({ "role": "system", "content": &**system }));
-    }
+/// The transcript, as the flat list of items this endpoint reads.
+fn input(request: &Request) -> Vec<Value> {
+    let mut items = Vec::new();
 
     for message in request.transcript.messages() {
-        append(&mut messages, message);
+        append(&mut items, message);
     }
 
-    messages
+    items
 }
 
-/// One message, as however many this wire needs for it.
+/// One message, as however many items this wire needs for it.
 ///
-/// Appends rather than maps because the counts differ: a turn that called three
-/// tools holds one message of results, and this protocol answers each call in a
-/// message that names it.
-fn append(messages: &mut Vec<Value>, message: &Message) {
+/// Appends rather than maps because the counts differ both ways: a turn that
+/// said something and then called three tools is four items, and a turn that
+/// called none is one.
+fn append(items: &mut Vec<Value>, message: &Message) {
     match message {
-        Message::User(text) => messages.push(json!({ "role": "user", "content": &**text })),
-        Message::Agent { text, calls, .. } => messages.push(agent(text, calls)),
-        Message::ToolResults(results) => messages.extend(results.iter().map(result)),
+        Message::User(text) => items.push(json!({ "role": "user", "content": &**text })),
+        Message::Agent { text, calls, stop } => {
+            let before = items.len();
+
+            // A model that goes straight to a tool says nothing first, and an
+            // empty message is an item with no content for the model to read
+            // back. The calls beside it carry the turn instead.
+            if !text.is_empty() {
+                items.push(json!({ "role": "assistant", "content": &**text }));
+            }
+
+            items.extend(calls.iter().map(call));
+
+            // An item of its own after the answer, and only where this message
+            // put an answer in front of it. Left off, the model reads its own
+            // half-sentence as a turn it chose to end — on the next turn of
+            // this session and on every turn of a continued one.
+            let answered = items.len() > before;
+
+            if let Some(said) = StopReason::cut(*stop).filter(|_| answered) {
+                items.push(json!({ "role": "assistant", "content": said }));
+            }
+        }
+        Message::ToolResults(results) => items.extend(results.iter().map(result)),
     }
 }
 
-/// What the model said, and what it asked to run.
-fn agent(text: &str, calls: &[ToolCall]) -> Value {
-    let mut message = Map::new();
-    message.insert("role".to_owned(), json!("assistant"));
-
-    // A model that goes straight to a tool says nothing first, and null is how
-    // this wire spells that. Null with no calls to carry it is a different
-    // thing — a message with neither content nor purpose, which this wire
-    // requires one of — so an answer that came back empty stays an empty
-    // string. A cancelled turn and a filtered one both reach here.
-    let content = if text.is_empty() && !calls.is_empty() {
-        Value::Null
-    } else {
-        json!(text)
-    };
-    message.insert("content".to_owned(), content);
-
-    if !calls.is_empty() {
-        let calls = calls.iter().map(call).collect();
-        message.insert("tool_calls".to_owned(), Value::Array(calls));
-    }
-
-    Value::Object(message)
-}
-
-/// One call the model made.
+/// One call the model made, as its own item.
 fn call(call: &ToolCall) -> Value {
     json!({
-        "id": call.id.as_str(),
-        "type": "function",
-        "function": {
-            "name": &*call.name,
-            "arguments": arguments(call.args.as_str()),
-        },
+        "type": "function_call",
+        "call_id": call.id.as_str(),
+        "name": &*call.name,
+        "arguments": arguments(call.args.as_str()),
     })
 }
 
@@ -124,36 +122,44 @@ fn arguments(args: &str) -> &str {
     if args.trim().is_empty() { "{}" } else { args }
 }
 
-/// One tool result, as its own message.
+/// One tool result, as its own item.
+///
+/// Answered by `call_id` rather than by position, which is what lets a turn's
+/// results arrive in any order and lets several calls be answered at once.
 fn result(result: &ToolResult) -> Value {
     let text = result.output.text();
 
     // There is no field for a failure on this wire. Unmarked, "no such file:
     // x" reads as the contents of a file that was read successfully.
-    let content = if result.output.is_failed() {
+    let output = if result.output.is_failed() {
         format!("error: {text}")
     } else {
         text.to_owned()
     };
 
     json!({
-        "role": "tool",
-        "tool_call_id": result.id.as_str(),
-        "content": content,
+        "type": "function_call_output",
+        "call_id": result.id.as_str(),
+        "output": output,
     })
 }
 
 /// One tool, as advertised.
+///
+/// Flat, unlike the older endpoint's nesting under a `function` object. `strict`
+/// is stated rather than left out: strict mode requires every property to be
+/// required and additional ones refused, which is not what these schemas say, so
+/// the answer is no and saying it is what keeps a later default from changing
+/// how a tool is validated.
 fn tool(schema: &ToolSchema) -> Value {
     let (parameters, description) = described(schema.schema);
 
     json!({
         "type": "function",
-        "function": {
-            "name": schema.name,
-            "description": description,
-            "parameters": Value::Object(parameters),
-        },
+        "name": schema.name,
+        "description": description,
+        "parameters": Value::Object(parameters),
+        "strict": false,
     })
 }
 
