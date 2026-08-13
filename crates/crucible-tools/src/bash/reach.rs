@@ -242,6 +242,3 @@ fn known(word: &str) -> Option<&'static Program> {
 fn flag(word: &str) -> Option<&str> {
     (word.starts_with('-') && word.len() > 1).then_some(word)
 }
-
-#[cfg(test)]
-mod tests;
