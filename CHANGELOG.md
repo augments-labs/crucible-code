@@ -15,6 +15,12 @@ Notable changes to crucible. Format follows
   reached by walking down against descriptors already held, one component at a
   time, leaving no interval for a swap. Windows keeps the check on the last
   component; `workspace/open.rs` says what that leaves.
+- **`grep` bounds its answer in bytes, not just in matching lines.** The limit
+  was a count, and a count is not a promise about size: two hundred matching
+  lines of four hundred characters is eighty kilobytes into the next request,
+  against the thirty kilobytes a command's output is held to — and the caller
+  that chose the two hundred is the model. The bytes now bound the answer, the
+  count is a second and smaller limit on top, and a cut answer says it was cut.
 
 - **Stopping a command stops the pipeline it started, on Unix.** Only the shell
   was signalled, and every other process on the line is a child of it — so they

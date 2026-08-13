@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crucible_core::Disposition;
 
-use super::{Grep, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
+use super::{CEILING, Grep, MAX_LINE, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
 use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
@@ -124,6 +124,58 @@ fn a_limit_stops_and_says_that_it_did() {
 }
 
 #[test]
+fn a_limit_past_the_ceiling_is_the_ceiling() {
+    // A number the model wrote is an argument like any other. Left unbounded it
+    // decides how many hits the walk holds and how long an answer the next
+    // request carries.
+    let sample = Sample::new("grep-ceiling");
+    sample.write("many.txt", &"needle\n".repeat(CEILING + 50));
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":100000}"#);
+
+    assert_eq!(
+        output
+            .text()
+            .lines()
+            .filter(|line| line.starts_with("many.txt:"))
+            .count(),
+        CEILING
+    );
+    assert!(
+        output
+            .text()
+            .contains(&format!("stopped at {CEILING} matches")),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn an_answer_is_bounded_in_bytes_as_well_as_in_lines() {
+    // Two hundred matching lines is the default, and a line is cut at `WIDTH`
+    // characters — so the count says how many lines come back and nothing at
+    // all about how much text that is.
+    let sample = Sample::new("grep-bytes");
+    sample.write(
+        "wide.txt",
+        &format!("needle{}\n", "x".repeat(WIDTH)).repeat(300),
+    );
+
+    let output = grep(&sample, r#"{"pattern":"needle","limit":100000}"#);
+
+    assert!(
+        output.text().len() < crate::bound::OUTPUT + 200,
+        "the answer was {} bytes",
+        output.text().len()
+    );
+    assert!(
+        output.text().contains("narrow the pattern"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
 fn a_pattern_that_is_not_a_regular_expression_says_so() {
     let sample = tree("grep-badre");
 
@@ -203,6 +255,34 @@ fn a_bad_byte_later_in_a_file_does_not_take_the_hits_before_it() {
     );
     assert!(
         output.text().contains("stopped partway through latin1.txt"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_line_too_long_to_hold_stops_that_file_rather_than_the_process() {
+    // A committed minified bundle: one ASCII line, no newline. The searcher has
+    // to hold a whole line to scan it, so with no limit this file is the heap —
+    // 200 MB of it takes the process to 413 MB, against a budget of 35. Bounded,
+    // it is one file the answer says it did not finish, which is the note the
+    // model can act on.
+    let sample = Sample::new("grep-long-line");
+    sample.write("src/main.rs", "let needle = 1;\n");
+    sample.write_bytes("vendor/bundle.min.js", &b"var a=1;".repeat(MAX_LINE / 4));
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    // The rest of the tree is still searched, and searched to the end.
+    assert!(
+        output.text().starts_with("src/main.rs:1:let needle = 1;\n"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output
+            .text()
+            .contains("stopped partway through vendor/bundle.min.js"),
         "{}",
         output.text()
     );
