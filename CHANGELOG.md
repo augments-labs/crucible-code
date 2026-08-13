@@ -8,6 +8,18 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **`glob` holds no more paths than it will answer with.** Every path the walk
+  found was kept and then sorted, so a pattern like `**/*` in a large tree built
+  a list of everything before cutting it to the few hundred it would report —
+  the memory was the size of the tree rather than the size of the answer. It now
+  keeps only the lowest paths it has room for, which answers the same as sorting
+  all of them, and its answer is bounded in bytes the way `grep`'s is.
+
+- **A `glob` walk stops when the turn does.** A tree large enough to be worth
+  walking is a tree where <kbd>Ctrl-C</kbd> has to arrive, and nothing in the
+  walk was watching. What it had found before the stop is real and is reported,
+  marked so the model does not read a prefix as the whole answer.
+
 - **Containment holds against the tree changing underneath it, on Unix.** A
   check settles where a name led at the instant it ran, and anything else that
   can write into the workspace could move it after — replace a directory above
