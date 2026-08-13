@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::dump::dump;
 
 use super::*;
 
@@ -42,6 +43,18 @@ fn drawn(welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) -> String {
         .map(Row::text)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The component at `columns`, against the picture checked in beside it under
+/// `name@columns`.
+///
+/// The width is the suffix rather than something written into the name, so that
+/// a picture cannot end up checked against a drawing of some other terminal:
+/// one argument decides both what was drawn and which file it is read from.
+fn pictured(name: &str, welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) {
+    insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+        insta::assert_snapshot!(name, dump(&welcome.rows(columns, glyphs), columns));
+    });
 }
 
 /// A palette that writes every hue it has.
@@ -93,59 +106,21 @@ fn a_terminal_with_no_room_for_a_frame_is_still_never_drawn_past() {
 
 #[test]
 fn eighty_columns_draws_the_identity_beside_what_happened_here() {
-    let drawn = drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode);
-
-    assert_eq!(
-        drawn,
-        "\
-╭─ crucible v0.0.8 ────────────────────────────────────────────────────────────╮
-│                                  │ Recent sessions                           │
-│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │
-│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ 1  a search that stops partway     2h ago │
-│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │ 2  rule replacement on windows  yesterday │
-│                                  │ 3  column counting in the tail     3d ago │
-│  claude-sonnet-5                 │                                           │
-│                                  │ ───────────────────────────────────────── │
-│  ~/code/crucible-code            │                                           │
-│                                  │ Tips                                      │
-│                                  │                                           │
-│                                  │ · /          opens the command list       │
-│                                  │ · shift+tab  steps the permission mode    │
-│                                  │ · ctrl-c     clears the line typed so far │
-╰──────────────────────────────────────────────────────────────────────────────╯"
-    );
+    pictured("sessions", &welcome(&WORKED_IN), PAIRED_AT, Glyphs::Unicode);
 }
 
 #[test]
 fn a_terminal_too_narrow_for_two_columns_stacks_them() {
     // Rather than squeezing: a thirty-two column identity cannot get narrower
     // without the wordmark breaking, and a wordmark that breaks is worse than
-    // one that gives up its art.
-    let drawn = drawn(&welcome(&WORKED_IN), FRAMED_AT, Glyphs::Unicode);
-
-    assert_eq!(
-        drawn,
-        "\
-╭─ crucible v0.0.8 ──────────────────────────╮
-│                                            │
-│ CRUCIBLE                                   │
-│ claude-sonnet-5                            │
-│ ~/code/crucible-code                       │
-│                                            │
-│ Recent sessions                            │
-│                                            │
-│ 1  a search that stops partway      2h ago │
-│ 2  rule replacement on windows   yesterday │
-│ 3  column counting in the tail      3d ago │
-│                                            │
-│ ────────────────────────────────────────── │
-│                                            │
-│ Tips                                       │
-│                                            │
-│ · /          opens the command list        │
-│ · shift+tab  steps the permission mode     │
-│ · ctrl-c     clears the line typed so far  │
-╰────────────────────────────────────────────╯"
+    // one that gives up its art. Both ends of the band, because the stack is
+    // what the widths either side of it are read against.
+    pictured("sessions", &welcome(&WORKED_IN), FRAMED_AT, Glyphs::Unicode);
+    pictured(
+        "sessions",
+        &welcome(&WORKED_IN),
+        PAIRED_AT - 1,
+        Glyphs::Unicode,
     );
 }
 
@@ -153,15 +128,32 @@ fn a_terminal_too_narrow_for_two_columns_stacks_them() {
 fn a_terminal_too_narrow_for_a_frame_keeps_only_what_is_a_fact() {
     // What this is, what it is asking, and where. A tip is an offer, and an
     // offer elided to three characters is not one.
-    let drawn = drawn(&welcome(&WORKED_IN), FRAMED_AT - 1, Glyphs::Unicode);
-
-    assert_eq!(
-        drawn,
-        "\
-CRUCIBLE
-claude-sonnet-5
-~/code/crucible-code"
+    pictured(
+        "sessions",
+        &welcome(&WORKED_IN),
+        FRAMED_AT - 1,
+        Glyphs::Unicode,
     );
+}
+
+#[test]
+fn a_directory_nobody_has_worked_in_draws_the_same_card_with_less_in_it() {
+    // The heading holds its row and the list under it says what there is to
+    // say, so the card is the shape it always is rather than one that grew a
+    // row the first time somebody used it.
+    pictured("no_sessions", &welcome(&[]), FRAMED_AT, Glyphs::Unicode);
+    pictured("no_sessions", &welcome(&[]), PAIRED_AT, Glyphs::Unicode);
+}
+
+#[test]
+fn a_font_without_box_drawing_draws_all_three_forms_out_of_what_it_has() {
+    // The set reaches the frame, the mark before a tip and the wordmark, which
+    // gives up its art for its letters. This is the picture somebody on a
+    // terminal that was told so is looking at, and the only way to see it from
+    // here is to draw it.
+    pictured("ascii", &welcome(&WORKED_IN), FRAMED_AT - 1, Glyphs::Ascii);
+    pictured("ascii", &welcome(&WORKED_IN), FRAMED_AT, Glyphs::Ascii);
+    pictured("ascii", &welcome(&WORKED_IN), PAIRED_AT, Glyphs::Ascii);
 }
 
 #[test]
