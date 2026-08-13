@@ -492,3 +492,66 @@ fn a_line_that_was_committed_keeps_the_mark_and_is_not_clipped() {
         format!("> {said}")
     );
 }
+
+#[test]
+fn a_click_on_the_line_says_how_far_into_it_the_pointer_was() {
+    // Counted from the top left of the rows, which is what a caller that knows
+    // where it drew the component can work out from where the mouse was.
+    let said = "abcdefghijklmnopqrstuvwxyz";
+    let prompt = typed(said);
+
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED), Some(0));
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5), Some(5));
+
+    // The second row of the same line carries on where the first left off.
+    assert_eq!(
+        prompt.clicked(FRAMED_AT, FRAMED_ROW + 1, FRAMED + 3),
+        Some(21)
+    );
+}
+
+#[test]
+fn a_click_past_the_end_of_a_row_lands_where_the_line_ends() {
+    // Which is where the eye reads a line as ending, and what every other
+    // terminal does with the same click.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, FRAMED + 40), Some(5));
+}
+
+#[test]
+fn a_click_anywhere_but_the_line_moves_nothing() {
+    // The border, the status row, and anything drawn above the box. Moving the
+    // cursor to the nearest place that is inside would answer a click nobody
+    // aimed at the line.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, 0, FRAMED + 1), None);
+    assert_eq!(prompt.clicked(80, FRAMED_ROW + 1, FRAMED + 1), None);
+    assert_eq!(prompt.clicked(80, FRAMED_ROW + 2, FRAMED + 1), None);
+}
+
+#[test]
+fn a_click_left_of_the_mark_lands_at_the_start_of_the_row() {
+    // On the border or on the mark itself, which is the one part of the row
+    // that is chrome rather than line.
+    let prompt = typed("hello");
+
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 0), Some(0));
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 2), Some(0));
+}
+
+#[test]
+fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
+    // The two are separate calls and lay the same component out. A click read
+    // against a box drawn any other way lands somewhere nobody pointed at.
+    for said in SAID {
+        for column in 0..=width::columns(said) {
+            let prompt = typing(said, column);
+            let caret = prompt.caret(FRAMED_AT);
+            let back = prompt.clicked(FRAMED_AT, caret.row, caret.column);
+
+            assert_eq!(back, Some(column), "{said:?} at {column}");
+        }
+    }
+}

@@ -164,6 +164,47 @@ impl Prompt<'_> {
         }
     }
 
+    /// Where in the line a click on the box landed, in display columns from its
+    /// start.
+    ///
+    /// `row` and `column` are counted from the top left of what
+    /// [`Prompt::rows`] returned, which is what a caller that knows where it
+    /// drew the component can work out from where the mouse was. `None` for a
+    /// click outside the rows the line is on — the border, the status, the list
+    /// above — because the answer to those is to leave the cursor alone rather
+    /// than to move it to the nearest place that is inside.
+    ///
+    /// A click past the end of a row lands at the end of that row, which is
+    /// where the eye reads the line as ending. Every other terminal does the
+    /// same thing and it is the one behaviour nobody has to be taught.
+    #[must_use]
+    pub fn clicked(&self, columns: usize, row: usize, column: usize) -> Option<usize> {
+        let (first, before) = if columns < FRAMED_AT {
+            (0, BARE)
+        } else {
+            (FRAMED_ROW, FRAMED)
+        };
+
+        let shown = self.window(inner(columns));
+        let at = row.checked_sub(first)?;
+        let line = shown.rows.get(at)?;
+
+        // The columns the rows above the clicked one already account for, so
+        // that what comes back is an offset into the whole line rather than
+        // into the row it happened to land on.
+        let above: usize = shown
+            .rows
+            .get(..at)
+            .unwrap_or_default()
+            .iter()
+            .map(|row| width::columns(row))
+            .sum();
+
+        let into = column.saturating_sub(before).min(width::columns(line));
+
+        Some(shown.gone + above + into)
+    }
+
     /// The line as it is left in scrollback once it has been typed.
     ///
     /// The caret again, so the record reads the way the box did. Not clipped:
@@ -282,10 +323,18 @@ impl Prompt<'_> {
         // same reason.
         let room = self.room.max(1);
         let first = row.saturating_sub(room - 1);
+        let gone: usize = broken
+            .get(..first)
+            .unwrap_or_default()
+            .iter()
+            .map(|row| width::columns(row))
+            .sum();
+
         Window {
             rows: broken.get(first..).unwrap_or_default().to_vec(),
             row: row - first,
             column,
+            gone,
         }
     }
 }
@@ -298,6 +347,8 @@ struct Window<'a> {
     row: usize,
     /// How many columns into that row it sits.
     column: usize,
+    /// How many columns of the line scrolled off above the first row shown.
+    gone: usize,
 }
 
 /// The line broken into rows no wider than the box.
