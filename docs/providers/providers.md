@@ -76,7 +76,7 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, openai
+crucible: no provider called gemini; this build has anthropic, moonshot, openai
 ```
 
 ## Keys
@@ -87,6 +87,7 @@ variable is read follows from the provider:
 | Provider | Variable | Sent as |
 | --- | --- | --- |
 | `anthropic` | `ANTHROPIC_API_KEY` | `x-api-key` |
+| `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
 
 Only the chosen provider's variable is read. Running `crucible --model
@@ -114,19 +115,19 @@ read. How you prove who you are is a different question, and crucible keeps them
 apart: a provider is handed an already-resolved credential and never learns what
 kind it was.
 
-Both providers above use the same kind of credential — an API key in a header —
+Every provider above uses the same kind of credential — an API key in a header —
 pointed at different headers with different prefixes. That is why adding a
-subscription login later is a new credential rather than an edit to either
+subscription login later is a new credential rather than an edit to any
 provider.
 
 ## What differs between them
 
-Nothing you have to think about. The two protocols disagree about where the
-system prompt goes, whether a transcript is a list of messages or a flat list of
-items, whether a tool call belongs to the message that made it, whether a tool is
+Nothing you have to think about. The protocols disagree about where the system
+prompt goes, whether a transcript is a list of messages or a flat list of items,
+whether a tool call belongs to the message that made it, whether a tool is
 declared nested or flat, how a failed result is marked, and how a stream ends.
 All of that is handled inside the provider; the same session behaves the same way
-on either.
+on any of them.
 
 One difference is worth knowing about because it decides which OpenAI models
 work at all. crucible talks to OpenAI over `/v1/responses` rather than
@@ -135,7 +136,8 @@ function tools on the older endpoint — and a harness whose whole purpose is
 calling tools cannot answer that by telling the model not to think. The cost is
 that other vendors serving an "OpenAI-compatible" API implement the older
 endpoint and not this one, so `openai` means OpenAI here rather than anything
-that speaks its shape.
+that speaks its shape. `moonshot` is that older endpoint, read by a provider of
+its own.
 
 Two consequences you can see:
 
@@ -144,3 +146,29 @@ Two consequences you can see:
 - No token ceiling is sent. On that endpoint one number bounds the reasoning and
   the visible answer together, so a figure chosen for an answer is one the model
   can spend entirely on thinking; the model's own ceiling applies instead.
+
+## MoonshotAI issues a key against one console or the other
+
+This is the one provider where a working key can still be refused, and the
+refusal does not say why.
+
+MoonshotAI sells two products with separate consoles, and a key from one is not
+accepted by the other:
+
+| Where the key came from | Address it is accepted at |
+| --- | --- |
+| Kimi Code Console | `https://api.kimi.com/coding/v1` |
+| Open Platform | `https://api.moonshot.ai/v1` |
+
+Nothing in the key itself says which, so crucible cannot read it and decide. It
+asks the coding console, that being the plan sold for what crucible does. A key
+from the open platform says so in
+[configuration](../configuration/configuration.md):
+
+```json
+{ "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1" } } }
+```
+
+Requests to this provider identify crucible by name in the `user-agent` header.
+MoonshotAI's terms require a client to say truthfully what it is, and treat a
+tampered identifier as a violation.

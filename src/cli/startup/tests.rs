@@ -12,9 +12,9 @@ fn serving(named: &str) -> Served {
 
 #[test]
 fn each_provider_reads_the_key_belonging_to_it() {
-    // The pairing is the whole of this function, and both arms build whichever
-    // way round they are wired: swapping the two bodies would send one vendor's
-    // key to the other vendor's endpoint with everything else still green.
+    // The pairing is the whole of this function, and every arm builds whichever
+    // way round it is wired: swapping two bodies would send one vendor's key to
+    // the other vendor's endpoint with everything else still green.
     let read = RefCell::new(Vec::new());
     let from = |name: &str| {
         read.borrow_mut().push(name.to_owned());
@@ -22,11 +22,12 @@ fn each_provider_reads_the_key_belonging_to_it() {
     };
     let nothing = Settings::default();
 
-    let anthropic = provider(Some(serving("anthropic")), &nothing, &from).expect("a provider");
-    let openai = provider(Some(serving("openai")), &nothing, &from).expect("a provider");
+    for one in PROVIDERS {
+        let built = provider(Some(serving(one.name)), &nothing, &from).expect("a provider");
 
-    assert_eq!(anthropic.name(), "anthropic");
-    assert_eq!(openai.name(), "openai");
+        assert_eq!(built.name(), one.name);
+    }
+
     assert_eq!(read.into_inner(), PROVIDERS.map(|one| one.key));
 }
 

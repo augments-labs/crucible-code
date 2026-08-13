@@ -85,14 +85,15 @@ crucible
 ```
 
 `--model` takes a model name, optionally qualified by the provider serving it.
-Unqualified, the provider is whichever of `ANTHROPIC_API_KEY` and
-`OPENAI_API_KEY` holds a key — hold both and nothing chooses between them, so
-qualify the name or set `providers.<name>.model` for one of them. There is no
-model built in: name one, configure one, or answer `/model` in the session,
-which writes the answer down.
+Unqualified, the provider is whichever of `ANTHROPIC_API_KEY`,
+`MOONSHOT_API_KEY` and `OPENAI_API_KEY` holds a key — hold more than one and
+nothing chooses between them, so qualify the name or set
+`providers.<name>.model` for one of them. There is no model built in: name one,
+configure one, or answer `/model` in the session, which writes the answer down.
 
 ```bash
 crucible --model openai/gpt-5.6-terra   # reads OPENAI_API_KEY
+crucible --model moonshot/kimi-k2       # reads MOONSHOT_API_KEY
 crucible --continue                     # carry on this directory's last session
 ```
 

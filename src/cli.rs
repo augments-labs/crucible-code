@@ -55,10 +55,14 @@ use crate::cli::style::Style;
 /// ask for comes from the person running it, through `--model` or through
 /// `providers.<name>.model`, and where neither says, crucible asks rather than
 /// guesses.
-const PROVIDERS: [Served; 2] = [
+const PROVIDERS: [Served; 3] = [
     Served {
         name: "anthropic",
         key: "ANTHROPIC_API_KEY",
+    },
+    Served {
+        name: "moonshot",
+        key: "MOONSHOT_API_KEY",
     },
     Served {
         name: "openai",
@@ -129,10 +133,16 @@ changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
 claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever of \
-ANTHROPIC_API_KEY and OPENAI_API_KEY holds a key — a variable exported empty \
-holds none, so it does not compete — and where both do, qualify the name or \
-set providers.<name>.model for one of them. The key is read from that \
-provider's variable, or from whichever one its apiKeyEnv names.
+ANTHROPIC_API_KEY, MOONSHOT_API_KEY and OPENAI_API_KEY holds a key — a \
+variable exported empty holds none, so it does not compete — and where more \
+than one does, qualify the name or set providers.<name>.model for one of them. \
+The key is read from that provider's variable, or from whichever one its \
+apiKeyEnv names.
+
+MoonshotAI issues a key against one of two consoles and refuses it at the \
+other, and nothing in the key says which. crucible asks the coding console; a \
+key from the open platform sets providers.moonshot.baseUrl to \
+https://api.moonshot.ai/v1.
 
 There is no model built in. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
