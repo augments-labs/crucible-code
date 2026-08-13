@@ -417,7 +417,7 @@ fn a_standing_row_is_drawn_under_every_delta_that_arrives() {
     // The tail, the row under it, and then back up onto the row the next delta
     // appends to -- eleven columns along, where "the answer" stopped.
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.terminal.take();
 
     render.stream("the answer").unwrap();
@@ -428,12 +428,68 @@ fn a_standing_row_is_drawn_under_every_delta_that_arrives() {
     );
 }
 
+/// What a turn stands under once the prompt box stays up for it: a box, and the
+/// mode under that.
+fn boxed() -> Vec<Row> {
+    vec![
+        Row::plain("╭──╮"),
+        Row::plain("│ ›│"),
+        Row::plain("╰──╯"),
+        Row::plain("ask mode on"),
+    ]
+}
+
+#[test]
+fn the_region_never_grows_past_the_screen_however_long_the_answer_is() {
+    // The bug this exists to stop, and the reason it took a long answer to
+    // show: the tail is bounded by the height of the window, so a tail that
+    // had filled it plus rows standing under it was a region taller than the
+    // screen. The top of one has already scrolled out of reach, so the next
+    // rewind erases rows the terminal has taken -- which the reader sees as
+    // the box and the mode being eaten away as the answer gets longer.
+    let rows = 8;
+    let mut render = Renderer::new(Recording::new(20, rows));
+    render.under(&boxed(), None, Palette::plain()).unwrap();
+
+    for delta in 0..40 {
+        render.stream(&format!("line {delta}\n")).unwrap();
+
+        assert!(
+            render.tail.len() + render.footing.len() <= rows,
+            "after {delta} deltas the region was {} rows on a screen {rows} tall",
+            render.tail.len() + render.footing.len()
+        );
+    }
+}
+
+#[test]
+fn the_tail_gives_back_the_rows_the_footing_takes() {
+    // The tail is the half that can give: what stands under it is a component
+    // somebody asked for, and the tail is a window onto a transcript the
+    // terminal is keeping anyway.
+    let mut render = Renderer::new(Recording::new(20, 8));
+
+    for delta in 0..20 {
+        render.stream(&format!("line {delta}\n")).unwrap();
+    }
+    let alone = render.tail.len();
+
+    render.under(&boxed(), None, Palette::plain()).unwrap();
+
+    assert_eq!(alone, 8, "the tail alone may fill the window");
+    assert_eq!(
+        render.tail.len() + render.footing.len(),
+        8,
+        "the two together may not"
+    );
+}
+
 #[test]
 fn a_line_committed_under_a_standing_row_still_lands_above_it() {
     // A tool call arrives in the middle of a turn and belongs to the record, so
     // it goes to scrollback -- above the row that is standing, not through it.
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.terminal.take();
 
     render.commit("$ cargo build").unwrap();
@@ -452,7 +508,7 @@ fn a_standing_row_never_reaches_the_record() {
     // It says which mode the turn ran in, which is not something the turn said.
     // Settled once a frame it would be most of the session's scrollback.
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.stream("one").unwrap();
     render.stream(" two").unwrap();
     render.terminal.take();
@@ -472,7 +528,7 @@ fn a_standing_row_comes_back_after_a_question_was_asked_in_the_middle_of_a_turn(
     // The question settles the region to write itself, which takes the row off
     // the screen. The turn is still running, so the next delta puts it back.
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.stream("about to run").unwrap();
     render.settle().unwrap();
     render.terminal.take();
@@ -488,11 +544,11 @@ fn a_standing_row_comes_back_after_a_question_was_asked_in_the_middle_of_a_turn(
 #[test]
 fn taking_a_standing_row_back_leaves_the_tail_where_it_was() {
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.stream("the answer").unwrap();
     render.terminal.take();
 
-    render.under(&[], Palette::plain()).unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
 
     assert_eq!(
         render.terminal.written(),
@@ -508,7 +564,7 @@ fn a_prompt_drawn_over_a_standing_row_takes_it_off_the_screen() {
     // itself. A rewind that stopped short of the row would leave it under the
     // box, saying the same thing a second time.
     let mut render = Renderer::new(Recording::new(80, 24));
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.terminal.take();
 
     let (rows, caret) = region();
@@ -526,7 +582,7 @@ fn a_redirected_run_stands_nothing_under_anything() {
     // whatever kept the output.
     let mut render = Renderer::new(Recording::redirected(80, 24));
 
-    render.under(&standing(), Palette::plain()).unwrap();
+    render.under(&standing(), None, Palette::plain()).unwrap();
     render.stream("the answer\n").unwrap();
     render.settle().unwrap();
 

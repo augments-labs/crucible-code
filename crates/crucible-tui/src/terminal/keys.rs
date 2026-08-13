@@ -10,6 +10,8 @@
 //! sending something exotic costs a frame that is not drawn instead of a
 //! character nobody typed.
 
+use std::time::Duration;
+
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -68,6 +70,20 @@ pub enum Pressed {
 /// [`TerminalError::Io`] if the terminal could not be read from.
 pub fn pressed() -> Result<Pressed, TerminalError> {
     Ok(meaning(&event::read()?))
+}
+
+/// Whether the terminal has something to say, waiting up to `patience` for it.
+///
+/// What [`pressed`] is for a caller that has something else to watch. A turn is
+/// running on another thread and reporting through a channel, and the reader
+/// here has to serve both — so it waits a little on one, looks at the other,
+/// and goes round. Zero asks whether anything is already in hand.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be read from.
+pub fn waiting(patience: Duration) -> Result<bool, TerminalError> {
+    Ok(event::poll(patience)?)
 }
 
 /// What one event from the terminal means.

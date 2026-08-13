@@ -370,3 +370,69 @@ fn a_line_is_clipped_to_the_columns_it_takes_not_the_characters_it_holds() {
 
     assert_eq!(clipped(three, 5), format!("{warning}{warning}…"));
 }
+
+/// What a question about `sensitivity` leaves on the terminal.
+fn questioned(sensitivity: &Sensitivity) -> String {
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    question(
+        &mut renderer,
+        &call("bash", r#"{"command":"ls"}"#),
+        sensitivity,
+        None,
+        Style::plain(),
+    )
+    .expect("a question to draw");
+
+    renderer.terminal().written().to_string()
+}
+
+/// A command the reach table could not read.
+fn unproved() -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: Command::Understood {
+            parts: Box::from([Box::from("ls src")]),
+            reach: Reach::Anything,
+        },
+    }
+}
+
+#[test]
+fn a_command_nothing_proved_anything_about_is_asked_about_with_the_reason() {
+    // The row that stops a permission mode being reported as broken. A mode
+    // that allows every change to a file still asks before a command unless
+    // the command was proved to reach nowhere outside — so it waves a `write`
+    // through and stops at `ls`, which reads as backwards until the question
+    // says what is being weighed.
+    let written = questioned(&unproved());
+
+    assert!(
+        written.contains("nothing here proved this stays inside the working directory"),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_command_proved_to_stay_inside_needs_no_such_reason() {
+    // It is only ever put to somebody by a mode that asks about everything,
+    // and that mode's answer to "why" is its own name.
+    let proved = Sensitivity::SpawnsProcess {
+        command: Command::Understood {
+            parts: Box::from([Box::from("mkdir demo")]),
+            reach: Reach::Workspace,
+        },
+    };
+
+    assert!(!questioned(&proved).contains("nothing here proved"));
+}
+
+#[test]
+fn a_change_to_a_file_is_asked_about_without_one() {
+    // A mode that asks about changes to files is asking about exactly what it
+    // says it asks about, so there is nothing to explain.
+    let changing = Sensitivity::MutatesFile {
+        target: Target::unresolved(),
+    };
+
+    assert!(!questioned(&changing).contains("nothing here proved"));
+}

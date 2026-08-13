@@ -10,12 +10,16 @@
 //! would outlive the thing it is for: a terminal still reporting clicks after
 //! crucible has gone sends escape bytes into whatever runs next.
 //!
-//! It has a price while it is held, and the price is why it is not held for the
-//! whole session. A terminal that is forwarding clicks is not using them for its
-//! own selection, so dragging to select and middle-click to paste stop working
-//! inside the prompt; every emulator here leaves both on the shift key, which is
-//! the convention this borrows rather than invents. Between turns and after
-//! crucible exits, the mouse is the terminal's again.
+//! It has a price, and the price is why nothing here is on unless it was asked
+//! for. A terminal that is forwarding buttons is not using them itself, and the
+//! wheel is a button: `output.mouse` left alone means the wheel goes on
+//! scrolling the terminal's own scrollback, which is where this program's
+//! transcript lives. Turned on, clicking places the cursor and the wheel stops
+//! scrolling — an inline renderer cannot offer both, because the transcript
+//! above the prompt is the terminal's rather than crucible's.
+//!
+//! Held only while the prompt is up either way, so between turns and after
+//! crucible exits the mouse is the terminal's again.
 //!
 //! [`Raw`]: super::raw::Raw
 
@@ -32,7 +36,7 @@ const REPORTING: &str = "\x1b[?1000h\x1b[?1006h";
 const QUIET: &str = "\x1b[?1006l\x1b[?1000l";
 
 /// Holds the terminal reporting clicks for as long as this value is alive.
-pub struct Mouse {
+pub struct Reporting {
     /// What stops the reporting, called once, by [`Drop`].
     ///
     /// A function pointer for the reason [`Raw`](super::raw::Raw) holds one: a
@@ -41,7 +45,7 @@ pub struct Mouse {
     quiet: fn() -> io::Result<()>,
 }
 
-impl Mouse {
+impl Reporting {
     /// Asks the terminal to report clicks, and returns what holds it to that.
     ///
     /// `None` unless the session is a terminal at both ends, which is the same
@@ -52,7 +56,7 @@ impl Mouse {
     /// # Errors
     ///
     /// [`RawError::Enter`] if the sequence could not be written.
-    pub fn watch() -> Result<Option<Self>, RawError> {
+    pub fn on() -> Result<Option<Self>, RawError> {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Ok(None);
         }
@@ -65,7 +69,7 @@ impl Mouse {
     }
 }
 
-impl Drop for Mouse {
+impl Drop for Reporting {
     fn drop(&mut self) {
         // Best effort and deliberately silent, the same as every other guard
         // here: the terminal is being handed back on the way out, and what
@@ -76,9 +80,9 @@ impl Drop for Mouse {
 
 /// Written by hand rather than derived: a function pointer's `Debug` is an
 /// address, which says nothing about what the guard is holding.
-impl fmt::Debug for Mouse {
+impl fmt::Debug for Reporting {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Mouse").field("held", &true).finish()
+        f.debug_struct("Reporting").field("held", &true).finish()
     }
 }
 
@@ -114,12 +118,12 @@ mod tests {
     }
 
     /// A guard holding nothing but the counter above.
-    fn held() -> Mouse {
-        Mouse { quiet: counted }
+    fn held() -> Reporting {
+        Reporting { quiet: counted }
     }
 
     /// A function that fails, for dropping a guard on the way out of.
-    fn early(_held: Mouse) -> Result<(), RawError> {
+    fn early(_held: Reporting) -> Result<(), RawError> {
         Err(RawError::Enter(io::Error::other("went wrong")))
     }
 
@@ -153,6 +157,6 @@ mod tests {
 
     #[test]
     fn a_guard_is_debug_without_showing_a_function_address() {
-        assert_eq!(format!("{:?}", held()), "Mouse { held: true }");
+        assert_eq!(format!("{:?}", held()), "Reporting { held: true }");
     }
 }

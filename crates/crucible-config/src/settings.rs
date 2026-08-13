@@ -23,7 +23,7 @@ mod updates;
 mod variables;
 
 pub use layers::{local, user};
-pub use output::{Color, Glyphs, ToolDetail};
+pub use output::{Color, Glyphs, Mouse, ToolDetail};
 pub use updates::Updates;
 pub use variables::ClearScreen;
 

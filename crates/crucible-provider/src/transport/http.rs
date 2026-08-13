@@ -8,17 +8,33 @@
 //! talking, so there is nothing here for an async runtime to interleave — it
 //! would be a scheduler brought in to serve one socket.
 
-use std::io::Read;
+use std::io::{self, Read};
 use std::time::Duration;
 
 use super::{Response, Transport, TransportError};
 
 /// How long to wait for the response to *start*.
 ///
-/// Only the head is bounded. The body is the model talking, which legitimately
-/// takes minutes, and a user who has stopped waiting presses Esc — a timeout
-/// cannot tell a long answer from a dead connection, and the user can.
+/// Only the head is given a deadline. The body is the model talking, which
+/// legitimately takes minutes, and a deadline cannot tell a long answer from a
+/// dead connection — the user can, which is why what bounds the body is
+/// [`TIMEOUT_QUIET`] and a cancel rather than a clock.
 const TIMEOUT_HEAD: Duration = Duration::from_mins(1);
+
+/// How long one read of the body waits before saying nothing came.
+///
+/// Not a deadline: a read that expires means "nothing yet", and the caller asks
+/// again. What it buys is that the wait is *interruptible*. Left blocking, a
+/// read sits on the socket for as long as the peer stays silent, so a user who
+/// presses Esc against a provider that has stopped talking waits alongside it —
+/// with no bound at all, because the body deliberately has none.
+///
+/// A quarter of a second is below what a person reads as an instant, and four
+/// wakeups a second are nothing beside the parsing they interleave with. This
+/// client measures a body read against the head's deadline as well, so a read
+/// waits a second rather than this once a response has been arriving for longer
+/// than [`TIMEOUT_HEAD`]. Both expire the same way.
+const TIMEOUT_QUIET: Duration = Duration::from_millis(250);
 
 /// How long to wait for a connection.
 const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
@@ -94,7 +110,17 @@ impl Transport for Https {
         headers: &[(Box<str>, Box<str>)],
         body: &str,
     ) -> Result<Response, TransportError> {
-        let mut request = self.agent.post(url);
+        // On this request and not on the agent: it is the answer to a model
+        // that pauses mid-sentence, and the caller reading it is the one that
+        // holds a cancel. The other direction — a body fetched to the end with
+        // nobody waiting on it — is better off blocking, and keeps the deadline
+        // it has.
+        let mut request = self
+            .agent
+            .post(url)
+            .config()
+            .timeout_recv_body(Some(TIMEOUT_QUIET))
+            .build();
         for (name, value) in headers {
             request = request.header(&**name, &**value);
         }
@@ -106,12 +132,50 @@ impl Transport for Https {
                 let status = response.status().as_u16();
                 Ok(Response {
                     status,
-                    body: reader(response.into_body()),
+                    body: Box::new(Waiting(reader(response.into_body()))),
                 })
             }
             Err(problem) => Err(TransportError::Unreachable(problem.to_string().into())),
         }
     }
+}
+
+/// A body whose reads give up waiting instead of holding the thread.
+///
+/// The wait expiring is not a failure — the response is still open and the model
+/// is still thinking — so it arrives as [`io::ErrorKind::Interrupted`], the one
+/// kind the `Read` contract says to retry. That spelling is what makes both
+/// readers of a body right without either knowing about this file: one that
+/// reads to the end waits through the pauses exactly as it did before, because
+/// `read_to_end` retries that kind itself; the streaming one reads through
+/// `fill_buf`, which does not, so it gets the turn back and looks at its cancel.
+///
+/// What it gives up is a bound nobody meant to have: this client measures a body
+/// read against the head's deadline too, so a peer that went silent used to fail
+/// the turn a minute after the head arrived — and so did a model that thought for
+/// that long, which is the failure worth losing the other one to prevent. Nothing
+/// ends a silent response now but the caller or the socket, and the caller being
+/// able to is the other half of this.
+struct Waiting(Box<dyn Read + Send>);
+
+impl Read for Waiting {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        match self.0.read(into) {
+            Err(problem) if expired(&problem) => Err(io::ErrorKind::Interrupted.into()),
+            read => read,
+        }
+    }
+}
+
+/// Whether a failed read is this client's own wait running out.
+///
+/// Any of its clocks, because a response still arriving after a minute is the
+/// ordinary case here rather than a broken one.
+fn expired(problem: &io::Error) -> bool {
+    problem
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ureq::Error>())
+        .is_some_and(|inner| matches!(inner, ureq::Error::Timeout(_)))
 }
 
 /// The body as something to read from.
@@ -130,6 +194,31 @@ mod tests {
     use std::thread;
 
     use super::*;
+
+    /// Serves a body in two halves with a pause between them, the way a model
+    /// that stops to think does. The pause is longer than [`TIMEOUT_QUIET`], so
+    /// a read of the second half is one that gave up waiting first.
+    fn pausing(first: &'static str, then: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                heard(&stream);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{first}",
+                    first.len() + then.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.flush();
+                thread::sleep(TIMEOUT_QUIET * 2);
+                let _ = stream.write_all(then.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        format!("http://{address}/v1/messages")
+    }
 
     /// Serves one canned response on loopback and returns the URL for it.
     ///
@@ -203,6 +292,86 @@ mod tests {
 
         assert_eq!(response.status, 404);
         assert_eq!(body, said);
+    }
+
+    #[test]
+    fn a_read_that_gives_up_waiting_says_so_rather_than_reporting_a_broken_stream() {
+        // The whole of what the streaming path needs: the pause comes back as
+        // something to retry, and the answer that follows it still arrives. A
+        // pause read as a failure is a model that thought for too long and lost
+        // the turn for it.
+        let url = pausing("half ", "and the rest");
+        let mut response = Https::new().post(&url, &[], "{}").unwrap();
+
+        let mut said = Vec::new();
+        let mut waited = 0;
+        let mut into = [0_u8; 64];
+        loop {
+            match response.body.read(&mut into) {
+                Ok(0) => break,
+                Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
+                Err(problem) if problem.kind() == io::ErrorKind::Interrupted => waited += 1,
+                Err(problem) => panic!("the pause was reported as a failure: {problem}"),
+            }
+        }
+
+        assert!(waited > 0, "the read never gave up waiting");
+        assert_eq!(String::from_utf8(said).unwrap(), "half and the rest");
+    }
+
+    #[test]
+    fn a_body_read_to_the_end_waits_through_the_pauses_in_it() {
+        // A refusal message is read this way, and the `Read` contract is what
+        // keeps that caller unaware that a body read now gives up waiting: it
+        // retries an interruption itself. Reported any other way, a message
+        // that arrived in two pieces would come back as a read error and the
+        // sentence naming the model that does not exist would be lost.
+        let url = pausing("{\"error\":", "\"nope\"}");
+        let mut response = Https::new().post(&url, &[], "{}").unwrap();
+
+        let mut said = String::new();
+        response.body.read_to_string(&mut said).unwrap();
+
+        assert_eq!(said, "{\"error\":\"nope\"}");
+    }
+
+    /// A body that fails its first read with something the client said.
+    struct Failing(Option<io::Error>);
+
+    impl Read for Failing {
+        fn read(&mut self, _into: &mut [u8]) -> io::Result<usize> {
+            Err(self
+                .0
+                .take()
+                .unwrap_or_else(|| io::ErrorKind::UnexpectedEof.into()))
+        }
+    }
+
+    /// What one read of `body` came back as.
+    fn read(body: io::Error) -> io::Error {
+        Waiting(Box::new(Failing(Some(body))))
+            .read(&mut [0_u8; 8])
+            .expect_err("the body was given a failure to report")
+    }
+
+    #[test]
+    fn a_wait_the_head_deadline_ended_is_still_only_a_wait() {
+        // This client measures a body read against the head's deadline as well,
+        // so every read of a response that has been arriving for longer than
+        // that ends this way. Taken for a broken connection it fails an answer
+        // that ran past a minute and then paused, which is an ordinary answer.
+        let expired = io::Error::other(ureq::Error::Timeout(ureq::Timeout::RecvResponse));
+
+        assert_eq!(read(expired).kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
+    fn a_connection_that_broke_is_not_mistaken_for_a_wait() {
+        // The other half: a stream retrying a dead socket forever is a turn
+        // that never comes back and never says why.
+        let broken = io::Error::from(io::ErrorKind::ConnectionReset);
+
+        assert_eq!(read(broken).kind(), io::ErrorKind::ConnectionReset);
     }
 
     #[test]

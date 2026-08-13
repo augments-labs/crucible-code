@@ -74,13 +74,22 @@ fn roomy() -> Renderer<Recording> {
 
 #[test]
 fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
-    // The test harness captures standard output, so this is the redirected
-    // case. It is also every `crucible < script.txt`, and the caller reads a
+    // The keyboard is held by the loop above for the whole session now, so what
+    // reaches here is whether there was one to hold. `false` is every
+    // `crucible < script.txt` and every redirected run, and the caller reads a
     // line for itself when it gets this back.
     let mut renderer = drawing();
     let mut runner = engine(Mode::Ask);
+    let mut editor = crucible_tui::Editor::new();
 
-    let asked = ask(&mut renderer, Style::plain(), &mut runner).expect("no keys to read");
+    let asked = ask(
+        &mut renderer,
+        Style::plain(),
+        &mut runner,
+        &mut editor,
+        false,
+    )
+    .expect("no keys to read");
 
     assert!(
         matches!(asked, Asked::Untyped),

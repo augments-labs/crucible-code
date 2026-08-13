@@ -55,6 +55,14 @@
           ],
           "type": "string"
         },
+        "mouse": {
+          "description": "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt, and the wheel stops scrolling",
+          "enum": [
+            "off",
+            "click"
+          ],
+          "type": "string"
+        },
         "toolDetail": {
           "description": "How much of a tool call and its result one line shows",
           "enum": [

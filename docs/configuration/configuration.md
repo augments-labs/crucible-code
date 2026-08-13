@@ -110,6 +110,7 @@ means nothing to anyone else who clones the repository.
 | --- | --- | --- |
 | `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
+| `mouse` | `off`, `click` | Who the mouse belongs to while a prompt is up. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
@@ -117,6 +118,14 @@ is a font missing that character, and nothing about that reaches crucible — th
 bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
+
+`mouse` is one trade with two ends rather than a preference. Left `off`, the
+terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
+the middle button pastes. Set to `click`, crucible asks the terminal to forward
+buttons while the prompt box is up, so a click in the box places the cursor —
+and the wheel is a button too, so it stops scrolling for as long as the box is
+there. crucible draws inline, which means the transcript above the box belongs
+to the terminal, so it cannot scroll that for you in exchange.
 
 ### `updates`
 
@@ -151,6 +160,29 @@ to one is `unsafe` in a process with threads, and crucible forbids unsafe code.
 
 Values are strings, because that is what an environment holds. A setting that
 reads as a number is written `"12"`.
+
+A command is **not** started with the environment crucible was started in. It
+gets a short list of what a program needs in order to run at all, and whatever
+`env` adds on top:
+
+- On Unix: `PATH`, `HOME`, `TERM`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`.
+- On Windows: `PATH`, `PATHEXT`, `COMSPEC`, `SystemRoot`, `SystemDrive`,
+  `windir`, `TEMP`, `TMP`, `TERM`, `HOME`, `USERPROFILE`, `HOMEDRIVE`,
+  `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
+  `ProgramData`.
+
+Everything else stops here, and your provider key is why. `env` and `printenv`
+are ordinary things for a model to run, and what a command prints comes back as
+tool output — onto your screen, into the next request, and into the session log.
+The list says what to keep rather than what to drop, because `apiKeyEnv` takes a
+name: a key can be called anything, so a list of the names keys usually have
+would cover exactly the names somebody thought of.
+
+A name written in `env` beats the inherited one, so `"PATH"` there replaces what
+crucible was started with rather than adding to it.
+
+A command that needs anything else — a `CARGO_TARGET_DIR`, a token a deploy
+script reads — is told about it here, which is you handing it over on purpose.
 
 ## The file that travels
 

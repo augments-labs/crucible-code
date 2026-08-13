@@ -6,6 +6,11 @@
 use crucible_core::ToolId;
 
 use super::*;
+use crate::transport::{Paused, Said};
+
+/// One delta, and then the model stops talking.
+const HALF: &str =
+    "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Hel\"}\n\n";
 
 /// A complete answer, as the API streams one.
 pub(in crate::openai) const ANSWER: &str = concat!(
@@ -281,6 +286,51 @@ fn a_call_cancelled_between_its_name_and_its_arguments_is_not_left_half_open() {
         Delta::Stopped(StopReason::Cancelled)
     );
     assert!(stream.next().is_none());
+}
+
+#[test]
+fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
+    // The provider went quiet mid-answer and the user pressed stop. Raised from
+    // inside the wait, because that is where a user raises one and the only
+    // place the answer was ever in doubt: a cancel seen before the read is one
+    // the read never had to be interrupted for.
+    let cancel = Cancel::new();
+    let raise = cancel.clone();
+    let silent = Paused::saying([
+        Said::Bytes(HALF.into()),
+        Said::Nothing,
+        Said::Nothing,
+        Said::Nothing,
+    ])
+    .meanwhile(move || raise.request());
+    let mut stream = Stream::new(Box::new(silent), cancel);
+
+    assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
+
+    assert_eq!(
+        stream.next().unwrap().unwrap(),
+        Delta::Stopped(StopReason::Cancelled),
+        "the stream waited out a silent provider with a cancel raised"
+    );
+    assert!(stream.next().is_none());
+}
+
+#[test]
+fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
+    // The regression a bounded wait buys its promptness with, if the wait
+    // expiring is read as a connection that broke: every pause in a long answer
+    // becomes a failed turn. Nothing here fails, and this body pauses between
+    // every five bytes of itself.
+    let mut stream = Stream::new(Box::new(Paused::dawdling(ANSWER, 5)), Cancel::new());
+
+    assert_eq!(
+        deltas(&mut stream),
+        vec![
+            Delta::Text("Hello".into()),
+            Delta::Text(", world".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ]
+    );
 }
 
 #[test]

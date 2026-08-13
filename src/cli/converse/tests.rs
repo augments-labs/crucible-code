@@ -12,7 +12,7 @@ use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, Terminal, TerminalError};
 
 use super::*;
-use crate::cli::fake::{Fixed, Script, changing, running};
+use crate::cli::fake::{Fixed, Script, changing, confined, running};
 use crate::cli::sample::Sample;
 
 /// The terms a test runs under when neither the style nor cancelling is what
@@ -301,10 +301,12 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     // A turn is the longest a session goes without a prompt on screen, and it
     // is the stretch the mode is deciding things over -- both used to leave
     // with the box and come back only once there was nothing left to decide.
-    // Pinned to the escape that parks the cursor back on the answer as well as
-    // to the words: rows drawn under the tail and not counted are rows the next
-    // frame rewinds over, which would corrupt the turn rather than merely
-    // mislead about it. Four rows, so the escape says four.
+    // Pinned to the escape that parks the cursor as well as to the words: rows
+    // drawn under the tail and not counted are rows the next frame rewinds
+    // over, which would corrupt the turn rather than merely mislead about it.
+    // The cursor comes back into the box rather than onto the answer, because
+    // the box is what takes typing while the turn runs — two rows up from the
+    // last of the four, and at the column the line starts on.
     let runner = scripted(Script::new(vec![saying("hello")]), Tools::new())
         .permitting(Permission::with(Mode::FullAccess, Rules::new()));
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -319,8 +321,8 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         "the box did not stand under the answer: {written}"
     );
     assert!(
-        written.contains("full access mode on\x1b[4A"),
-        "the rows under the tail were not counted: {written}"
+        written.contains("\x1b[2A\x1b[5G"),
+        "the cursor was not parked in the box: {written}"
     );
 }
 
@@ -532,6 +534,131 @@ fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
 fn end_of_input_is_a_refusal() {
     // A pipe that closed mid-question cannot consent to anything.
     assert_eq!(verdict(None, true), (Verdict::Deny, Remember::Never));
+}
+
+// Which questions a mode leaves to be drawn.
+//
+// What each mode answers is settled where the engine is, over sensitivities
+// written down by hand. What needs the loop running is that the answer reaches
+// the screen: the engine crosses to the worker with the runner and comes back,
+// and a mode is the one thing about a session that changes after it started —
+// so a session drawing one mode while deciding by another would be wrong in the
+// place nobody can check by reading.
+//
+// Every test here types nothing an unexpected question could be answered with.
+// A question drawn where none was expected meets the end of input, which is a
+// refusal, so the turn ends and the sentence after it is never said — the
+// assertions below fail rather than hang.
+
+/// The whole loop in one mode, over the tools given.
+fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) -> String {
+    let runner =
+        scripted(Script::new(rounds), offered).permitting(Permission::with(mode, Rules::new()));
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn allow_edits_changes_a_file_with_no_question_drawn() {
+    let written = deciding(
+        Mode::AllowEdits,
+        tools(Fixed::new("write", changing())),
+        vec![calling("write"), saying("changed it")],
+        "edit it\n",
+    );
+
+    assert!(!written.contains("wants to change"), "{written}");
+    assert!(written.contains("changed it"), "{written}");
+}
+
+#[test]
+fn allow_edits_asks_before_a_command_nothing_proved_anything_about() {
+    // The mode is a sentence about reach, and a command line nobody read
+    // closely enough reaches whatever the user can. Answered `n`, so the
+    // question is one the loop waited on rather than one it drew and walked
+    // past.
+    let written = deciding(
+        Mode::AllowEdits,
+        tools(Fixed::new("bash", running("cargo test"))),
+        vec![calling("bash"), saying("ran it")],
+        "go\nn\n",
+    );
+
+    assert!(
+        written.contains("bash wants to run: cargo test"),
+        "{written}"
+    );
+    assert!(written.contains("bash was not allowed"), "{written}");
+}
+
+#[test]
+fn allow_edits_runs_a_command_proved_to_stay_inside_with_no_question_drawn() {
+    let written = deciding(
+        Mode::AllowEdits,
+        tools(Fixed::new("bash", confined("mkdir src/net"))),
+        vec![calling("bash"), saying("made it")],
+        "go\n",
+    );
+
+    assert!(!written.contains("wants to run"), "{written}");
+    assert!(written.contains("made it"), "{written}");
+}
+
+#[test]
+fn full_access_draws_neither_question() {
+    // Both in one round, which is the shape that would catch a mode read once
+    // per turn rather than asked of every call.
+    let mut offered = tools(Fixed::new("write", changing()));
+    offered.add(Box::new(Fixed::new("bash", running("cargo test"))));
+
+    let round = vec![
+        Delta::ToolStarted {
+            id: ToolId::new("a"),
+            name: "write".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::ToolStarted {
+            id: ToolId::new("b"),
+            name: "bash".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ];
+
+    let written = deciding(
+        Mode::FullAccess,
+        offered,
+        vec![round, saying("both done")],
+        "go\n",
+    );
+
+    assert!(!written.contains("wants to"), "{written}");
+    assert!(written.contains("both done"), "{written}");
+}
+
+#[test]
+fn the_mode_a_command_named_is_the_mode_the_next_turn_is_decided_under() {
+    // `/mode` is answered on this thread, and the turn after it decides on
+    // another. The row under the box is drawn from the mode read here on the
+    // way in, and the call is decided by the engine that went with the runner:
+    // one value, or the screen would be describing a session that is not the
+    // one running. The turn starts in `ask`, which is the mode that would have
+    // drawn the question this asserts is absent.
+    let written = deciding(
+        Mode::Ask,
+        tools(Fixed::new("write", changing())),
+        vec![calling("write"), saying("changed it")],
+        "/mode allowEdits\nedit it\n",
+    );
+
+    assert!(written.contains("allow edits on"), "{written}");
+    assert!(!written.contains("wants to change"), "{written}");
+    assert!(written.contains("changed it"), "{written}");
 }
 
 // What a command does to the loop it was typed into.

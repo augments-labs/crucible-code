@@ -12,6 +12,13 @@
 //! loop. Everything an event yielded is delivered before another is read,
 //! including after the user cancels: those deltas are already off the socket,
 //! and dropping them would lose part of an answer that had arrived.
+//!
+//! The cancel is looked at between events, and what makes that prompt is that
+//! the framing below gives up waiting and hands the turn back rather than
+//! blocking on the socket. So a provider that has stopped talking costs one
+//! bounded wait and not an indefinite one, and a wait that expired ends
+//! nothing: the response is still open, and only the user or the socket closes
+//! it. The other provider streams the same way, through the same framing.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -21,7 +28,7 @@ use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
 
 use crate::openai::wire::Open;
 use crate::openai::{NAME, wire};
-use crate::sse::Events;
+use crate::sse::{Events, Framed};
 
 /// A response being read.
 pub(super) struct Stream {
@@ -108,8 +115,8 @@ impl DeltaStream for Stream {
                 return None;
             }
 
-            // Between events rather than during one: the read below blocks
-            // until the provider says something.
+            // Between events rather than during one, which is prompt because
+            // the read below comes back whether or not anything arrived.
             if self.cancel.requested() {
                 self.finished = true;
                 return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
@@ -123,7 +130,10 @@ impl DeltaStream for Stream {
                         problem: problem.to_string().into(),
                     }));
                 }
-                Some(Ok(event)) => event,
+                // Nothing yet. Round the loop to the cancel above, which is the
+                // whole of what a bounded wait is for.
+                Some(Ok(Framed::Quiet)) => continue,
+                Some(Ok(Framed::Event(event))) => event,
             };
 
             match wire::deltas(&event, &mut self.open) {

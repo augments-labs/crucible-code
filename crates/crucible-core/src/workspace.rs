@@ -10,6 +10,12 @@
 //! text. A check that inspects the string a caller supplied can be walked
 //! around; a check on the path the operating system actually resolved cannot.
 //!
+//! What such a check settles is where a name led at the instant it ran, and a
+//! second writer on the machine can move it afterwards. So the open that acts
+//! on a resolved path is done here as well, carrying what the check established
+//! into the call itself; `open` says which half of that race each measure
+//! closes and which it leaves.
+//!
 //! A workspace reaches the directory crucible was started in and any further
 //! directories configuration named. Which of them a path lands in makes no
 //! difference to anything downstream: reach is settled here, once, and what
@@ -19,6 +25,7 @@
 use std::path::Path;
 
 mod error;
+mod open;
 mod path;
 mod resolve;
 mod roots;

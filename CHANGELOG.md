@@ -26,6 +26,21 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **The prompt box takes typing while a turn is running.** Raw mode is held for
+  the whole session rather than for each prompt, so the box goes on being
+  written in while the answer arrives above it; <kbd>Enter</kbd> queues the line
+  as the next prompt, and <kbd>Ctrl-C</kbd> asks the turn to stop instead of
+  ending the process. A permission question is answered by one key rather than
+  by a typed line. A run with no terminal at either end reads whole lines
+  exactly as before.
+
+- **`output.mouse` decides who the mouse belongs to, and the terminal keeps it
+  by default.** Clicking in the box to place the cursor means the terminal is
+  forwarding buttons to crucible — and the wheel is a button, so the wheel stops
+  scrolling the scrollback this program's transcript lives in, and dragging
+  stops selecting. An inline renderer cannot have both. Set it to `click` if
+  placing the cursor is worth more to you than scrolling.
+
 - **The prompt box wraps and grows instead of scrolling sideways.** A line
   longer than the box takes another row, up to about half the window; past that
   it scrolls under the top edge. A paragraph you are writing is now a paragraph
@@ -55,9 +70,52 @@ Notable changes to crucible. Format follows
   turn until `/model` answers it. Two keys and nothing choosing between them is
   now a question rather than a coin toss.
 
+- **Stopping a silent provider now works.** A response body read is bounded, so
+  a cancel raised while nothing is arriving ends the stream within a quarter of
+  a second instead of waiting on the socket indefinitely. A pause is not a
+  failure: the same change fixes long answers being dropped as a broken
+  connection once a turn had been streaming for over a minute.
+
+- **`glob` holds only as many paths as its answer will carry.** It used to
+  collect every match and sort the lot before taking the limit, so `**` over a
+  large tree cost the tree rather than the limit. The paths returned and the
+  `N more` count are unchanged.
+
+- **The prompt box and the mode row no longer get eaten as the answer gets
+  longer.** The live tail was bounded by the whole height of the window, so once
+  it had filled the screen, the rows standing under it put the region past the
+  bottom — and every frame after that erased rows the terminal had already taken.
+  The tail now gives back exactly the rows the footing needs.
+
+- **A command put to you says why it is being put to you.** A mode that allows
+  every change to a file still asks before a command unless the command was
+  proved to reach nowhere outside the working directory, which only a handful of
+  path-taking programs can be. So `allowEdits` waves a `write` through and stops
+  at `ls`, and the question now carries the reason rather than reading as a
+  setting that does not work.
+
 - **`cargo run` starts crucible.** The bench probes under `src/bin/` are targets
   too, so cargo refused to choose between six binaries and asked for `--bin` —
   including for the `cargo run -- --help` the documentation gives you.
+
+### Security
+
+- **File tools open what they checked.** `read`, `write` and `edit` now open the
+  file the containment check was about rather than resolving its name a second
+  time: a new file is created in a way the operating system will not satisfy
+  through a symbolic link, and `edit` reads and rewrites through one open file
+  instead of resolving the name again between the two. A link planted in the
+  working directory after a path is checked no longer sends a read or a write
+  outside it. What a program rearranging that directory underneath crucible can
+  still reach is set out on the directories page.
+
+- **A command no longer inherits the environment crucible was started in.** It
+  used to get every variable this process holds, so `env` — an ordinary thing
+  for a model to run — handed your provider key back as tool output, onto the
+  screen and into the session log. A command now gets `PATH`, `HOME`, the locale
+  and terminal, their Windows equivalents, and whatever `env` in your
+  configuration adds. A command that needed anything else from your shell now
+  has to be told about it there.
 
 ## [0.0.9] - 2026-08-12
 

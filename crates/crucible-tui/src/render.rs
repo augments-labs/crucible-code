@@ -62,6 +62,10 @@ pub struct Renderer<T: Terminal> {
     /// Painted when they are set rather than once per frame. What they say
     /// changes when the session changes, and a turn is a great many frames.
     footing: Vec<String>,
+    /// Where the cursor belongs inside [`Self::footing`], where somebody is
+    /// typing into it. `None` parks the cursor at the end of the tail, which is
+    /// where the next delta lands.
+    footed: Option<Caret>,
     /// Reads the markers out of the model's markdown and says what each run is.
     ///
     /// Held here rather than made fresh per delta, for the reason the tail holds
@@ -102,6 +106,7 @@ impl<T: Terminal> Renderer<T> {
             overflow: Vec::new(),
             painted: Vec::new(),
             footing: Vec::new(),
+            footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
         }
@@ -280,13 +285,37 @@ impl<T: Terminal> Renderer<T> {
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn under(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
+    pub fn under(
+        &mut self,
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
 
         region::paint(rows, palette, &mut self.footing);
+        self.footed = caret;
+        self.reserve();
         self.draw()
+    }
+
+    /// Leaves the tail exactly the rows the footing does not need.
+    ///
+    /// The live region is the tail and whatever stands under it together, and it
+    /// has to fit on the screen: taken back by moving the cursor up over it, one
+    /// taller than the screen is one whose top has already scrolled out of
+    /// reach. The tail is the half that can give — what stands under it is a
+    /// component that was asked for — so the tail's bound moves whenever the
+    /// footing's height does.
+    ///
+    /// A window with no room for both keeps one row of tail, because a tail of
+    /// none cannot hold the row still being written to.
+    fn reserve(&mut self) {
+        let bound = self.size.rows.saturating_sub(self.footing.len());
+
+        self.tail.holding(bound, &mut self.overflow);
     }
 
     /// Ends the live region, leaving what it held in scrollback.
@@ -372,6 +401,7 @@ impl<T: Terminal> Renderer<T> {
         // the window no longer has, and a row too wide for the screen is one
         // the terminal wraps itself. The caller lays out the next one.
         self.footing.clear();
+        self.footed = None;
         self.drawn = 0;
         self.parked = 0;
         Ok(())
@@ -447,7 +477,7 @@ impl<T: Terminal> Renderer<T> {
             region,
             &mut self.overflow,
             &self.tail,
-            &self.footing,
+            (&self.footing, self.footed),
         );
 
         self.drawn = self.tail.len() + self.footing.len();

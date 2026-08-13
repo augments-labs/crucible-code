@@ -295,6 +295,73 @@ fn a_root_whose_name_is_not_utf8_is_refused_at_the_door() {
 }
 
 #[test]
+fn a_leaf_made_into_a_link_after_the_check_is_not_opened_through() {
+    let f = Fixture::new("swapleaf");
+    let path = f.workspace.existing("kept.txt").unwrap();
+
+    // Containment established where this name led at the instant it ran. A
+    // second writer with the workspace open — a build script, a watcher, a
+    // shell in the next pane — can move it afterwards, and opening by name
+    // would follow it straight out of the tree.
+    fs::remove_file(path.as_path()).unwrap();
+    symlink(f.outside.join("secret.txt"), path.as_path());
+
+    let err = path.open_to_change().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert_eq!(
+        fs::read_to_string(f.outside.join("secret.txt")).unwrap(),
+        "out"
+    );
+}
+
+#[test]
+fn a_link_planted_where_a_new_file_goes_is_not_created_through() {
+    let f = Fixture::new("swapcreate");
+    let path = f.workspace.creatable("fresh.txt").unwrap();
+
+    symlink(f.outside.join("absent.txt"), path.as_path());
+
+    // `O_CREAT | O_EXCL`, so the operating system refuses to satisfy the
+    // create through a link at the last component, dangling or not. There is
+    // no second lookup here for the swap to win.
+    let err = path.create().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
+    assert!(!f.outside.join("absent.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "names the hole that is open: nothing here resolves a step against a directory it holds"]
+fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
+    // The half still reachable, written down as the property that does not hold
+    // rather than as prose, so running the ignored tests reports it. Every call
+    // that acts on a resolved path resolves the directories above the last
+    // component afresh and at the same moment, so a directory replaced with a
+    // link between the check and the call is followed by all of them and
+    // disagreed with by none. What would see it is resolving each step relative
+    // to a directory already held open; until safe Rust can ask for that,
+    // neither property below holds and running this reports the first.
+    let f = Fixture::new("swapabove");
+    fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
+    fs::write(f.outside.join("one.txt"), "out").unwrap();
+    let existing = f.workspace.existing("sub/one.txt").unwrap();
+    let fresh = f.workspace.creatable("sub/fresh.txt").unwrap();
+
+    fs::remove_dir_all(f.workspace.root().join("sub")).unwrap();
+    std::os::unix::fs::symlink(&f.outside, f.workspace.root().join("sub")).unwrap();
+
+    assert!(
+        existing.open().is_err(),
+        "a file outside the workspace was opened for reading"
+    );
+    let _ = fresh.create();
+    assert!(
+        !f.outside.join("fresh.txt").exists(),
+        "a file was created outside the workspace"
+    );
+}
+
+#[test]
 fn a_relative_directory_cannot_be_reached() {
     let f = Fixture::new("relative");
 

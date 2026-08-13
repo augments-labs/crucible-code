@@ -107,13 +107,12 @@ moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
-Clicking in the box puts the cursor where you clicked, which is the same move
-the arrows make one place at a time. A click anywhere else — the border, the row
-under it, the list above — leaves the cursor where it is. While the box is up
-the terminal is reporting clicks to crucible rather than using them for its own
-selection, so hold <kbd>Shift</kbd> to select and to paste with the middle
-button; between turns, and after crucible exits, the mouse is the terminal's
-again.
+The mouse belongs to the terminal: the wheel scrolls, dragging selects, the
+middle button pastes. Set `output.mouse` to `click` and crucible takes the
+buttons instead while the box is up, so clicking in the box puts the cursor
+where you clicked — at the price of the wheel, because the wheel is a button
+and the scrollback it scrolls is where crucible's transcript lives. An inline
+renderer cannot have both, which is why it is a choice rather than a default.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
@@ -124,8 +123,14 @@ Type a prompt and press enter. The line stays where it was and the answer
 streams in under it, with the box and the mode still standing at the bottom of
 the screen — so a tool call arriving ten minutes into a turn is read beside the
 mode that let it through, and the screen looks the same whether or not crucible
-happens to be working. The box takes no typing while a turn runs, so the key
-that steps the mode is not offered beside it. Tool calls appear as they run:
+happens to be working.
+
+You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
+queues what you wrote as the next prompt, and it is run the moment the turn
+ends. <kbd>Ctrl-C</kbd> asks the turn to stop. The key that steps the mode is
+not offered there, because the mode is away with the turn until it finishes.
+
+Tool calls appear as they run:
 
 ```
 › what does the runner do when a tool fails?
@@ -281,3 +286,9 @@ Six tools, advertised in the order a model tends to reach for them:
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see
 [Permissions](../permissions/index.md).
+
+`bash` runs its command through a POSIX shell in the workspace root, and starts
+it with a short list of variables — `PATH`, `HOME`, the locale — rather than the
+environment crucible is running in. Your provider key is not on that list, so a
+command that prints the environment prints no key. Anything else a command needs
+is named in [`env`](../configuration/configuration.md#env).

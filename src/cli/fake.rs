@@ -147,3 +147,18 @@ pub(crate) fn running(command: &str) -> Sensitivity {
         },
     }
 }
+
+/// The same, with the one claim `allowEdits` acts on without asking: this line
+/// changes nothing outside the workspace.
+///
+/// Written down here because what proves it is the tool's own reading of its
+/// own arguments, which these tests do not have and are not about. Which lines
+/// earn the claim is settled where they are read.
+pub(crate) fn confined(command: &str) -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: Command::Understood {
+            parts: Box::from([Box::from(command)]),
+            reach: Reach::Workspace,
+        },
+    }
+}

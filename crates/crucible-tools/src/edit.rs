@@ -4,7 +4,7 @@
 //! that has just read a file can quote from it, and quoting is the one thing it
 //! can do without counting.
 
-use std::fs;
+use std::io::{Read as _, Seek as _, Write as _};
 
 use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
 
@@ -87,13 +87,24 @@ impl Tool for Edit {
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        let Ok(before) = fs::read_to_string(&path) else {
-            // A directory, or something that is not text. Either way the model
-            // sent the wrong path and can send a different one.
+        // One open file for the read and the write. Naming the path twice would
+        // leave a gap between them in which the name could be made to lead
+        // somewhere else, and the text put down here is decided from the text
+        // read a moment ago — so if those are two files, the change is being
+        // applied to one nobody looked at.
+        let mut file = match path.open_to_change() {
+            Ok(file) => file,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+        };
+
+        let mut before = String::new();
+        if file.read_to_string(&mut before).is_err() {
+            // Something that is not text. The model sent the wrong path and can
+            // send a different one.
             return Ok(ToolOutput::failed(format!(
                 "{requested} is not a text file"
             )));
-        };
+        }
 
         let found = before.matches(find).count();
         if let Some(problem) = trouble(found, all, requested) {
@@ -106,11 +117,14 @@ impl Tool for Edit {
             before.replacen(find, replace, 1)
         };
 
-        fs::write(&path, &after).map_err(|source| ToolError::Io {
-            tool: NAME,
-            problem: format!("could not write {requested}").into(),
-            source,
-        })?;
+        file.set_len(0)
+            .and_then(|()| file.rewind())
+            .and_then(|()| file.write_all(after.as_bytes()))
+            .map_err(|source| ToolError::Io {
+                tool: NAME,
+                problem: format!("could not write {requested}").into(),
+                source,
+            })?;
 
         let changed = if all { found } else { 1 };
         Ok(ToolOutput::ok(format!(

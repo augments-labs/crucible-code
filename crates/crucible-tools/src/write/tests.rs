@@ -175,6 +175,30 @@ fn creating_through_a_dangling_symlink_that_leaves_the_workspace_is_refused() {
 }
 
 #[test]
+fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
+    // The path is resolved once to say what the call is about and again in
+    // `run`, and the gap between the two is however long somebody took to
+    // answer. A link planted in it would make the file that was agreed to a
+    // different file from the one written, so the resolution that counts is
+    // the second one — and this is what says the first is never trusted for it.
+    let sample = Sample::new("write-planted");
+    let outside = sample.outside("secret.txt", "original\n");
+    let tool = Write::new(sample.workspace());
+    let args = r#"{"path":"notes.txt","content":"stolen\n"}"#;
+
+    assert_eq!(
+        tool.sensitivity(&ToolArgs::new(args)).to_string(),
+        "change notes.txt"
+    );
+    symlink(&outside, sample.root().join("notes.txt"));
+
+    let output = tool.run(allowed(&tool, args)).unwrap();
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "original\n");
+}
+
+#[test]
 fn a_directory_is_not_a_file_to_write_over() {
     let sample = Sample::new("write-dir");
     sample.write("sub/one.txt", "a\n");

@@ -1,6 +1,5 @@
 //! Reading a file.
 
-use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 
 use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
@@ -156,11 +155,14 @@ impl Tool for Read {
             return Ok(ToolOutput::failed(format!("{requested} is a directory")));
         }
 
-        let file = File::open(&path).map_err(|source| ToolError::Io {
-            tool: NAME,
-            problem: format!("could not open {requested}").into(),
-            source,
-        })?;
+        // Through the workspace rather than by name, so a last component
+        // replaced with a symbolic link since the check above is refused rather
+        // than read out of the tree and into the transcript, where the answer
+        // to a question about a file in the project would be a file elsewhere.
+        let file = match path.open() {
+            Ok(file) => file,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+        };
 
         Self::numbered(BufReader::new(file), requested, from, limit)
     }

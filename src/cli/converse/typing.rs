@@ -21,11 +21,11 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use crucible_core::Mode;
+use crucible_core::{Cancel, Mode};
 use crucible_runner::Runner;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Listed, Menu, Mouse, Pressed, Prompt, Raw, Renderer, Row, Slot,
-    Terminal, Typed, caret, pressed,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot, Terminal,
+    Typed, caret, pressed, waiting,
 };
 
 use crate::cli::Fatal;
@@ -49,6 +49,12 @@ const CYCLE: &str = "(shift+tab to cycle)";
 /// answering — and by the time waiting too long could be noticed, the thing to
 /// say would be that the offer had already gone.
 const LEAVING: &str = "press ctrl-c again to leave";
+
+/// What the row under the box says while a turn is running.
+///
+/// Two keys, both of which do something at that moment. The one that steps the
+/// mode is left off, because the engine holding the mode is away with the turn.
+const WORKING: &str = "(enter queues it · ctrl-c stops the turn)";
 
 /// How long the second press has to arrive in.
 ///
@@ -78,32 +84,27 @@ pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     runner: &mut Runner,
+    editor: &mut Editor,
+    keys: bool,
 ) -> Result<Asked, Fatal> {
-    let Some(_raw) = Raw::enter()? else {
+    if !keys {
         return Ok(Asked::Untyped);
-    };
-
-    // Held beside raw mode and dropped with it, so the terminal is only
-    // reporting clicks while there is a box to click into. A `?` below leaves
-    // by the same door.
-    let _mouse = Mouse::watch()?;
+    }
 
     let glyphs = style.glyphs();
-    let mut editor = Editor::new();
+    let editor = editor;
 
     let mut says = saying(runner);
-
-    // What the line has open above the box. Rebuilt on the keystroke that
-    // changed the line rather than per frame: the box is redrawn on every key,
-    // and this is the same list until one of them edits the line.
-    let mut open = Opened::default();
 
     // When Ctrl-C was last pressed against an empty line, if it is still the
     // last key pressed. Taken by every other key, so the pair has to be two
     // presses in a row rather than two with a session between them.
     let mut leaving: Option<Instant> = None;
 
-    let mut shown = draw(renderer, &editor, style, &says, &open)?;
+    // Whatever was typed while the last turn ran is already here, so the list a
+    // slash opens has to be worked out from it rather than assumed empty.
+    let mut open = Opened::filtered(editor.text(), glyphs);
+    let mut shown = draw(renderer, editor, style, &says, &open)?;
 
     loop {
         let arrived = pressed()?;
@@ -119,14 +120,14 @@ pub(crate) fn ask<T: Terminal>(
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                shown = draw(renderer, &editor, style, &says, &open)?;
+                shown = draw(renderer, editor, style, &says, &open)?;
             }
 
             // Nothing is standing, so there is nothing to back out of — except
             // the offer above, which is on screen and has just been taken back.
             Pressed::Escape | Pressed::Ignored => {
                 if offered.is_some() {
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
@@ -134,10 +135,10 @@ pub(crate) fn ask<T: Terminal>(
             // move made in one go. A click that landed anywhere but on the line
             // moves nothing, which is the same as a key that moved nothing.
             Pressed::Clicked { row, column } => {
-                let moved = placed(renderer, &mut editor, &says, shown, (row, column));
+                let moved = placed(renderer, editor, &says, shown, (row, column));
 
                 if moved || offered.is_some() {
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
@@ -145,12 +146,12 @@ pub(crate) fn ask<T: Terminal>(
             // open, or at the end it is already on, the key costs no frame.
             Pressed::Up => {
                 if open.up() || offered.is_some() {
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
             }
             Pressed::Down => {
                 if open.down() || offered.is_some() {
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
@@ -161,7 +162,7 @@ pub(crate) fn ask<T: Terminal>(
                 runner.cycle();
 
                 says = saying(runner);
-                shown = draw(renderer, &editor, style, &says, &open)?;
+                shown = draw(renderer, editor, style, &says, &open)?;
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -170,14 +171,14 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => {
                     if offered.is_some() {
-                        shown = draw(renderer, &editor, style, &says, &open)?;
+                        shown = draw(renderer, editor, style, &says, &open)?;
                     }
                 }
                 Typed::Changed => {
                     open = Opened::filtered(editor.text(), glyphs);
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
-                Typed::Submitted => return said(renderer, &mut editor, &open, style),
+                Typed::Submitted => return said(renderer, editor, &open, style),
 
                 // Ctrl-C against a line with nothing on it. The first press
                 // says what a second one would do; the second does it, so long
@@ -191,7 +192,7 @@ pub(crate) fn ask<T: Terminal>(
 
                     leaving = Some(Instant::now());
                     says.asking = Some(LEAVING);
-                    shown = draw(renderer, &editor, style, &says, &open)?;
+                    shown = draw(renderer, editor, style, &says, &open)?;
                 }
 
                 Typed::Ended => {
@@ -231,7 +232,7 @@ struct Says {
     asking: Option<&'static str>,
 }
 
-/// The box as it stands under a turn, with nothing being typed into it.
+/// The box as it stands under a turn, and where the cursor sits in it.
 ///
 /// The same component in the same place rather than a row standing in for it.
 /// A turn is the longest a session goes without a prompt on screen, and a box
@@ -239,21 +240,108 @@ struct Says {
 /// when output is scrolling past — so what a session looks like would depend on
 /// whether it happened to be working.
 ///
-/// No keys are offered after the mode. Nothing is reading them while a turn
-/// runs, and a key printed beside the thing it does not act on is worse than
-/// saying only what is true.
-pub(super) fn working(mode: Mode, columns: usize, glyphs: Glyphs) -> Vec<Row> {
-    Prompt {
-        said: "",
-        column: 0,
+/// It is not a picture of a box: the keys below are read while the turn runs,
+/// so what is typed goes in and the cursor is where it is going.
+pub(super) fn working<T: Terminal>(
+    renderer: &Renderer<T>,
+    editor: &Editor,
+    mode: Mode,
+    style: Style,
+) -> (Vec<Row>, Caret) {
+    let columns = renderer.columns();
+    let prompt = Prompt {
+        said: editor.text(),
+        column: editor.column(),
         mode: mode.sentence(),
         tone: tone(mode),
-        hint: "",
+        hint: WORKING,
         asking: None,
-        // One row, because there is no line in it to grow for.
-        room: 1,
+        room: Prompt::room(renderer.rows()),
+    };
+
+    (prompt.rows(columns, style.glyphs()), prompt.caret(columns))
+}
+
+/// Reads whatever the keyboard already has, and redraws the box if it moved.
+///
+/// Called between looks at the channel the turn reports on, so it never waits:
+/// a key that has not arrived yet is one the next time round will find. What it
+/// returns is a line somebody finished while the answer was still arriving,
+/// which the loop above runs as the next prompt.
+///
+/// The keys that mean something here are the ones that still do. Return
+/// finishes a line, Ctrl-C asks the turn to stop — in raw mode the terminal
+/// sends it rather than raising a signal, so this is the only thing that could
+/// — and the rest edit the line. Stepping the mode is not among them: the
+/// engine that holds it is on the worker thread for the length of the turn, and
+/// a key that moved the row on screen and nothing else would be a lie about
+/// what the next tool call costs.
+pub(super) fn during<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    editor: &mut Editor,
+    mode: Mode,
+    style: Style,
+    cancel: &Cancel,
+) -> Result<Option<String>, Fatal> {
+    let mut moved = false;
+    let mut finished = None;
+
+    while waiting(Duration::ZERO)? {
+        match pressed()? {
+            // The rows on screen were laid out for a width the window no longer
+            // has. The renderer takes them back; the redraw below puts the box
+            // down again at the new one.
+            Pressed::Resized => {
+                renderer.resized()?;
+                moved = true;
+            }
+
+            Pressed::Key(Key::Enter) => {
+                if !editor.is_empty() {
+                    finished = Some(editor.take());
+                    moved = true;
+                }
+            }
+
+            // Not the end of the process any more. Raw mode is held for the
+            // whole session now, so this key arrives here instead of becoming a
+            // signal — and asking the turn to stop is what it always meant.
+            Pressed::Key(Key::Interrupt) => {
+                cancel.request();
+                moved = true;
+            }
+
+            Pressed::Key(key) => moved |= editor.press(key) == Typed::Changed,
+
+            // A click, an arrow through a list there is none of, a mode step.
+            // None of them has anything to act on while a turn is running.
+            Pressed::Clicked { .. }
+            | Pressed::Cycle
+            | Pressed::Escape
+            | Pressed::Up
+            | Pressed::Down
+            | Pressed::Ignored => {}
+        }
     }
-    .rows(columns, glyphs)
+
+    if moved {
+        stand(renderer, editor, mode, style)?;
+    }
+
+    Ok(finished)
+}
+
+/// Puts the box under the turn, with the cursor in it.
+pub(super) fn stand<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    editor: &Editor,
+    mode: Mode,
+    style: Style,
+) -> Result<(), Fatal> {
+    let (rows, caret) = working(renderer, editor, mode, style);
+
+    renderer.under(&rows, Some(caret), style.palette())?;
+    Ok(())
 }
 
 /// The row for the mode the box is showing.

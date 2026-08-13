@@ -6,24 +6,30 @@
 //! do to the screen is in these two functions.
 
 use super::frame::Frame;
+use super::region::Caret;
 use super::tail::Tail;
 
 /// Builds a frame: back over what was drawn, then the rows that have left the
 /// tail for good, then the rows still live, then whatever stands under them.
 ///
 /// Returns how many rows ended up below the cursor, which is what the next
-/// rewind has to stop short of. The cursor comes back to the end of the tail
-/// rather than resting after the last row written, because the end of the tail
-/// is where the next delta goes — and it is where a terminal echoing a keystroke
-/// nothing is waiting to read puts it, rather than through the middle of a row
-/// this process composed.
+/// rewind has to stop short of.
+///
+/// Where the cursor comes back to depends on who is expected to type next.
+/// With no caret it goes to the end of the tail, because that is where the next
+/// delta lands. With one it goes into the rows standing under the tail — those
+/// rows are a box somebody is writing in while the answer above them arrives,
+/// and a cursor left at the end of the answer would put every keystroke on the
+/// wrong row of the screen.
 pub(crate) fn draw(
     frame: &mut Frame,
     drawn: usize,
     overflow: &mut Vec<String>,
     tail: &Tail,
-    under: &[String],
+    under: (&[String], Option<Caret>),
 ) -> usize {
+    let (under, caret) = under;
+
     open(frame, drawn, overflow);
     frame.live(tail.rows().chain(under.iter().map(String::as_str)));
 
@@ -31,8 +37,20 @@ pub(crate) fn draw(
         return 0;
     }
 
-    frame.park(under.len(), tail.column());
-    under.len()
+    // The cursor is on the last row written, so both of these count up from
+    // there. A caret past the rows it names is clamped rather than refused:
+    // the frame is already written by now, and a cursor one row out is better
+    // than a frame that failed.
+    let (up, column) = match caret {
+        Some(caret) => (
+            under.len() - 1 - caret.row.min(under.len() - 1),
+            caret.column,
+        ),
+        None => (under.len(), tail.column()),
+    };
+
+    frame.park(up, column);
+    up
 }
 
 /// Builds the end of a turn, and empties the tail into it.
@@ -77,7 +95,7 @@ mod tests {
         let (tail, mut overflow) = streamed(80, 24, "one\ntwo\nthree");
         let mut frame = Frame::new();
 
-        draw(&mut frame, 3, &mut overflow, &tail, &[]);
+        draw(&mut frame, 3, &mut overflow, &tail, (&[], None));
 
         assert_eq!(frame.as_str(), "\r\x1b[2A\x1b[Jone\r\ntwo\r\nthree");
     }
@@ -89,7 +107,7 @@ mod tests {
         let (tail, mut overflow) = streamed(80, 2, "alpha\nbeta\ngamma\ndelta");
         let mut frame = Frame::new();
 
-        draw(&mut frame, 2, &mut overflow, &tail, &[]);
+        draw(&mut frame, 2, &mut overflow, &tail, (&[], None));
 
         assert_eq!(
             frame.as_str(),
@@ -107,12 +125,43 @@ mod tests {
         let mut frame = Frame::new();
         let under = ["ask mode on".to_owned()];
 
-        let parked = draw(&mut frame, 1, &mut overflow, &tail, &under);
+        let parked = draw(&mut frame, 1, &mut overflow, &tail, (&under, None));
 
         assert_eq!(parked, 1);
         assert_eq!(
             frame.as_str(),
             "\r\x1b[Jthe answer\r\nask mode on\x1b[1A\x1b[11G"
+        );
+    }
+
+    #[test]
+    fn a_caret_brings_the_cursor_into_the_rows_under_the_tail() {
+        // A box being typed into while the answer above it arrives. Left at
+        // the end of the answer, the cursor would put every keystroke on the
+        // wrong row of the screen.
+        let (tail, mut overflow) = streamed(80, 24, "the answer");
+        let mut frame = Frame::new();
+        let under = [
+            "\u{256d}\u{2500}\u{256e}".to_owned(),
+            "\u{2502} \u{203a} hi".to_owned(),
+            "\u{2570}\u{2500}\u{256f}".to_owned(),
+            "ask mode on".to_owned(),
+        ];
+
+        let parked = draw(
+            &mut frame,
+            1,
+            &mut overflow,
+            &tail,
+            (&under, Some(Caret { row: 1, column: 9 })),
+        );
+
+        // Two rows below the cursor, so the next rewind stops short of them.
+        assert_eq!(parked, 2);
+        assert!(
+            frame.as_str().ends_with("\x1b[2A\x1b[10G"),
+            "{:?}",
+            frame.as_str()
         );
     }
 

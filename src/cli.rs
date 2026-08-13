@@ -311,6 +311,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             settings.color(),
             settings.glyphs(),
             settings.tool_detail(),
+            settings.mouse(),
             renderer.is_terminal(),
             &from,
         ),
