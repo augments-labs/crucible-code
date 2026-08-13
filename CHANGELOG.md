@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-08-13
+
+### Added
+
+- **A click in the prompt box places the cursor.** `Prompt::clicked` answers
+  which character of the line a click landed on; a click on the border, the
+  status row or the list above moves nothing rather than jumping to the nearest
+  place inside. Nothing is wired to a mouse yet — reporting is opt-in, because
+  turning it on takes the wheel away from the terminal.
+
 ### Changed
 
 - **The prompt box grows downward instead of scrolling sideways.** A line longer
@@ -921,7 +931,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.13...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.14...HEAD
+[0.0.14]: https://github.com/augments-labs/crucible-code/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/augments-labs/crucible-code/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/augments-labs/crucible-code/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/augments-labs/crucible-code/compare/v0.0.10...v0.0.11
