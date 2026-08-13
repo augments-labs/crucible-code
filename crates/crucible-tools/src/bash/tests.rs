@@ -4,10 +4,10 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::Command;
+use crucible_core::{Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Verdict};
 
-use super::output::OUTPUT;
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
+use crate::bound::OUTPUT;
 use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
@@ -86,12 +86,22 @@ fn a_command_that_runs_too_long_is_stopped() {
     );
 }
 
+// Unix only, because the guarantee is a signal sent to a process group and
+// Windows has no process group to signal. `output::stop` says why crucible does
+// not buy itself the FFI a job object would take, and says that a killed
+// command there still leaves what it started running — which is exactly the
+// case this asserts the absence of.
+#[cfg(unix)]
 #[test]
-fn a_command_stopped_for_running_too_long_says_so_once() {
-    // Both facts hold here: the command was killed for taking too long, and the
-    // thing it left running still holds the pipe open. Reported as two notes
-    // they read as two separate problems, and the second one names a cause that
-    // is not why this stopped.
+fn what_a_stopped_command_left_running_is_stopped_with_it() {
+    // A backgrounded process is disowned by the shell and reparented, so it
+    // used to outlive the command and go on holding the pipe — which is why the
+    // report has a note for output that is still arriving. It is in the group
+    // the command was killed with, so what the model gets here is the timeout
+    // and nothing else, and the machine is left with nothing running.
+    //
+    // What the note is still for is a process that left that group of its own
+    // accord, and `output::tests` pins how that reads.
     let sample = Sample::new("bash-timeout-background");
 
     let output = ran(
@@ -105,6 +115,11 @@ fn a_command_stopped_for_running_too_long_says_so_once() {
         output.text().matches("\n\n[").count(),
         1,
         "one marker, not two: {}",
+        output.text()
+    );
+    assert!(
+        !output.text().contains("still holds the output open"),
+        "{}",
         output.text()
     );
 }
@@ -141,6 +156,30 @@ fn output_that_was_still_arriving_does_not_come_back_looking_complete() {
         output.text().contains("still arriving"),
         "{}",
         output.text()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pipeline_the_command_started_is_stopped_with_it() {
+    // `kill` reaches the shell alone. Every other member of a pipeline is a
+    // child of it, so they reparent and go on running after the tool has
+    // returned — `yes > /dev/null | cat` burns a core until the session ends.
+    // What is signalled is the process group, and the marker is what proves it:
+    // written by a member of the pipeline after the command was stopped, it can
+    // only exist if that member outlived the kill.
+    let sample = Sample::new("bash-pipeline");
+
+    let output = ran(
+        &sample,
+        r#"{"command":"(sleep 2; touch outlived) | cat","timeout":1}"#,
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    thread::sleep(Duration::from_secs(3));
+    assert!(
+        !sample.root().join("outlived").exists(),
+        "a member of the pipeline outlived the command"
     );
 }
 
@@ -195,6 +234,38 @@ fn a_turn_already_stopped_never_starts_the_command() {
     assert!(!sample.root().join("should-not-exist").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn the_shell_is_not_something_the_workspace_can_supply() {
+    // An empty element on the PATH means the current directory to whatever
+    // resolves a bare name, and the current directory of every command this
+    // tool runs is the workspace. So a file the model wrote called `sh` would
+    // be the shell that reads every command line after it — including the ones
+    // a user was asked about and allowed.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("bash-shell");
+    sample.write("sh", "#!/bin/sh\necho owned\n");
+    std::fs::set_permissions(
+        sample.root().join("sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("a writable temporary directory");
+
+    let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
+    let empty_element_first = move |name: &str| match name {
+        "PATH" => Some(OsString::from(format!(":{inherited}"))),
+        other => std::env::var_os(other),
+    };
+
+    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
+    let output = tool
+        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
+        .expect("the command ran");
+
+    assert_eq!(output.text(), "hello");
+}
+
 #[test]
 fn a_call_with_no_command_says_what_is_missing() {
     let sample = Sample::new("bash-nocommand");
@@ -242,6 +313,96 @@ fn the_sensitivity_carries_what_the_call_will_run() {
             }
         }
     );
+}
+
+/// Whether a mode puts this command line to the user, decided the way a turn
+/// decides one.
+///
+/// Over the sensitivity this tool worked out rather than one written down here,
+/// so what the tests below pin is the whole route a call takes: the words of
+/// the line, the sensitivity handed over, and the arm the mode answers with.
+fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
+    struct Watching(bool);
+
+    impl Ask for Watching {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            self.0 = true;
+            (Verdict::Allow, Remember::Never)
+        }
+    }
+
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let call = ToolCall {
+        id: ToolId::new("one"),
+        name: tool.name().into(),
+        args: ToolArgs::new(format!(r#"{{"command":"{line}"}}"#)),
+    };
+
+    let mut watching = Watching(false);
+    Permission::with(mode, Rules::new()).decide(
+        &call,
+        &tool.sensitivity(&call.args),
+        &mut watching,
+    );
+
+    watching.0
+}
+
+/// The lines a mode is asked about here: ones naming nothing but paths that
+/// exist inside the workspace, and ones nobody would call an edit.
+///
+/// The first group is the point. Each of them changes what `write` may change
+/// and names it in words a reader could check, and each is still put to the
+/// user — because `sh` looks those words up again when the command runs, and
+/// what it finds then is not what a check on the text found.
+const LINES: [&str; 9] = [
+    "mkdir demo",
+    "touch src/b.rs",
+    "cp src/a.rs src/b.rs",
+    "mv src/a.rs src/b.rs",
+    "rm src/a.rs",
+    "ls src",
+    "cargo test",
+    "rm -rf build",
+    "mkdir demo; touch src/b.rs",
+];
+
+#[test]
+fn allow_edits_asks_before_every_command_line() {
+    // What the mode's name says, with nothing behind it about what a line was
+    // read to be. A shell is what `allowEdits` stops at, whatever it was given
+    // to run.
+    let sample = Sample::new("bash-allow-edits");
+    sample.write("src/a.rs", "");
+
+    for line in LINES {
+        assert!(asks(&sample, Mode::AllowEdits, line), "{line}");
+    }
+}
+
+#[test]
+fn ask_asks_before_the_same_ones() {
+    // `allowEdits` and `ask` answer a command identically, which is the whole
+    // of the difference between them being about files.
+    let sample = Sample::new("bash-ask");
+    sample.write("src/a.rs", "");
+
+    for line in LINES {
+        assert!(asks(&sample, Mode::Ask, line), "{line}");
+    }
+}
+
+#[test]
+fn full_access_asks_before_none_of_them() {
+    // The same lines under the one mode that runs a command unasked, so the
+    // two tests above are pinning the mode rather than something the tool or
+    // the engine would have done to every call anyway.
+    let sample = Sample::new("bash-full-access");
+    sample.write("src/a.rs", "");
+
+    for line in LINES {
+        assert!(!asks(&sample, Mode::FullAccess, line), "{line}");
+    }
 }
 
 #[test]
@@ -373,36 +534,4 @@ fn a_name_crucible_has_no_value_for_is_left_unset_rather_than_given_one() {
     // makes it carry; a default written into this crate instead would be this
     // crate deciding where a command's programs come from.
     assert!(environment::inherited(|_| None).is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn the_shell_is_not_something_the_workspace_can_supply() {
-    // An empty element on the PATH means the current directory to whatever
-    // resolves a bare name, and the current directory of every command this
-    // tool runs is the workspace. So a file the model wrote called `sh` would
-    // be the shell that reads every command line after it — including the ones
-    // a user was asked about and allowed.
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let sample = Sample::new("bash-shell");
-    sample.write("sh", "#!/bin/sh\necho owned\n");
-    std::fs::set_permissions(
-        sample.root().join("sh"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .expect("a writable temporary directory");
-
-    let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
-    let empty_element_first = move |name: &str| match name {
-        "PATH" => Some(OsString::from(format!(":{inherited}"))),
-        other => std::env::var_os(other),
-    };
-
-    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
-    let output = tool
-        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
-        .expect("the command ran");
-
-    assert_eq!(output.text(), "hello");
 }

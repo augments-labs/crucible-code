@@ -273,6 +273,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "rustix",
  "serde_json",
 ]
 

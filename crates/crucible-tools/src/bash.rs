@@ -216,7 +216,8 @@ impl Tool for Bash {
             )
         })?;
 
-        let child = std::process::Command::new(shell)
+        let mut spawning = std::process::Command::new(shell);
+        spawning
             .arg("-c")
             .arg(command)
             .current_dir(self.workspace.root())
@@ -232,7 +233,18 @@ impl Tool for Bash {
             )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // A group of its own, headed by the shell, so that stopping the command
+        // reaches the rest of what the line started rather than the shell alone
+        // — `output::stop` says what that costs when it is left undone. It also
+        // takes the command out of crucible's own group, which is what keeps a
+        // signal sent to this program from ending a command halfway through a
+        // write it was allowed to make.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut spawning, 0);
+
+        let child = spawning
             .spawn()
             .map_err(|source| io("could not start a shell", source))?;
 

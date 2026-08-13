@@ -17,10 +17,7 @@ use std::time::{Duration, Instant};
 use crucible_core::{Cancel, ToolError, ToolOutput};
 
 use super::{NAME, TICK, io};
-
-/// How much output comes back. Past this the interesting part is the end —
-/// the error, the summary line — so the middle is what goes.
-pub(super) const OUTPUT: usize = 30_000;
+use crate::bound::OUTPUT;
 
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
@@ -54,13 +51,13 @@ pub(super) fn collect(
         }
 
         if cancel.requested() {
-            let _ = child.kill();
+            stop(&mut child);
             let _ = child.wait();
             return Err(ToolError::Cancelled(NAME));
         }
 
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            stop(&mut child);
             expired = true;
             break child.wait().ok();
         }
@@ -77,6 +74,42 @@ pub(super) fn collect(
         expired,
     }
     .report())
+}
+
+/// Ends the command, and the rest of what the command line started.
+///
+/// `Child::kill` signals the shell alone, and a shell is rarely the only
+/// process a line makes: every other member of a pipeline is a child of it,
+/// so they are reparented and keep running once it is gone. `yes > /dev/null |
+/// cat` then burns a core for the rest of the session, after the tool has
+/// returned and with nothing left holding a handle to it.
+///
+/// So the signal goes to the process group instead, which [`super`] puts the
+/// shell at the head of when it spawns one. Group membership is inherited, and
+/// a non-interactive shell does no job control of its own, so every process the
+/// line started is in it — including the ones the shell had already stopped
+/// waiting for.
+///
+/// Windows has no process group to signal. Its equivalent is a job object, and
+/// every call that makes one is FFI: `unsafe` is denied across this workspace,
+/// with one module opted in for a session file's permissions, and a second
+/// exception is not something a tool should buy itself. There a killed command
+/// still leaves what it started running, and what the model is told is the note
+/// [`Finished::report`] writes about output that is still arriving.
+fn stop(child: &mut Child) {
+    #[cfg(unix)]
+    // The group id is the child's own process id, because it was spawned as the
+    // leader of a group of its own. Signalling the group before the child is
+    // deliberate: the child is the one process that cannot get away, and it is
+    // what holds the group open while the rest of the line is reached.
+    if let Some(group) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+
+    let _ = child.kill();
 }
 
 /// What a command left behind.

@@ -1,6 +1,40 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{Kept, OUTPUT, cut};
+use super::{Finished, Kept, OUTPUT, cut};
+
+#[test]
+fn a_command_stopped_for_running_too_long_says_so_once() {
+    // Both facts hold here: it was killed for taking too long, and something it
+    // left running holds the pipe open still. Reported as two notes they read
+    // as two problems, the second of which names a cause that is not why this
+    // stopped.
+    //
+    // Assembled rather than run, because the process that can do this is one
+    // that left the group the command was killed with — a daemon that called
+    // `setsid` for itself — and no command line makes one of those on every
+    // platform this ships to.
+    let report = Finished {
+        code: None,
+        out: "half a build".to_owned(),
+        arriving: true,
+        expired: true,
+    }
+    .report();
+
+    assert!(report.is_failed());
+    assert_eq!(
+        report.text().matches("\n\n[").count(),
+        1,
+        "one marker, not two: {}",
+        report.text()
+    );
+    assert!(report.text().contains("ran too long"), "{}", report.text());
+    assert!(
+        report.text().contains("still holds the output open"),
+        "{}",
+        report.text()
+    );
+}
 
 #[test]
 fn more_output_than_anything_can_use_keeps_both_ends() {
