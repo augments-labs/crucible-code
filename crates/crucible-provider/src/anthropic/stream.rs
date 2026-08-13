@@ -1,126 +1,19 @@
-//! One response, as deltas.
+//! One Anthropic response, as deltas.
 //!
-//! The read half of the provider: events in through [`super::wire`], deltas
-//! out. It exists apart from the request because it outlives it — the request
-//! is over in a round trip, and this is what runs for as long as the model is
-//! talking.
-//!
-//! The cancel is looked at between events, and what makes that prompt is that
-//! the framing below gives up waiting and hands the turn back rather than
-//! blocking on the socket. So a provider that has stopped talking costs one
-//! bounded wait and not an indefinite one, and a wait that expired ends
-//! nothing: the response is still open, and only the user or the socket closes
-//! it. The other provider streams the same way, through the same framing.
+//! The loop belongs to [`crate::stream`] and is the same for every provider.
+//! What is this provider's is which events mean something, which lives in
+//! [`super::wire`]; what is here is the pairing of the two, and the tests that
+//! read a recorded response end to end.
 
-use std::fmt;
-use std::io::{BufReader, Read};
+use crate::anthropic::wire::Messages;
+use crate::stream::Response;
 
-use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
-
-use crate::anthropic::{NAME, wire};
-use crate::sse::{Events, Framed};
-
-/// A response being read.
-pub(super) struct Stream {
-    events: Events<BufReader<Box<dyn Read + Send>>>,
-    cancel: Cancel,
-    /// Whether the model said why it stopped.
-    stopped: bool,
-    /// Whether there is nothing further to deliver.
-    finished: bool,
-}
-
-impl Stream {
-    /// Reads `body` until it ends or `cancel` is raised.
-    pub(super) fn new(body: Box<dyn Read + Send>, cancel: Cancel) -> Self {
-        Self {
-            events: Events::new(BufReader::new(body)),
-            cancel,
-            stopped: false,
-            finished: false,
-        }
-    }
-
-    /// What to deliver when the events run out.
-    ///
-    /// A response that stops arriving part-way through looks exactly like a
-    /// finished one from here — same silence, no error. Saying so is the
-    /// difference between a visibly failed turn and an answer that was quietly
-    /// cut in half.
-    fn ended(&mut self) -> Option<Result<Delta, ProviderError>> {
-        self.finished = true;
-
-        if self.stopped {
-            return None;
-        }
-
-        Some(Err(ProviderError::Transport {
-            provider: NAME,
-            problem: "the response ended before the model finished".into(),
-        }))
-    }
-
-    /// Stops delivering, and reports why.
-    fn fail(&mut self, problem: ProviderError) -> Result<Delta, ProviderError> {
-        self.finished = true;
-        Err(problem)
-    }
-}
-
-impl fmt::Debug for Stream {
-    /// By hand: a socket part-way through a response cannot be shown without
-    /// consuming it.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Stream")
-            .field("stopped", &self.stopped)
-            .field("finished", &self.finished)
-            .finish_non_exhaustive()
-    }
-}
-
-impl DeltaStream for Stream {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
-        loop {
-            if self.finished {
-                return None;
-            }
-
-            // Between events rather than during one, which is prompt because
-            // the read below comes back whether or not anything arrived.
-            if self.cancel.requested() {
-                self.finished = true;
-                return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
-            }
-
-            let event = match self.events.next() {
-                None => return self.ended(),
-                Some(Err(problem)) => {
-                    return Some(self.fail(ProviderError::Transport {
-                        provider: NAME,
-                        problem: problem.to_string().into(),
-                    }));
-                }
-                // Nothing yet. Round the loop to the cancel above, which is the
-                // whole of what a bounded wait is for.
-                Some(Ok(Framed::Quiet)) => continue,
-                Some(Ok(Framed::Event(event))) => event,
-            };
-
-            match wire::delta(&event) {
-                Err(problem) => return Some(self.fail(problem)),
-                Ok(Some(delta)) => {
-                    self.stopped |= matches!(delta, Delta::Stopped(_));
-                    return Some(Ok(delta));
-                }
-                Ok(None) => {}
-            }
-        }
-    }
-}
+/// A response being read, as this endpoint narrates one.
+pub(super) type Stream = Response<Messages>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::ToolId;
+    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
 
     use super::*;
     use crate::transport::{Paused, Said};
