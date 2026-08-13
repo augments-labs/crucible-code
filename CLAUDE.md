@@ -124,6 +124,15 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
     anything that ships. Written a release later, a page documents a memory of
     the change rather than the change — and the reader who needed it met the
     gap first.
+
+    The module doc comment is on that list, and it is the one most often left
+    behind. This project states its invariants in the prose at the top of a
+    file rather than in a design document, so a comment its code has outgrown
+    is not a stale note: it is a false statement of the invariant, sitting
+    where the next reader goes to learn it, and the closer it sits to the code
+    that broke it the more it is believed. So read the prose above what you
+    changed — and the prose above whatever now does something else because you
+    changed it, which is the copy nobody opens.
 11. **A pull request over 400 changed lines into `main` is sent back.**
     Additions plus deletions across the whole diff, generated files aside —
     `Cargo.lock` and `schema/` are output, and nobody reads output line by line.

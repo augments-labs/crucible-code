@@ -7,6 +7,8 @@
 //! not, since the failure that costs something is a flag being waved through
 //! after taking a word that was never a path.
 
+use std::fs;
+
 use crucible_core::Reach;
 
 use super::of;
@@ -157,7 +159,10 @@ fn cp_reaches_no_further_than_either_end() {
     let sample = sample("reach-cp");
 
     assert_eq!(reach(&sample, "cp src/a.rs src/b.rs"), Reach::Workspace);
-    assert_eq!(reach(&sample, "cp -r src build/src"), Reach::Workspace);
+    assert_eq!(
+        reach(&sample, "cp -f src/a.rs build/a.rs"),
+        Reach::Workspace
+    );
 
     // `-t` takes the destination directory, which would leave the source
     // looking like the only path in the line.
@@ -177,6 +182,105 @@ fn mv_reaches_no_further_than_either_end() {
 
     assert!(asks(&sample, "mv -t build src/a.rs"));
     assert!(asks(&sample, "mv --suffix .bak src/a.rs build"));
+}
+
+#[test]
+fn a_copy_into_a_directory_is_proved_nothing_about() {
+    // The file written is `outbox/a.rs`, and no word in the line spells it —
+    // so nothing resolved it, and a symbolic link a cloned repository left
+    // there is followed straight out of the tree.
+    let sample = sample("reach-copy-into");
+    let outside = sample.outside("stolen", "");
+    fs::create_dir(sample.root().join("outbox")).expect("a writable temporary directory");
+    symlink(&outside, sample.root().join("outbox/a.rs"));
+
+    assert!(asks(&sample, "cp src/a.rs outbox"));
+    assert!(asks(&sample, "mv src/a.rs outbox"));
+
+    // The working directory is the same shape with a shorter name.
+    assert!(asks(&sample, "cp build/out ."));
+
+    // And more than one source says the last word is a directory whatever is
+    // on disk when this reads it.
+    assert!(asks(&sample, "cp src/a.rs build/out outbox"));
+    assert!(asks(&sample, "mv src/a.rs build/out outbox"));
+}
+
+#[test]
+fn a_recursive_copy_is_proved_nothing_about() {
+    // `-r` turns each word into a tree, and the files under one are paths no
+    // word named and nothing resolved. Whether every one of them lands inside
+    // is then a question about what the copy does with the links it meets,
+    // which is not something the line says.
+    let sample = sample("reach-copy-recursive");
+
+    for line in [
+        "cp -r src build/src",
+        "cp -R src build/src",
+        "cp --recursive src build/src",
+        "cp -rf src build/src",
+        "cp -a src build/src",
+        "cp --archive src build/src",
+    ] {
+        assert!(
+            asks(&sample, line),
+            "{line} descends and was not asked about"
+        );
+    }
+
+    // What is left is the copy this can read: two paths, both resolved, and
+    // the second one is the file that changes.
+    assert_eq!(reach(&sample, "cp src/a.rs src/b.rs"), Reach::Workspace);
+}
+
+#[test]
+fn no_line_that_makes_a_second_name_for_a_file_is_proved() {
+    // The engine refuses a write to its own configuration by the path, and a
+    // hard link is a second path to the same inode that resolving does not
+    // undo. Nothing here may make one, which is what holds that closed — and
+    // `cp` is one letter in a table away from being able to.
+    let sample = sample("reach-hard-link");
+
+    for line in [
+        "ln src/a.rs src/b.rs",
+        "cp -l src/a.rs src/b.rs",
+        "cp --link src/a.rs src/b.rs",
+        "cp -al src build/src",
+    ] {
+        assert!(asks(&sample, line), "{line} makes a second name for a file");
+    }
+}
+
+#[test]
+fn a_word_that_reaches_the_permission_configuration_is_proved_nothing_about() {
+    // What no file tool may write, no proved command line may write either.
+    // The refusal is on the directory as well as the files, because a program
+    // handed a directory works the filename out itself.
+    //
+    // Empty, the directory counts the same: one made this turn is a single
+    // copy away from holding a configuration, so what this reads is where the
+    // word lands and never what happens to be there while it reads.
+    let bare = sample("reach-configuration-bare");
+    assert!(asks(&bare, "mkdir .crucible"));
+    assert_eq!(
+        reach(&bare, "mkdir x.crucible"),
+        Reach::Workspace,
+        "a directory that merely ends in the name is somebody else's"
+    );
+
+    let sample = sample("reach-configuration");
+    sample.write(".crucible/config.json", "{}");
+
+    for line in [
+        "cp src/a.rs .crucible/config.json",
+        "rm .crucible/config.local.json",
+        "mv .crucible/config.json build/out",
+        "touch .crucible/config.local.json",
+        "cp src/a.rs .crucible",
+        "rmdir .crucible",
+    ] {
+        assert!(asks(&sample, line), "{line} reaches the configuration");
+    }
 }
 
 #[test]

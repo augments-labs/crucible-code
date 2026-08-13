@@ -23,5 +23,14 @@ authors.workspace = true
 globset.workspace = true
 thiserror.workspace = true
 
+# The descriptor walk that opens a path the workspace proved, which is what
+# makes containment hold against something else writing into the tree at the
+# same time. Every crate above inherits it, on Unix targets — and there it is
+# already being compiled for `crossterm`, so what arrives is a feature rather
+# than a crate. Windows has no `openat` and gets the check on names instead;
+# `workspace/open.rs` says what that costs.
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [lints]
 workspace = true

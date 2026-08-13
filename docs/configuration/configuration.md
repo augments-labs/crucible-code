@@ -110,7 +110,7 @@ means nothing to anyone else who clones the repository.
 | --- | --- | --- |
 | `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
-| `mouse` | `off`, `click` | Who the mouse belongs to while a prompt is up. |
+| `mouse` | `off`, `click` | Who the mouse belongs to for the length of a session. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
@@ -122,10 +122,11 @@ font has no box drawing rather than a fallback crucible guesses its way into.
 `mouse` is one trade with two ends rather than a preference. Left `off`, the
 terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
 the middle button pastes. Set to `click`, crucible asks the terminal to forward
-buttons while the prompt box is up, so a click in the box places the cursor —
-and the wheel is a button too, so it stops scrolling for as long as the box is
-there. crucible draws inline, which means the transcript above the box belongs
-to the terminal, so it cannot scroll that for you in exchange.
+buttons for the whole session, so a click in the box places the cursor between
+turns — and the wheel is a button too, so it stops scrolling until crucible
+exits, a turn included, where a click places nothing. crucible draws inline,
+which means the transcript above the box belongs to the terminal, so it cannot
+scroll that for you in exchange.
 
 ### `updates`
 
@@ -336,7 +337,8 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, glyphs, toolDetail
+crucible has at line 3, column 5 — accepted here: color, glyphs, mouse,
+toolDetail
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

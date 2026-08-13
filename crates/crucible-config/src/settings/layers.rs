@@ -151,9 +151,9 @@ mod tests {
     fn the_file_crucible_writes_to_is_the_layer_git_ignores_and_not_the_one_that_travels() {
         // `.crucible/config.json` is checked in, so a rule somebody answered
         // `always` to on their own machine would reach everyone who clones.
-        // Watched through a document only the other layer accepts: an `env`
-        // name outside crucible's own is refused in the file that travels, so
-        // reading this back at all is where it landed.
+        // Watched through a document only the other layer accepts: an `allow`
+        // is refused in the file that travels, so reading this back at all is
+        // where it landed — and an `allow` is what answering `always` writes.
         let scratch = Scratch::new("layers-local");
         let path = local(scratch.root());
 
@@ -161,7 +161,8 @@ mod tests {
             .expect("a writable temporary directory");
         fs::write(
             &path,
-            r#"{"env": {"WHOSE": "mine"}, "providers": {"a": {"model": "local"}}}"#,
+            r#"{"permissions": {"allow": ["bash(cargo test)"]},
+                "providers": {"a": {"model": "local"}}}"#,
         )
         .expect("a writable temporary directory");
 

@@ -144,18 +144,23 @@ impl Transport for Https {
 ///
 /// The wait expiring is not a failure — the response is still open and the model
 /// is still thinking — so it arrives as [`io::ErrorKind::Interrupted`], the one
-/// kind the `Read` contract says to retry. That spelling is what makes both
-/// readers of a body right without either knowing about this file: one that
-/// reads to the end waits through the pauses exactly as it did before, because
-/// `read_to_end` retries that kind itself; the streaming one reads through
-/// `fill_buf`, which does not, so it gets the turn back and looks at its cancel.
+/// kind the `Read` contract says to retry. The streaming reader reads through
+/// `fill_buf`, which does not retry it, so a pause hands the turn back and the
+/// cancel gets looked at.
 ///
 /// What it gives up is a bound nobody meant to have: this client measures a body
 /// read against the head's deadline too, so a peer that went silent used to fail
 /// the turn a minute after the head arrived — and so did a model that thought for
 /// that long, which is the failure worth losing the other one to prevent. Nothing
-/// ends a silent response now but the caller or the socket, and the caller being
-/// able to is the other half of this.
+/// here ends a silent response now but the caller or the socket.
+///
+/// Which is why a caller that retries has to say when it will stop. `read_to_end`
+/// does not: it retries an interruption for ever, so a body handed to it against
+/// a peer that stalls without closing is a thread that never comes back. The one
+/// caller that reads a whole body — [`refusal`] — carries its own deadline for
+/// that reason, and no new one may read a body without one.
+///
+/// [`refusal`]: crate::refusal
 struct Waiting(Box<dyn Read + Send>);
 
 impl Read for Waiting {
@@ -321,11 +326,15 @@ mod tests {
 
     #[test]
     fn a_body_read_to_the_end_waits_through_the_pauses_in_it() {
-        // A refusal message is read this way, and the `Read` contract is what
-        // keeps that caller unaware that a body read now gives up waiting: it
-        // retries an interruption itself. Reported any other way, a message
-        // that arrived in two pieces would come back as a read error and the
+        // What a caller reading a whole body has to survive: a message that
+        // arrived in two pieces, with a wait between them that expired. Read
+        // any other way, the pause would come back as a read error and the
         // sentence naming the model that does not exist would be lost.
+        //
+        // `read_to_end` is what this test uses and what a refusal must not:
+        // waiting through a pause and waiting for ever are the same behaviour
+        // until the peer stops talking, which is `refusal`'s deadline's job and
+        // is proved there.
         let url = pausing("{\"error\":", "\"nope\"}");
         let mut response = Https::new().post(&url, &[], "{}").unwrap();
 

@@ -316,6 +316,7 @@ fn every_notice_is_a_single_line() {
         StopReason::Filtered,
         StopReason::Paused,
         StopReason::Cancelled,
+        StopReason::Unknown,
     ];
 
     for stop in every {
@@ -325,7 +326,8 @@ fn every_notice_is_a_single_line() {
             | StopReason::OutOfTokens
             | StopReason::Filtered
             | StopReason::Paused
-            | StopReason::Cancelled => {}
+            | StopReason::Cancelled
+            | StopReason::Unknown => {}
         }
 
         let said = notice(stop).unwrap_or_default();
@@ -435,4 +437,15 @@ fn a_change_to_a_file_is_asked_about_without_one() {
     };
 
     assert!(!questioned(&changing).contains("nothing here proved"));
+}
+
+#[test]
+fn a_reason_this_build_does_not_know_is_reported_as_unfinished() {
+    // The one ending that must never be passed over in silence: a reason
+    // nobody here has heard of is not one of the two that mean the answer is
+    // whole, so treating it as ordinary would put a truncated answer on screen
+    // reading as a complete one.
+    let said = notice(StopReason::Unknown).expect("a reason nobody knows still says something");
+
+    assert!(said.starts_with("! unfinished"), "{said}");
 }

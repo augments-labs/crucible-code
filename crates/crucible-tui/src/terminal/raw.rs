@@ -22,6 +22,22 @@
 use std::fmt;
 use std::io::{self, IsTerminal};
 
+// Every guard here — this one, `Reporting`, `Title` — hands the terminal back
+// through `Drop`, and the only thing that runs a `Drop` on the way out of a
+// panic is unwinding. Built to abort, none of them runs: the shell that gets the
+// terminal back echoes nothing, reports clicks and wears somebody else's tab
+// name, and `reset` is the remedy.
+//
+// So this is a build that must not exist rather than one that is merely worse,
+// and the check is here because no test can make it. A test binary unwinds
+// whatever the release profile says, which is exactly how a guard can be proved
+// to keep its promise under `cargo test` and break it in the shipped artifact.
+#[cfg(panic = "abort")]
+compile_error!(
+    "the terminal guards hand the terminal back on unwind, so this crate cannot be built with \
+     panic = \"abort\""
+);
+
 /// What can go wrong entering raw mode.
 #[derive(Debug, thiserror::Error)]
 pub enum RawError {
@@ -36,10 +52,11 @@ pub enum RawError {
 /// exit path has to remember to.
 ///
 /// What that covers is every path this process decides: a return, a `?`, a
-/// panic that unwinds. Ctrl-C is inside it rather than outside — raw mode is
-/// what stops the terminal turning that key into a signal, so it arrives as a
-/// byte for the reader to act on and the guard is dropped on the way out like
-/// any other. What it does not cover is a process killed outright, where no
+/// panic — every panic, because a build that would not unwind one is refused
+/// above. Ctrl-C is inside it rather than outside — raw mode is what stops the
+/// terminal turning that key into a signal, so it arrives as a byte for the
+/// reader to act on and the guard is dropped on the way out like any other.
+/// What it does not cover is a process killed outright, where no
 /// code of this program's runs at all; `reset` is the terminal's own answer to
 /// that, and no program can do better from inside.
 pub struct Raw {
@@ -149,6 +166,26 @@ mod tests {
         }
 
         assert!(run().is_err());
+        LEFT.with(|left| assert_eq!(left.get(), 1));
+    }
+
+    #[test]
+    fn a_guard_the_stack_unwound_past_hands_it_back_too() {
+        // The path the module doc claims and nothing here used to reach: the
+        // terminal is raw, something panics, and the frames in between are
+        // discarded. It proves the `Drop`, and it cannot prove the strategy —
+        // this binary unwinds because a test binary always does. What says the
+        // shipped one unwinds is the `compile_error!` above, which fails the
+        // build rather than a test.
+        //
+        // The panic message on the way past is the harness reporting a panic
+        // that was caught on purpose, not a failure.
+        let unwound = std::panic::catch_unwind(|| {
+            let _raw = held();
+            panic!("the reader was handed a terminal that had gone");
+        });
+
+        assert!(unwound.is_err(), "nothing unwound");
         LEFT.with(|left| assert_eq!(left.get(), 1));
     }
 

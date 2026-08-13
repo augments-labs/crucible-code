@@ -6,21 +6,26 @@
 //! not.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::PathError;
 
 /// The set of directories a workspace reaches, each resolved once.
+///
+/// Each is held behind an `Arc` because every path proven against one keeps it:
+/// opening that path walks down from the directory it was proved against, so
+/// the two travel together and are cloned together.
 #[derive(Debug, Clone)]
 pub(super) struct Roots {
     /// The directory crucible was started in, canonical. Relative paths are
     /// joined to this one and `bash` runs here, so it stays distinguishable
     /// from the rest however many others are added.
-    root: PathBuf,
+    root: Arc<Path>,
 
     /// Further directories, named in configuration rather than discovered.
     /// Reaching them is a decision somebody wrote down; nothing here grows on
     /// its own.
-    extra: Vec<PathBuf>,
+    extra: Vec<Arc<Path>>,
 }
 
 impl Roots {

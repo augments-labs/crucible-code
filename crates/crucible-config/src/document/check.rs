@@ -44,12 +44,20 @@ impl Spot<'_> {
     };
 }
 
-/// One document being checked: the text it came from and what to call it.
+/// One document being checked: the text it came from, what to call it, and
+/// which of the layers it is.
+///
+/// The origin is held here rather than passed to the two checks that ask for
+/// it, because it is a property of the document being read and not of one
+/// question about it — and because a walk that has to be handed it at every
+/// level is a walk somebody can forget to hand it to.
 pub(super) struct Reader<'a> {
     /// The file as the user would name it, for the message.
     pub(super) file: &'a str,
     /// The source, so a key can be located in it.
     pub(super) text: &'a str,
+    /// Which layer this file is, which decides what it is allowed to say.
+    pub(super) origin: Origin,
 }
 
 impl Reader<'_> {
@@ -102,6 +110,28 @@ impl Reader<'_> {
     }
 
     /// An object whose keys crucible chose. An unrecognised one stops the read.
+    ///
+    /// And a key the shape marks as widening, in the layer that travels with a
+    /// clone. That is the same structural refusal `env` has had, moved onto the
+    /// thing it was always about: `.crucible/config.json` reaches everyone who
+    /// clones the repository, so a key in it that only ever loosens what
+    /// crucible does unasked would be authority granted by a file nobody read.
+    /// `permissions.mode` set to `fullAccess` there is every call in every
+    /// session approved before the user has typed anything.
+    ///
+    /// Only the layer that is checked in, not both project files, and the
+    /// reason is that crucible writes an `allow` the user answered `always` to
+    /// into `.crucible/config.local.json`. Refusing one there would be crucible
+    /// writing a file it then refuses to open.
+    ///
+    /// So a repository that commits a `config.local.json` of its own can still
+    /// state an `allow` and a `mode`, and this refusal does not reach it. That
+    /// is left standing on purpose rather than overlooked: refusing `mode`
+    /// there and not `allow` would cost somebody a per-project mode and stop
+    /// nobody, since `allow` states the same authority a rule at a time. What
+    /// closes it is a `.gitignore`, and what makes that bearable is the
+    /// refusal in `variables` below — an `allow` is rules the user can read,
+    /// while a `PATH` is every command silently becoming a different program.
     fn fields(
         &self,
         value: &Value,
@@ -119,13 +149,25 @@ impl Reader<'_> {
             let path = join(spot.path, key);
             let at = At::of(key, self.text);
 
-            let inner = shape.field(key).ok_or_else(|| ConfigError::UnknownKey {
+            let declared = shape.declared(key).ok_or_else(|| ConfigError::UnknownKey {
                 file: self.file.into(),
                 path: path.as_str().into(),
                 at,
                 accepted: Accepted::new(shape.keys()),
             })?;
-            self.check(held, inner, Spot { path: &path, at })?;
+
+            // Before the value is walked, so the refusal names the key rather
+            // than something written under it. What is wrong here is where the
+            // key is, and that is true whatever it was set to.
+            if declared.widens && self.origin == Origin::Project {
+                return Err(ConfigError::Widening {
+                    file: self.file.into(),
+                    path: path.as_str().into(),
+                    at,
+                });
+            }
+
+            self.check(held, &declared.shape, Spot { path: &path, at })?;
         }
         Ok(())
     }
@@ -189,13 +231,34 @@ impl Reader<'_> {
     /// is about a meaning the shape has no way to state — the shape of every
     /// entry in `env` is the same string either way.
     ///
-    /// The first is structural security. The one layer that reaches everyone who
-    /// clones a repository can hold no value whose meaning crucible does not
-    /// already fix, so a key cannot be leaked by a configuration file somebody
-    /// committed without reading it. Crucible's own namespace is exempt because
-    /// those names are settings rather than secrets — see [`crate::env`].
-    /// Checked by origin rather than by filename, because the filename is the
-    /// wiring's business and this rule is not.
+    /// The first is structural security. No file under the working directory
+    /// may hold a value whose meaning crucible does not already fix, so a key
+    /// cannot be leaked by a configuration file somebody committed without
+    /// reading it — and, the sharper half, a repository cannot decide what the
+    /// commands crucible runs actually are. `PATH` alone settles which program
+    /// every one of them resolves to; `LD_PRELOAD` is not on the list a child
+    /// inherits and is addable through this same block. Crucible's own
+    /// namespace is exempt because those names are settings rather than
+    /// secrets — see [`crate::env`]. Checked by origin rather than by filename,
+    /// because the filename is the wiring's business and this rule is not.
+    ///
+    /// Both project files, not only the checked-in one. Which of them git
+    /// carries is a convention written in the repository being cloned, so it is
+    /// not a thing crucible can check — see [`Origin::in_the_workspace`]. The
+    /// alternative was a list of the names that hand a program somebody else's
+    /// code, and it is unbounded: `PATH`, `LD_*` and `DYLD_*` are only the
+    /// start of it, `BASH_ENV` sources a file into every non-interactive shell,
+    /// and every language runtime adds one more. A list of the names somebody
+    /// guessed covers exactly the guesses — which is the argument the list of
+    /// variables a command inherits is already built on, from the other side.
+    ///
+    /// It costs the honest user a real thing, and this is what: a variable for
+    /// one project only — a `CARGO_TARGET_DIR`, a token a deploy script
+    /// reads — now goes in the configuration file in their home directory,
+    /// where it applies to every project, or in the shell they start crucible
+    /// in. They are not the threat and they pay anyway, because the file they
+    /// wrote and the file a repository committed are the same file to
+    /// everything crucible can see.
     ///
     /// The second holds in every layer: a variable crucible has already read by
     /// the time it opens a file cannot be set from one, so it is refused instead
@@ -206,7 +269,7 @@ impl Reader<'_> {
     /// than where the setting is read, because here the file is still open and
     /// the position can still be pointed at — by the time the layers have
     /// merged, neither can.
-    pub(super) fn variables(&self, value: &Value, origin: Origin) -> Result<(), ConfigError> {
+    pub(super) fn variables(&self, value: &Value) -> Result<(), ConfigError> {
         let Some(vars) = value.get("env").and_then(Value::as_object) else {
             return Ok(());
         };
@@ -223,8 +286,8 @@ impl Reader<'_> {
                 });
             }
 
-            if origin == Origin::Project && !env::ours(name) {
-                return Err(ConfigError::SecretLayer {
+            if self.origin.in_the_workspace() && !env::ours(name) {
+                return Err(ConfigError::ProjectEnv {
                     file: self.file.into(),
                     name: name.as_str().into(),
                     at: At::of(name, self.text),

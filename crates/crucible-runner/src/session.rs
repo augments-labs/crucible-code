@@ -1,17 +1,14 @@
-//! The session log: what makes a session survive the process.
+//! One file per session, one line per message, appended in order. Nothing
+//! already written is ever changed, which is what makes a crash cost the last
+//! line rather than the file: there is no offset to seek to, no length to
+//! update, and nothing half-changed to leave behind.
 //!
-//! One file per session, one line per message, appended in order and never
-//! rewritten. Append-only is what makes a crash cost the last line rather than
-//! the file: there is no offset to seek to, no length to update, and nothing
-//! that has already been written can be left half-changed.
-//!
-//! Writing happens on the session's own thread. The thread that draws must not
-//! wait for a disk, and a queue is how it stops having to.
-//!
-//! Durability here means "survives the process", not "survives the machine":
-//! each line reaches the operating system as it is recorded, and nothing calls
-//! `fsync`. Paying milliseconds per message to also survive a power cut is not
-//! the trade a coding session wants.
+//! The one cut is where continuing starts. `--continue` shortens the file to
+//! the end of the last message the replay could settle on — before a line a
+//! crash tore in half, before a tool call nothing ever answered — and does it
+//! before the handle that appends exists. A log already ending there loses
+//! nothing, which is every ordinary run. It is a truncation and not a rewrite:
+//! what survives is byte for byte what was written.
 
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};

@@ -157,6 +157,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
             Message::Agent {
                 text: "Hello, world".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
             },
         ]
     );
@@ -246,6 +247,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
             Message::Agent {
                 text: "looking".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Cancelled),
             },
         ]
     );
@@ -303,6 +305,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
             Message::Agent {
                 text: "let me look at src/main.rs".into(),
                 calls: Vec::new(),
+                stop: None,
             },
         ]
     );
@@ -434,6 +437,7 @@ fn a_session_that_forgot_is_continued_from_where_it_started_again() {
             Message::Agent {
                 text: "after".into(),
                 calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
             },
         ]
     );
@@ -559,11 +563,13 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
     earlier.push(Message::Agent {
         text: "first".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
     earlier.push(Message::User("two".into()));
     earlier.push(Message::Agent {
         text: "second".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
     scripted.runner = scripted.runner.resuming(earlier);
 
@@ -608,6 +614,73 @@ fn a_turn_reports_why_it_stopped() {
     assert_eq!(scripted.turn("go").unwrap(), StopReason::OutOfTokens);
 
     assert_eq!(scripted.finished(), [StopReason::OutOfTokens]);
+}
+
+#[test]
+fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
+    // The live notice covers the session; the log is what covers the restart.
+    // Without the reason on the line, the user hits the ceiling mid-sentence,
+    // quits, continues, and replay hands the half-sentence back as a finished
+    // turn — so the model is shown its own truncation as an answer it chose to
+    // end.
+    let sample = Sample::new("runner-cut-off");
+    let script = Script::new(vec![vec![
+        Delta::Text("as I was say".into()),
+        Delta::Stopped(StopReason::OutOfTokens),
+    ]]);
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+
+    scripted.turn("write it all out").unwrap();
+
+    // Dropping the runner drops the session, which is what waits for the queue.
+    drop(scripted);
+    let (_session, replayed) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        replayed.messages(),
+        [
+            Message::User("write it all out".into()),
+            Message::Agent {
+                text: "as I was say".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::OutOfTokens),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_it() {
+    // Silence is what a finished response and one that stopped arriving have in
+    // common. Read as a finish, half an answer reaches the user looking whole —
+    // and reaches the model that way on every turn afterwards. Both providers
+    // here prevent it; this is what a third one that forgot would meet.
+    let script = Script::new(vec![vec![Delta::Text("as I was say".into())]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(
+        matches!(problem, TurnError::Provider(ProviderError::Protocol { .. })),
+        "{problem:?}"
+    );
+
+    // What the user already read is still recorded, and it is recorded as an
+    // answer that never reached an ending.
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::User("go".into()),
+            Message::Agent {
+                text: "as I was say".into(),
+                calls: Vec::new(),
+                stop: None,
+            },
+        ]
+    );
+    assert_eq!(scripted.finished(), [], "a failed turn has no ending");
 }
 
 #[test]
@@ -657,6 +730,7 @@ fn earlier(sample: &Sample) -> SessionId {
     session.append(&Message::Agent {
         text: "an answer from before".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
 
     // Dropping is what waits for the queue, so the log is complete after it.

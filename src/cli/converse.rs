@@ -29,9 +29,7 @@ use std::time::Duration;
 
 use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
 use crucible_runner::Runner;
-use crucible_tui::{
-    Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, TerminalError, pressed,
-};
+use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, TerminalError, pressed};
 
 use super::Fatal;
 use super::draw;
@@ -108,14 +106,6 @@ pub(crate) fn converse<T: Terminal>(
     // at one end or the other, which reads whole lines instead.
     let raw = Raw::enter()?;
     let keys = raw.is_some();
-
-    // Only where a layer asked for it, because the wheel is a button: a
-    // terminal forwarding buttons to crucible is one whose wheel no longer
-    // scrolls the scrollback this program's transcript lives in.
-    let _pointer = (keys && style.clicks())
-        .then(Reporting::on)
-        .transpose()?
-        .flatten();
 
     // One line for the whole session rather than one per prompt. What was typed
     // while a turn ran is still there when it ends, and the allocation the last

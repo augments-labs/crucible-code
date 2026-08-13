@@ -179,6 +179,89 @@ fn a_finished_call_whose_arguments_never_streamed_supplies_them() {
 }
 
 #[test]
+fn a_call_finishing_that_is_not_the_one_open_is_refused() {
+    // The finished item carries the whole argument text, and taken on trust it
+    // would be emitted under whichever call is open — one tool running on
+    // another tool's arguments, and read against that other call's `streamed`
+    // flag, so the arguments arrive twice or not at all.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+
+    let elsewhere = r#"{"type":"response.output_item.done","output_index":1,
+        "item":{"type":"function_call","id":"fc_2","call_id":"call_2","name":"write",
+                "arguments":"{\"path\":\"b.rs\"}"}}"#;
+    let problem = deltas(&event(elsewhere), &mut open).expect_err("another call finishing");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
+}
+
+#[test]
+fn a_call_finishing_with_nothing_open_is_refused() {
+    let done = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read",
+                "arguments":"{}"}}"#;
+
+    let problem =
+        deltas(&event(done), &mut Open::default()).expect_err("a call nothing ever opened");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
+}
+
+#[test]
+fn a_message_finishing_is_not_a_tool_call_and_leaves_the_open_one_alone() {
+    // The response narrates the end of every item, and a call is opened before
+    // the message beside it is closed. Read as a call, that would end the open
+    // one and the fragments still to come would have nothing to belong to.
+    let mut open = Open::default();
+    deltas(&event(OPENED), &mut open).expect("a call opens");
+
+    let said = r#"{"type":"response.output_item.done","output_index":0,
+        "item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}"#;
+
+    assert!(
+        deltas(&event(said), &mut open)
+            .expect("a message finishing")
+            .is_empty()
+    );
+
+    let fragment = r#"{"type":"response.function_call_arguments.delta",
+        "item_id":"fc_1","delta":"{}"}"#;
+    assert_eq!(
+        deltas(&event(fragment), &mut open).expect("the open call's arguments"),
+        vec![Delta::ToolArgs("{}".into())]
+    );
+}
+
+#[test]
+fn a_tool_call_carrying_half_an_identity_is_refused_rather_than_skipped() {
+    // Skipped, nothing opens: the fragments that follow are assembled onto the
+    // call before it, the half-announced call leaves no trace, and the turn
+    // ends looking like a clean finish with a tool the model asked for never
+    // run.
+    for half in [
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","call_id":"call_1","name":"read"}}"#,
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","id":"fc_1","name":"read"}}"#,
+        r#"{"type":"response.output_item.added",
+            "item":{"type":"function_call","id":"fc_1","call_id":"call_1"}}"#,
+    ] {
+        let problem = deltas(&event(half), &mut Open::default()).expect_err("half a call");
+
+        assert!(
+            matches!(problem, ProviderError::Protocol { .. }),
+            "{problem:?}"
+        );
+    }
+}
+
+#[test]
 fn a_response_that_asked_for_nothing_yielded() {
     let output = r#"[{"type":"message","role":"assistant","content":[]}]"#;
 

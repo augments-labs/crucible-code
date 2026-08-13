@@ -26,6 +26,15 @@ pub enum Message {
         text: Box<str>,
         /// The tools it asked for, in the order it asked.
         calls: Vec<ToolCall>,
+        /// How the answer ended, or `None` where it never reached an ending —
+        /// a response that broke off part way through.
+        ///
+        /// Carried on the message rather than reported once and forgotten,
+        /// because the transcript outlives the turn: it is written to the
+        /// session log, read back by `--continue`, and sent to the model on
+        /// every turn after this one. Without it a half-sentence goes back to
+        /// the model as an answer it chose to end.
+        stop: Option<StopReason>,
     },
 
     /// What the tools produced, matched back to the calls that asked.
@@ -67,6 +76,53 @@ pub enum StopReason {
     Paused,
     /// The user cancelled.
     Cancelled,
+    /// The provider named a reason this build has never heard of.
+    ///
+    /// Every other variant here says what happened; this one says only that
+    /// nobody knows, which is why it exists rather than a fallback to
+    /// [`Self::Yielded`]. A vendor's list grows, and the day it does, the arm
+    /// that catches the new word decides whether an answer that was cut short
+    /// arrives looking complete. Reading it as unfinished is wrong at worst
+    /// about a turn that was fine; reading it as a finish is wrong about the
+    /// one failure the user cannot see for themselves.
+    ///
+    /// It is not a licence to stop mapping reasons. A new one in a vendor's
+    /// list is still an edit to that provider — this is what holds until the
+    /// edit is made.
+    Unknown,
+}
+
+impl StopReason {
+    /// What the model has to be told about an agent turn that ended this way,
+    /// or `None` where the turn ended the way the model meant it to.
+    ///
+    /// Takes the option because the absence of a reason is itself one of the
+    /// answers: a response that broke off never said why it stopped, and a
+    /// turn that never said is no more finished than one that said it was cut
+    /// short.
+    ///
+    /// The sentence lives here rather than in each provider so that two
+    /// providers cannot disagree about what a cut-off turn is. Where it goes
+    /// on the wire differs between them, and that part each of them owns.
+    #[must_use]
+    pub fn cut(stop: Option<Self>) -> Option<&'static str> {
+        match stop {
+            // The answer stops where the model meant it to, and a turn waiting
+            // on tools has the calls beside it saying what it is waiting for.
+            Some(Self::Yielded | Self::WantsTools) => None,
+
+            Some(Self::OutOfTokens) => Some("[the answer above was cut off at the token ceiling]"),
+            Some(Self::Filtered) => {
+                Some("[the answer above was cut short by the provider's filter]")
+            }
+            Some(Self::Paused) => Some("[the answer above was paused and was never carried on]"),
+            Some(Self::Cancelled) => Some("[the answer above was stopped by the user]"),
+            Some(Self::Unknown) => {
+                Some("[the answer above stopped for an unknown reason and may be unfinished]")
+            }
+            None => Some("[the answer above was cut off before it finished]"),
+        }
+    }
 }
 
 /// The ordered record of turns.
@@ -145,11 +201,60 @@ mod tests {
         transcript.push(Message::Agent {
             text: "answer".into(),
             calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
         });
         transcript.push(Message::User("second".into()));
 
         assert_eq!(transcript.turns(), 2);
         assert_eq!(transcript.len(), 3);
+    }
+
+    #[test]
+    fn a_turn_that_ended_the_way_the_model_meant_it_to_is_not_marked() {
+        // Every turn ends. A note under each one saying so would be spent on
+        // the path taken every time, and the model would learn nothing from it.
+        assert_eq!(StopReason::cut(Some(StopReason::Yielded)), None);
+        assert_eq!(StopReason::cut(Some(StopReason::WantsTools)), None);
+    }
+
+    #[test]
+    fn every_way_a_turn_can_be_cut_off_says_so_to_the_model() {
+        // The half of this the live notice does not cover: the user is told on
+        // screen, and the model is told here — on the next request, and on
+        // every request after a session is continued. Listed by an exhaustive
+        // `match` rather than an array, so a reason added to `StopReason` stops
+        // the build here instead of being the one nobody worded.
+        let every = [
+            StopReason::OutOfTokens,
+            StopReason::Filtered,
+            StopReason::Paused,
+            StopReason::Cancelled,
+            StopReason::Unknown,
+        ];
+
+        for stop in every {
+            match stop {
+                StopReason::OutOfTokens
+                | StopReason::Filtered
+                | StopReason::Paused
+                | StopReason::Cancelled
+                | StopReason::Unknown => {}
+                StopReason::Yielded | StopReason::WantsTools => continue,
+            }
+
+            assert!(
+                StopReason::cut(Some(stop)).is_some(),
+                "{stop:?} reads as a finished turn"
+            );
+        }
+    }
+
+    #[test]
+    fn an_answer_that_never_reached_an_ending_is_marked_as_cut_off() {
+        // A response that broke off part way says nothing about why it stopped.
+        // Read as a finish it is a half-sentence the model is shown as a turn
+        // it chose to end.
+        assert!(StopReason::cut(None).is_some());
     }
 
     #[test]

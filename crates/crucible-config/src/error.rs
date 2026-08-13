@@ -194,21 +194,27 @@ pub enum ConfigError {
         at: At,
     },
 
-    /// An `env` variable that is not crucible's own, in the layer that travels
-    /// with a clone.
+    /// An `env` variable that is not crucible's own, in a file under the
+    /// working directory.
     ///
     /// Its own variant rather than an unknown key, because the name is not a
-    /// typo — `env` is a block crucible has and this is a name it will take
-    /// anywhere else. A reader told "no such setting" would go looking for a
-    /// misspelling that is not there.
+    /// typo — `env` is a block crucible has and this is a name it will take in
+    /// the file in the user's home directory. A reader told "no such setting"
+    /// would go looking for a misspelling that is not there.
+    ///
+    /// The message names the working directory rather than either file, because
+    /// both of them are refused and telling somebody to move the line to the
+    /// other one would send them in a circle.
     #[error(
-        "{file}: env cannot set {name}{at} — this file is checked in, so a value \
-         written here travels to everyone who clones this repository. Only \
-         crucible's own settings, which start with {namespace}, are read from a \
-         checked-in file. Put this one in .crucible/config.local.json, which git \
-         ignores, or in the configuration file in your home directory"
+        "{file}: env cannot set {name}{at} — crucible cannot tell a file you \
+         wrote from one that arrived with the checkout, so no file under the \
+         working directory sets a variable for the commands crucible runs — \
+         PATH alone decides which program each of those commands is. Only \
+         crucible's own settings, which start with {namespace}, are read from \
+         one. Put this in the configuration file in your home directory, or set \
+         it in the shell you start crucible in"
     )]
-    SecretLayer {
+    ProjectEnv {
         /// The file, as the user would name it.
         file: Box<str>,
         /// The variable name. A name, never the value beside it.
@@ -217,6 +223,32 @@ pub enum ConfigError {
         at: At,
         /// crucible's prefix, carried so the message cannot drift from it.
         namespace: &'static str,
+    },
+
+    /// A permission key that only ever loosens what crucible does unasked,
+    /// written in the layer that travels with a clone.
+    ///
+    /// Its own variant for the same reason as the one above: the key is real
+    /// and is accepted in the other two files, so "no such setting" would send
+    /// the reader hunting a typo. What is wrong is where it was written.
+    ///
+    /// The message says which keys a checked-in file *may* state, because the
+    /// reader was configuring a repository for a team and still has that to do.
+    #[error(
+        "{file}: {path} cannot be set here{at} — this file is checked in, so \
+         what it says reaches everyone who clones this repository, and this key \
+         only ever widens what crucible does without asking. A checked-in file \
+         may tighten its own rules — permissions.ask and permissions.deny — and \
+         may not loosen anybody's. Put this one in .crucible/config.local.json, \
+         which git ignores, or in the configuration file in your home directory"
+    )]
+    Widening {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the key.
+        path: Box<str>,
+        /// Where it is, when that can be said.
+        at: At,
     },
 
     /// An `env` variable that crucible has already read by the time it opens a

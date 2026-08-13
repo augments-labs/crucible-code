@@ -32,7 +32,7 @@ pub use event::{Event, Post, TurnError};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Minted, Mode, Permission, Reach, Remember,
-    RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
+    RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest, reaches_configuration,
 };
 pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};

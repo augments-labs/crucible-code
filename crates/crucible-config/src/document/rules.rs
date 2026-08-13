@@ -77,6 +77,9 @@ mod tests {
             &Reader {
                 file: ".crucible/config.json",
                 text,
+                // Whichever layer: nothing this module reads depends on it. A
+                // rule that will not parse is the same mistake in all three.
+                origin: crate::document::Origin::Project,
             },
             &value,
         )

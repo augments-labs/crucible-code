@@ -1,14 +1,14 @@
-//! Where the pointer was clicked, for as long as there is a box to click into.
+//! Where the pointer was clicked, for a terminal that was asked to say.
 //!
 //! A terminal does not report the mouse unless it is asked to. Asking is two
 //! escape sequences: one that turns button reporting on, and one that asks for
 //! the answers in the form that survives a window wider than 223 columns.
 //!
 //! Reporting is state on the terminal in the same way [`Raw`] mode is, so it is
-//! held by a guard for exactly as long as the prompt is up and handed back on
-//! the way out — including the way out through a `?` or a panic. Held longer it
-//! would outlive the thing it is for: a terminal still reporting clicks after
-//! crucible has gone sends escape bytes into whatever runs next.
+//! held by a guard and handed back on the way out — including the way out
+//! through a `?` or a panic. Nothing may outlive the process: a terminal still
+//! reporting clicks after crucible has gone sends escape bytes into whatever
+//! runs next.
 //!
 //! It has a price, and the price is why nothing here is on unless it was asked
 //! for. A terminal that is forwarding buttons is not using them itself, and the
@@ -18,8 +18,13 @@
 //! scrolling — an inline renderer cannot offer both, because the transcript
 //! above the prompt is the terminal's rather than crucible's.
 //!
-//! Held only while the prompt is up either way, so between turns and after
-//! crucible exits the mouse is the terminal's again.
+//! The binary holds one for exactly as long as a prompt is being read, and not
+//! for the session that prompt belongs to. The box under a running turn takes
+//! typing but reads no click, so a guard held across a turn would give the
+//! wheel up through the longest stretch of a session and buy nothing with it —
+//! and a turn is when somebody most wants to scroll back over what has just
+//! been written. Two sequences per prompt is what that costs, written where no
+//! frame is being assembled.
 //!
 //! [`Raw`]: super::raw::Raw
 
@@ -138,12 +143,32 @@ mod tests {
 
     #[test]
     fn a_guard_dropped_by_an_early_return_still_stops_it() {
-        // The path that matters: a `?` on the way out of the prompt leaves the
+        // The path that matters: a `?` on the way out of the session leaves the
         // terminal reporting clicks into whatever runs next.
         QUIETED.with(|count| count.set(0));
 
         let _ = early(held());
 
+        assert_eq!(QUIETED.with(Cell::get), 1);
+    }
+
+    #[test]
+    fn a_guard_the_stack_unwound_past_still_stops_it() {
+        // The other path the module doc claims. A terminal still forwarding
+        // buttons after crucible has gone sends escape bytes into whatever runs
+        // next, so the panic has to leave through the same door the `?` does.
+        //
+        // What makes that true of the shipped binary rather than only of this
+        // one is the `compile_error!` in `raw.rs`: a test binary unwinds
+        // whatever the release profile says.
+        QUIETED.with(|count| count.set(0));
+
+        let unwound = std::panic::catch_unwind(|| {
+            let _pointer = held();
+            panic!("the frame was drawn against a terminal that had gone");
+        });
+
+        assert!(unwound.is_err(), "nothing unwound");
         assert_eq!(QUIETED.with(Cell::get), 1);
     }
 

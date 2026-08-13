@@ -40,8 +40,8 @@ pub(super) struct Open {
 ///
 /// [`ProviderError::Upstream`] when the event is the provider reporting a
 /// failure inside a response it had already started, and
-/// [`ProviderError::Protocol`] when an event does not parse or contradicts what
-/// is open.
+/// [`ProviderError::Protocol`] when an event does not parse, announces a tool
+/// call by part of its identity, or contradicts what is open.
 pub(super) fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
     // A heartbeat, which a proxy may spell any way it likes and may send with
     // no data line at all. There is nothing to parse; reading it as an event
@@ -62,9 +62,9 @@ pub(super) fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, Pr
         // that it finished normally.
         "response.output_text.delta" | "response.refusal.delta" => Ok(said(&payload)),
 
-        "response.output_item.added" => Ok(started(&payload, open)),
+        "response.output_item.added" => started(&payload, open),
         "response.function_call_arguments.delta" => arguing(&payload, open),
-        "response.output_item.done" => Ok(finished(&payload, open)),
+        "response.output_item.done" => finished(&payload, open),
 
         // The three ways a response ends. `completed` is the only one that is
         // not a failure, and which of the two finishes it is depends on what
@@ -97,22 +97,31 @@ fn said(payload: &Value) -> Vec<Delta> {
 ///
 /// A message item opening is nothing to report: its text arrives as fragments
 /// and this would put a delta in front of it saying so.
-fn started(payload: &Value, open: &mut Open) -> Vec<Delta> {
+fn started(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
     let Some(item) = payload.get("item") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     if text(item, "type") != Some("function_call") {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // The two identities this endpoint gives a call, and they are not
     // interchangeable. `id` is what its own fragments are keyed by; `call_id`
     // is what a result is answered against, and it is the one the transcript
     // has to carry.
+    //
+    // A call missing either of them, or its name, is refused rather than
+    // skipped. Skipped, nothing opens: the fragments that follow are assembled
+    // onto the call before it — one tool running on another tool's arguments —
+    // and the call that was half announced leaves no trace, so the turn ends
+    // looking like a clean finish with a tool the model asked for never run.
     let (Some(id), Some(name), Some(call)) =
         (text(item, "id"), text(item, "name"), text(item, "call_id"))
     else {
-        return Vec::new();
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a tool call arrived without both of its identities and a name".into(),
+        });
     };
 
     *open = Open {
@@ -120,10 +129,10 @@ fn started(payload: &Value, open: &mut Open) -> Vec<Delta> {
         streamed: false,
     };
 
-    vec![Delta::ToolStarted {
+    Ok(vec![Delta::ToolStarted {
         id: ToolId::new(call),
         name: name.into(),
-    }]
+    }])
 }
 
 /// A fragment of the open call's arguments.
@@ -154,21 +163,35 @@ fn arguing(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError
 /// is what they add up to and repeating it would double the arguments; where
 /// none did — a server that narrates only the ends of things — it is the only
 /// copy there is.
-fn finished(payload: &Value, open: &mut Open) -> Vec<Delta> {
+///
+/// Which of those it is can only be answered about the call in hand, so the item
+/// is checked against the open one first — the same check [`arguing`] makes, for
+/// the same reason. Taken on trust, the arguments of one call would be emitted
+/// under whichever call happens to be open and against the `streamed` flag of
+/// that other call: one tool running on another tool's arguments, and the flag
+/// deciding whether they arrive twice or not at all.
+fn finished(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
     let Some(item) = payload.get("item") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     if text(item, "type") != Some("function_call") {
-        return Vec::new();
+        return Ok(Vec::new());
+    }
+
+    if text(item, "id").is_none_or(|item| item != open.item) {
+        return Err(ProviderError::Protocol {
+            provider: NAME,
+            problem: "a tool call finished that was not the one open".into(),
+        });
     }
 
     let streamed = std::mem::take(open).streamed;
     let arguments = text(item, "arguments").filter(|arguments| !arguments.is_empty());
 
-    match arguments {
+    Ok(match arguments {
         Some(arguments) if !streamed => vec![Delta::ToolArgs(arguments.into())],
         _ => Vec::new(),
-    }
+    })
 }
 
 /// Why a response that finished finished.

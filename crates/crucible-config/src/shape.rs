@@ -63,6 +63,19 @@ pub(crate) struct Field {
     /// teaching material rather than filler. Whatever stands here is what gets
     /// pasted.
     pub(crate) examples: &'static [&'static str],
+
+    /// Whether this key can only ever loosen what crucible does unasked.
+    ///
+    /// Declared here, beside the key, rather than as a list of paths somewhere
+    /// that checks documents — a list like that is a second declaration of the
+    /// same keys, and the one that goes stale is the one nothing reads. The
+    /// walk refuses a `true` in the layer that travels with a clone, and the
+    /// reasoning for that sits where the refusal is.
+    ///
+    /// It reaches no schema. One schema is served to all three layers, and a
+    /// key refused in one of them is still a key everywhere else — an editor
+    /// that struck it out would be wrong in two files out of three.
+    pub(crate) widens: bool,
 }
 
 /// What a provider may be told.
@@ -74,6 +87,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         // No example. It would have to name a real model, and a model id in a
         // file served to every editor outlives the model.
         examples: &[],
+        widens: false,
     },
     // The *name*. A key never appears in a configuration file: this workspace
     // resolves one from the environment by the name given here, and the value
@@ -83,6 +97,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         about: "Name of the environment variable holding this provider's API key — the name, never the key",
         shape: Shape::Text,
         examples: &[],
+        widens: false,
     },
 ]);
 
@@ -125,24 +140,28 @@ const OUTPUT: &[Field] = &[
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.
         examples: &[],
+        widens: false,
     },
     Field {
         name: "glyphs",
         about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
         shape: Shape::Choice(GLYPHS),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "mouse",
         about: "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt, and the wheel stops scrolling",
         shape: Shape::Choice(MOUSE),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "toolDetail",
         about: "How much of a tool call and its result one line shows",
         shape: Shape::Choice(TOOL_DETAIL),
         examples: &[],
+        widens: false,
     },
 ];
 
@@ -159,6 +178,7 @@ const UPDATES: &[Field] = &[Field {
     about: "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
     shape: Shape::Choice(UPDATE_CHECK),
     examples: &[],
+    widens: false,
 }];
 
 /// Every answer `permissions.mode` accepts.
@@ -178,37 +198,46 @@ const DIRECTORY: Shape = Shape::Text;
 /// The three kinds are separate keys rather than one list of `kind: pattern`
 /// entries, because the kind decides which rule wins and reading a `deny` list
 /// on its own is the property that buys.
+///
+/// Three of these five widen and two tighten, and that is the whole of what the
+/// layer travelling with a clone is allowed to say: `ask` and `deny` only ever
+/// put more in front of the user, so a repository that wants its own `.git`
+/// left alone can still say so in a file everyone gets.
 const PERMISSIONS: &[Field] = &[
     Field {
         name: "mode",
-        about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything",
+        about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Not read from .crucible/config.json, which everyone who clones gets",
         shape: Shape::Choice(MODE),
         examples: &[],
+        widens: true,
     },
     Field {
         name: "allow",
-        about: "Rules for calls that run without being put to you",
+        about: "Rules for calls that run without being put to you. Not read from .crucible/config.json, which everyone who clones gets",
         shape: Shape::List(&RULE),
         // A whole command rather than a program and a wildcard. `bash(git *)`
         // would read as the obvious thing to write and would cover `git push`,
         // and an example is where somebody learns which one to write.
         examples: &["read(src/**)", "bash(cargo test)"],
+        widens: true,
     },
     Field {
         name: "ask",
         about: "Rules for calls that are always put to you, whatever the mode says",
         shape: Shape::List(&RULE),
         examples: &["edit(Cargo.lock)", "bash(git push)"],
+        widens: false,
     },
     Field {
         name: "deny",
         about: "Rules for calls that are refused in every mode, beating any allow written beside them",
         shape: Shape::List(&RULE),
         examples: &["read(.env)", "edit(.git/**)"],
+        widens: false,
     },
     Field {
         name: "extraDirectories",
-        about: "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, so this belongs in .crucible/config.local.json",
+        about: "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, and this is not read from .crucible/config.json, so it belongs in .crucible/config.local.json",
         shape: Shape::List(&DIRECTORY),
         // One spelling per platform. What counts as absolute is a drive or a
         // share on Windows and a leading slash everywhere else, and this schema
@@ -218,6 +247,10 @@ const PERMISSIONS: &[Field] = &[
             "/home/you/src/shared-library",
             r"C:\Users\you\src\shared-library",
         ],
+        // A directory outside the working directory is reach the workspace
+        // would otherwise refuse, so naming one is widening even though no
+        // rule is written.
+        widens: true,
     },
 ];
 
@@ -228,30 +261,35 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "Per-provider defaults, keyed by provider name",
         shape: Shape::Named(&PROVIDER),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "env",
-        about: "Environment variables for the commands crucible runs. A checked-in file may set only crucible's own CRUCIBLE_CODE_ names",
+        about: "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
         shape: Shape::Named(&VALUE),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "output",
         about: "What the terminal shows",
         shape: Shape::Fields(OUTPUT),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "permissions",
         about: "What runs without being put to you, what is refused outright, and where tools may reach",
         shape: Shape::Fields(PERMISSIONS),
         examples: &[],
+        widens: false,
     },
     Field {
         name: "updates",
         about: "Whether crucible finds out that a newer release exists",
         shape: Shape::Fields(UPDATES),
         examples: &[],
+        widens: false,
     },
 ]);
 
@@ -267,13 +305,22 @@ impl Shape {
         }
     }
 
+    /// The whole declaration of `name` under this one, if crucible declared it.
+    ///
+    /// Only a shape whose keys crucible chose has one. Under a
+    /// [`Shape::Named`] the key is the user's — a provider name, a variable
+    /// name — and there is nothing declared about it to return.
+    pub(crate) fn declared(&self, name: &str) -> Option<&'static Field> {
+        match self {
+            Self::Fields(fields) => fields.iter().find(|field| field.name == name),
+            Self::Text | Self::Choice(_) | Self::Named(_) | Self::List(_) => None,
+        }
+    }
+
     /// The shape of `name` under this one, if it is a key at all.
     pub(crate) fn field(&self, name: &str) -> Option<&'static Shape> {
         match self {
-            Self::Fields(fields) => fields
-                .iter()
-                .find(|field| field.name == name)
-                .map(|field| &field.shape),
+            Self::Fields(_) => self.declared(name).map(|field| &field.shape),
             Self::Named(inner) => Some(inner),
             Self::Text | Self::Choice(_) | Self::List(_) => None,
         }

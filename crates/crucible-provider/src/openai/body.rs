@@ -12,7 +12,7 @@
 //! rather than nested under a `function` object, and a failed result is marked
 //! by a prefix on the text because there is no field for it.
 
-use crucible_core::{Message, Request, ToolCall, ToolResult, ToolSchema};
+use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
 
 use crate::json::described;
@@ -74,7 +74,9 @@ fn input(request: &Request) -> Vec<Value> {
 fn append(items: &mut Vec<Value>, message: &Message) {
     match message {
         Message::User(text) => items.push(json!({ "role": "user", "content": &**text })),
-        Message::Agent { text, calls } => {
+        Message::Agent { text, calls, stop } => {
+            let before = items.len();
+
             // A model that goes straight to a tool says nothing first, and an
             // empty message is an item with no content for the model to read
             // back. The calls beside it carry the turn instead.
@@ -83,6 +85,16 @@ fn append(items: &mut Vec<Value>, message: &Message) {
             }
 
             items.extend(calls.iter().map(call));
+
+            // An item of its own after the answer, and only where this message
+            // put an answer in front of it. Left off, the model reads its own
+            // half-sentence as a turn it chose to end — on the next turn of
+            // this session and on every turn of a continued one.
+            let answered = items.len() > before;
+
+            if let Some(said) = StopReason::cut(*stop).filter(|_| answered) {
+                items.push(json!({ "role": "assistant", "content": said }));
+            }
         }
         Message::ToolResults(results) => items.extend(results.iter().map(result)),
     }

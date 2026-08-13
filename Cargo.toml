@@ -86,6 +86,19 @@ serde_json = "=1.0.151"
 # is the Unicode Annex #11 table as data, with no dependencies of its own.
 unicode-width = "=0.2.2"
 
+# `openat`, and the flags that decide what one component of a path may be. A
+# path is proven inside the workspace and then opened, and between those two
+# moments anything else on the machine that can write there can make the same
+# name lead somewhere else. What closes that is opening one component at a time
+# against a descriptor for the directory before it, refusing a symbolic link at
+# each step — and `std` has no call that takes a directory to resolve against,
+# only ones that take a whole path and resolve it afresh. The system call itself
+# is `unsafe` through `libc`, which this workspace denies, and this is the safe
+# wrapper for it. Unix targets only, where `openat` is the platform's own idea;
+# already in the tree under `crossterm`, so this turns a feature on rather than
+# adding a crate. Confined to `workspace/open/descent.rs`.
+rustix = { version = "=1.1.4", features = ["fs"] }
+
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
 # with the inheritance from the user profile switched off. Nothing in `std`
@@ -216,10 +229,19 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-# Panics are denied by lint, so unwinding machinery is dead weight in the
-# binary. A session survives an abort regardless: the transcript is an
-# append-only log already on disk, not state flushed at exit.
-panic = "abort"
+# Unwinding, left at the default and written down because the tempting change is
+# to abort: panics are denied by lint here, so the machinery reads as dead
+# weight. It is not. The lint reaches this workspace and not crossterm's reader,
+# ureq, or a failed allocation — and raw mode, mouse reporting and the tab title
+# are handed back by `Drop`, which an abort does not run. The transcript survives
+# either way, being an append-only log already on disk; the terminal does not,
+# and the user's remedy is `reset`, which most people do not know. Unwinding also
+# makes `Fatal::Lost` reachable, so a turn thread that dies becomes an exit code
+# from `main` rather than an abort in the middle of a frame. The price is about
+# 465 KB of landing pads on a 5 MB binary and nothing at run time.
+#
+# `crucible-tui`'s guards refuse to compile against `panic = "abort"`, so this
+# cannot be quietly undone by a profile somewhere else.
 
 [profile.bench]
 inherits = "release"

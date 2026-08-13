@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crucible_core::Disposition;
 
-use super::{Grep, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
+use super::{Grep, MAX_LINE, Sensitivity, Tool, ToolArgs, ToolOutput, WIDTH};
 use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
@@ -203,6 +203,34 @@ fn a_bad_byte_later_in_a_file_does_not_take_the_hits_before_it() {
     );
     assert!(
         output.text().contains("stopped partway through latin1.txt"),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
+fn a_line_too_long_to_hold_stops_that_file_rather_than_the_process() {
+    // A committed minified bundle: one ASCII line, no newline. The searcher has
+    // to hold a whole line to scan it, so with no limit this file is the heap —
+    // 200 MB of it takes the process to 413 MB, against a budget of 35. Bounded,
+    // it is one file the answer says it did not finish, which is the note the
+    // model can act on.
+    let sample = Sample::new("grep-long-line");
+    sample.write("src/main.rs", "let needle = 1;\n");
+    sample.write_bytes("vendor/bundle.min.js", &b"var a=1;".repeat(MAX_LINE / 4));
+
+    let output = grep(&sample, r#"{"pattern":"needle"}"#);
+
+    // The rest of the tree is still searched, and searched to the end.
+    assert!(
+        output.text().starts_with("src/main.rs:1:let needle = 1;\n"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        output
+            .text()
+            .contains("stopped partway through vendor/bundle.min.js"),
         "{}",
         output.text()
     );

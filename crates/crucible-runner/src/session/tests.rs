@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{Message, SessionId, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult};
+use crucible_core::{
+    Message, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+};
 use serde_json::Value;
 
 use super::{Session, SessionError, wire};
@@ -23,6 +25,7 @@ fn calling(id: &str, name: &str, args: &str) -> Message {
             name: name.into(),
             args: ToolArgs::new(args),
         }],
+        stop: Some(StopReason::WantsTools),
     }
 }
 
@@ -289,6 +292,65 @@ fn continuing_a_session_appends_to_the_same_log() {
     let (_session, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
     assert_eq!(transcript.messages().len(), 2);
+}
+
+#[test]
+fn an_agent_line_with_a_stop_word_this_build_lacks_is_not_read_as_a_finish() {
+    // A word from a build that spelled things differently cannot reach here —
+    // the format in the header refuses that log outright. What can is a line
+    // this build wrote before a reason was renamed under it. Read as a finish,
+    // the session continues with a truncated turn in it that nothing marks, so
+    // the safe reading is the one that says nobody knows.
+    let sample = Sample::new("session-strange-stop");
+
+    sample.plant(
+        "0000000000001-000001",
+        &[
+            sample.header(wire::FORMAT, "0000000000001-000001"),
+            r#"{"user":"go"}"#.to_owned(),
+            r#"{"agent":"as I was say","calls":[],"stop":"something-new"}"#.to_owned(),
+        ],
+    );
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        transcript.messages().last(),
+        Some(&Message::Agent {
+            text: "as I was say".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Unknown),
+        })
+    );
+}
+
+#[test]
+fn an_agent_line_with_no_stop_at_all_reads_as_an_answer_that_never_ended() {
+    // What the runner writes for a response that broke off part way, and the
+    // one reading that must not become a finish.
+    let sample = Sample::new("session-no-stop");
+
+    sample.plant(
+        "0000000000001-000001",
+        &[
+            sample.header(wire::FORMAT, "0000000000001-000001"),
+            r#"{"user":"go"}"#.to_owned(),
+            r#"{"agent":"as I was say","calls":[],"stop":null}"#.to_owned(),
+        ],
+    );
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(
+        transcript.messages().last(),
+        Some(&Message::Agent {
+            text: "as I was say".into(),
+            calls: Vec::new(),
+            stop: None,
+        })
+    );
 }
 
 #[test]

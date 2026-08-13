@@ -102,6 +102,7 @@ fn a_tool_call_is_an_item_of_its_own_beside_what_was_said() {
             name: "read".into(),
             args: ToolArgs::new("{\"path\":\"a.rs\"}"),
         }],
+        stop: Some(StopReason::WantsTools),
     });
 
     let body = build(&request(transcript));
@@ -129,6 +130,7 @@ fn a_tool_call_with_no_words_before_it_sends_no_message_at_all() {
             name: "read".into(),
             args: ToolArgs::new("{}"),
         }],
+        stop: Some(StopReason::WantsTools),
     });
 
     let body = build(&request(transcript));
@@ -145,11 +147,49 @@ fn a_turn_that_produced_nothing_at_all_still_sends_something_to_hold() {
     transcript.push(Message::Agent {
         text: String::new().into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Cancelled),
     });
 
     let body = build(&request(transcript));
 
     assert_eq!(at(&body, "/input/1"), &NOTHING);
+}
+
+#[test]
+fn a_turn_that_was_cut_off_is_not_sent_back_as_one_the_model_finished() {
+    // The live notice tells the user; nothing told the model. So the next turn
+    // — and every turn of a continued session — showed it its own half-sentence
+    // as an answer it had chosen to end there.
+    let mut transcript = said("write it all out");
+    transcript.push(Message::Agent {
+        text: "as I was say".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::OutOfTokens),
+    });
+
+    let body = build(&request(transcript));
+
+    assert_eq!(at(&body, "/input/1/content"), "as I was say");
+    assert_eq!(
+        at(&body, "/input/2/content"),
+        StopReason::cut(Some(StopReason::OutOfTokens)).expect("a cut-off turn")
+    );
+}
+
+#[test]
+fn a_turn_the_model_ended_itself_carries_no_note() {
+    // The path taken every time. A note under each answer would be spent on
+    // the ordinary ending and teach the model nothing.
+    let mut transcript = said("hello");
+    transcript.push(Message::Agent {
+        text: "hello back".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+
+    let body = build(&request(transcript));
+
+    assert_eq!(at(&body, "/input/2"), &NOTHING);
 }
 
 #[test]
@@ -164,6 +204,7 @@ fn a_tool_that_takes_no_arguments_still_sends_parsable_text() {
             name: "clock".into(),
             args: ToolArgs::new("  "),
         }],
+        stop: Some(StopReason::WantsTools),
     });
 
     let body = build(&request(transcript));

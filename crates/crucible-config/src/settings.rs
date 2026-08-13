@@ -222,11 +222,18 @@ mod tests {
 
     #[test]
     fn env_takes_the_nearest_layer_that_named_each_variable() {
+        // crucible's own names on the project side, because those are the only
+        // ones a file under the working directory may set — a name whose
+        // meaning this program fixes is not a way to hand a command somebody
+        // else's program.
         let user = Document::sample(
-            r#"{"env": {"RUST_LOG": "warn", "PAGER": "cat"}}"#,
+            r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12", "PAGER": "cat"}}"#,
             Origin::User,
         );
-        let local = Document::sample(r#"{"env": {"RUST_LOG": "debug"}}"#, Origin::ProjectLocal);
+        let local = Document::sample(
+            r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "30"}}"#,
+            Origin::ProjectLocal,
+        );
 
         let settings = Settings::resolve(vec![user, local]);
         let mut found: Vec<_> = settings.env().collect();
@@ -234,18 +241,21 @@ mod tests {
 
         // Per name, not per block: overriding one variable in a checkout does
         // not turn off the rest of what the user set at home.
-        assert_eq!(found, vec![("PAGER", "cat"), ("RUST_LOG", "debug")]);
+        assert_eq!(
+            found,
+            vec![("CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "30"), ("PAGER", "cat")]
+        );
     }
 
     #[test]
     fn printing_the_settings_names_a_variable_and_shows_nothing_of_its_value() {
-        // The layers git ignores may hold anything the user's commands need, so
-        // this type holds secrets by design. What it must not do is print one:
-        // a `{settings:?}` in a diagnostic somebody adds later is a leak nobody
+        // The user's own file may hold anything their commands need, so this
+        // type holds secrets by design. What it must not do is print one: a
+        // `{settings:?}` in a diagnostic somebody adds later is a leak nobody
         // reviewed, which is why the redaction lives in the type rather than in
         // the call sites.
-        let local = Document::sample(r#"{"env": {"TOKEN": "hunter2"}}"#, Origin::ProjectLocal);
-        let settings = Settings::resolve(vec![local]);
+        let user = Document::sample(r#"{"env": {"TOKEN": "hunter2"}}"#, Origin::User);
+        let settings = Settings::resolve(vec![user]);
 
         let printed = format!("{settings:?}");
         assert!(printed.contains("TOKEN"), "got {printed}");

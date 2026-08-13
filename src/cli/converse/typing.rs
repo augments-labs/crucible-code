@@ -6,17 +6,21 @@
 //! the mode under it, and a window that follows the cursor along a line longer
 //! than the screen.
 //!
-//! Raw mode is held for exactly as long as a line is being typed and handed
-//! back before the turn starts. That is what keeps the rest of the session
-//! working the way it did: a permission question is still answered by a line
-//! the terminal collects, and Ctrl-C during a turn is still the signal the
-//! terminal sends rather than a byte nothing is waiting to read.
+//! Raw mode is not entered here. The loop above holds it for the whole session,
+//! because the box takes typing while a turn runs and a keyboard handed back
+//! between turns could not do that. The rest follows from holding it: a
+//! permission question is answered by a key rather than by a line the terminal
+//! collected, and Ctrl-C arrives as a byte for this side to act on rather than
+//! as a signal the terminal sends — against an empty line [`ask`] offers to
+//! leave, and mid turn [`during`] asks the turn to stop.
 //!
-//! It is also the only place the mode changes, which is why the engine is a
-//! parameter here. The mode is a fact about the session and lives in the
-//! engine; this reads it to draw the row under the box and steps it when the
-//! key that steps it arrives. Nothing else is looking at it while a prompt is
-//! being typed, so there is one copy of it and no lock over it.
+//! It is one of the two places the mode changes — `/mode` is the other — which
+//! is why the engine is a parameter here. The mode is a fact about the session
+//! and lives in the engine; this reads it to draw the row under the box and
+//! steps it when the key that steps it arrives. Both of those happen between
+//! turns, on the thread that draws, so there is one copy of it and no lock over
+//! it: while a turn is away with the engine, [`during`] draws the mode it was
+//! handed and steps nothing.
 
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -24,8 +28,8 @@ use std::time::{Duration, Instant};
 use crucible_core::{Cancel, Mode};
 use crucible_runner::Runner;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot, Terminal,
-    Typed, caret, pressed, waiting,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Reporting, Row, Slot,
+    Terminal, Typed, caret, pressed, waiting,
 };
 
 use crate::cli::Fatal;
@@ -90,6 +94,13 @@ pub(crate) fn ask<T: Terminal>(
     if !keys {
         return Ok(Asked::Untyped);
     }
+
+    // Held for exactly as long as a prompt is being read, and dropped before
+    // the turn is spawned. Held any longer the terminal would be forwarding
+    // buttons through a turn that reads none of them — and the wheel is a
+    // button, so the cost would be the scrollback this program's transcript
+    // lives in, paid for nothing.
+    let _pointer = style.clicks().then(Reporting::on).transpose()?.flatten();
 
     let glyphs = style.glyphs();
 

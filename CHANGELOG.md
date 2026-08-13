@@ -13,10 +13,11 @@ Notable changes to crucible. Format follows
   next crucible you start anywhere begins with it. `/model` on its own still
   says which model is being asked.
 
-- **Clicking in the prompt box puts the cursor where you clicked.** The terminal
-  reports clicks only while the box is up, so between turns and after crucible
-  exits the mouse is the terminal's own again — hold <kbd>Shift</kbd> to select
-  or middle-click paste inside the box.
+- **Clicking in the prompt box puts the cursor where you clicked.** Off unless
+  `output.mouse` asks for it, and the terminal only reports buttons while a
+  prompt is being read — so the wheel scrolls as it always did between prompts,
+  while a turn is running, and after crucible exits. Inside the box, hold
+  <kbd>Shift</kbd> to select or to paste with the middle button.
 
 - **crucible says when there is a newer release.** A line under the welcome
   names the version and where to get it. The question is put to GitHub at most
@@ -48,8 +49,8 @@ Notable changes to crucible. Format follows
 
 - **The box stays on screen while a turn runs.** It used to leave for the whole
   of a turn, taking the one fixed thing on screen away exactly when output was
-  scrolling past. It takes no typing while a turn is running, so the key that
-  steps the mode is not offered beside it.
+  scrolling past. The key that steps the mode is not offered beside it, because
+  the engine holding the mode is away with the turn.
 
 - **OpenAI is reached over the Responses API.** Every turn against a current
   OpenAI model used to come back `HTTP 400: Function tools with reasoning_effort

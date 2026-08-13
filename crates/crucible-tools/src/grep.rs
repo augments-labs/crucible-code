@@ -35,6 +35,32 @@ const WIDTH: usize = 400;
 /// How many files the answer names before it starts counting them instead.
 const NAMED: usize = 5;
 
+/// The most heap one searcher may hold a line in.
+///
+/// The searcher scans a line at a time, so its buffer has to grow to the longest
+/// line in the file. Left unbounded that is the default, and the default is
+/// "limited only by available memory": a committed minified bundle — one ASCII
+/// line and no newline, the case [`WIDTH`] is cut for — is read whole. Nothing
+/// else stops it. `MmapChoice::never` moves those bytes onto the heap rather
+/// than avoiding them, and `BinaryDetection::quit` never fires on a long line of
+/// text. Measured, a 200 MB bundle takes the process to 413 MB, which against
+/// the 35 MB this program is allowed is not a slow search but a dead one.
+///
+/// A quarter of a megabyte, and the arithmetic is over the whole walk rather
+/// than one file: the walk is parallel, one searcher is built per thread, and
+/// `ignore` takes a thread per core up to twelve. So the worst case is 3 MB — a
+/// fixed cost under a tenth of the budget, which does not move with the size of
+/// the tree, the number of files or the length of the session.
+///
+/// Generous against a real line for the same reason it is small against the
+/// budget. A matching line is cut at [`WIDTH`] characters before anyone sees it,
+/// so this is some six hundred times what is ever reported, and five times the
+/// longest line in a machine-written source file in this program's own
+/// dependency tree. A file with a line longer than this is searched as far as
+/// that line and then named in the note [`unread`] writes, which is what the
+/// model needs to know to go and look for itself.
+const MAX_LINE: usize = 256 * 1024;
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 const SCHEMA: &str = r#"{
@@ -150,6 +176,9 @@ impl Grep {
                 // the walk and the ignore rules, which is where `rg` wins most
                 // of it too.
                 .memory_map(MmapChoice::never())
+                // Which is also why this has to be said: with no map, a line is
+                // held on the heap, and with no limit the heap is the machine.
+                .heap_limit(Some(MAX_LINE))
                 .build();
             let (hits, partly, so_far) = (&hits, &partly, &so_far);
 
@@ -213,11 +242,12 @@ impl Grep {
     /// The matching lines of one file, and whether the search reached the end
     /// of it.
     ///
-    /// Two things stop it early. The file cannot be read — no permission, a
-    /// device, gone since the walk saw it — or a line the matcher hit is not
-    /// text, because `UTF8` decodes before it hands anything over and only a
-    /// NUL byte quits the searcher, so a Latin-1 file is searched as the text
-    /// it nearly is until one of its bytes is not.
+    /// Three things stop it early. The file cannot be read — no permission, a
+    /// device, gone since the walk saw it. A line the matcher hit is not text,
+    /// because `UTF8` decodes before it hands anything over and only a NUL byte
+    /// quits the searcher, so a Latin-1 file is searched as the text it nearly
+    /// is until one of its bytes is not. Or a line is longer than [`MAX_LINE`],
+    /// which the searcher reports as the allocation it was refused.
     ///
     /// Either way what came back before that point is real and is kept, and the
     /// name goes back with it. Dropping the lot is what makes a file holding a

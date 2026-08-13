@@ -109,10 +109,11 @@ not a space, so a path is one word.
 
 The mouse belongs to the terminal: the wheel scrolls, dragging selects, the
 middle button pastes. Set `output.mouse` to `click` and crucible takes the
-buttons instead while the box is up, so clicking in the box puts the cursor
-where you clicked — at the price of the wheel, because the wheel is a button
-and the scrollback it scrolls is where crucible's transcript lives. An inline
-renderer cannot have both, which is why it is a choice rather than a default.
+buttons instead, for the whole session, so clicking in the box between turns
+puts the cursor where you clicked — at the price of the wheel, because the wheel
+is a button and the scrollback it scrolls is where crucible's transcript lives.
+An inline renderer cannot have both, which is why it is a choice rather than a
+default.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
@@ -261,14 +262,17 @@ transcript that already holds this much. Without the line, all three look
 exactly like an answer that finished.
 
 A turn that ended normally says nothing at all. There is a fourth line,
-`! stopped`, for a turn that was cancelled — but nothing in 0.0.x can cancel
-one, so you will not see it yet. See <kbd>Ctrl-C</kbd> below.
+`! stopped`, for a turn you stopped yourself:
 
-<kbd>Ctrl-C</kbd> ends the process rather than the turn. In 0.0.x input is left
-in the terminal's cooked mode and no signal is caught, so there is no way to stop
-a single answer and keep the session. The session log is written as the turn
-goes, so `crucible --continue` picks the session up from wherever it
-stopped — see [Sessions](../sessions/sessions.md).
+```
+! stopped
+```
+
+<kbd>Ctrl-C</kbd> during a turn asks that turn to stop, and leaves the session
+where it was. Nothing is killed: the provider stops between reads and a command
+stops between the steps it takes, so a file a tool was writing is either
+untouched or finished. What was on screen stays on screen, what you had typed
+stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 

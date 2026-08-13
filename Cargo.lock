@@ -242,6 +242,7 @@ name = "crucible-core"
 version = "0.0.9"
 dependencies = [
  "globset",
+ "rustix",
  "thiserror",
 ]
 

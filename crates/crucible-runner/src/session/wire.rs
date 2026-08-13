@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use crucible_core::{Message, SessionId, ToolCall, ToolId, ToolOutput, ToolResult};
+use crucible_core::{Message, SessionId, StopReason, ToolCall, ToolId, ToolOutput, ToolResult};
 use serde_json::{Value, json};
 
 /// What wrote the file.
@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 2;
+pub(crate) const FORMAT: u32 = 3;
 
 /// The line that says everything before it was forgotten.
 ///
@@ -72,9 +72,10 @@ pub(crate) struct Opening {
 pub(crate) fn line(message: &Message) -> String {
     let value = match message {
         Message::User(text) => json!({ "user": text.as_ref() }),
-        Message::Agent { text, calls } => json!({
+        Message::Agent { text, calls, stop } => json!({
             "agent": text.as_ref(),
             "calls": calls.iter().map(called).collect::<Vec<_>>(),
+            "stop": stop.map(stopped),
         }),
         Message::ToolResults(results) => json!({
             "results": results.iter().map(answered).collect::<Vec<_>>(),
@@ -96,10 +97,55 @@ pub(crate) fn message(line: &str) -> Option<Message> {
         return Some(Message::Agent {
             text: text.as_str()?.into(),
             calls: read(value.get("calls")?, call)?,
+            stop: stops(value.get("stop")),
         });
     }
 
     Some(Message::ToolResults(read(value.get("results")?, result)?))
+}
+
+/// How an answer ended, as the log spells it.
+///
+/// Spelled here rather than taken from the enum's `Debug`, for the same reason
+/// the rest of this shape is: a rename in the domain would silently change what
+/// every log written afterwards says.
+///
+/// Every variant is named rather than caught by a rest pattern — a reason added
+/// to [`StopReason`] is a reason the log has to learn a word for, and the
+/// build stopping here is what asks for one.
+fn stopped(stop: StopReason) -> &'static str {
+    match stop {
+        StopReason::Yielded => "yielded",
+        StopReason::WantsTools => "tools",
+        StopReason::OutOfTokens => "tokens",
+        StopReason::Filtered => "filtered",
+        StopReason::Paused => "paused",
+        StopReason::Cancelled => "cancelled",
+        StopReason::Unknown => "unknown",
+    }
+}
+
+/// What an agent line says about how the answer ended.
+///
+/// Null — and, for a line damaged in a way that still parses, absent — is an
+/// answer that never reached an ending, which is what the runner records for a
+/// response that broke off part way.
+///
+/// A word this build has no name for reads as [`StopReason::Unknown`] rather
+/// than making the line unreadable. It is the same answer the providers give a
+/// vendor's new word, and it costs a session nothing; what it must never become
+/// is a finish, which is the one reading that would put a truncated turn back
+/// in front of the model as a whole one.
+fn stops(value: Option<&Value>) -> Option<StopReason> {
+    Some(match value.and_then(Value::as_str)? {
+        "yielded" => StopReason::Yielded,
+        "tools" => StopReason::WantsTools,
+        "tokens" => StopReason::OutOfTokens,
+        "filtered" => StopReason::Filtered,
+        "paused" => StopReason::Paused,
+        "cancelled" => StopReason::Cancelled,
+        _ => StopReason::Unknown,
+    })
 }
 
 /// Every element of a JSON array, read the same way, or `None` if any of them

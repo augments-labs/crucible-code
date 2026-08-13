@@ -14,6 +14,12 @@
 //! is exactly the kind of thing to be wrong about quietly. So they are absent,
 //! and a line using one is asked about.
 //!
+//! Resolving every word is only a proof where the words are the files. A copy
+//! or a move given a directory writes `directory/name`, which is no word in the
+//! line — nothing resolved it, and a symbolic link left at that name is
+//! followed straight out of the tree. So those two are read for the shapes that
+//! leave the filename to the program, and refused on them.
+//!
 //! One shape is refused with the proof in hand: a recursive `rm`. `rm -rf .`
 //! from the workspace root cannot reach outside the tree, and that is true and
 //! not enough. [`Reach::Workspace`] is what a mode may act on *without asking*,
@@ -21,8 +27,17 @@
 //! bounded loss, whatever was typed. A recursive delete changes everything
 //! beneath them instead. That is a difference in kind rather than degree, so it
 //! is where the answer stops.
+//!
+//! And one place inside the workspace is not somewhere a proof may lead: the
+//! files this agent's permissions are read from. They sit in the tree, so every
+//! check above passes over them happily, and a line that changed one would be
+//! deciding every question asked after the next start. `reaches_configuration`
+//! is where that is refused, and it is the permission engine's own answer
+//! rather than a second list kept in step with it by hand.
 
-use crucible_core::{Reach, Workspace};
+use std::path::Path;
+
+use crucible_core::{Reach, Workspace, reaches_configuration};
 
 /// A program whose arguments this can read, with the flags it recognises.
 struct Program {
@@ -35,6 +50,14 @@ struct Program {
     /// Which of the above turn the call into one about everything underneath
     /// what it names.
     recursive: Recursion,
+    /// Whether the last path is a destination the program may finish itself.
+    ///
+    /// `cp a b` writes `b`, which is a word here and gets resolved like one.
+    /// `cp a dir` writes `dir/a`, which is no word at all — so nothing resolved
+    /// it, and a symbolic link sitting at that name is followed out of the tree
+    /// by the copy. Where this is set, the shapes that leave the program to
+    /// work the name out are refused rather than half-read.
+    destination: bool,
 }
 
 /// The flags that make a program descend, in both spellings one can arrive in.
@@ -102,6 +125,7 @@ const PROGRAMS: [Program; 6] = [
         letters: "pv",
         words: &["--parents", "--verbose"],
         recursive: NEVER,
+        destination: false,
     },
     Program {
         name: "rmdir",
@@ -111,12 +135,14 @@ const PROGRAMS: [Program; 6] = [
         // removes has to be empty already — so nothing is destroyed that was
         // not already nothing.
         recursive: NEVER,
+        destination: false,
     },
     Program {
         name: "touch",
         letters: "acmv",
         words: &["--no-create"],
         recursive: NEVER,
+        destination: false,
     },
     Program {
         name: "rm",
@@ -136,6 +162,7 @@ const PROGRAMS: [Program; 6] = [
             letters: "rR",
             words: &["--recursive"],
         },
+        destination: false,
     },
     Program {
         name: "cp",
@@ -149,10 +176,18 @@ const PROGRAMS: [Program; 6] = [
             "--verbose",
             "--no-target-directory",
         ],
-        // `-r` descends here too, and copying into the tree creates rather than
-        // destroys. What it can cost is a file overwritten, which is the bound
-        // `allowEdits` already accepts from `write`.
-        recursive: NEVER,
+        // For a reason of its own rather than `rm`'s. A recursive copy does not
+        // destroy what it descends over — it stops the words naming the files.
+        // Each one stands for a tree this never walked, and whether everything
+        // in that tree lands inside depends on what the copy does with the
+        // links it finds on the way, which is a property of the program and not
+        // of the line. `-a` is here because it implies `-R`, and both letters
+        // because `-r` and `-R` are the same flag.
+        recursive: Recursion {
+            letters: "rRa",
+            words: &["--recursive", "--archive"],
+        },
+        destination: true,
     },
     Program {
         name: "mv",
@@ -165,6 +200,12 @@ const PROGRAMS: [Program; 6] = [
             "--no-target-directory",
         ],
         recursive: NEVER,
+        // A rename replaces a symbolic link rather than following one, so `mv`
+        // is not the escape `cp` is. It is still a line whose last word is not
+        // the file that changes, which is the whole of what this proves — and a
+        // move between filesystems is a copy underneath, where the far end is
+        // opened by name like any other.
+        destination: true,
     },
 ];
 
@@ -194,7 +235,9 @@ fn confined(part: &str, workspace: &Workspace) -> Reach {
         return Reach::Anything;
     };
 
-    let mut named = false;
+    let mut paths = 0usize;
+    let mut last = None;
+
     for word in words {
         if word.contains(UNREADABLE) {
             return Reach::Anything;
@@ -217,19 +260,44 @@ fn confined(part: &str, workspace: &Workspace) -> Reach {
         // `creatable` and not `existing`: `mkdir` names a directory that is not
         // there yet, and both answer the only question being asked — where this
         // lands once symbolic links are followed.
-        if workspace.creatable(word).is_err() {
+        let Ok(path) = workspace.creatable(word) else {
+            return Reach::Anything;
+        };
+
+        // Inside the workspace and still not something to prove. The engine's
+        // own configuration lives in the tree, and a write there decides every
+        // question from the next start on — so it is asked about rather than
+        // waved through by a mode this line could rewrite.
+        if reaches_configuration(path.as_path()) {
             return Reach::Anything;
         }
-        named = true;
+
+        paths += 1;
+        last = Some(path);
     }
 
     // A program with no path to work on is doing something else — printing its
     // version, reading its own defaults — and nothing here read what.
-    if named {
-        Reach::Workspace
-    } else {
-        Reach::Anything
+    let Some(last) = last else {
+        return Reach::Anything;
+    };
+
+    if program.destination && finishes_the_name(paths, last.as_path()) {
+        return Reach::Anything;
     }
+
+    Reach::Workspace
+}
+
+/// Whether the program is left to work out the path it writes.
+///
+/// Two shapes say so. A destination that is a directory takes the name from the
+/// source, and more than one source says the destination is a directory
+/// whatever is there at the moment this reads — which is the half worth having
+/// twice, because the other half is an answer about one instant and the copy
+/// runs at a later one.
+fn finishes_the_name(paths: usize, last: &Path) -> bool {
+    paths > 2 || last.is_dir()
 }
 
 /// The program this word names, when it is one of the few this can read.
