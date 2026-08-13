@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A piped prompt nobody could answer no longer reports success.** With no
+  model configured, `echo … | crucible` said so and exited 0, which is what a
+  script reads as "it worked". It now exits non-zero. Interactively nothing
+  changes: `/model` is a key away, so the warning still leaves the session
+  running.
+
 ### Internal
 
 - `grep` and `glob` are pinned to not follow a symbolic link out of the

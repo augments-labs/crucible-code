@@ -165,17 +165,30 @@ sandbox /opt/crucible/crucible --help >/dev/null || {
 }
 
 echo "==> a machine with no key"
-# The first thing a new user meets if they miss a step in the README. It has to
-# name the variable, and it has to be a failure — a run that says nothing and
-# exits 0 is one people report as "it does nothing".
+# The first thing a new user meets if they miss a step in the README. A key is
+# no longer needed to start — /login and /model are a key away — so a run with
+# nothing to answer is allowed to end quietly, and what it owes instead is the
+# sentence saying which key that is.
 if said=$(sandbox /opt/crucible/crucible </dev/null 2>&1); then
-    echo '    FAIL a run with no key exited 0'
-    failed=1
-elif [[ $said == *ANTHROPIC_API_KEY* ]]; then
-    echo '    names the variable it wants'
+    if [[ $said == */login* && $said == */model* ]]; then
+        echo '    says what to do about it'
+    else
+        printf '    FAIL a run with no key never said what to do: %q\n' "$said"
+        failed=1
+    fi
 else
-    printf '    FAIL a run with no key never said which one: %q\n' "$said"
+    printf '    FAIL a run with nothing to answer exited %d\n' "$?"
     failed=1
+fi
+
+# Down a pipe there is nobody to press that key, so a prompt arriving there is
+# unanswerable and has to be a failure: a run that answers nothing and exits 0
+# is one people report as "it does nothing", and a script reads it as success.
+if answer=$(echo 'what is 2+2' | sandbox /opt/crucible/crucible 2>&1); then
+    printf '    FAIL a prompt it could not answer exited 0: %q\n' "$answer"
+    failed=1
+else
+    echo '    a prompt it cannot answer ends as a failure'
 fi
 
 echo "==> a run nobody is watching"

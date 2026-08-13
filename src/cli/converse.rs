@@ -208,7 +208,17 @@ pub(crate) fn converse<T: Terminal>(
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
         if runner.model().is_empty() {
-            draw::unconfigured(renderer, unasked(terms.provider), style)?;
+            let said = unasked(terms.provider);
+
+            // Down a pipe there is nobody to type `/model`, so carrying on
+            // reads every remaining line and answers none of them — and ends
+            // `Ok`, which is the one thing a script looks at. Said and failed
+            // rather than said and shrugged.
+            if !renderer.is_terminal() {
+                return Err(Fatal::Unanswerable(said));
+            }
+
+            draw::unconfigured(renderer, said, style)?;
             continue;
         }
 
