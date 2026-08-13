@@ -215,6 +215,17 @@ pub(crate) enum Fatal {
         held: Box<str>,
     },
 
+    /// A prompt arrived that could not be answered, on a run with no terminal
+    /// to fix it from.
+    ///
+    /// Interactively this is a warning and the session carries on, because
+    /// `/model` is a key away. Down a pipe there is nobody to type it, so the
+    /// prompt is unanswerable and a run that returned nothing must say so in
+    /// the one place a script reads: the exit code. Ending with `Ok` there is
+    /// the "it does nothing" report, arriving as success.
+    #[error("{0} No turn was taken.")]
+    Unanswerable(&'static str),
+
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
     Input(io::Error),

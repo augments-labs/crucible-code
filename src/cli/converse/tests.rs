@@ -765,3 +765,31 @@ impl io::Write for Kept {
         Ok(())
     }
 }
+
+#[test]
+fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly() {
+    // Interactively this is a warning and the session carries on, because
+    // `/model` is a key away. Down a pipe nobody can type it, so every line
+    // after this one would be read and none of them answered — and the run
+    // would end `Ok`, which is the one thing a script looks at. `echo ... |
+    // crucible` reporting success while answering nothing is the "it does
+    // nothing" report arriving as a zero exit.
+    let runner = Runner::new(
+        Box::new(Script::new(Vec::new())),
+        Tools::new(),
+        Model {
+            name: String::new().into(),
+            max_tokens: 64,
+            system: None,
+        },
+        Session::nowhere(),
+    );
+
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
+
+    let problem = converse(runner, &mut renderer, &plain(), &mut input)
+        .expect_err("a run that answered nothing to fail");
+
+    assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
+}

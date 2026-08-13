@@ -59,7 +59,11 @@ variable. Then use /model to select a model.
 ```
 
 Everything except taking a turn works in that state, which is what leaves
-somewhere to type the answer. `/model <name>` asks for that model from the next
+somewhere to type the answer. Down a pipe there is nobody to type it, so a
+prompt arriving there cannot be answered and the run ends non-zero rather than
+reading every remaining line and answering none of them.
+
+`/model <name>` asks for that model from the next
 turn on and writes it to `~/.crucible/config.json` under the provider this run
 is set up for, so the next run starts with it. `/model` on its own says which
 model is being asked.
