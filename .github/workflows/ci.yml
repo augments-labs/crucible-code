@@ -112,7 +112,15 @@ jobs:
 
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - run: cargo test --workspace --locked
+      # Runs even when clippy above did not, for the reason the gate job now
+      # runs every one of its sections: this job exists to execute the
+      # platform-split code, and a lint that stopped the run means nobody
+      # learned whether that code works here — which is the one question this
+      # runner was paid for. Both invocations are byte-for-byte what
+      # `scripts/check.sh` runs, so the two stay one standard on three
+      # platforms.
+      - if: '!cancelled()'
+        run: cargo test --workspace --locked
 
   budgets:
     name: scripts/bench.sh

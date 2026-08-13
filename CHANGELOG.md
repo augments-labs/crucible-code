@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rule allowing one thing no longer quietly allows another.** A verdict was
+  reached about a call and then applied more widely than the call it was reached
+  about; it is now bound to the sensitivity it was asked about, so an allow for
+  a read cannot stand in for an allow for a write.
+
 ### Internal
 
 - The renderer is watched on a real screen. A test starts the shipped binary on

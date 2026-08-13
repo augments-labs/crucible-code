@@ -250,6 +250,46 @@ fn allowing_one_command_for_the_session_does_not_allow_another() {
 }
 
 #[test]
+fn allowing_one_file_for_the_session_does_not_allow_another() {
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    let call = call("write");
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 1);
+
+    // Same tool, different file. The question named a source file; a memory
+    // keyed on the tool would hand over the hook git runs on every commit on
+    // the strength of that yes.
+    permission.decide(&call, &writing(".git/hooks/pre-commit"), &mut answer);
+    assert_eq!(answer.asked, 2);
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(answer.asked, 2, "the allowed file stays allowed");
+}
+
+#[test]
+fn what_an_always_answer_showed_is_what_it_governs_the_session_by() {
+    // `always` writes a rule naming one file, and until something reads that
+    // file back the session's own memory is what stands for it. The two have
+    // to cover the same thing: a memory wider than the rule shown is a promise
+    // broken in the turn it was made.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_ever();
+    let call = call("write");
+
+    permission.decide(&call, &writing("src/a.rs"), &mut answer);
+    assert_eq!(
+        narrowest(&call, &writing("src/a.rs")).map(|rule| rule.to_string()),
+        Some("write(src/a.rs)".to_owned()),
+        "the rule the question showed names one file"
+    );
+
+    permission.decide(&call, &writing("Makefile"), &mut answer);
+    assert_eq!(answer.asked, 2, "and the session may not cover more");
+}
+
+#[test]
 fn an_engine_that_forgot_asks_again_about_what_the_last_session_allowed() {
     // What a process picking up a different session does with the answers it
     // was given about the one it is leaving. "For the rest of this session" is
@@ -464,6 +504,17 @@ fn only_the_configuration_itself_is_refused() {
             )
             .ran()
     );
+}
+
+#[test]
+fn the_refusal_is_the_files_themselves_and_not_the_directory_holding_them() {
+    // A file tool names the file it will write, so the refusal is exactly the
+    // files — it is the one answer nothing can get past, and widening it to the
+    // directory would wall `.crucible` off from its owner for good.
+    assert!(configuration(Path::new("/w/.crucible/config.json")));
+    assert!(!configuration(Path::new("/w/.crucible/notes.json")));
+    assert!(!configuration(Path::new("/w/.crucible")));
+    assert!(!configuration(Path::new("/w/x.crucible/config.json")));
 }
 
 // The arm no rule matched, which is the only thing a mode decides — and the

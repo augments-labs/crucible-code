@@ -14,7 +14,11 @@
 //! One refusal precedes both: no tool may write the files this engine is
 //! configured from. A single write there could allow everything from the next
 //! start on, so that answer cannot be entrusted to the rules and modes it
-//! would defeat.
+//! would defeat. A tool that runs programs arrives here as a command rather
+//! than as the paths it will touch, so the refusal cannot be spelled for it.
+//! What stands in its place is that a command is put to the user in every mode
+//! but `fullAccess`, so a line that would write one of those files is one
+//! somebody was shown first.
 //!
 //! A refusal has two shapes on purpose. A rule is standing policy and stops one
 //! call; the model meets the wall, is told, and gets on with something else. A
@@ -40,6 +44,34 @@ pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
 pub use sensitivity::{Command, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
+
+/// The directory the permission configuration is read from, and the files
+/// inside it that are read.
+const DIRECTORY: &str = ".crucible";
+const FILES: [&str; 2] = ["config.json", "config.local.json"];
+
+/// Whether this resolved path is a file permission configuration is read from:
+/// `config.json` or `config.local.json` directly inside a directory named
+/// `.crucible`. Any such directory counts — the project's, the home one, or one
+/// deeper in the tree, which is what a session started there would read.
+///
+/// Matched on whole components of the resolved path, so a directory that merely
+/// ends in `.crucible` is somebody else's, and a symbolic link into the real
+/// file does not slip past.
+///
+/// It is a check on the path and not on the file behind it, so a second name
+/// for the same inode — a hard link, which resolving does not undo — is not
+/// this file as far as this is concerned. Making one takes a program, and a
+/// program is put to the user in every mode but `fullAccess`.
+fn configuration(path: &Path) -> bool {
+    let file = path.file_name().and_then(|name| name.to_str());
+    let directory = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+
+    directory == Some(DIRECTORY) && file.is_some_and(|file| FILES.contains(&file))
+}
 
 /// What the engine settled on for one call.
 #[derive(Debug)]
@@ -153,11 +185,15 @@ impl Permission {
         // everything into the next start, so the refusal cannot be entrusted
         // to what the files say — the files are the thing being defended.
         // Writes only, and file tools only: reading configuration is how a
-        // session begins, and a spawned process shows the engine a command
-        // rather than the paths it will touch, so what a process may do stays
-        // with the rules and the mode.
+        // session begins, and a process is shown here as a command rather than
+        // as the paths it will touch. What keeps that from being the way round
+        // this is the mode itself — a command is put to the user in every mode
+        // but `fullAccess`, so a line that would write one of these files is
+        // one somebody was shown first.
         if let Sensitivity::MutatesFile { target } = sensitivity
-            && Self::own_configuration(target)
+            && target
+                .absolute()
+                .is_some_and(|absolute| configuration(Path::new(absolute)))
         {
             return Disposition::Deny;
         }
@@ -229,48 +265,26 @@ impl Permission {
         }
     }
 
-    /// Whether this path is a file permission configuration is read from:
-    /// `config.json` or `config.local.json` directly inside a directory named
-    /// `.crucible`. Any such directory counts — the project's, the home one,
-    /// or one deeper in the tree, which is what a session started there would
-    /// read.
+    /// What a session-long allow covers: the tool, and the one thing the
+    /// question named it would do.
     ///
-    /// Matched on whole components of the resolved path, so a directory that
-    /// merely ends in `.crucible` is somebody else's, and a symbolic link
-    /// into the real file does not slip past.
+    /// Never the tool alone. Agreeing to `cargo test` is not agreeing to
+    /// `curl`, and agreeing to change `src/a.rs` is not agreeing to change the
+    /// hook git runs on every commit — the question showed one of them, so that
+    /// is the whole of what an answer to it can cover.
     ///
-    /// It is a check on the path and not on the file behind it, so a second
-    /// name for the same inode — a hard link, which resolving does not undo —
-    /// is not this file as far as this is concerned. Making one is what holds
-    /// that closed: no program `bash` can prove stays inside the workspace
-    /// creates a hard link, so a line that would is one somebody is asked
-    /// about, in every mode.
-    fn own_configuration(target: &Target) -> bool {
-        const DIRECTORY: &str = ".crucible";
-        const FILES: [&str; 2] = ["config.json", "config.local.json"];
-
-        let Some(absolute) = target.absolute().map(Path::new) else {
-            return false;
-        };
-
-        let file = absolute.file_name().and_then(|name| name.to_str());
-        let directory = absolute
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str());
-
-        directory == Some(DIRECTORY) && file.is_some_and(|file| FILES.contains(&file))
-    }
-
-    /// What a session-long allow covers.
-    ///
-    /// For a tool that changes files it is the tool: that is what the question
-    /// named, and a session allow may not quietly cover more than was asked
-    /// about. For one that runs programs it is the tool and the command, since
-    /// agreeing to `cargo test` is not agreeing to `curl`.
+    /// Spelled the way the question spelled it, which is also the way a rule
+    /// minted from an `always` spells it. The two are one promise made twice:
+    /// the rule is what the next session reads, and this is what stands for it
+    /// until something does.
     fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Box<str> {
         match sensitivity {
-            Sensitivity::ReadOnly { .. } | Sensitivity::MutatesFile { .. } => call.name.clone(),
+            // A read never reaches here — an `ask` about one became a refusal
+            // further up — and it is spelled anyway, because a scope that read
+            // back as the bare tool name would be the widest one there is.
+            Sensitivity::ReadOnly { target } | Sensitivity::MutatesFile { target } => {
+                format!("{}:{target}", call.name).into()
+            }
             Sensitivity::SpawnsProcess { command } => format!("{}:{command}", call.name).into(),
         }
     }

@@ -86,12 +86,6 @@ fn a_command_that_runs_too_long_is_stopped() {
     );
 }
 
-// Unix only, because the guarantee is a signal sent to a process group and
-// Windows has no process group to signal. `output::stop` says why crucible does
-// not buy itself the FFI a job object would take, and says that a killed
-// command there still leaves what it started running — which is exactly the
-// case this asserts the absence of.
-#[cfg(unix)]
 #[test]
 fn what_a_stopped_command_left_running_is_stopped_with_it() {
     // A backgrounded process is disowned by the shell and reparented, so it

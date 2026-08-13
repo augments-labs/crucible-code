@@ -148,9 +148,11 @@ pub trait Tool: Send + Sync {
     ///
     /// An [`Approved`] cannot be constructed outside the permission engine, so
     /// a call site that has not obtained a verdict cannot reach this function.
-    /// It carries the arguments as well as the proof, which is what makes the
-    /// arguments a tool runs on *the* arguments a verdict was reached about —
-    /// a separate `args` parameter left that to the caller's care.
+    /// It carries the tool and the arguments as well as the proof, which is
+    /// what makes the arguments a tool runs on *the* arguments a verdict was
+    /// reached about, and this tool *the* tool it was reached about — a
+    /// separate `args` parameter, and a handle found beside the call, both
+    /// left that to the caller's care.
     ///
     /// # Errors
     ///

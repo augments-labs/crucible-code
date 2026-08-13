@@ -9,6 +9,11 @@
 //! The secret is *applied*, never returned. [`Credential::authorize`] takes the
 //! outgoing request and writes into it, so no caller ever holds the value and
 //! there is no accessor to forget to keep out of a log line.
+//!
+//! That call runs on the way into every request rather than once at startup,
+//! which is the moment a credential holding something perishable can renew it:
+//! how old a token is only matters where it is about to be used, and a renewal
+//! that fails there ends the turn before a request leaves.
 
 use std::fmt;
 
@@ -20,6 +25,21 @@ pub enum CredentialError {
     /// Carries the variable *name*, never its value.
     #[error("{0} is not set")]
     NotInEnvironment(Box<str>),
+
+    /// The credential was found and could not be made ready for this request.
+    ///
+    /// Looking one up is not the only moment authentication fails. A key read
+    /// from the environment is there or it is not, and that is the whole of
+    /// what can go wrong with it; a credential that holds a token decides in
+    /// [`Credential::authorize`] whether the one it holds is still good, and a
+    /// renewal that is refused has to be reported from inside that call.
+    /// Without somewhere to say so, the only thing such a credential could
+    /// report is a variable that is unset, which is not what happened.
+    ///
+    /// Carries a sentence written for the user and never the token itself:
+    /// this reaches a log line and the screen like every other error here.
+    #[error("{0}")]
+    NotRenewed(Box<str>),
 }
 
 /// An API key.
@@ -207,10 +227,15 @@ impl fmt::Debug for Outgoing {
 pub trait Credential: Send + Sync + fmt::Debug {
     /// Writes whatever this credential needs into the request.
     ///
+    /// Called on every request, which is what makes this the place a token is
+    /// renewed: a credential holding one is deciding here whether what it holds
+    /// is still good, at the only moment that can be answered about.
+    ///
     /// # Errors
     ///
-    /// Implementation-defined; a credential that must be fetched or refreshed
-    /// can fail here.
+    /// [`CredentialError::NotRenewed`] where the credential had to produce
+    /// something before it could answer and could not. One holding a key has
+    /// already applied it by this point and cannot fail.
     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError>;
 }
 
@@ -329,6 +354,32 @@ mod tests {
             .authorize(&mut openai)
             .unwrap();
         assert_eq!(header(&openai, "authorization"), format!("Bearer {SECRET}"));
+    }
+
+    /// A credential that has to renew something before it can answer, and
+    /// cannot. The shape a subscription login takes when its token has expired
+    /// and the renewal was refused.
+    #[derive(Debug)]
+    struct Stale;
+
+    impl Credential for Stale {
+        fn authorize(&self, _request: &mut Outgoing) -> Result<(), CredentialError> {
+            Err(CredentialError::NotRenewed("the login has expired".into()))
+        }
+    }
+
+    #[test]
+    fn a_credential_that_cannot_renew_says_so_and_writes_nothing() {
+        // Authentication fails at two moments, not one. This is the second:
+        // the credential was found, and what it holds is no longer good. A
+        // request half-authorised is worse than one never sent, so a failure
+        // here leaves the headers as they were.
+        let mut request = Outgoing::new();
+
+        let problem = Stale.authorize(&mut request).unwrap_err();
+
+        assert_eq!(problem.to_string(), "the login has expired");
+        assert!(request.headers().is_empty(), "the request was written to");
     }
 
     #[test]
