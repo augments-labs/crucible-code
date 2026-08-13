@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`allowEdits` asks before every command.** It used to run a shell command
+  unasked when the line had been read and every path in it found inside the
+  working directory — a proof a symbolic link could undo after the fact, since
+  a shell reopens those paths by name. The mode is now what its name says: the
+  tools that change files change them, and anything that starts a process asks.
+  A command you run constantly wants an `allow` rule, or `fullAccess`.
+
 ## [0.0.9] - 2026-08-12
 
 ### Added
