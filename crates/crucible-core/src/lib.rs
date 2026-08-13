@@ -13,8 +13,7 @@
 //!   implemented in the crates above, so adding one must never edit this crate.
 //!
 //! Authentication is a separate axis from the wire protocol: a `Provider`
-//! receives an already-resolved `Credential` and never learns whether it came
-//! from an API key or a subscription login.
+//! receives an already-resolved `Credential` and never learns what kind it is.
 
 mod cancel;
 mod credential;

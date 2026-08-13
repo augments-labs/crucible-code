@@ -116,9 +116,29 @@ apart: a provider is handed an already-resolved credential and never learns what
 kind it was.
 
 Every provider above uses the same kind of credential — an API key in a header —
-pointed at different headers with different prefixes. That is why adding a
-subscription login later is a new credential rather than an edit to any
+pointed at different headers with different prefixes. That is why a different
+way of proving who you are is a new credential rather than an edit to any
 provider.
+
+### Why there is no "log in with your subscription"
+
+crucible authenticates by API key, and a vendor's chat subscription is not one
+of the keys it accepts. That is deliberate and it is not a gap waiting to be
+filled.
+
+A subscription is sold scoped to the vendor's own software. Anthropic's terms
+permit a Claude Pro or Max plan in Claude Code and not in another program, and
+accounts have been closed for pointing something else at one. Other vendors say
+the same thing more quietly, by listing their own CLI, their own editor
+extension and their own app as what a plan covers and pricing everything else at
+API rates. crucible will not put your account in that position, so it does not
+offer the login at all.
+
+A plan a vendor *does* publish for other programs is a different thing, and
+crucible takes it. That path is an API key and the base URL the key belongs to,
+which is a key in your environment and a `baseUrl` in your configuration —
+nothing new to learn. crucible also identifies itself as crucible on every
+request, and will not claim to be another program to reach a plan that way.
 
 ## What differs between them
 

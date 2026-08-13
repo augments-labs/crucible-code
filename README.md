@@ -20,8 +20,8 @@ commands, searches a tree, and streams a model's reasoning inline — in the
 scrollback you already have, not in a full-screen buffer that replaces it.
 
 It is provider agnostic. A provider is a wire protocol; how you authenticate is
-a separate axis, so an API key today and a subscription login later are two
-independent choices rather than one coupled decision.
+a separate axis, so the two are independent choices rather than one coupled
+decision.
 
 ## Why another one
 
