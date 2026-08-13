@@ -32,25 +32,38 @@ directory is reached by its own name.
 
 A path is resolved once to say what a call is about, and resolved again inside
 the tool that acts on it — so a symbolic link planted while a question was on
-screen changes the answer rather than slipping past it. The file is then opened
-in a way that carries that second check into the call itself. A new file is
-created with the flag that makes the operating system refuse a symbolic link at
-the last component, so it cannot be created through one. A file that is already
-there is opened only after the last component has been confirmed not to be a
-link, and the opened file is then asked whether it is the one that answer was
-about. `edit` reads and rewrites through a single open file rather than naming
-it twice.
+screen changes the answer rather than slipping past it. What that leaves is a
+path with no symbolic link anywhere in it, and on Unix the file is then reached
+by walking it rather than by naming it: crucible opens the directory the path
+was proved under, then each directory below in turn against the one before it,
+refusing any step that has become a link or has stopped being a directory, and
+asks for the file itself against the directory holding it. Every step is one
+system call inside a directory the step before it already reached, so there is
+no gap left between deciding a name is safe and using it. A new file is created
+at the end of the same walk, with the flag that makes the operating system
+refuse a symbolic link at the last component. `edit` reads and rewrites through
+a single open file rather than naming it twice.
 
-What that bounds is crucible. It is not a boundary on the machine, and two
-things get past it if something else is writing into your working directory at
-the same time. A directory *above* the file — rather than the file itself — can
-be replaced with a link between the check and the call, in a window as long as
-two system calls; what would close that is resolving a path one step at a time
-against a directory already held open, which crucible does not do. And a second
-hard name for a file elsewhere is not a link at all, so nothing distinguishes it
-from the original and no check made on names reaches it.
+A link you meant is untouched by any of that. A checkout reached through one
+works, because the working directory is resolved when crucible starts and the
+link is never on the way down; so does a project that links to its own files,
+because resolving followed the link and settled containment about where it led.
+What the walk refuses is a link that was not there when the path was checked.
 
-Neither takes a privilege beyond writing into that directory, which is the
+Windows has no call that opens one component against a directory already held.
+There crucible confirms the last component is not a link and then opens the path
+by name, so a directory *above* the file can still be replaced between those two
+calls, in a window as long as two system calls.
+
+What that bounds is crucible, on either platform. It is not a boundary on the
+machine, and two things get past it on Unix as well. A directory crucible is
+walking through can be *moved* out of the working directory and the file below
+it goes with it — the file opened is still the file that was checked, and
+whoever moved it could already read it. And a second hard name for a file
+elsewhere is not a link at all, so nothing distinguishes it from the original
+and no check made on names reaches it.
+
+None of those takes a privilege beyond writing into that directory, which is the
 point: containment answers for what crucible resolves, and a working directory
 another local program is rearranging underneath it is outside what a check on
 paths can promise.

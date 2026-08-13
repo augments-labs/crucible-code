@@ -32,7 +32,7 @@ impl Roots {
     /// Resolves the root, which must exist.
     pub(super) fn open(root: &Path) -> Result<Self, PathError> {
         Ok(Self {
-            root: canonical(root, &root.display().to_string())?,
+            root: canonical(root, &root.display().to_string())?.into(),
             extra: Vec::new(),
         })
     }
@@ -50,7 +50,7 @@ impl Roots {
                 requested: directory.into(),
             });
         }
-        self.extra.push(canonical(given, directory)?);
+        self.extra.push(canonical(given, directory)?.into());
         Ok(())
     }
 
@@ -59,18 +59,21 @@ impl Roots {
         &self.root
     }
 
-    /// Whether a resolved path lies under any directory the workspace reaches.
+    /// Which directory the workspace reaches a resolved path through, if any.
     ///
     /// The argument is already canonical — that is the whole reason this
     /// comparison can be trusted. A check against the text a caller supplied
     /// can be walked around with `..` or a symbolic link; a check against the
     /// path the operating system resolved cannot.
-    pub(super) fn contains(&self, resolved: &Path) -> bool {
-        resolved.starts_with(&self.root)
-            || self
-                .extra
-                .iter()
-                .any(|reached| resolved.starts_with(reached))
+    ///
+    /// The answer is the directory rather than a yes, because opening the path
+    /// later walks down to it from exactly here. A walk that started anywhere
+    /// else would be proving something about a tree nobody was pointed at.
+    pub(super) fn containing(&self, resolved: &Path) -> Option<Arc<Path>> {
+        std::iter::once(&self.root)
+            .chain(&self.extra)
+            .find(|reached| resolved.starts_with(reached))
+            .map(Arc::clone)
     }
 }
 

@@ -101,6 +101,14 @@ Notable changes to crucible. Format follows
 
 ### Security
 
+- **Workspace containment is a boundary on Unix rather than a best-effort
+  guard.** A file is now reached by walking down from the directory it was
+  proved under, one component at a time, refusing any that has become a
+  symbolic link — so another program rearranging your working directory can no
+  longer steer a tool call out of it. Windows keeps the check on the last
+  component only. A checkout reached through a link, and links inside a
+  project, are unaffected.
+
 - **File tools open what they checked.** `read`, `write` and `edit` now open the
   file the containment check was about rather than resolving its name a second
   time: a new file is created in a way the operating system will not satisfy

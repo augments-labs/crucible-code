@@ -12,9 +12,11 @@
 //!
 //! What such a check settles is where a name led at the instant it ran, and a
 //! second writer on the machine can move it afterwards. So the open that acts
-//! on a resolved path is done here as well, carrying what the check established
-//! into the call itself; `open` says which half of that race each measure
-//! closes and which it leaves.
+//! on a resolved path is done here as well, and on Unix it does not use the
+//! name at all: it walks down from the directory containment was settled
+//! against, one component at a time, against descriptors it already holds.
+//! `open` says what that closes, what it costs on a platform without that call,
+//! and what is left over on both.
 //!
 //! A workspace reaches the directory crucible was started in and any further
 //! directories configuration named. Which of them a path lands in makes no

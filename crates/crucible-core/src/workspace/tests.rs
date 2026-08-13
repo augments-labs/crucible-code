@@ -213,6 +213,13 @@ fn a_reached_directory_is_readable_and_writable() {
         .creatable(&f.beside.join("new.txt").display().to_string())
         .unwrap();
     assert!(written.as_path().starts_with(&f.beside));
+
+    // Opening walks down from whichever directory containment was settled
+    // against, so a reached directory has to be one a walk can start at. Were
+    // that always the root, every path here would be refused for lying outside
+    // a tree it was never in.
+    assert!(read.open().is_ok());
+    assert!(written.create().is_ok());
 }
 
 #[test]
@@ -331,16 +338,13 @@ fn a_link_planted_where_a_new_file_goes_is_not_created_through() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "names the hole that is open: nothing here resolves a step against a directory it holds"]
 fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
-    // The half still reachable, written down as the property that does not hold
-    // rather than as prose, so running the ignored tests reports it. Every call
-    // that acts on a resolved path resolves the directories above the last
-    // component afresh and at the same moment, so a directory replaced with a
-    // link between the check and the call is followed by all of them and
-    // disagreed with by none. What would see it is resolving each step relative
-    // to a directory already held open; until safe Rust can ask for that,
-    // neither property below holds and running this reports the first.
+    // The other half of the race, and the one a check on the last component
+    // never sees: it is not the file that moves but a directory above it. What
+    // answers is the walk down from the root, which asks for `sub` against a
+    // descriptor for the directory holding it and with `O_NOFOLLOW` — so a
+    // `sub` that has become a link is refused by the same call that would
+    // otherwise have followed it, for reading and for creating alike.
     let f = Fixture::new("swapabove");
     fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
     fs::write(f.outside.join("one.txt"), "out").unwrap();
@@ -350,15 +354,58 @@ fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
     fs::remove_dir_all(f.workspace.root().join("sub")).unwrap();
     std::os::unix::fs::symlink(&f.outside, f.workspace.root().join("sub")).unwrap();
 
+    let err = existing.open().unwrap_err();
     assert!(
-        existing.open().is_err(),
-        "a file outside the workspace was opened for reading"
+        matches!(err, PathError::Swapped { .. }),
+        "a file outside the workspace was opened for reading: {err:?}"
     );
-    let _ = fresh.create();
+
+    let err = fresh.create().unwrap_err();
+    assert!(matches!(err, PathError::Swapped { .. }), "got {err:?}");
     assert!(
         !f.outside.join("fresh.txt").exists(),
         "a file was created outside the workspace"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_a_project_links_to_its_own_files_through_is_still_read() {
+    let f = Fixture::new("linkeddir");
+    fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
+    symlink(
+        f.workspace.root().join("sub"),
+        f.workspace.root().join("via"),
+    );
+
+    // The link a checkout shipped, which is most of them: `via` is inside the
+    // workspace and leads inside it. Resolving followed it and settled
+    // containment about where it led, so what the walk down takes is `sub` —
+    // refusing every link on sight would instead refuse a repository for being
+    // laid out the way repositories are.
+    let path = f.workspace.existing("via/one.txt").unwrap();
+    assert!(path.as_path().starts_with(f.workspace.root().join("sub")));
+
+    let mut file = path.open().unwrap();
+    let mut read = String::new();
+    std::io::Read::read_to_string(&mut file, &mut read).unwrap();
+    assert_eq!(read, "in");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_reached_through_a_link_is_still_a_workspace() {
+    let f = Fixture::new("linkedroot");
+    let alias = f.workspace.root().with_file_name("checkout");
+    symlink(f.workspace.root(), &alias);
+
+    // A checkout reached through a link is common enough that getting it wrong
+    // would be getting the feature wrong: the root is resolved once when the
+    // workspace opens, so every walk afterwards starts at the far end and the
+    // link is never on the way down.
+    let workspace = Workspace::open(&alias).unwrap();
+    let path = workspace.existing("kept.txt").unwrap();
+    assert!(path.open().is_ok());
 }
 
 #[test]
