@@ -11,6 +11,7 @@
 //! way to authenticate does not edit a single provider.
 
 mod anthropic;
+mod endpoint;
 mod json;
 mod openai;
 mod refusal;
@@ -19,6 +20,7 @@ mod transport;
 mod unavailable;
 
 pub use anthropic::Anthropic;
+pub use endpoint::{Endpoint, EndpointError};
 pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};
