@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The prompt box grows downward instead of scrolling sideways.** A line longer
+  than the terminal used to slide along one row, so the beginning of what you
+  had typed was gone from the screen. The box now takes as many rows as the line
+  needs, up to about half the window, and scrolls inside itself past that —
+  keeping the cursor's row in view. A wrapped row carries a continuation mark so
+  the fold is visible rather than guessed at.
+
 ### Internal
 
 - A component's rows can be pictured against a file checked in beside it, so a

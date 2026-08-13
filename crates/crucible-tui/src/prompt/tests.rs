@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::dump::dump;
 
 use super::*;
 
@@ -11,6 +12,26 @@ const MODE: &str = "ask before edits";
 
 /// What is said quietly after it.
 const HINT: &str = "(shift+tab to cycle)";
+
+/// The three modes as the row under the box spells them, the colour each puts
+/// on the border, and the name of the picture each is checked against.
+///
+/// The words a session actually shows, unlike [`MODE`] above, which is a
+/// fixture for the tests that are about the row rather than about the mode.
+const MODES: [(&str, Slot, &str); 3] = [
+    ("ask mode on", Slot::Quiet, "ask"),
+    ("allow edits on", Slot::AllowEdits, "allow_edits"),
+    ("full access mode on", Slot::FullAccess, "full_access"),
+];
+
+/// What something waiting on the very next key says while it waits.
+const ASKING: &str = "press ctrl-c again to leave";
+
+/// How many rows of line the tests give a box, unless one is about the ceiling.
+///
+/// Generous, so that every line below is drawn whole and the assertions are
+/// about the wrapping rather than about what the ceiling took away.
+const ROOM: usize = 8;
 
 /// Lines worth drawing at every width: nothing, something short, something far
 /// longer than any box, and something that is two columns per character.
@@ -30,12 +51,28 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         tone: Slot::Accent,
         hint: HINT,
         asking: None,
+        room: ROOM,
     }
+}
+
+/// How many rows of a drawn component the line itself took.
+fn lines(prompt: &Prompt<'_>, columns: usize) -> usize {
+    let chrome = if columns < FRAMED_AT { 1 } else { 3 };
+
+    prompt.rows(columns, Glyphs::Unicode).len() - chrome
 }
 
 /// The same, with the cursor at the end of what was typed.
 fn typed(said: &str) -> Prompt<'_> {
     typing(said, width::columns(said))
+}
+
+/// An empty box with something waiting on the very next key under it.
+fn asked() -> Prompt<'static> {
+    Prompt {
+        asking: Some(ASKING),
+        ..typed("")
+    }
 }
 
 /// What the component says, with no colour in it.
@@ -51,6 +88,18 @@ fn row(prompt: &Prompt<'_>, at: usize, columns: usize, glyphs: Glyphs) -> String
         .expect("a row the component drew")
 }
 
+/// The component at `columns`, against the picture checked in beside it under
+/// `name@columns`.
+///
+/// The width is the suffix rather than something written into the name, so that
+/// a picture cannot end up checked against a drawing of some other terminal:
+/// one argument decides both what was drawn and which file it is read from.
+fn pictured(name: &str, prompt: &Prompt<'_>, columns: usize, glyphs: Glyphs) {
+    insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+        insta::assert_snapshot!(name, dump(&prompt.rows(columns, glyphs), columns));
+    });
+}
+
 /// A palette that writes every hue it has.
 fn colourful() -> Palette {
     Palette::resolve(true, &|name| {
@@ -59,7 +108,7 @@ fn colourful() -> Palette {
 }
 
 #[test]
-fn a_framed_terminal_gets_four_rows_and_the_box_ends_at_its_last_column() {
+fn every_row_of_a_framed_box_ends_at_its_last_column() {
     // The property the component is built to hold. A row past the last column
     // is one the terminal wraps itself, which leaves the cursor a row below
     // where the next frame expects it -- so the next frame erases somebody
@@ -68,9 +117,9 @@ fn a_framed_terminal_gets_four_rows_and_the_box_ends_at_its_last_column() {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             for said in SAID {
                 let rows = typed(said).rows(columns, glyphs);
-                assert_eq!(rows.len(), 4, "{glyphs:?} at {columns}");
+                let framed = rows.len() - 1;
 
-                for row in rows.iter().take(3) {
+                for row in rows.iter().take(framed) {
                     assert_eq!(
                         row.columns(),
                         columns,
@@ -103,59 +152,105 @@ fn nothing_is_ever_drawn_past_the_last_column() {
 }
 
 #[test]
-fn the_box_is_the_same_height_however_long_the_line_is() {
-    // A box that grew a row as the line got longer would push everything above
-    // it up the screen on a keystroke, and the reader would be typing into
-    // something that moves.
-    for columns in [FRAMED_AT, 40, 80] {
-        let heights: Vec<usize> = SAID
-            .iter()
-            .map(|said| typed(said).rows(columns, Glyphs::Unicode).len())
-            .collect();
+fn the_box_grows_a_row_for_every_row_the_line_takes() {
+    // A prompt is written and read at the same time. Scrolled sideways instead,
+    // a paragraph being written is a paragraph nobody can see.
+    let said = "abcdefghijklmnopqrstuvwxyz";
 
-        assert_eq!(heights, vec![4; SAID.len()], "at {columns}");
-    }
+    // Eighteen columns inside the frame at this width, so twenty-six characters
+    // are two rows.
+    assert_eq!(lines(&typed(said), FRAMED_AT), 2);
+    assert_eq!(lines(&typed(""), FRAMED_AT), 1);
+
+    // And wider, where the same line fits on one.
+    assert_eq!(lines(&typed(said), 80), 1);
+}
+
+#[test]
+fn a_line_that_exactly_fills_a_row_takes_the_next_one_as_well() {
+    // The cursor after the last character would otherwise stand on the padding
+    // beside the border, which is not where the next character appears.
+    let filling = "a".repeat(inner(FRAMED_AT));
+
+    assert_eq!(lines(&typed(&filling), FRAMED_AT), 2);
+    assert_eq!(typed(&filling).caret(FRAMED_AT).column, FRAMED);
+}
+
+#[test]
+fn the_box_stops_growing_at_the_room_it_was_given() {
+    // The region is taken back by moving the cursor up over it, so a box taller
+    // than the screen is one that could not be taken back at all.
+    let said = "a".repeat(1000);
+    let capped = Prompt {
+        room: 3,
+        ..typed(&said)
+    };
+
+    assert_eq!(lines(&capped, FRAMED_AT), 3);
+}
+
+#[test]
+fn how_much_room_a_window_gives_a_box_is_about_half_of_it() {
+    // Enough to write a paragraph in, and never so much that what the prompt is
+    // a reply to is pushed off the screen.
+    assert_eq!(Prompt::room(24), 9);
+    assert_eq!(Prompt::room(48), 21);
+
+    // And never nothing, however short the window is: a box with no row to type
+    // on is not a box.
+    assert_eq!(Prompt::room(6), 1);
+    assert_eq!(Prompt::room(1), 1);
 }
 
 #[test]
 fn the_line_is_typed_after_the_mark_inside_the_frame() {
-    let rows = drawn(&typed("hello"), 30, Glyphs::Unicode);
+    pictured("short", &typed("hello"), 30, Glyphs::Unicode);
+}
 
-    assert_eq!(
-        rows,
-        vec![
-            format!("╭{}╮", "─".repeat(28)),
-            "│ › hello                    │".to_owned(),
-            format!("╰{}╯", "─".repeat(28)),
-            MODE.to_owned(),
-        ]
-    );
+#[test]
+fn a_box_nothing_has_been_typed_into_is_the_same_box() {
+    // The one on screen for longer than any other, and the one every keystroke
+    // is drawn over. It is a row of line either way: an empty box that closed
+    // up would open again on the first character and move what is above it.
+    pictured("empty", &typed(""), FRAMED_AT, Glyphs::Unicode);
+    pictured("empty", &typed(""), 80, Glyphs::Unicode);
 }
 
 #[test]
 fn a_font_with_no_box_drawing_in_it_gets_a_box_of_the_same_shape() {
     // Same width, same rows, same columns held for the mark: the set changes
     // what a border is drawn with and nothing about where anything sits.
-    let rows = drawn(&typed("hello"), 30, Glyphs::Ascii);
-
-    assert_eq!(
-        rows,
-        vec![
-            format!("+{}+", "-".repeat(28)),
-            "| > hello                    |".to_owned(),
-            format!("+{}+", "-".repeat(28)),
-            MODE.to_owned(),
-        ]
-    );
+    pictured("short_ascii", &typed("hello"), 30, Glyphs::Ascii);
 }
 
 #[test]
 fn a_terminal_too_narrow_for_a_frame_gets_the_mark_and_the_mode() {
     // The border would cost a quarter of the screen to say what the mark
-    // already says.
-    let rows = drawn(&typed("hello"), 20, Glyphs::Unicode);
+    // already says. Both sets, because the mark is the last chrome left and it
+    // is drawn out of whichever one is in force.
+    pictured("bare", &typed("hello"), FRAMED_AT - 1, Glyphs::Unicode);
+    pictured("bare_ascii", &typed("hello"), FRAMED_AT - 1, Glyphs::Ascii);
+}
 
-    assert_eq!(rows, vec!["› hello".to_owned(), MODE.to_owned()]);
+#[test]
+fn a_mode_is_a_colour_on_the_border_and_a_sentence_under_the_box() {
+    // Three pictures rather than three assertions about a slot: what the reader
+    // meets is the border and the row under it changing together, and a mode
+    // given one and not the other is a screen that says two things.
+    for (mode, tone, name) in MODES {
+        let prompt = Prompt {
+            mode,
+            tone,
+            ..typed("")
+        };
+
+        pictured(name, &prompt, 80, Glyphs::Unicode);
+    }
+}
+
+#[test]
+fn a_question_waiting_on_the_next_key_is_drawn_under_the_status_row() {
+    pictured("asking", &asked(), 80, Glyphs::Unicode);
 }
 
 #[test]
@@ -215,31 +310,44 @@ fn the_cursor_is_never_left_standing_on_the_border() {
 }
 
 #[test]
-fn a_line_longer_than_the_box_is_windowed_onto_its_end() {
-    // Windowed rather than wrapped: the box is a fixed number of rows, and a
-    // wrap would need another one. Eighteen columns inside the frame at this
-    // width, one of them held back so the cursor is not on the edge.
+fn a_line_longer_than_the_box_wraps_onto_the_next_row() {
+    // Eighteen columns inside the frame at this width. The rows under the first
+    // are indented to match it, so a line that wrapped reads as one line.
     let said = "abcdefghijklmnopqrstuvwxyz";
+    pictured("wrapped", &typed(said), FRAMED_AT, Glyphs::Unicode);
 
     assert_eq!(
-        row(&typed(said), FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
-        "│ › jklmnopqrstuvwxyz  │"
+        typed(said).caret(FRAMED_AT),
+        Caret {
+            row: FRAMED_ROW + 1,
+            column: FRAMED + 8,
+        }
     );
-    assert_eq!(typed(said).caret(FRAMED_AT).column, FRAMED + 17);
 }
 
 #[test]
 fn the_window_follows_the_cursor_back_up_the_line() {
     // Worked out from the cursor every time rather than remembered: a kept
     // scroll position is a second piece of state the line can get out of step
-    // with.
+    // with. With one row of room the cursor at the start brings the first row
+    // back into view.
     let said = "abcdefghijklmnopqrstuvwxyz";
+    let capped = Prompt {
+        room: 1,
+        ..typing(said, 0)
+    };
 
-    assert_eq!(
-        row(&typing(said, 0), FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
-        "│ › abcdefghijklmnopqr │"
-    );
-    assert_eq!(typing(said, 0).caret(FRAMED_AT).column, FRAMED);
+    pictured("held_at_the_top", &capped, FRAMED_AT, Glyphs::Unicode);
+    assert_eq!(capped.caret(FRAMED_AT).column, FRAMED);
+
+    // And the cursor at the end of it scrolls the first row back under the top
+    // edge.
+    let capped = Prompt {
+        room: 1,
+        ..typed(said)
+    };
+
+    pictured("scrolled", &capped, FRAMED_AT, Glyphs::Unicode);
 }
 
 #[test]
@@ -253,9 +361,15 @@ fn a_window_never_cuts_a_wide_character_in_half() {
         for column in 0..=width::columns(said) {
             let typed = typing(said, column);
             let rows = typed.rows(columns, Glyphs::Unicode);
-            let line = rows.get(FRAMED_ROW).map(Row::columns);
+            let framed = rows.len() - 1;
 
-            assert_eq!(line, Some(columns), "at {columns}, cursor at {column}");
+            for (at, row) in rows.iter().enumerate().take(framed) {
+                assert_eq!(
+                    row.columns(),
+                    columns,
+                    "at {columns}, cursor at {column}, row {at}"
+                );
+            }
         }
     }
 }
@@ -295,14 +409,8 @@ fn a_question_takes_a_row_of_its_own_under_the_status_and_starts_at_the_left() {
     // Under rather than beside: the mode holds until somebody changes it and
     // this holds until the next keystroke, so a row shared between the two
     // would have one of them read as the other.
-    const ASKING: &str = "press ctrl-c again to leave";
-
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-        let asked = Prompt {
-            asking: Some(ASKING),
-            ..typed("")
-        };
-        let rows = drawn(&asked, 80, glyphs);
+        let rows = drawn(&asked(), 80, glyphs);
 
         assert_eq!(rows.len(), 5, "{rows:?}");
         assert!(
@@ -326,15 +434,8 @@ fn nothing_asking_takes_no_row_at_all() {
 fn a_question_is_clipped_to_the_width_rather_than_dropped() {
     // Unlike the keys after the mode: half of this still names the key that is
     // waiting, and the row is only there because somebody has just pressed it.
-    const ASKING: &str = "press ctrl-c again to leave";
-
-    let asked = Prompt {
-        asking: Some(ASKING),
-        ..typed("")
-    };
-
     for columns in WIDTHS {
-        let rows = asked.rows(columns, Glyphs::Unicode);
+        let rows = asked().rows(columns, Glyphs::Unicode);
         let last = rows.last().expect("a row the component drew");
 
         assert!(last.columns() <= columns, "at {columns}: {:?}", last.text());
