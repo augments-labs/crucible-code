@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-08-13
+
 ### Fixed
 
 - **A stop reason this build has never heard of is reported as unfinished.** It
@@ -850,7 +852,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/augments-labs/crucible-code/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/augments-labs/crucible-code/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/augments-labs/crucible-code/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/augments-labs/crucible-code/compare/v0.0.8...v0.0.9
