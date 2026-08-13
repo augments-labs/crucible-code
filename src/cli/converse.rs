@@ -212,7 +212,7 @@ fn take<T: Terminal>(
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
     let mut held = renderer
-        .under(&[standing], terms.style.palette())
+        .under(&[standing], None, terms.style.palette())
         .map_err(Fatal::from);
 
     // Ends when the worker drops both senders, which happens when the turn is
@@ -237,7 +237,7 @@ fn take<T: Terminal>(
     // would be the same fact twice with a blank row between them.
     if held.is_ok() {
         held = renderer
-            .under(&[], terms.style.palette())
+            .under(&[], None, terms.style.palette())
             .map_err(Fatal::from);
     }
 

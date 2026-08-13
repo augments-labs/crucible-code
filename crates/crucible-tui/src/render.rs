@@ -62,6 +62,10 @@ pub struct Renderer<T: Terminal> {
     /// Painted when they are set rather than once per frame. What they say
     /// changes when the session changes, and a turn is a great many frames.
     footing: Vec<String>,
+    /// Where the cursor belongs inside [`Self::footing`], where somebody is
+    /// typing into it. `None` parks the cursor at the end of the tail, which is
+    /// where the next delta lands.
+    footed: Option<Caret>,
     /// Reads the markers out of the model's markdown and says what each run is.
     ///
     /// Held here rather than made fresh per delta, for the reason the tail holds
@@ -102,6 +106,7 @@ impl<T: Terminal> Renderer<T> {
             overflow: Vec::new(),
             painted: Vec::new(),
             footing: Vec::new(),
+            footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
         }
@@ -280,13 +285,37 @@ impl<T: Terminal> Renderer<T> {
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn under(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
+    pub fn under(
+        &mut self,
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
 
         region::paint(rows, palette, &mut self.footing);
+        self.footed = caret;
+        self.reserve();
         self.draw()
+    }
+
+    /// Leaves the tail exactly the rows the footing does not need.
+    ///
+    /// The live region is the tail and whatever stands under it together, and it
+    /// has to fit on the screen: taken back by moving the cursor up over it, one
+    /// taller than the screen is one whose top has already scrolled out of
+    /// reach. The tail is the half that can give — what stands under it is a
+    /// component that was asked for — so the tail's bound moves whenever the
+    /// footing's height does.
+    ///
+    /// A window with no room for both keeps one row of tail, because a tail of
+    /// none cannot hold the row still being written to.
+    fn reserve(&mut self) {
+        let bound = self.size.rows.saturating_sub(self.footing.len());
+
+        self.tail.holding(bound, &mut self.overflow);
     }
 
     /// Ends the live region, leaving what it held in scrollback.
@@ -352,6 +381,12 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        // Before the erase rather than after it. An erase is counted in rows of
+        // the screen it is written to, and by now that is the new one: the
+        // region below has to be measured against the window the cursor is
+        // sitting in, not the one it was drawn on.
+        self.size = size;
+
         // The size comes from the terminal, not from the stream, so a run whose
         // output is redirected still sees the window change. There is no live
         // region in a pipe to wipe, and an erase sequence written into one ends
@@ -359,19 +394,28 @@ impl<T: Terminal> Renderer<T> {
         // back, so what is live there is written out instead of dropped. The
         // rewrap below applies either way.
         if self.terminal.is_terminal() {
-            self.erase()?;
-            self.terminal.flush()?;
+            // Only ever what this renderer drew, which is what `drawn` counts.
+            // With nothing counted there is nothing of its own on screen to
+            // drop, and the row the cursor is on is one a prompt was written
+            // verbatim onto -- a row this promised no frame would move back
+            // over. A question waiting to be answered is exactly that state,
+            // and erasing it takes the offer off the screen while somebody is
+            // still reading it.
+            if self.drawn > 0 {
+                self.erase()?;
+                self.terminal.flush()?;
+            }
         } else {
             self.settle_plain()?;
         }
 
-        self.size = size;
         self.tail = Tail::new(size.columns, size.rows);
         self.finished = Tail::new(size.columns, 1);
         // Dropped for the reason the live rows are: it was laid out for a width
         // the window no longer has, and a row too wide for the screen is one
         // the terminal wraps itself. The caller lays out the next one.
         self.footing.clear();
+        self.footed = None;
         self.drawn = 0;
         self.parked = 0;
         Ok(())
@@ -447,7 +491,7 @@ impl<T: Terminal> Renderer<T> {
             region,
             &mut self.overflow,
             &self.tail,
-            &self.footing,
+            (&self.footing, self.footed),
         );
 
         self.drawn = self.tail.len() + self.footing.len();
@@ -486,9 +530,20 @@ impl<T: Terminal> Renderer<T> {
     /// How many rows a rewind has to move back over to reach the top of the
     /// live region.
     ///
-    /// The rows on screen, less the ones below wherever the cursor was parked.
+    /// The rows on screen, less the ones below wherever the cursor was parked,
+    /// and never more than the window is tall. A rewind moves the cursor
+    /// through rows of the screen it is written to; above the top of that
+    /// screen there is no live region left to reach, only scrollback that has
+    /// been committed and is still being read.
+    ///
+    /// The two counts come apart when the window gets shorter: the rows were
+    /// drawn on the taller one, the terminal has already scrolled the top of
+    /// them away, and what is left to take back is one screen of them at most.
+    /// Clamping here rather than at the one caller that resizes, because this
+    /// is the whole of the answer to how far back a frame may reach, and a
+    /// second answer beside it is one that would go on being right by accident.
     fn region(&self) -> usize {
-        self.drawn.saturating_sub(self.parked)
+        self.drawn.saturating_sub(self.parked).min(self.size.rows)
     }
 }
 

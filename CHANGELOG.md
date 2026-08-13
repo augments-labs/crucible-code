@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The prompt box and the row under it never disappear.** The live tail was
+  bounded by the whole window, so once a turn had written enough rows the tail
+  plus the box came to more rows than the terminal has — and every frame erased
+  lines the terminal had already taken, scrolling the box off the bottom. The
+  tail is now bounded by what is left after the box, which is the only figure
+  that keeps both on screen no matter how long the turn runs.
+
 ## [0.0.13] - 2026-08-13
 
 ### Fixed
