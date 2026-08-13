@@ -18,8 +18,8 @@ expression: window.picture()
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
-|Warning: No models available. Use /login or set an API key environment          |
-|variable. Then use /model to select a model.                                    |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › the quick brown fox jumps over the lazy dog. the quick brown fox jumps ove │|
