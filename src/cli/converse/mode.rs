@@ -11,7 +11,7 @@
 //! into every crate if they sat one level down.
 
 use crucible_core::Mode;
-use crucible_tui::{Glyphs, Row, Slot, clip};
+use crucible_tui::{Glyphs, Slot};
 
 /// Every mode, in the order the key steps through them.
 ///
@@ -55,40 +55,9 @@ pub(super) const fn tone(mode: Mode) -> Slot {
     }
 }
 
-/// The row that stands under a turn, saying which mode it is being taken in.
-///
-/// The same words in the same colour as the row under the box, and without the
-/// keys that follow them there: the key that steps the mode is read while a
-/// line is being typed, and nothing is reading keys while a turn runs. Offering
-/// one that would do nothing is worse than saying only what is true.
-///
-/// Clipped, because the row is counted: one wider than the screen is one the
-/// terminal wraps itself, and the next frame would move back over the wrong
-/// rows.
-pub(super) fn standing(mode: Mode, columns: usize) -> Row {
-    Row::new().then(tone(mode), clip(mode.sentence(), columns))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_row_that_stands_under_a_turn_says_the_mode_and_nothing_else() {
-        // The words are the mode's own, so a mode added later cannot reach the
-        // screen through here spelled some other way.
-        for mode in RING {
-            assert_eq!(standing(mode, 80).text(), mode.sentence(), "{mode}");
-        }
-    }
-
-    #[test]
-    fn a_screen_too_narrow_for_the_mode_gets_as_much_of_it_as_fits() {
-        // A row wider than the screen is wrapped by the terminal, which leaves
-        // the cursor a row below where the next frame expects it -- so the row
-        // that says which mode a turn is running in would corrupt the turn.
-        assert_eq!(standing(Mode::FullAccess, 4).text(), "full");
-    }
 
     #[test]
     fn the_list_holds_every_mode_of_the_ring_once_and_in_its_order() {

@@ -22,9 +22,9 @@ fn recorded(sample: &Sample, asked: &str) -> Session {
 
     session.append(&Message::User(asked.into()));
     session.append(&Message::Agent {
-        stop: Some(StopReason::WantsTools),
         text: "an answer".into(),
         calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     });
 
     session
@@ -49,6 +49,8 @@ fn terms(sample: &Sample) -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         remembering: sample.root().join("unwritten.json"),
+        provider: Some("anthropic"),
+        choosing: sample.root().join("unwritten-home.json"),
         sessions: sample.logs(),
         workspace: sample.workspace(),
     }

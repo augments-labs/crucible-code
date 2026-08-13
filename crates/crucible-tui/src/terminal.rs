@@ -16,6 +16,7 @@
 //! writes is plain ANSI, so what a swap would cost is those three files.
 
 pub(crate) mod keys;
+pub(crate) mod mouse;
 pub(crate) mod raw;
 pub(crate) mod system;
 

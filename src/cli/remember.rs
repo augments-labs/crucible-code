@@ -1,6 +1,11 @@
-//! Writing one rule into the file a project keeps out of git.
+//! Writing one answer into a configuration file.
 //!
-//! The crate below decides what the file may say and what one more rule leaves
+//! Two of them, into two files: the rule an answer of `always` leaves behind
+//! goes into the layer a project keeps out of git, and the model `/model` picks
+//! goes into the one at home, because a model is a fact about who is running
+//! crucible rather than about the checkout.
+//!
+//! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
 
 use std::fs;
@@ -47,6 +52,28 @@ pub(crate) fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> 
     };
 
     let written = crucible_config::allowing(&text, &named, rule)?;
+
+    put(file, &written).map_err(unwritable)
+}
+
+/// Writes `model` down as the one to ask `provider` for.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the choice and nothing else.
+pub(crate) fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
+    let named = file.display().to_string();
+    let unwritable = |source| RememberError::Unwritable {
+        file: named.clone().into(),
+        source,
+    };
+
+    let text = match fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(source) => return Err(unwritable(source)),
+    };
+
+    let written = crucible_config::choosing(&text, &named, provider, model)?;
 
     put(file, &written).map_err(unwritable)
 }

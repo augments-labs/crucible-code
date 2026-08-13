@@ -78,6 +78,15 @@ pub enum ProviderError {
     /// The user cancelled mid-stream.
     #[error("{0}: cancelled")]
     Cancelled(&'static str),
+
+    /// There is nothing set up to send the turn to.
+    ///
+    /// No provider is named, because that is the whole of the problem: no
+    /// credential was found for any of them. It reaches the user as a failed
+    /// turn rather than as a refusal to start, so that the session is still
+    /// there to set one up in.
+    #[error("{0}")]
+    Unconfigured(Box<str>),
 }
 
 /// One turn's worth of input to a model.
@@ -133,6 +142,19 @@ pub enum Delta {
 /// the render path.
 pub trait DeltaStream: Send {
     /// The next delta, or `None` when the stream is finished.
+    ///
+    /// A stream that returns `None` has already delivered a
+    /// [`Delta::Stopped`], or has already reported a failure. Ending without
+    /// either is the one thing an implementation may not do: silence is what a
+    /// finished response and a response that stopped arriving have in common,
+    /// and the stop reason is the only thing that tells them apart. A
+    /// truncated answer that ends quietly reads as a complete one, which is
+    /// the failure the user cannot see for themselves — so a response that
+    /// stops arriving is a [`ProviderError::Transport`] to report, not a
+    /// stream that finished.
+    ///
+    /// The runner holds this rather than trusting it, and a stream that ends
+    /// with nothing said fails the turn.
     fn next(&mut self) -> Option<Result<Delta, ProviderError>>;
 }
 

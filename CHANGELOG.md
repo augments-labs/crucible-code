@@ -6,6 +6,43 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`/model <name>` chooses the model and writes the choice down.** It goes to
+  `~/.crucible/config.json` under the provider serving it, so the next session
+  starts on it without the command line saying so.
+
+- **crucible says when there is a newer release.** A line under the welcome
+  names the version and how to get it, and says nothing at all when you are up
+  to date. The check runs at most once a day, on a thread of its own, and
+  nothing waits for it — so the answer is drawn the *next* time you start.
+  `updates.check` set to `never` stops it contacting GitHub entirely.
+
+- **`output.mouse` decides who the mouse belongs to.** Left `off`, the terminal
+  keeps it: the wheel scrolls scrollback, dragging selects, the middle button
+  pastes. Set to `click`, a click in the box places the cursor — and the wheel
+  is a button too, so it stops scrolling until crucible exits. One trade with
+  two ends, which is why it is a setting and not a default.
+
+### Changed
+
+- **There is no model built in.** crucible used to fall back to a Claude name
+  whatever provider you had a key for, so `--model openai/` asked OpenAI for a
+  model OpenAI does not serve. With nothing configured and nothing on the
+  command line it now starts and says so, under the welcome, rather than
+  picking on your behalf. `/model` or an API key variable is the way out.
+
+- **The prompt box takes typing while a turn is running.** Raw mode is held for
+  the length of the session rather than only while a line is being read, so
+  what you type during an answer is there when the answer ends instead of being
+  swallowed.
+
+### Fixed
+
+- **Authentication can fail where it is used, not only where it is looked up.**
+  A credential that cannot be renewed reaches the turn as a failed turn with the
+  reason on screen, so the session is still there to fix it in.
+
 ## [0.0.14] - 2026-08-13
 
 ### Added

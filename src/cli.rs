@@ -16,6 +16,7 @@ mod converse;
 mod draw;
 #[cfg(test)]
 mod fake;
+mod release;
 mod remember;
 #[cfg(test)]
 mod sample;
@@ -27,61 +28,79 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::Parser;
-use crucible_config::{ConfigError, Home, Settings};
+use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
 use crucible_runner::SessionError;
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
+use crate::cli::draw::Opening;
 use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
 
-/// The providers this is built with, and what each is asked for when nothing
-/// else names a model.
+/// The providers this is built with, and where each one's key is read from.
 ///
-/// One list rather than three: the sentence a wrong name gets back is written
-/// from it, so is the check that refuses the name before anything is drawn, and
-/// so is the model a run lands on with no flag and no configuration.
+/// One list rather than two: the sentence a wrong name gets back is written
+/// from it, and so is the check that refuses the name before anything is drawn.
 /// [`startup::provider`] has one arm per entry, and adding a provider is an
 /// edit to both in the same commit.
 ///
-/// The model belongs to the provider rather than to the build. One name for all
-/// of them is a name only one of them serves, and the other finds that out
-/// after the key has been read and the request sent.
+/// No model is written here, and none may be. A name in this file is a name
+/// this build was compiled with, and a model chosen that way is chosen for
+/// somebody who never asked for it — it outlives the model, it is asked for
+/// with whichever key happens to be set, and the first anyone hears of the
+/// mismatch is a refusal from a vendor they did not mean to write to. What to
+/// ask for comes from the person running it, through `--model` or through
+/// `providers.<name>.model`, and where neither says, crucible asks rather than
+/// guesses.
 const PROVIDERS: [Served; 2] = [
     Served {
         name: "anthropic",
-        model: "claude-sonnet-5",
         key: "ANTHROPIC_API_KEY",
     },
     Served {
         name: "openai",
-        model: "gpt-5.6-terra",
         key: "OPENAI_API_KEY",
     },
 ];
 
-/// A provider this build has an arm for, the model it answers with, and where
-/// its key is read from.
+/// A provider this build has an arm for, and where its key is read from.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Served {
     /// What `--model provider/…` and `providers.<name>` call it.
     pub(crate) name: &'static str,
-    /// What to ask it for when neither the flag nor a file named a model.
-    pub(crate) model: &'static str,
     /// The variable its key is read from, unless `apiKeyEnv` names another.
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.
     pub(crate) key: &'static str,
 }
 
-/// The provider an unqualified model name is served by, and the one a machine
-/// holding no key — or every key — lands on.
+/// What crucible says when nothing on this machine is set up to answer.
 ///
-/// Named rather than taken from the head of the list, so reordering the entries
-/// above cannot quietly move where a bare `crucible` sends its first turn.
-const FALLBACK: &str = "anthropic";
+/// Said under the welcome where a run starts with no key for any provider, and
+/// again in place of any turn typed before there is one.
+pub(crate) const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.";
+
+/// What it says when there is a provider to ask and nothing to ask it for.
+///
+/// A separate sentence rather than the one above, because the one above tells
+/// somebody to set a key — and the key is the half they have already done. A
+/// warning that names the wrong missing thing is worse than no warning: it
+/// sends the reader to check something that was never wrong.
+pub(crate) const NO_MODEL_CHOSEN: &str =
+    "Warning: No model selected. Use /model to select the model to ask.";
+
+/// Which of the two a session with no model has to say.
+///
+/// The provider by name rather than by entry, because the loop holds only the
+/// name by the time it has to ask this again.
+pub(crate) const fn unasked(provider: Option<&str>) -> &'static str {
+    match provider {
+        Some(_) => NO_MODEL_CHOSEN,
+        None => NOTHING_TO_ASK,
+    }
+}
 
 /// The provider names, for the sentence a name outside them gets back.
 fn names() -> String {
@@ -108,13 +127,15 @@ edits and runs things in the current directory, and asks before anything that \
 changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
-claude-sonnet-5, or openai/gpt-5.6-terra. Unqualified names go to Anthropic. \
-Left off, the provider is whichever of ANTHROPIC_API_KEY and OPENAI_API_KEY \
-holds a key, and Anthropic when both or neither does — a variable exported \
-empty holds none, so it does not compete. Left off, or \
-given as a provider and a bare slash, the model comes from your configuration, \
-and failing that from the one this build pairs with that provider. The key is \
-read from that provider's variable, or from whichever one its apiKeyEnv names.
+claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever of \
+ANTHROPIC_API_KEY and OPENAI_API_KEY holds a key — a variable exported empty \
+holds none, so it does not compete — and where both do, qualify the name or \
+set providers.<name>.model for one of them. The key is read from that \
+provider's variable, or from whichever one its apiKeyEnv names.
+
+There is no model built in. Left off, or given as a provider and a bare slash, \
+the model comes from your configuration; where nothing says, crucible starts \
+and asks rather than picking one, and /model writes your answer down.
 
 crucible keeps its own files in ~/.crucible, and reads config.json there, then \
 .crucible/config.json and .crucible/config.local.json in the directory it was \
@@ -130,8 +151,8 @@ struct Cli {
     #[arg(short, long)]
     r#continue: bool,
 
-    /// The model to ask, optionally as provider/model. Defaults to what your
-    /// configuration says, then to the one this build pairs with that provider.
+    /// The model to ask, optionally as provider/model. Left off, it is
+    /// whatever your configuration chose for the provider whose key is set.
     #[arg(short, long)]
     model: Option<String>,
 }
@@ -182,6 +203,18 @@ pub(crate) enum Fatal {
     #[error("--model needs a provider before the slash, as in --model openai/gpt-5.6-terra")]
     Providerless,
 
+    /// More than one provider has a key, and nothing said which of them to ask.
+    #[error(
+        "more than one provider holds a key ({held}), so which to ask is not decided; \
+         qualify the name as --model provider/model, or set providers.<name>.model \
+         for one of them"
+    )]
+    Ambiguous {
+        /// The variables that hold one, named so the answer is a shell command
+        /// away rather than a search through the documentation.
+        held: Box<str>,
+    },
+
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
     Input(io::Error),
@@ -220,25 +253,24 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // to reach. Once, here, and never again — nothing in a turn may widen it.
     let workspace = workspace.reaching(settings.extra_directories())?;
 
-    // A flag that is present names a provider, even when it names one by saying
-    // a bare model name and letting the unqualified form answer. A flag left off
-    // names nothing at all, and then the only evidence on the machine is which
-    // key is set.
+    // Only the flag names a provider outright. Everything else is evidence
+    // rather than an instruction — which key this machine holds, which provider
+    // a file already chose a model for — and it is read here, before anything is
+    // drawn, so a run that cannot start does not first announce that it has.
+    //
+    // Both halves may come back missing, and neither is filled in with a guess.
+    // A provider chosen without a key is one whose refusal arrives after the
+    // first prompt; a model chosen without being asked for is one vendor's name
+    // sent to whichever vendor the key belongs to.
     let choice = match cli.model.as_deref() {
         Some(named) => Choice::parse(named).ok_or(Fatal::Providerless)?,
-        None => Choice::serving(keyed(&settings, &from)),
+        None => Choice::default(),
     };
 
-    // The name on its own, here rather than in `assemble`, because the banner
-    // below names a model and the provider that would serve it: a run that
-    // cannot start should not first announce that it has. Only the name — the
-    // key, the agent and the session stay where they are, after the banner,
-    // since the first frame is measured to its first word.
-    //
-    // What it found comes back rather than being thrown away, because the model
-    // to fall back on is a fact about the provider this proved. Looking the name
-    // up twice is what would let the two answers be about different providers.
-    let serving = served(&choice.provider)?;
+    let serving = match &choice.provider {
+        Some(named) => Some(served(named)?),
+        None => chosen(&choice, &settings, &from)?,
+    };
     let model = wanted(&choice, &settings, serving);
 
     // Set before the session is started, because a session writes a file and
@@ -276,9 +308,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // the render path may ask either of them again.
     let terms = Terms {
         style: Style::resolve(
-            settings.color(),
-            settings.glyphs(),
-            settings.tool_detail(),
+            style::Output {
+                color: settings.color(),
+                glyphs: settings.glyphs(),
+                detail: settings.tool_detail(),
+                mouse: settings.mouse(),
+            },
             renderer.is_terminal(),
             &from,
         ),
@@ -288,6 +323,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // files were read from — so what an answer of `always` writes is what
         // the next crucible started here reads back.
         remembering: crucible_config::local(workspace.root()),
+
+        // Who `/model` is choosing for, and where it writes the choice down.
+        // Both are settled here because both are facts about how this run was
+        // set up, and the prompt is not the place to work out either again.
+        provider: serving.map(|one| one.name),
+        choosing: crucible_config::user(&home),
 
         // The two `/resume` reads a directory of logs with. Both are settled
         // here for the same reason everything else in `Terms` is: the session
@@ -309,11 +350,35 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // the heading with nothing under it.
     let sessions = crucible_runner::recent(home.sessions(), &workspace, Welcome::WANTED);
 
-    draw::opening(&mut renderer, &model, &workspace, &sessions, terms.style)?;
+    // Off the disk, so no socket is opened on the path the first frame is
+    // measured on. Asking again happens after the frame is drawn, on a thread
+    // nobody waits for, and what it finds is what the next run says. Nothing
+    // said is asking: a release check is the sort of thing somebody turns off,
+    // and one that has to be turned *on* is one nobody has.
+    let asking = settings.updates().is_none_or(Updates::wanted);
+    let update = asking
+        .then(|| release::newer(home.path(), env!("CARGO_PKG_VERSION")))
+        .flatten();
+
+    draw::opening(
+        &mut renderer,
+        &Opening {
+            model: model.as_deref(),
+            unasked: unasked(serving.map(|one| one.name)),
+            workspace: &workspace,
+            sessions: &sessions,
+            update: update.as_ref(),
+            style: terms.style,
+        },
+    )?;
+
+    if asking {
+        release::refresh(home.path());
+    }
 
     let runner = assemble(&Startup {
-        provider: &choice.provider,
-        model: &model,
+        provider: serving,
+        model: model.as_deref(),
         resuming: cli.r#continue,
         mode,
         settings: &settings,
@@ -328,71 +393,95 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     outcome
 }
 
-/// Which provider to ask when nothing named one.
+/// Which provider to ask when the flag named none, or `None` where this machine
+/// has nothing set up to ask.
 ///
-/// `crucible` on its own says nothing about which provider is wanted, so the
-/// only evidence there is is which key the machine holds. Somebody who has
-/// exported one key has set up one provider, and answering them with a refusal
-/// about the *other* provider's variable names a thing they never meant to set.
+/// The only evidence a flagless run leaves is which key the machine holds.
+/// Somebody who has exported one key has set up one provider, and that is the
+/// provider — whatever model name they went on to type. This is the rung that
+/// stops `OPENAI_API_KEY` from being read beside a model only Anthropic serves:
+/// there is no provider written into this build for a bare name to fall back
+/// on, so the key decides, and a key that decides nothing is a run with no
+/// provider rather than a run against a guess.
 ///
 /// Where the file says `apiKeyEnv`, that is the variable looked for: a key is
 /// configured by the name of the variable holding it, and this reads the name
-/// rather than the value — nothing here learns what any key is.
+/// rather than the value — nothing here learns what any key is. A variable
+/// exported empty holds no key, the same way the lookup that reads one sees it,
+/// so `ANTHROPIC_API_KEY=` turns that provider off rather than competing.
 ///
-/// Several keys, or none, is [`FALLBACK`]. That is not a guess about which was
-/// meant; it is the same answer for the same machine every run, rather than one
-/// that turns on which variables a shell happened to export.
-///
-/// A variable exported empty is looked at twice, and the order is the whole
-/// point. It is not a key — the lookup that reads one refuses a blank — so it
-/// loses to a variable that holds one, and a shell carrying `ANTHROPIC_API_KEY=`
-/// to turn that provider *off* does not outvote the key beside it. Where nothing
-/// holds a key it counts after all, so a machine set up with one blank variable
-/// is refused by the name already in the shell rather than by one the user has
-/// never typed.
-fn keyed(settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> &'static str {
-    sole(settings, from, |value| !value.trim().is_empty())
-        .or_else(|| sole(settings, from, |_| true))
-        .unwrap_or(FALLBACK)
-}
-
-/// The one provider whose variable `holds`, or `None` where that is not exactly
-/// one of them.
-///
-/// The value is read and asked a question about; nothing keeps it and nothing
-/// learns what it was.
-fn sole(
+/// Several keys and a model already chosen for exactly one of them is that one:
+/// a `providers.openai.model` written at home is an answer to this question,
+/// and the run after `/model` is the one it has to keep answering. Several keys
+/// and no such answer is [`Fatal::Ambiguous`] — two providers set up and nothing
+/// choosing between them is a question, and picking one would send a turn to a
+/// vendor over a coin toss.
+fn chosen(
+    choice: &Choice,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    holds: impl Fn(&str) -> bool,
-) -> Option<&'static str> {
-    let mut found = PROVIDERS.into_iter().filter(|one| {
-        from(settings.api_key_env(one.name).unwrap_or(one.key)).is_some_and(|value| holds(&value))
-    });
-
-    match (found.next(), found.next()) {
-        (Some(one), None) => Some(one.name),
-        _ => None,
+) -> Result<Option<Served>, Fatal> {
+    let mut holding = keyed(settings, from);
+    let (Some(first), second) = (holding.next(), holding.next()) else {
+        return Ok(None);
+    };
+    if second.is_none() {
+        return Ok(Some(first));
     }
+
+    // The flag having named the model is what makes configuration unable to
+    // answer: `providers.<name>.model` is a choice of model, and the flag has
+    // already overruled it, so reading it here would pick a provider by a name
+    // this run is not going to ask for.
+    let mut answered = keyed(settings, from)
+        .filter(|one| choice.model.is_none() && settings.model(one.name).is_some());
+
+    match (answered.next(), answered.next()) {
+        (Some(one), None) => Ok(Some(one)),
+        _ => Err(Fatal::Ambiguous {
+            held: keyed(settings, from)
+                .map(|one| settings.api_key_env(one.name).unwrap_or(one.key))
+                .collect::<Vec<_>>()
+                .join(", ")
+                .into(),
+        }),
+    }
+}
+
+/// Every provider whose variable holds a key, in the order they are declared.
+fn keyed<'a>(
+    settings: &'a Settings,
+    from: &'a dyn Fn(&str) -> Option<String>,
+) -> impl Iterator<Item = Served> + 'a {
+    PROVIDERS.into_iter().filter(move |one| {
+        from(settings.api_key_env(one.name).unwrap_or(one.key))
+            .is_some_and(|value| !value.trim().is_empty())
+    })
 }
 
 /// Which model to ask for, once the command line and the files have both spoken.
 ///
-/// The flag, then the configuration for that provider, then the name that
-/// provider is built with. `--model openai/` naming a provider and no model is
-/// what makes the middle rung reachable: without it every way of choosing a
-/// provider names a model in the same breath, and `providers.openai.model`
-/// could never be the answer to anything.
+/// The flag, then the configuration for the provider this is going to, then
+/// nothing. `--model openai/` naming a provider and no model is what makes the
+/// middle rung reachable: without it every way of choosing a provider names a
+/// model in the same breath, and `providers.openai.model` could never be the
+/// answer to anything.
 ///
-/// The bottom rung is `serving` rather than a name of its own, so every rung is
-/// about the provider the run is going to. A rung that was not would send one
-/// vendor another vendor's model name.
-fn wanted(choice: &Choice, settings: &Settings, serving: Served) -> Box<str> {
-    choice
-        .model
-        .clone()
-        .or_else(|| settings.model(&choice.provider).map(Into::into))
-        .unwrap_or_else(|| serving.model.into())
+/// There is no bottom rung, and that is the point. A name written into this
+/// build would be asked for on behalf of somebody who never chose it, and it
+/// would be asked of whichever provider the key belongs to.
+///
+/// A key written into a file and left empty is a file that said nothing, not a
+/// request for a model called nothing. Sent as it stands it would reach a
+/// vendor as a name with no characters in it.
+fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Option<Box<str>> {
+    if let Some(named) = choice.model.clone() {
+        return Some(named);
+    }
+
+    let configured = settings.model(serving?.name)?.trim();
+
+    (!configured.is_empty()).then(|| configured.into())
 }
 
 /// Writes a fatal error where the user will see it.

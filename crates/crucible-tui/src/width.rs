@@ -82,6 +82,56 @@ pub fn clip(text: &str, columns: usize) -> &str {
     }
 }
 
+/// `text` broken into rows no wider than `columns`, at the spaces where it can
+/// be.
+///
+/// For a sentence composed here rather than one that arrived: a component with a
+/// paragraph to draw has to know how many rows it drew, and this is where the
+/// walk that answers that already lives. The streamed tail wraps at the column
+/// instead, because it is fed a character at a time and cannot see the end of
+/// the word it is in.
+///
+/// A word too long for a row is cut rather than left to overflow, which is what
+/// keeps every row back no wider than asked for however narrow the terminal is.
+/// Borrowed rather than allocated: the rows are pieces of `text`.
+#[must_use]
+pub fn fold(text: &str, columns: usize) -> Vec<&str> {
+    let mut rows = Vec::new();
+    let mut rest = text.trim();
+
+    if columns == 0 {
+        return rows;
+    }
+
+    while !rest.is_empty() {
+        let Some(over) = cut(rest, columns) else {
+            rows.push(rest);
+            break;
+        };
+
+        // The last space inside the row, so a word is not halved. Failing that
+        // the row is one long word and the cut stands. Never zero: a character
+        // wider than the whole row would otherwise take no bytes off the front
+        // and this would not end.
+        let at = match rest[..over].rfind(' ') {
+            Some(space) if space > 0 => space,
+            _ => over.max(step(rest)),
+        };
+
+        rows.push(rest[..at].trim_end());
+        rest = rest[at..].trim_start();
+    }
+
+    rows
+}
+
+/// The offset one character in, for the row too narrow to hold even that.
+fn step(text: &str) -> usize {
+    text.char_indices()
+        .nth(1)
+        .map_or(text.len(), |(offset, _)| offset)
+}
+
 /// How many display columns one row of `text` costs.
 ///
 /// The same walk as [`cut`] rather than a second count of the same string: a

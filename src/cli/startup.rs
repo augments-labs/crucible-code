@@ -13,11 +13,11 @@ use std::path::Path;
 
 use crucible_config::Settings;
 use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
-use crucible_provider::{Anthropic, Https, OpenAi};
+use crucible_provider::{Anthropic, Https, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
-use super::{Fatal, PROVIDERS, Served};
+use super::{Fatal, NOTHING_TO_ASK, PROVIDERS, Served};
 
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
@@ -50,9 +50,11 @@ way you decided, and carry on.";
 /// fail, and eight of those in a row is a call nobody can read.
 pub(super) struct Startup<'a> {
     /// Which provider, after the command line and the files have both spoken.
-    pub(super) provider: &'a str,
-    /// Which model of it, resolved the same way.
-    pub(super) model: &'a str,
+    /// `None` where this machine holds no key for any of them.
+    pub(super) provider: Option<Served>,
+    /// Which model of it, resolved the same way. `None` where nothing named
+    /// one, which is a session that can do everything but take a turn.
+    pub(super) model: Option<&'a str>,
     /// Whether to carry on the most recent session for this directory.
     pub(super) resuming: bool,
     /// The mode the permission engine starts in. The caller resolves it once
@@ -136,6 +138,11 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// another is an arm here and a `Credential` beside it — nothing in any crate
 /// below has to learn that it exists.
 ///
+/// `None` is a machine with no key for any provider, and it gets the provider
+/// that answers nothing. Ending the run instead would take away the session the
+/// key is about to be set up from, and the sentence it refuses with is the one
+/// already drawn under the welcome.
+///
 /// `from` reads the environment. It is a parameter because the pairing below is
 /// worth a test and the real environment cannot be set from one: writing to it
 /// is `unsafe` in edition 2024, which this workspace forbids.
@@ -146,11 +153,16 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// the vendor's usual name, written beside the provider in `PROVIDERS`. The
 /// *value* stays where it always was: read once, here, and applied to a header.
 fn provider(
-    named: &str,
+    serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
-    let variable = settings.api_key_env(named).unwrap_or(served(named)?.key);
+    let Some(serving) = serving else {
+        return Ok(Box::new(Unavailable::new(NOTHING_TO_ASK)));
+    };
+
+    let named = serving.name;
+    let variable = settings.api_key_env(named).unwrap_or(serving.key);
 
     match named {
         // Two protocols, one credential kind pointed at different headers.
@@ -214,14 +226,19 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
 /// The root goes in the system prompt because every tool takes paths relative
 /// to it, and a model that has to guess the root spends its first tool call
 /// finding out.
-fn model(name: &str, workspace: &Workspace) -> Model {
+///
+/// An unnamed model is the empty name, which is what the loop reads to find out
+/// that there is nothing to ask yet. It is the same absence [`Startup::model`]
+/// carries, spelled the way a `Model` can hold it — the alternative is an
+/// `Option` threaded through every turn to describe a state no turn is taken in.
+fn model(name: Option<&str>, workspace: &Workspace) -> Model {
     let system = format!(
         "{SYSTEM}\n\nThe workspace root is {}. Every tool path is relative to it.",
         workspace.root().display()
     );
 
     Model {
-        name: name.into(),
+        name: name.unwrap_or_default().into(),
         max_tokens: MAX_TOKENS,
         system: Some(system.into()),
     }

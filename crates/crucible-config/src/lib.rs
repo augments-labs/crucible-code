@@ -53,6 +53,6 @@ mod shape;
 // to do with it, and a second way in is a second answer to which files exist.
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
-pub use remember::allowing;
-pub use settings::{ClearScreen, Color, Glyphs, Settings, ToolDetail, local};
+pub use remember::{allowing, choosing};
+pub use settings::{ClearScreen, Color, Glyphs, Mouse, Settings, ToolDetail, Updates, local, user};
 pub use shape::schema::schema;

@@ -72,6 +72,18 @@ pub fn local(workspace: &Path) -> PathBuf {
     workspace.join(PROJECT).join(LOCAL)
 }
 
+/// Where this machine keeps the settings that follow the person rather than the
+/// checkout.
+///
+/// The other layer crucible itself writes to, and named here for the same
+/// reason: which file a model chosen at the prompt lands in is the same fact as
+/// which file it is read back from, and two answers to it would be a choice
+/// written where nothing looks.
+#[must_use]
+pub fn user(home: &Home) -> PathBuf {
+    home.path().join(FILE)
+}
+
 /// The three files, in the order they merge: furthest first.
 fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
     let project = workspace.join(PROJECT);
@@ -139,9 +151,9 @@ mod tests {
     fn the_file_crucible_writes_to_is_the_layer_git_ignores_and_not_the_one_that_travels() {
         // `.crucible/config.json` is checked in, so a rule somebody answered
         // `always` to on their own machine would reach everyone who clones.
-        // Watched through a document only the other layer accepts: an `env`
-        // name outside crucible's own is refused in the file that travels, so
-        // reading this back at all is where it landed.
+        // Watched through a document only the other layer accepts: an `allow`
+        // is refused in the file that travels, so reading this back at all is
+        // where it landed — and an `allow` is what answering `always` writes.
         let scratch = Scratch::new("layers-local");
         let path = local(scratch.root());
 
@@ -149,7 +161,8 @@ mod tests {
             .expect("a writable temporary directory");
         fs::write(
             &path,
-            r#"{"env": {"WHOSE": "mine"}, "providers": {"a": {"model": "local"}}}"#,
+            r#"{"permissions": {"allow": ["bash(cargo test)"]},
+                "providers": {"a": {"model": "local"}}}"#,
         )
         .expect("a writable temporary directory");
 

@@ -29,6 +29,12 @@ fn plain() -> Terms {
         cancel: Cancel::new(),
         remembering: crucible_config::local(&unwritten),
 
+        // A provider, so `/model` has a name to write its answer under, and a
+        // file inside the same absent tree so nothing a test types reaches a
+        // configuration anybody keeps.
+        provider: Some("anthropic"),
+        choosing: unwritten.join("config.json"),
+
         // The same tree, equally absent: a loop these terms drive has no
         // sessions to list and none to pick up. What `/resume` does with ones
         // that are there is proved where they are recorded.
@@ -125,6 +131,21 @@ fn two_prompts_are_two_turns() {
 
     assert!(written.contains("first"), "{written}");
     assert!(written.contains("second"), "{written}");
+}
+
+#[test]
+fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
+    // Return pressed twice while a long turn ran. The box takes the second
+    // line as readily as the first and clears itself both times, so a queue
+    // that kept only one of them loses a prompt the user watched it accept --
+    // and it never runs, and nothing says so.
+    let mut waiting = VecDeque::new();
+
+    queue(&mut waiting, Some("run the tests".to_owned()));
+    queue(&mut waiting, None);
+    queue(&mut waiting, Some("now fix what failed".to_owned()));
+
+    assert_eq!(waiting, ["run the tests", "now fix what failed"]);
 }
 
 #[test]
@@ -291,14 +312,16 @@ fn the_prompt_line_names_the_mode_in_force() {
 }
 
 #[test]
-fn the_mode_stands_under_a_turn_that_is_still_being_written() {
+fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     // A turn is the longest a session goes without a prompt on screen, and it
-    // is the stretch the mode is deciding things over -- the mode used to leave
+    // is the stretch the mode is deciding things over -- both used to leave
     // with the box and come back only once there was nothing left to decide.
-    // Pinned to the escape that parks the cursor back on the answer as well as
-    // to the words: a row drawn under the tail and not counted is one the next
-    // frame rewinds over, which would corrupt the turn rather than merely
-    // mislead about it.
+    // Pinned to the escape that parks the cursor as well as to the words: rows
+    // drawn under the tail and not counted are rows the next frame rewinds
+    // over, which would corrupt the turn rather than merely mislead about it.
+    // The cursor comes back into the box rather than onto the answer, because
+    // the box is what takes typing while the turn runs — two rows up from the
+    // last of the four, and at the column the line starts on.
     let runner = scripted(Script::new(vec![saying("hello")]), Tools::new())
         .permitting(Permission::with(Mode::FullAccess, Rules::new()));
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -307,17 +330,18 @@ fn the_mode_stands_under_a_turn_that_is_still_being_written() {
     converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
+    assert!(written.contains("full access mode on"), "{written}");
     assert!(
-        written.contains("hello\r\nfull access mode on\x1b[1A"),
-        "{written}"
+        written.contains("hello\r\n\u{256d}"),
+        "the box did not stand under the answer: {written}"
+    );
+    assert!(
+        written.contains("\x1b[2A\x1b[5G"),
+        "the cursor was not parked in the box: {written}"
     );
 }
 
-// What a question offers, and what the answer to it leaves behind.
-//
-// The turns either side of a question are the parent module's subject. This is
-// the moment in the middle, where the loop is drawing and waiting at once.
-
+/// The moment in the middle of a turn, where the loop draws and waits at once.
 /// The whole loop under terms of the test's own: what an answer leaves behind
 /// depends on where those terms point.
 fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str) -> String {
@@ -330,13 +354,11 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
 
     renderer.terminal().written().to_string()
 }
-
 fn tools(tool: Fixed) -> Tools {
     let mut offered = Tools::new();
     offered.add(Box::new(tool));
     offered
 }
-
 /// The call the script below made, as the engine will be asked about it.
 fn asking(name: &str) -> ToolCall {
     ToolCall {
@@ -345,7 +367,6 @@ fn asking(name: &str) -> ToolCall {
         args: ToolArgs::new("{}"),
     }
 }
-
 fn calling(name: &str) -> Vec<Delta> {
     vec![
         Delta::ToolStarted {
@@ -357,170 +378,138 @@ fn calling(name: &str) -> Vec<Delta> {
     ]
 }
 
+mod question;
+
+// Which questions a mode leaves to be drawn.
+//
+// What each mode answers is settled where the engine is, over sensitivities
+// written down by hand. What needs the loop running is that the answer reaches
+// the screen: the engine crosses to the worker with the runner and comes back,
+// and a mode is the one thing about a session that changes after it started —
+// so a session drawing one mode while deciding by another would be wrong in the
+// place nobody can check by reading.
+//
+// Every test here types nothing an unexpected question could be answered with.
+// A question drawn where none was expected meets the end of input, which is a
+// refusal, so the turn ends and the sentence after it is never said — the
+// assertions below fail rather than hang.
+
+/// The whole loop in one mode, over the tools given.
+fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) -> String {
+    let runner =
+        scripted(Script::new(rounds), offered).permitting(Permission::with(mode, Rules::new()));
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+
+    renderer.terminal().written().to_string()
+}
+
 #[test]
-fn a_question_asked_mid_turn_is_answered_from_the_same_input() {
-    // The turn blocks on the answer while the loop is drawing its events.
-    // Both are on the one channel, so this deadlocks if they are not.
-    let written = conversing(
-        vec![calling("write"), saying("changed it")],
+fn allow_edits_changes_a_file_with_no_question_drawn() {
+    let written = deciding(
+        Mode::AllowEdits,
         tools(Fixed::new("write", changing())),
-        "edit it\ny\n",
+        vec![calling("write"), saying("changed it")],
+        "edit it\n",
     );
 
-    assert!(written.contains("wants to change"), "{written}");
+    assert!(!written.contains("wants to change"), "{written}");
     assert!(written.contains("changed it"), "{written}");
 }
 
 #[test]
-fn refusing_a_tool_ends_the_turn_where_the_user_can_see_why() {
-    let written = conversing(
-        vec![calling("write")],
-        tools(Fixed::new("write", changing())),
-        "edit it\nn\n",
+fn allow_edits_asks_before_a_command_nothing_proved_anything_about() {
+    // The mode is a sentence about reach, and a command line nobody read
+    // closely enough reaches whatever the user can. Answered `n`, so the
+    // question is one the loop waited on rather than one it drew and walked
+    // past.
+    let written = deciding(
+        Mode::AllowEdits,
+        tools(Fixed::new("bash", running("cargo test"))),
+        vec![calling("bash"), saying("ran it")],
+        "go\nn\n",
     );
 
-    assert!(written.contains("write was not allowed"), "{written}");
-}
-
-#[test]
-fn a_question_left_unanswered_at_end_of_input_is_refused() {
-    // The input ends mid-question. Nothing consented, so nothing runs, and
-    // the loop still returns instead of waiting on a pipe that is closed.
-    let written = conversing(
-        vec![calling("write")],
-        tools(Fixed::new("write", changing())),
-        "edit it\n",
-    );
-
-    assert!(written.contains("was not allowed"), "{written}");
-}
-
-#[test]
-fn an_answer_of_always_is_on_the_disk_before_the_next_turn_is_asked_for() {
-    // The whole path, end to end: the rule the question offered is the rule
-    // that reaches the file, and the file is the one crucible reads at start-up.
-    let sample = Sample::new("converse-always");
-    let terms = Terms {
-        remembering: crucible_config::local(&sample.root()),
-        ..plain()
-    };
-
-    let written = answering(
-        &terms,
-        vec![calling("bash"), saying("done")],
-        tools(Fixed::new("bash", running("ls"))),
-        "go\na\n",
-    );
-
-    assert!(written.contains("remembered bash(ls)"), "{written}");
     assert!(
-        matches!(
-            sample.settles(&asking("bash"), &running("ls")),
-            Settled::Approved(_)
-        ),
-        "the rule is not in {}",
-        crucible_config::local(&sample.root()).display()
+        written.contains("bash wants to run: cargo test"),
+        "{written}"
     );
+    assert!(written.contains("bash was not allowed"), "{written}");
 }
 
 #[test]
-fn a_call_no_rule_can_be_written_for_writes_nothing_when_always_is_typed() {
-    // The question did not offer `always`, so the word is one the prompt has
-    // no answer for. Nothing runs and nothing is written down — the failure
-    // that leaves the user to answer again rather than one that quietly
-    // widens what a file allows.
-    let sample = Sample::new("converse-unwritable");
-    let terms = Terms {
-        remembering: crucible_config::local(&sample.root()),
-        ..plain()
-    };
-
-    let written = answering(
-        &terms,
-        vec![calling("write")],
-        tools(Fixed::new("write", changing())),
-        "go\na\n",
+fn allow_edits_draws_the_question_for_a_command_that_only_changes_the_workspace() {
+    // The line this mode used to run unasked, because every path in it was
+    // found inside the working directory. A shell reopens those paths by name
+    // after the reading, so the reading was never a guarantee about what ran —
+    // and the mode now says what its name says: files yes, processes ask.
+    let written = deciding(
+        Mode::AllowEdits,
+        tools(Fixed::new("bash", running("mkdir src/net"))),
+        vec![calling("bash"), saying("made it")],
+        "go\ny\n",
     );
 
-    assert!(written.contains("was not allowed"), "{written}");
     assert!(
-        !crucible_config::local(&sample.root()).exists(),
-        "a file was written for a call no rule can be minted from"
+        written.contains("bash wants to run: mkdir src/net"),
+        "{written}"
     );
+    assert!(written.contains("made it"), "{written}");
 }
 
 #[test]
-fn yes_allows_this_call_only() {
-    assert_eq!(
-        verdict(Some("y\n"), true),
-        (Verdict::Allow, Remember::Never)
+fn full_access_draws_neither_question() {
+    // Both in one round, which is the shape that would catch a mode read once
+    // per turn rather than asked of every call.
+    let mut offered = tools(Fixed::new("write", changing()));
+    offered.add(Box::new(Fixed::new("bash", running("cargo test"))));
+
+    let round = vec![
+        Delta::ToolStarted {
+            id: ToolId::new("a"),
+            name: "write".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::ToolStarted {
+            id: ToolId::new("b"),
+            name: "bash".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ];
+
+    let written = deciding(
+        Mode::FullAccess,
+        offered,
+        vec![round, saying("both done")],
+        "go\n",
     );
-    assert_eq!(
-        verdict(Some("yes"), true),
-        (Verdict::Allow, Remember::Never)
-    );
+
+    assert!(!written.contains("wants to"), "{written}");
+    assert!(written.contains("both done"), "{written}");
 }
 
 #[test]
-fn session_allows_calls_like_it_until_crucible_exits() {
-    assert_eq!(
-        verdict(Some("s\n"), true),
-        (Verdict::Allow, Remember::Session)
+fn the_mode_a_command_named_is_the_mode_the_next_turn_is_decided_under() {
+    // `/mode` is answered on this thread, and the turn after it decides on
+    // another. The row under the box is drawn from the mode read here on the
+    // way in, and the call is decided by the engine that went with the runner:
+    // one value, or the screen would be describing a session that is not the
+    // one running. The turn starts in `ask`, which is the mode that would have
+    // drawn the question this asserts is absent.
+    let written = deciding(
+        Mode::Ask,
+        tools(Fixed::new("write", changing())),
+        vec![calling("write"), saying("changed it")],
+        "/mode allowEdits\nedit it\n",
     );
-    assert_eq!(
-        verdict(Some("session"), true),
-        (Verdict::Allow, Remember::Session)
-    );
-}
 
-#[test]
-fn always_allows_calls_like_it_from_now_on() {
-    // The answer that costs a file. It is a different word from `session`
-    // because it is a different promise, and one of the two outlives the
-    // process that made it.
-    assert_eq!(
-        verdict(Some("a\n"), true),
-        (Verdict::Allow, Remember::Always)
-    );
-    assert_eq!(
-        verdict(Some("always"), true),
-        (Verdict::Allow, Remember::Always)
-    );
-}
-
-#[test]
-fn always_is_not_an_answer_where_no_rule_can_be_written() {
-    // The question did not offer it, so it is a word the user typed at a
-    // prompt that has no such answer — and the failure worth having is the
-    // one where nothing runs.
-    assert_eq!(
-        verdict(Some("a\n"), false),
-        (Verdict::Deny, Remember::Never)
-    );
-    assert_eq!(
-        verdict(Some("always"), false),
-        (Verdict::Deny, Remember::Never)
-    );
-}
-
-#[test]
-fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
-    // Including the empty line, which is what someone types when they meant
-    // to read the question first. A refusal covers the call it refused and no
-    // other, so there is nothing for a duration to hold.
-    for answer in ["n", "no", "", "\n", "yeah", "Y E S", "1"] {
-        assert_eq!(
-            verdict(Some(answer), true),
-            (Verdict::Deny, Remember::Never),
-            "{answer:?}"
-        );
-    }
-}
-
-#[test]
-fn end_of_input_is_a_refusal() {
-    // A pipe that closed mid-question cannot consent to anything.
-    assert_eq!(verdict(None, true), (Verdict::Deny, Remember::Never));
+    assert!(written.contains("allow edits on"), "{written}");
+    assert!(!written.contains("wants to change"), "{written}");
+    assert!(written.contains("changed it"), "{written}");
 }
 
 // What a command does to the loop it was typed into.

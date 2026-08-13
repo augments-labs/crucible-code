@@ -16,15 +16,20 @@ use check::{Reader, Spot};
 
 /// Which of the layers a document was read from.
 ///
-/// Carried by the document rather than decided by the reader, because one rule
-/// depends on it: the layer that travels with a clone may not carry `env`.
+/// Carried by the document rather than decided by the reader, because two rules
+/// depend on it: what a file under the working directory may put in `env`, and
+/// what the file that travels with a clone may say about permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
     /// The configuration file in the user's home directory.
+    ///
+    /// The only layer that arrived with the person rather than with a
+    /// checkout, which is what makes it the only one allowed to widen anything.
     User,
     /// `.crucible/config.json` — checked in, and read by everyone who clones.
     Project,
-    /// `.crucible/config.local.json` — git ignores it.
+    /// `.crucible/config.local.json` — the file crucible writes an answer to,
+    /// and the one a `.gitignore` is expected to keep out of the repository.
     ProjectLocal,
 }
 
@@ -39,6 +44,23 @@ impl Origin {
             Self::User => 0,
             Self::Project => 1,
             Self::ProjectLocal => 2,
+        }
+    }
+
+    /// Whether this layer is a file that came with the working directory.
+    ///
+    /// Both project files do, and which of them git carries is not a fact
+    /// crucible can check: `.crucible/config.local.json` is git-ignored by
+    /// convention, and the convention is written in the `.gitignore` of the
+    /// repository being cloned. A repository that simply commits one gets a
+    /// file crucible reads and cannot tell from the user's own.
+    ///
+    /// So this is the question the `env` rule asks, rather than which of the
+    /// two names the file has.
+    pub(crate) fn in_the_workspace(self) -> bool {
+        match self {
+            Self::User => false,
+            Self::Project | Self::ProjectLocal => true,
         }
     }
 }
@@ -84,6 +106,11 @@ impl Document {
     /// errors when it is JSON crucible does not understand, and
     /// [`ConfigError::BadRule`] or [`ConfigError::Relative`] when the
     /// permissions block holds text that is the right shape and says nothing.
+    ///
+    /// [`ConfigError::Widening`] and [`ConfigError::ProjectEnv`] for a document
+    /// that says something its layer is not allowed to say — which is why the
+    /// origin is an argument here rather than something the layering decides
+    /// afterwards.
     pub(crate) fn parse(text: &str, file: &str, origin: Origin) -> Result<Self, ConfigError> {
         let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
             file: file.into(),
@@ -92,9 +119,9 @@ impl Document {
             problem: without_position(&source.to_string()).into(),
         })?;
 
-        let reader = Reader { file, text };
+        let reader = Reader { file, text, origin };
         reader.check(&value, &DOCUMENT, Spot::ROOT)?;
-        reader.variables(&value, origin)?;
+        reader.variables(&value)?;
         reader.directories(&value)?;
         let rules = rules::read(&reader, &value)?;
 
@@ -166,15 +193,15 @@ mod tests {
 
     #[test]
     fn printing_a_document_names_a_variable_and_shows_nothing_of_its_value() {
-        // The layers git ignores are where a variable outside crucible's own
-        // namespace is allowed to live, so a document parsed from one holds
+        // The home directory is where a variable outside crucible's own
+        // namespace is allowed to live, so a document parsed from it holds
         // whatever the user put there.
         let document = Document::parse(
             r#"{"env": {"TOKEN": "hunter2"}}"#,
-            ".crucible/config.local.json",
-            Origin::ProjectLocal,
+            "~/.crucible/config.json",
+            Origin::User,
         )
-        .expect("a document the layer git ignores accepts");
+        .expect("a document the user's own file accepts");
 
         let printed = format!("{document:?}");
         assert!(printed.contains("TOKEN"), "got {printed}");

@@ -102,6 +102,15 @@ pub(super) fn insert(text: &str, container: Span, item: impl Fn(Option<&str>) ->
     splice(text, last..last, &written)
 }
 
+/// The text with the value at `span` written over.
+///
+/// What [`insert`] is for a container that gains a member, this is for one that
+/// already has it: an answer written twice is an answer the parser reads once
+/// and the reader reads two different ways.
+pub(super) fn over(text: &str, span: Span, written: &str) -> String {
+    splice(text, span.start..span.end, written)
+}
+
 /// The text with `range` replaced.
 fn splice(text: &str, range: std::ops::Range<usize>, written: &str) -> String {
     let mut spliced = String::with_capacity(text.len() + written.len());

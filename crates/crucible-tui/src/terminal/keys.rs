@@ -10,7 +10,12 @@
 //! sending something exotic costs a frame that is not drawn instead of a
 //! character nobody typed.
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use std::time::Duration;
+
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 
 use super::TerminalError;
 use crate::editor::Key;
@@ -34,6 +39,17 @@ pub enum Pressed {
     Up,
     /// The down arrow: on one row through it.
     Down,
+    /// A button went down somewhere on the screen, counted from its top left.
+    ///
+    /// Absolute, because that is what the terminal reports and this file is
+    /// where its answer stops being its own type. Working out which row of
+    /// which component that is belongs to whoever drew them.
+    Clicked {
+        /// How many rows down the screen.
+        row: usize,
+        /// How many columns across it.
+        column: usize,
+    },
     /// The window changed size, so whatever is live was laid out for a width
     /// the terminal no longer has.
     Resized,
@@ -56,6 +72,20 @@ pub fn pressed() -> Result<Pressed, TerminalError> {
     Ok(meaning(&event::read()?))
 }
 
+/// Whether the terminal has something to say, waiting up to `patience` for it.
+///
+/// What [`pressed`] is for a caller that has something else to watch. A turn is
+/// running on another thread and reporting through a channel, and the reader
+/// here has to serve both — so it waits a little on one, looks at the other,
+/// and goes round. Zero asks whether anything is already in hand.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be read from.
+pub fn waiting(patience: Duration) -> Result<bool, TerminalError> {
+    Ok(event::poll(patience)?)
+}
+
 /// What one event from the terminal means.
 ///
 /// Separate from the read so that every mapping below is a test rather than a
@@ -64,8 +94,59 @@ fn meaning(event: &Event) -> Pressed {
     match event {
         Event::Resize(..) => Pressed::Resized,
         Event::Key(key) => key_pressed(*key),
+        Event::Mouse(mouse) => clicked(*mouse),
         _ => Pressed::Ignored,
     }
+}
+
+/// The same for the mouse, once it is the mouse.
+///
+/// A button going down and nothing else. Reporting is only ever on while a
+/// prompt is up, and what a prompt has for the pointer to do is put the cursor
+/// somewhere — a release, a drag and a wheel have no answer here, and acting on
+/// the release as well would answer one click twice.
+///
+/// Either button, because either is the one somebody reaches for: the left is
+/// what every editor places a caret with, and the right is what a terminal user
+/// who has never had a caret to place reaches for first. Neither has a second
+/// meaning in this box for the other to collide with. The middle is left alone —
+/// it is paste on this platform, and answering it would take that away and put
+/// a cursor move in its place.
+fn clicked(mouse: MouseEvent) -> Pressed {
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
+    ) {
+        return Pressed::Ignored;
+    }
+
+    Pressed::Clicked {
+        row: mouse.row as usize,
+        column: mouse.column as usize,
+    }
+}
+
+/// Where the terminal says its cursor is, counted from the top left of the
+/// screen.
+///
+/// A question rather than a read, and the one place this crate asks the
+/// terminal anything on the way *in*: the answer comes back as a sequence in
+/// the same stream keys arrive on. It is asked once per click and never per
+/// frame — a click is somebody's hand, and a round trip on the render path
+/// would be a round trip per keystroke.
+///
+/// It is what makes a click mean anything. crucible draws inline, so it does
+/// not know which row of the screen it is drawing on; the cursor is parked
+/// where the caret is at the moment a click arrives, so this and the caret
+/// together say where the component starts.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal would not answer.
+pub fn caret() -> Result<(usize, usize), TerminalError> {
+    let (column, row) = crossterm::cursor::position()?;
+
+    Ok((row as usize, column as usize))
 }
 
 /// The same for a key, once it is one.

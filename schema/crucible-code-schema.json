@@ -12,7 +12,7 @@
     },
     "env": {
       "additionalProperties": false,
-      "description": "Environment variables for the commands crucible runs. A checked-in file may set only crucible's own CRUCIBLE_CODE_ names",
+      "description": "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
       "patternProperties": {
         "^[^$]": {
           "type": "string"
@@ -55,6 +55,14 @@
           ],
           "type": "string"
         },
+        "mouse": {
+          "description": "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt, and the wheel stops scrolling",
+          "enum": [
+            "off",
+            "click"
+          ],
+          "type": "string"
+        },
         "toolDetail": {
           "description": "How much of a tool call and its result one line shows",
           "enum": [
@@ -77,7 +85,7 @@
           "type": "string"
         },
         "allow": {
-          "description": "Rules for calls that run without being put to you",
+          "description": "Rules for calls that run without being put to you. Not read from .crucible/config.json, which everyone who clones gets",
           "items": {
             "examples": [
               "read(src/**)",
@@ -113,7 +121,7 @@
           "uniqueItems": true
         },
         "extraDirectories": {
-          "description": "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, so this belongs in .crucible/config.local.json",
+          "description": "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, and this is not read from .crucible/config.json, so it belongs in .crucible/config.local.json",
           "items": {
             "examples": [
               "/home/you/src/shared-library",
@@ -125,7 +133,7 @@
           "uniqueItems": true
         },
         "mode": {
-          "description": "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything",
+          "description": "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Not read from .crucible/config.json, which everyone who clones gets",
           "enum": [
             "ask",
             "allowEdits",
@@ -166,6 +174,27 @@
           "type": "string"
         },
         "$schema": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "updates": {
+      "additionalProperties": false,
+      "description": "Whether crucible finds out that a newer release exists",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "check": {
+          "description": "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
+          "enum": [
+            "auto",
+            "never"
+          ],
           "type": "string"
         }
       },

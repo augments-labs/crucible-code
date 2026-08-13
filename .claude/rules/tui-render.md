@@ -24,6 +24,24 @@ transcript above lives on disk or in a bounded window rather than in a `Vec`
 that grows all session. Rewrite this section when that lands; do not soften the
 paragraph above it.
 
+That is also the moment to decide whether this crate should own its own
+rendering at all, and the decision is easier to make deliberately now than
+under the pressure of the rewrite. `ratatui` was not ruled out on its merits —
+it is built on the `crossterm` this crate already uses — but on the alternate
+screen, which is the thing the paragraph above refuses. A full-screen renderer
+takes that screen anyway, so at that point the argument that ruled it out has
+gone, and the choice becomes: write a virtualized viewport, or adopt one.
+
+What is worth weighing when it comes up, rather than rediscovering:
+a widget framework owns a cell buffer and diffs it, so the cursor arithmetic
+this crate does by hand — how far a frame rewinds, where it parks, how tall the
+live region may be — stops existing, and with it the class of defect that has
+cost this crate the most. Against that, a component here is a `Vec<Row>` that
+needs no terminal to test, which is a better seam than rendering into a buffer;
+and the screen test would lose the thing it uniquely catches, because a bug in
+an escape sequence is not possible in a framework that writes them for you.
+Neither list settles it. Both are easy to forget.
+
 Until then, the live tail is bounded — once there are more rows than the bound,
 the oldest are written out once and forgotten. A change that holds the whole
 transcript to re-render it has broken the budget even if it looks correct on a
