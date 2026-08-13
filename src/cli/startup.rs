@@ -193,7 +193,7 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
     let mut tools = Tools::new();
 
     tools.add(Box::new(Read::new(workspace.clone())));
-    tools.add(Box::new(Grep::new(workspace.clone())));
+    tools.add(Box::new(Grep::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Glob::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Edit::new(workspace.clone())));
     tools.add(Box::new(Write::new(workspace.clone())));

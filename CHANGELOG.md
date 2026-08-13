@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A `grep` walk stops when the turn does.** The same as `glob`'s: a tree
+  worth searching is a tree where <kbd>Ctrl-C</kbd> has to arrive, and nothing
+  in the walk was watching. A search stopped partway reports what it had, and
+  says so, including when it stopped inside a file it was reading.
+
 - **`glob` holds no more paths than it will answer with.** Every path the walk
   found was kept and then sorted, so a pattern like `**/*` in a large tree built
   a list of everything before cutting it to the few hundred it would report —
