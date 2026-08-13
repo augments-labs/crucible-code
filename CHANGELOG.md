@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A provider stream can say "nothing yet".** A read used to block until the
+  provider spoke, so the cancel flag was only ever looked at between events —
+  and a model that went quiet mid-answer held the turn on the socket for as long
+  as it stayed quiet, with <kbd>Ctrl-C</kbd> waiting behind it. A read that
+  brings nothing back is now a third answer alongside an event and an ending,
+  handed to the caller so it can look at its cancel and ask again.
+
 ## [0.0.11] - 2026-08-13
 
 ### Fixed

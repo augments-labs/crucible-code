@@ -6,6 +6,11 @@
 //! payload still text. Parsing that text is the provider's job, because only it
 //! knows what its vendor puts in there.
 //!
+//! A read that gave up waiting leaves as [`Framed::Quiet`] rather than as
+//! either an event or an ending, which is what lets a caller holding a cancel
+//! act on it while a response is open. Both providers stream through here, so
+//! that is one behaviour rather than two that have to be kept the same.
+//!
 //! Bytes throughout, converted to text once per event. One read from the socket
 //! can split a character in half, so accumulating into a `String` would have to
 //! either lose it or refuse it -- and the payload is JSON, where a lost byte is
@@ -46,6 +51,35 @@ pub(crate) struct SseEvent {
     pub(crate) data: String,
 }
 
+/// What one call to [`Events::next`] came back with.
+#[derive(Debug)]
+pub(crate) enum Framed {
+    /// One event, whole.
+    Event(SseEvent),
+
+    /// Nothing yet. The read waited as long as it waits and the peer said
+    /// nothing, which is neither a failure nor an ending: the response is still
+    /// open and the model is still thinking.
+    ///
+    /// It exists so that waiting is the caller's to do. A provider that goes
+    /// silent would otherwise hold the caller inside this call for as long as
+    /// it stayed silent, and a user who asked to stop would be waiting on the
+    /// same socket. Handed back the turn, the caller looks at its cancel and
+    /// asks again.
+    Quiet,
+}
+
+/// What one read of a line came back with.
+enum Line {
+    /// A line, in `self.line`, without its ending.
+    Read,
+    /// Nothing yet. What had arrived of the line stays where it is, so the read
+    /// that follows carries on from the middle of it.
+    Quiet,
+    /// The stream is finished.
+    Ended,
+}
+
 /// Frames a byte stream into events.
 #[derive(Debug)]
 pub(crate) struct Events<R> {
@@ -66,21 +100,29 @@ impl<R: BufRead> Events<R> {
         }
     }
 
-    /// The next event, or `None` when the stream is finished.
+    /// The next event, [`Framed::Quiet`] if none has arrived yet, or `None`
+    /// when the stream is finished.
     ///
     /// A stream that ends part-way through an event delivers nothing for it.
     /// That is not silent: every protocol here ends with an event of its own,
     /// so the caller notices the one that never came.
-    pub(crate) fn next(&mut self) -> Option<Result<SseEvent, SseError>> {
+    pub(crate) fn next(&mut self) -> Option<Result<Framed, SseError>> {
         loop {
             match self.read_line() {
                 Err(problem) => return Some(Err(problem)),
-                Ok(false) => return None,
-                Ok(true) => {}
+                Ok(Line::Quiet) => return Some(Ok(Framed::Quiet)),
+                Ok(Line::Ended) => return None,
+                Ok(Line::Read) => {}
             }
 
             if !self.line.is_empty() {
-                if let Err(problem) = self.take_field() {
+                let taken = self.take_field();
+                // Here rather than where the next line starts: a line half of
+                // which has arrived is held in the same place, and clearing on
+                // the way in would drop that half every time the peer paused
+                // mid-line.
+                self.line.clear();
+                if let Err(problem) = taken {
                     return Some(Err(problem));
                 }
                 continue;
@@ -89,24 +131,34 @@ impl<R: BufRead> Events<R> {
             // A blank line dispatches. Runs of them, and the one that closes a
             // comment, have nothing to dispatch.
             if !self.name.is_empty() || !self.data.is_empty() {
-                return Some(self.dispatch());
+                return Some(self.dispatch().map(Framed::Event));
             }
         }
     }
 
     /// Reads one line into `self.line`, without its ending.
     ///
-    /// `false` means the stream is finished. Reads through the buffer rather
-    /// than with `read_line`, which would take an unbounded line from a peer
-    /// that never sent an ending.
-    fn read_line(&mut self) -> Result<bool, SseError> {
-        self.line.clear();
-
+    /// Reads through the buffer rather than with `read_line`, which would take
+    /// an unbounded line from a peer that never sent an ending.
+    fn read_line(&mut self) -> Result<Line, SseError> {
         loop {
-            let available = self.reader.fill_buf()?;
+            let available = match self.reader.fill_buf() {
+                Ok(available) => available,
+                // A wait that expired, not a stream that broke. The transport
+                // spells it this way on purpose; see [`Framed::Quiet`].
+                Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {
+                    return Ok(Line::Quiet);
+                }
+                Err(problem) => return Err(problem.into()),
+            };
+
             if available.is_empty() {
                 // A last line with no ending is still a line.
-                return Ok(!self.line.is_empty());
+                return Ok(if self.line.is_empty() {
+                    Line::Ended
+                } else {
+                    Line::Read
+                });
             }
 
             let ending = available.iter().position(|byte| *byte == b'\n');
@@ -125,7 +177,7 @@ impl<R: BufRead> Events<R> {
                 if self.line.last() == Some(&b'\r') {
                     self.line.pop();
                 }
-                return Ok(true);
+                return Ok(Line::Read);
             }
         }
     }
@@ -192,14 +244,7 @@ mod tests {
 
     /// Frames a whole stream, so a test reads as one call.
     fn events(stream: &str) -> Vec<SseEvent> {
-        let mut framed = Events::new(stream.as_bytes());
-        let mut out = Vec::new();
-
-        while let Some(event) = framed.next() {
-            out.push(event.unwrap());
-        }
-
-        out
+        framed(Events::new(stream.as_bytes())).0
     }
 
     /// The same, delivered the way a socket delivers one.
@@ -209,14 +254,22 @@ mod tests {
     /// and event boundary falls across a read.
     fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
         let reader = io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
-        let mut framed = Events::new(reader);
-        let mut out = Vec::new();
+        framed(Events::new(reader)).0
+    }
 
-        while let Some(event) = framed.next() {
-            out.push(event.unwrap());
+    /// Everything a reader framed, and how many times it went quiet doing it.
+    fn framed<R: BufRead>(mut events: Events<R>) -> (Vec<SseEvent>, usize) {
+        let mut out = Vec::new();
+        let mut quiet = 0;
+
+        while let Some(next) = events.next() {
+            match next.unwrap() {
+                Framed::Event(event) => out.push(event),
+                Framed::Quiet => quiet += 1,
+            }
         }
 
-        out
+        (out, quiet)
     }
 
     #[test]
@@ -338,6 +391,21 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().unwrap().data.len(), payload.len());
         assert_eq!(out.first().unwrap().data, payload);
+    }
+
+    #[test]
+    fn a_pause_anywhere_in_a_stream_frames_the_same_as_one_that_arrives_whole() {
+        // What a model thinking mid-sentence does to the socket, and it can
+        // fall anywhere: the half of a line that had arrived has to survive the
+        // pause. The pause reaching the caller is the other half of this — it
+        // is waited out there, where the cancel is, and not in here.
+        let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
+        let paused = io::BufReader::new(crate::transport::Paused::dawdling(stream, 3));
+
+        let (out, quiet) = framed(Events::new(paused));
+
+        assert!(quiet > 0, "the framing waited the pauses out itself");
+        assert_eq!(out, events(stream));
     }
 
     #[test]
