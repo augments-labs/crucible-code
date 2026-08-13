@@ -544,3 +544,29 @@ fn a_search_with_no_path_named_covers_the_whole_workspace() {
     assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
     assert_eq!(sensitivity.to_string(), "read .");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_to_a_file_outside_the_workspace_is_not_searched() {
+    // The walk decides this by not following links at all: a link's own type is
+    // not a file, so the entry is skipped before anything opens it. Pinned
+    // rather than left to the walker's default, because that default is a
+    // setting somebody could turn on for a reason having nothing to do with
+    // this — and what a search reads goes back to the model.
+    let sample = Sample::new("grep-link-out");
+    let secret = sample.outside("secret.txt", "the quick brown fox\n");
+    crate::sample::symlink(&secret, sample.root().join("innocent.txt"));
+
+    let output = grep(&sample, r#"{"pattern":"quick brown"}"#);
+
+    assert!(
+        !output.text().contains("the quick brown fox"),
+        "a link led the search out of the workspace: {}",
+        output.text()
+    );
+    assert!(
+        !output.text().contains("innocent"),
+        "the link was searched: {}",
+        output.text()
+    );
+}

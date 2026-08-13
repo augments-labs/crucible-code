@@ -4,6 +4,22 @@
 //! decision before it is a convenience one — the budget is "within 1.25× of the
 //! `rg` binary", and the only way to hold it on a real tree is to skip what `rg`
 //! skips and read what it reads.
+//!
+//! What holds this inside the workspace is the walk, and it holds by not
+//! following links: an entry whose own type is not a file is skipped before
+//! anything opens it, so a link planted in the tree is not a way out of it.
+//! That is a property rather than a default — a test pins it, because the
+//! setting behind it could be turned on one day for a reason that has nothing
+//! to do with what a search is allowed to read.
+//!
+//! What it does not hold is the instant between the two. The walk decides an
+//! entry is a file and the search then opens it by name, so something else
+//! writing into the workspace could put a link there in between and be read.
+//! The file tools have no such gap — they walk down to a proven path against
+//! descriptors they already hold, and `crucible_core::workspace` says how — but
+//! that walk is this crate's to do only if it stops using `rg`'s, which is the
+//! thing the budget above is paid for. It is written down here rather than
+//! closed, and it is the same residue a rename leaves there.
 
 use std::collections::BTreeSet;
 use std::io;

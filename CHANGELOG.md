@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Internal
+
+- `grep` and `glob` are pinned to not follow a symbolic link out of the
+  workspace, and `grep`'s module says what that holds and what it leaves. The
+  property was already true — the walk does not follow links — but it rested on
+  a default nothing tested, and what a search reads goes back to the model.
+
 ## [0.0.15] - 2026-08-13
 
 ### Fixed
