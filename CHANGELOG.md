@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The runner runs the tool the verdict was reached about.** It looked the name
+  up from the call it was holding rather than from the proof, so the tool that
+  ran and the tool a user was asked about were two values a call site had to
+  keep in step by hand. The proof now carries the name, and there is nothing
+  left to keep in step.
+
 ## [0.0.12] - 2026-08-13
 
 ### Fixed

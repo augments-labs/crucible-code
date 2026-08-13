@@ -35,6 +35,11 @@ impl Grant {
 /// mechanism exists to replace. Carrying both in one value with private fields
 /// makes the arguments a tool runs on *the* arguments a verdict was reached
 /// about, by construction.
+///
+/// The tool is the third thing a call is made of, and it comes out of here for
+/// the same reason. A verdict is reached about `write` changing a file; the
+/// value that says so names `write`, so the tool it reaches is not something a
+/// caller looks up again beside it.
 #[derive(Debug)]
 pub struct Approved {
     call: ToolCall,
@@ -83,9 +88,57 @@ impl Approved {
             .is_none_or(|reached| self.denied.names(&reached))
     }
 
+    /// The tool a verdict was reached about.
+    ///
+    /// What the caller dispatches on, so that the tool a proof arrives at is
+    /// the tool the proof is about. A name held separately is a name that can
+    /// be the wrong one — self-limiting while every tool refuses arguments it
+    /// does not recognise, and only while that stays true of every tool there
+    /// is.
+    #[must_use]
+    pub fn tool(&self) -> &str {
+        &self.call.name
+    }
+
     /// The arguments a verdict was reached about.
     #[must_use]
     pub fn args(&self) -> &ToolArgs {
         &self.call.args
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ids::ToolId;
+    use crate::permission::Rules;
+    use crate::tool::ToolArgs;
+
+    use super::*;
+
+    fn call() -> ToolCall {
+        ToolCall {
+            id: ToolId::new("a"),
+            name: "write".into(),
+            args: ToolArgs::new(r#"{"path":"src/a.rs"}"#),
+        }
+    }
+
+    #[test]
+    fn a_denial_mints_no_proof() {
+        // The whole of what the private field buys: there is one constructor
+        // and it answers `None` to the verdict that is not an allow.
+        assert!(Grant::issue(Verdict::Deny).is_none());
+    }
+
+    #[test]
+    fn an_approval_names_the_tool_and_the_arguments_of_the_one_call() {
+        // Both halves out of one value. A caller that reads the tool from here
+        // cannot dispatch a proof about `write` to something else, whatever it
+        // happens to be holding beside it.
+        let grant = Grant::issue(Verdict::Allow).expect("an allow mints one");
+        let approved = Approved::new(call(), grant, Rules::new().denials("write"));
+
+        assert_eq!(approved.tool(), "write");
+        assert_eq!(approved.args().as_str(), r#"{"path":"src/a.rs"}"#);
     }
 }
