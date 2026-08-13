@@ -620,4 +620,27 @@ mod tests {
         assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
         assert_eq!(sensitivity.to_string(), "read src");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symbolic_link_out_of_the_workspace_is_not_listed() {
+        // The same property `grep` holds, for the same reason: the walk does
+        // not follow links, so a link's own type is not a file and the entry
+        // never reaches the answer. A path listed here is one the model will
+        // hand back to `read`, so listing one that leads outside would be
+        // offering it a way out.
+        let sample = Sample::new("glob-link-out");
+        let secret = sample.outside("secret.txt", "");
+        crate::sample::symlink(&secret, sample.root().join("innocent.txt"));
+        sample.write("real.txt", "");
+
+        let output = glob(&sample, r#"{"pattern":"**/*.txt"}"#);
+
+        assert!(output.text().contains("real.txt"), "{}", output.text());
+        assert!(
+            !output.text().contains("innocent"),
+            "a link out of the workspace was listed: {}",
+            output.text()
+        );
+    }
 }
