@@ -131,6 +131,29 @@ to one is `unsafe` in a process with threads, and crucible forbids unsafe code.
 Values are strings, because that is what an environment holds. A setting that
 reads as a number is written `"12"`.
 
+A command is **not** started with the environment crucible was started in. It
+gets a short list of what a program needs in order to run at all, and whatever
+`env` adds on top:
+
+- On Unix: `PATH`, `HOME`, `TERM`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`.
+- On Windows: `PATH`, `PATHEXT`, `COMSPEC`, `SystemRoot`, `SystemDrive`,
+  `windir`, `TEMP`, `TMP`, `TERM`, `HOME`, `USERPROFILE`, `HOMEDRIVE`,
+  `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
+  `ProgramData`.
+
+Everything else stops here, and your provider key is why. `env` and `printenv`
+are ordinary things for a model to run, and what a command prints comes back as
+tool output — onto your screen, into the next request, and into the session log.
+The list says what to keep rather than what to drop, because `apiKeyEnv` takes a
+name: a key can be called anything, so a list of the names keys usually have
+would cover exactly the names somebody thought of.
+
+A name written in `env` beats the inherited one, so `"PATH"` there replaces what
+crucible was started with rather than adding to it.
+
+A command that needs anything else — a `CARGO_TARGET_DIR`, a token a deploy
+script reads — is told about it here, which is you handing it over on purpose.
+
 ## The file that travels
 
 `.crucible/config.json` is checked in, so anything in it reaches everyone who

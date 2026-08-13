@@ -1,12 +1,13 @@
 //! What a command comes back as, and what stops one.
 
+use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Command, Reach};
 
 use super::output::OUTPUT;
-use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
+use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
@@ -338,6 +339,9 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     // The file is the nearer answer: somebody who wrote `PATH` or `RUST_LOG`
     // into their configuration meant it for the commands crucible runs, and
     // inheriting the shell's copy instead would leave it doing nothing.
+    //
+    // `HOME` is inherited, so the two are a real collision rather than a name
+    // only one side ever sets.
     let sample = Sample::new("bash-env-over");
 
     let tool = Bash::new(sample.workspace(), Cancel::new())
@@ -346,4 +350,71 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     let output = tool.run(allowed(&tool, args)).expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
+}
+
+#[test]
+fn a_variable_crucible_was_started_with_reaches_no_command_unless_the_list_names_it() {
+    // Against the environment crucible really has rather than a stand-in for
+    // one, because what a child ends up with is settled at the spawn and only a
+    // real environment shows that it was cleared there. `cargo` sets several of
+    // its own when it runs a test binary, and none of them are things a program
+    // needs in order to run.
+    let sample = Sample::new("bash-env-cleared");
+    let (name, _) = std::env::vars()
+        .find(|(name, value)| name.starts_with("CARGO_") && !value.is_empty())
+        .expect("cargo sets variables of its own when it runs a test binary");
+
+    let output = ran(&sample, &format!(r#"{{"command":"echo \"[${name}]\""}}"#));
+
+    assert_eq!(output.text(), "[]", "{name} reached the command");
+}
+
+#[test]
+fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
+    // Why the list says what to keep rather than what to drop. `apiKeyEnv`
+    // takes a name, so a credential is called whatever the person holding it
+    // called it — this one is on no list of the names keys usually have, and
+    // what keeps it from the command is that it was never asked for. The
+    // command is the one a model would run to find it.
+    let sample = Sample::new("bash-env-key");
+    let crucibles_own = |name: &str| match name {
+        "WORK_KEY" => Some(OsString::from("s3cr3t")),
+        _ => std::env::var_os(name),
+    };
+
+    let tool = Bash::inheriting(sample.workspace(), Cancel::new(), crucibles_own);
+    let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
+    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+
+    assert!(output.text().starts_with("[]"), "{}", output.text());
+    assert!(!output.text().contains("s3cr3t"), "{}", output.text());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn the_path_crucible_was_started_with_reaches_the_command() {
+    // What everything else here stands on. The clear takes `PATH` with the
+    // rest, and a command with no `PATH` has nothing to find a program with —
+    // the shell that reads the line included.
+    //
+    // Unix only, because this compares the text. The shell on Windows is an
+    // MSYS one, which rewrites a Windows `PATH` into POSIX form before a
+    // command reads it, so the same list comes back spelled differently. What
+    // stands in for this there is the rest of the file: `cat`, `sleep`, `yes`
+    // and `head` are programs rather than builtins, and none of them is found
+    // without a `PATH`.
+    let sample = Sample::new("bash-env-path");
+    let inherited = std::env::var("PATH").expect("crucible was started with a PATH");
+
+    let output = ran(&sample, r#"{"command":"echo \"$PATH\""}"#);
+
+    assert_eq!(output.text(), inherited);
+}
+
+#[test]
+fn a_name_crucible_has_no_value_for_is_left_unset_rather_than_given_one() {
+    // `PATH` included. A shell started without one falls back to the path POSIX
+    // makes it carry; a default written into this crate instead would be this
+    // crate deciding where a command's programs come from.
+    assert!(environment::inherited(|_| None).is_empty());
 }

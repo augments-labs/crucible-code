@@ -6,6 +6,11 @@
 //! why every call comes through the permission engine and why the question the
 //! user is asked names the command.
 //!
+//! What a command is *started with* is confined. crucible's own environment
+//! holds the provider credential, so a child is given a chosen set of variables
+//! rather than an inherited copy of that one — [`environment`] says which, and
+//! why an allowlist is the only shape that can work.
+//!
 //! A rule can be written about a command, so the line has to be read far enough
 //! to say what it will run — that is [`command`], which recognises the shapes a
 //! rule can honestly cover and refuses the rest. Refusing means being asked.
@@ -16,11 +21,13 @@
 //! a `mkdir` the way it already treats a `write`.
 
 mod command;
+mod environment;
 mod output;
 mod reach;
 mod shell;
 mod wrapper;
 
+use std::ffi::OsString;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -67,8 +74,9 @@ const SCHEMA: &str = r#"{
 pub struct Bash {
     workspace: Workspace,
     cancel: Cancel,
-    /// Laid over what crucible itself was started with — see [`Bash::exporting`].
-    env: Vec<(Box<str>, Box<str>)>,
+    /// The whole of what a command is started with: the names [`environment`]
+    /// inherits, with the `env` block laid over them by [`Bash::exporting`].
+    env: Vec<(Box<str>, OsString)>,
 }
 
 impl std::fmt::Debug for Bash {
@@ -90,7 +98,7 @@ impl std::fmt::Debug for Bash {
 /// The exported variables as `Debug` may show them: every name, and a marker
 /// where each value would be. Which name is set is what somebody reading this
 /// is looking for, and it is all they need.
-struct Exported<'a>(&'a [(Box<str>, Box<str>)]);
+struct Exported<'a>(&'a [(Box<str>, OsString)]);
 
 impl std::fmt::Debug for Exported<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -104,14 +112,29 @@ impl Bash {
     /// Runs in `workspace`, and stops when `cancel` says to.
     #[must_use]
     pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
+        Self::inheriting(workspace, cancel, |name| std::env::var_os(name))
+    }
+
+    /// The same, reading crucible's own environment through `lookup`.
+    ///
+    /// Read once, here, rather than at every spawn: nothing in this process
+    /// writes to its environment — that is `unsafe` in edition 2024 and denied
+    /// in this workspace — so the answer cannot have changed by the time a
+    /// command runs, and the spawn path is left with nothing to ask.
+    fn inheriting(
+        workspace: Workspace,
+        cancel: Cancel,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Self {
         Self {
             workspace,
             cancel,
-            env: Vec::new(),
+            env: environment::inherited(lookup),
         }
     }
 
-    /// Variables every command this tool runs is started with.
+    /// Variables every command this tool runs is started with, on top of the
+    /// ones [`environment`] inherits.
     ///
     /// Handed to each child rather than set in this process, which is not a
     /// workaround: writing to the environment is `unsafe` in edition 2024 and
@@ -121,13 +144,16 @@ impl Bash {
     ///
     /// A name given here wins over the one crucible inherited, because somebody
     /// who wrote `PATH` into a configuration file meant it for the commands
-    /// crucible runs.
+    /// crucible runs. Winning is two things together: the inherited entry under
+    /// that name is dropped, and what replaces it is appended last — which is
+    /// what settles a configured `Path` against an inherited `PATH` on Windows,
+    /// where those are one variable and `std` hands over the later of the two.
     #[must_use]
     pub fn exporting<'a>(mut self, vars: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
-        self.env = vars
-            .into_iter()
-            .map(|(name, value)| (name.into(), value.into()))
-            .collect();
+        for (name, value) in vars {
+            self.env.retain(|(existing, _)| existing.as_ref() != name);
+            self.env.push((name.into(), value.into()));
+        }
         self
     }
 }
@@ -182,10 +208,15 @@ impl Tool for Bash {
             .arg("-c")
             .arg(command)
             .current_dir(self.workspace.root())
+            // The child's environment is built rather than inherited: what
+            // crucible was started with holds the provider credential, and
+            // `env` is a command a model runs for ordinary reasons. The
+            // `environment` module says what a child gets instead.
+            .env_clear()
             .envs(
                 self.env
                     .iter()
-                    .map(|(name, value)| (name.as_ref(), value.as_ref())),
+                    .map(|(name, value)| (name.as_ref(), value.as_os_str())),
             )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
