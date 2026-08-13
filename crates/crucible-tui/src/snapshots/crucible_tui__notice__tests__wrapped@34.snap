@@ -1,0 +1,10 @@
+---
+source: crates/crucible-tui/src/notice.rs
+expression: "dump(&notice.rows(columns, glyphs), columns)"
+---
+<Quiet>──────────────────────────────────</>
+<Strong>Update Available</>                  
+New version 0.1.0 is available.   
+Download it from                  
+<Accent>https://example.test/releases</>     
+<Quiet>──────────────────────────────────</>

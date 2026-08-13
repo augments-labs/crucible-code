@@ -123,6 +123,13 @@ Notable changes to crucible. Format follows
   running, and the shell is resolved to an absolute path rather than found on
   `PATH`.
 
+### Internal
+
+- **Component pictures in the test suite.** The welcome, prompt, notice and
+  command list are checked against a drawing of each one — the rows as text,
+  with the colour slot named inline — so a layout change shows up as a diff of
+  the screen rather than of a Rust literal. Test-only; nothing ships.
+
 ### Security
 
 - **Workspace containment is a boundary on Unix rather than a best-effort

@@ -1,0 +1,9 @@
+---
+source: crates/crucible-tui/src/prompt/tests.rs
+expression: "dump(&prompt.rows(columns, glyphs), columns)"
+---
+<Accent>╭──────────────────────╮</>
+<Accent>│</> <Accent>›</> abcdefghijklmnopqr <Accent>│</>
+<Accent>│</> <Accent> </> stuvwxyz           <Accent>│</>
+<Accent>╰──────────────────────╯</>
+<Accent>ask before edits</>

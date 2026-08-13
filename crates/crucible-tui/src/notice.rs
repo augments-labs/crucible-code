@@ -86,6 +86,7 @@ fn prose(said: &str, columns: usize, slot: Slot) -> Vec<Row> {
 #[cfg(test)]
 mod tests {
     use crate::color::Palette;
+    use crate::dump::dump;
 
     use super::*;
 
@@ -110,20 +111,34 @@ mod tests {
         rows.get(row).map_or("<no such row>", String::as_str)
     }
 
+    /// The notice at `columns`, against the picture checked in beside it under
+    /// `name@columns`.
+    ///
+    /// The width is the suffix rather than something written into the name, so
+    /// that a picture cannot end up checked against a drawing of some other
+    /// terminal: one argument decides both what was drawn and which file it is
+    /// read from.
+    fn pictured(name: &str, notice: &Notice<'_>, columns: usize, glyphs: Glyphs) {
+        insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+            insta::assert_snapshot!(name, dump(&notice.rows(columns, glyphs), columns));
+        });
+    }
+
     #[test]
     fn a_notice_is_a_heading_and_a_sentence_between_two_rules() {
-        let rows = drawn(&update(), 80);
-        let rule = "─".repeat(80);
+        // Two widths, because the sentence is the part that moves: one that has
+        // room for the prose and what is to be typed on a single row, and one
+        // that does not.
+        pictured("fits", &update(), 80, Glyphs::Unicode);
+        pictured("wrapped", &update(), 34, Glyphs::Unicode);
+    }
 
-        assert_eq!(rows.len(), 4, "{rows:?}");
-        assert_eq!(at(&rows, 0), rule);
-        assert_eq!(at(&rows, 1), "Update Available");
-        assert!(at(&rows, 2).starts_with("New version 0.1.0"), "{rows:?}");
-        assert!(
-            at(&rows, 2).ends_with("https://example.test/releases"),
-            "{rows:?}"
-        );
-        assert_eq!(at(&rows, 3), rule);
+    #[test]
+    fn a_font_without_box_drawing_rules_the_block_off_with_what_it_has() {
+        // The rules are the whole of the frame here, so the set reaches all of
+        // it: a block that kept one drawing character would be the one row of
+        // hollow squares on that terminal.
+        pictured("ascii", &update(), 80, Glyphs::Ascii);
     }
 
     #[test]

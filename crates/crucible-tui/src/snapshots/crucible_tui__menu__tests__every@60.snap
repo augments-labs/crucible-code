@@ -1,0 +1,7 @@
+---
+source: crates/crucible-tui/src/menu.rs
+expression: "dump(&menu.rows(columns, glyphs), columns)"
+---
+<Strong>/help</>     what these are                                    
+<Strong>/model</>    which model answers                               
+<Strong>/resume</>   pick up an earlier session here

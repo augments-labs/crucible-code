@@ -1,0 +1,6 @@
+---
+source: crates/crucible-tui/src/menu.rs
+expression: "dump(&menu.rows(columns, glyphs), columns)"
+---
+<Strong>/mode</>   ask mode on                                         
+        ask · allowEdits · fullAccess

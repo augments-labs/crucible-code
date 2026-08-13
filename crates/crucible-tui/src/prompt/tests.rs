@@ -314,16 +314,8 @@ fn a_line_longer_than_the_box_wraps_onto_the_next_row() {
     // Eighteen columns inside the frame at this width. The rows under the first
     // are indented to match it, so a line that wrapped reads as one line.
     let said = "abcdefghijklmnopqrstuvwxyz";
-    let rows = drawn(&typed(said), FRAMED_AT, Glyphs::Unicode);
+    pictured("wrapped", &typed(said), FRAMED_AT, Glyphs::Unicode);
 
-    assert_eq!(
-        rows.get(FRAMED_ROW).map(String::as_str),
-        Some("│ › abcdefghijklmnopqr │")
-    );
-    assert_eq!(
-        rows.get(FRAMED_ROW + 1).map(String::as_str),
-        Some("│   stuvwxyz           │")
-    );
     assert_eq!(
         typed(said).caret(FRAMED_AT),
         Caret {
@@ -345,10 +337,7 @@ fn the_window_follows_the_cursor_back_up_the_line() {
         ..typing(said, 0)
     };
 
-    assert_eq!(
-        row(&capped, FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
-        "│ › abcdefghijklmnopqr │"
-    );
+    pictured("held_at_the_top", &capped, FRAMED_AT, Glyphs::Unicode);
     assert_eq!(capped.caret(FRAMED_AT).column, FRAMED);
 
     // And the cursor at the end of it scrolls the first row back under the top
@@ -358,10 +347,7 @@ fn the_window_follows_the_cursor_back_up_the_line() {
         ..typed(said)
     };
 
-    assert_eq!(
-        row(&capped, FRAMED_ROW, FRAMED_AT, Glyphs::Unicode),
-        "│ › stuvwxyz           │"
-    );
+    pictured("scrolled", &capped, FRAMED_AT, Glyphs::Unicode);
 }
 
 #[test]
@@ -423,14 +409,8 @@ fn a_question_takes_a_row_of_its_own_under_the_status_and_starts_at_the_left() {
     // Under rather than beside: the mode holds until somebody changes it and
     // this holds until the next keystroke, so a row shared between the two
     // would have one of them read as the other.
-    const ASKING: &str = "press ctrl-c again to leave";
-
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-        let asked = Prompt {
-            asking: Some(ASKING),
-            ..typed("")
-        };
-        let rows = drawn(&asked, 80, glyphs);
+        let rows = drawn(&asked(), 80, glyphs);
 
         assert_eq!(rows.len(), 5, "{rows:?}");
         assert!(
@@ -454,15 +434,8 @@ fn nothing_asking_takes_no_row_at_all() {
 fn a_question_is_clipped_to_the_width_rather_than_dropped() {
     // Unlike the keys after the mode: half of this still names the key that is
     // waiting, and the row is only there because somebody has just pressed it.
-    const ASKING: &str = "press ctrl-c again to leave";
-
-    let asked = Prompt {
-        asking: Some(ASKING),
-        ..typed("")
-    };
-
     for columns in WIDTHS {
-        let rows = asked.rows(columns, Glyphs::Unicode);
+        let rows = asked().rows(columns, Glyphs::Unicode);
         let last = rows.last().expect("a row the component drew");
 
         assert!(last.columns() <= columns, "at {columns}: {:?}", last.text());
