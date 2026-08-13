@@ -19,13 +19,13 @@
 mod unix;
 
 #[cfg(unix)]
-pub(super) use unix::{directory, log, mark};
+pub(super) use unix::{directory, fresh, log, mark};
 
 #[cfg(windows)]
 mod windows;
 
 #[cfg(windows)]
-pub(super) use windows::{directory, log, mark};
+pub(super) use windows::{directory, fresh, log, mark};
 
 #[cfg(test)]
 mod tests;

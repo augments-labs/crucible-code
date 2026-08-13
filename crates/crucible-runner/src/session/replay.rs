@@ -129,6 +129,12 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
 /// turn, silently, or — once the weld is no longer the last line — the whole
 /// session. Cutting touches nothing that was replayed, so what is on disk
 /// afterwards reads back as exactly the transcript returned here.
+///
+/// How each answer ended comes back with it, unchanged and unjudged. Nothing
+/// here decides what a turn that was cut off means — that is the provider's, on
+/// the next request, and it is the whole reason the reason is on the line: a
+/// transcript replayed without it hands the model a half-sentence as an answer
+/// it chose to end.
 pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
