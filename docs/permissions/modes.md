@@ -15,39 +15,34 @@ holds in every one, and a read runs in every one.
 | --- | --- | --- | --- |
 | read | run | run | run |
 | change a file | ask | run | run |
-| run a program proved to change nothing outside the workspace | ask | run | run |
-| run any other program | ask | ask | run |
+| run a program | ask | ask | run |
 
-`allowEdits` is for the stretch of work where being interrupted per edit costs
-more than the edits do: the workspace changes silently, and anything that could
-reach past it still asks. `fullAccess` asks about nothing, which makes a `deny`
-rule the only thing that can say no there — write those first.
+`allowEdits` means what its name says: `write` and `edit` change files without
+asking, and anything that starts a process asks. It is for the stretch of work
+where being interrupted per edit costs more than the edits do. `fullAccess`
+asks about nothing, which makes a `deny` rule the only thing that can say no
+there — write those first.
 
-## What `allowEdits` counts as an edit
+## Why `allowEdits` still asks before a command
 
-Creating a directory is the same change to the same tree whether `write` made
-it or a shell did, so `allowEdits` runs a command it can prove reaches no
-further than an edit would. Proving that takes all of this at once:
+`bash` runs a shell, and a shell reaches whatever you can. crucible reads the
+line closely enough to say what will run, which is what lets a [rule](rules.md)
+be written about it — but reading is not containment. Whatever a word in the
+line was found to point at, the shell looks it up again by name when the command
+runs, and a symbolic link put at that name in between sends the change somewhere
+else, with nobody asked.
 
-- the line is one simple command — no `;`, `&&`, `||` or pipe;
-- the program is one of `mkdir`, `rmdir`, `touch`, `rm`, `cp` or `mv`, spelled
-  as itself rather than as a path to it;
-- every flag is one of that program's that carries no value of its own, so
-  `mkdir -p src/net` qualifies and `mkdir -m 755 src/net` does not;
-- every remaining word resolves to a path inside the workspace, after symbolic
-  links are followed, including one being created;
-- and at least one such path is named.
+The file tools have no such gap. They keep hold of the directory the path was
+proved under and never look the name up a second time, which is what
+[containment](directories.md#what-containment-is-measured-against) is measured
+by. `sh` cannot be made to work that way, so the mode that runs a command
+without a question is `fullAccess`, and there is no other.
 
-Anything else asks, including a great many commands that are perfectly
-harmless. A glob, a `~`, a quoted word: the shell rewrites those before the
-program sees them, so the path crucible checked would not be the path that
-changed. `mkdir -p src/net/http` where `src/net` does not exist yet asks for
-the same reason — there is nothing there to resolve against.
-
-This is not a list of safe commands. It is the list of commands whose reach can
-be established: `rm -rf src` is on it, and `allowEdits` runs it without asking,
-which is the authority `write` already had said out loud. A `deny` rule still
-holds over every one of them.
+That leaves `allowEdits` as one sentence, which is the whole of what it is for:
+the tools that change files change them, and anything that starts a process is
+put to you. Standing permission for a command you run all day is an
+[allow rule](rules.md) or an answer of `always` — written down where you can
+read it back and take it away again.
 
 ## The mode is always on screen
 

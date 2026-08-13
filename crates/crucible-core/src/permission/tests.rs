@@ -474,16 +474,6 @@ fn only_the_configuration_itself_is_refused() {
 // stopped thinking about, so the shape worth testing is the boundary: what
 // `allowEdits` covers, and what it still stops at.
 
-/// A command something read closely enough to say it stays inside.
-fn confined(parts: &[&str]) -> Sensitivity {
-    Sensitivity::SpawnsProcess {
-        command: Command::Understood {
-            parts: parts.iter().map(|part| (*part).into()).collect(),
-            reach: Reach::Workspace,
-        },
-    }
-}
-
 #[test]
 fn a_read_is_allowed_without_asking_in_every_mode() {
     for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
@@ -553,46 +543,39 @@ fn allow_edits_writes_without_asking_but_still_asks_before_running_anything() {
 }
 
 #[test]
-fn allow_edits_runs_a_command_that_reaches_no_further_than_an_edit() {
-    // The promise is about the workspace, not about which tool did it. A
-    // `mkdir` proved to land inside changes exactly what `write` may change,
-    // and asking about one while waving the other through is a distinction the
-    // person who typed `allowEdits` did not make.
-    let mut permission = with(Mode::AllowEdits, &[]);
-    let mut answer = Answer::once(Verdict::Allow);
+fn no_mode_short_of_full_access_runs_a_command_that_only_changes_the_workspace() {
+    // The lines that read most like an edit are the ones this is about.
+    // `mkdir src/net` changes what `write` may change and is still asked about,
+    // because the words are resolved by the shell a moment after anybody could
+    // have checked them — so what a mode has to go on is that a process is
+    // starting, and `allowEdits` allows edits.
+    for mode in [Mode::Ask, Mode::AllowEdits] {
+        let mut permission = with(mode, &[]);
+        let mut answer = Answer::once(Verdict::Allow);
 
-    assert!(
-        permission
-            .decide(&call("bash"), &confined(&["mkdir src/net"]), &mut answer)
-            .ran()
-    );
-    assert_eq!(answer.asked, 0);
+        for line in ["mkdir src/net", "touch src/b.rs", "rm src/a.rs"] {
+            assert!(
+                permission
+                    .decide(&call("bash"), &running(&[line]), &mut answer)
+                    .ran(),
+                "{mode}: {line}"
+            );
+        }
+
+        assert_eq!(answer.asked, 3, "{mode} ran a command line unasked");
+    }
 }
 
 #[test]
-fn ask_still_asks_about_a_command_confined_to_the_workspace() {
-    // `ask` means ask. The reach is what `allowEdits` reads, and no other mode
-    // is entitled to quietly start reading it too.
-    let mut permission = with(Mode::Ask, &[]);
-    let mut answer = Answer::once(Verdict::Allow);
-
-    assert!(
-        permission
-            .decide(&call("bash"), &confined(&["mkdir src/net"]), &mut answer)
-            .ran()
-    );
-    assert_eq!(answer.asked, 1);
-}
-
-#[test]
-fn a_deny_rule_beats_a_command_confined_to_the_workspace() {
-    // Staying inside the workspace is what stops a question being asked, never
-    // what overrules the answer somebody wrote down in advance.
+fn a_deny_rule_stops_a_command_a_mode_would_have_asked_about() {
+    // A rule is standing policy and settles the call outright; the mode's arm
+    // is only ever reached by a call no rule spoke about. So a denial is not a
+    // question with the answer filled in — nobody is asked at all.
     let mut permission = with(Mode::AllowEdits, &[(Disposition::Deny, "bash(rm *)")]);
     let mut answer = Answer::once(Verdict::Allow);
 
     assert!(matches!(
-        permission.decide(&call("bash"), &confined(&["rm -rf build"]), &mut answer),
+        permission.decide(&call("bash"), &running(&["rm -rf build"]), &mut answer),
         Settled::Forbidden
     ));
     assert_eq!(answer.asked, 0);
