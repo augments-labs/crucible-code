@@ -5,8 +5,26 @@
 //! characters to draw with, and how much of a line to show. None of those may
 //! be asked per event — two are syscalls and the third is a file.
 
-use crucible_config::{Color, Glyphs as Configured, Mouse, ToolDetail};
+use crucible_config::{Color, Glyphs as Wanted, Mouse, ToolDetail};
 use crucible_tui::{Glyphs, Palette};
+
+/// What the `output` block said, before the terminal and the environment have
+/// their say.
+///
+/// One value rather than four parameters: they arrive together, out of one
+/// block, and a call site passing four `None`s in a row says nothing about
+/// which is which.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Output {
+    /// Whether to write colour.
+    pub(crate) color: Option<Color>,
+    /// Which characters to draw with.
+    pub(crate) glyphs: Option<Wanted>,
+    /// How much of a tool call one line shows.
+    pub(crate) detail: Option<ToolDetail>,
+    /// Who the mouse belongs to while a prompt is up.
+    pub(crate) mouse: Option<Mouse>,
+}
 
 /// How much of a tool's arguments a compact line shows.
 const ARGS: usize = 56;
@@ -45,14 +63,11 @@ impl Style {
     /// `from` reads the environment, as a parameter because writing to the real
     /// one is `unsafe` in edition 2024 and this workspace forbids it.
     pub(crate) fn resolve(
-        color: Option<Color>,
-        glyphs: Option<Configured>,
-        detail: Option<ToolDetail>,
-        mouse: Option<Mouse>,
+        output: Output,
         terminal: bool,
         from: &dyn Fn(&str) -> Option<String>,
     ) -> Self {
-        let color = match color.unwrap_or(Color::Auto) {
+        let color = match output.color.unwrap_or(Color::Auto) {
             // Both overrides mean it: `always` is how a run whose output is
             // being captured on purpose — a recording, a pty in CI — asks for
             // the colour it would have had, and it would be no override at all
@@ -68,16 +83,16 @@ impl Style {
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
             palette: Palette::resolve(color, from),
-            glyphs: match glyphs.unwrap_or(Configured::Unicode) {
-                Configured::Unicode => Glyphs::Unicode,
-                Configured::Ascii => Glyphs::Ascii,
+            glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
+                Wanted::Unicode => Glyphs::Unicode,
+                Wanted::Ascii => Glyphs::Ascii,
             },
-            detail: detail.unwrap_or(ToolDetail::Compact),
+            detail: output.detail.unwrap_or(ToolDetail::Compact),
 
             // Off unless a layer asked. The wheel is a button, so a terminal
             // forwarding buttons to crucible is one whose wheel no longer
             // scrolls the scrollback this program's transcript lives in.
-            clicks: mouse.is_some_and(Mouse::places),
+            clicks: output.mouse.is_some_and(Mouse::places),
         }
     }
 
@@ -131,7 +146,7 @@ impl Style {
     /// What a test uses when the drawing is not the thing being tested: a
     /// terminal, nothing configured, nothing in the environment.
     pub(crate) fn plain() -> Self {
-        Self::resolve(None, None, None, None, true, &|_| None)
+        Self::resolve(Output::default(), true, &|_| None)
     }
 }
 
@@ -156,7 +171,7 @@ mod tests {
     /// The style a run with nothing configured and nothing in the environment
     /// gets, on a terminal or not.
     fn plain(terminal: bool) -> Style {
-        Style::resolve(None, None, None, None, terminal, &environment(&[]))
+        Style::resolve(Output::default(), terminal, &environment(&[]))
     }
 
     #[test]
@@ -170,14 +185,7 @@ mod tests {
 
     #[test]
     fn no_color_turns_it_off_on_a_terminal_that_would_otherwise_have_it() {
-        let style = Style::resolve(
-            None,
-            None,
-            None,
-            None,
-            true,
-            &environment(&[(NO_COLOR, "1")]),
-        );
+        let style = Style::resolve(Output::default(), true, &environment(&[(NO_COLOR, "1")]));
 
         assert!(!style.color());
     }
@@ -187,14 +195,7 @@ mod tests {
         // The convention is that the variable's presence is the signal, but an
         // empty value is what a shell leaves behind when somebody unsets it the
         // wrong way, and reading that as "no colour" surprises them.
-        let style = Style::resolve(
-            None,
-            None,
-            None,
-            None,
-            true,
-            &environment(&[(NO_COLOR, "")]),
-        );
+        let style = Style::resolve(Output::default(), true, &environment(&[(NO_COLOR, "")]));
 
         assert!(style.color());
     }
@@ -205,15 +206,25 @@ mod tests {
 
         // `always` on a pipe, with NO_COLOR set: the file said colour, and both
         // of the things it overrides are saying no.
-        assert!(Style::resolve(Some(Color::Always), None, None, None, false, &shouting).color());
+        assert!(
+            Style::resolve(
+                Output {
+                    color: Some(Color::Always),
+                    ..Output::default()
+                },
+                false,
+                &shouting
+            )
+            .color()
+        );
 
         // `never` on a terminal with nothing else objecting.
         assert!(
             !Style::resolve(
-                Some(Color::Never),
-                None,
-                None,
-                None,
+                Output {
+                    color: Some(Color::Never),
+                    ..Output::default()
+                },
                 true,
                 &environment(&[])
             )
@@ -231,10 +242,10 @@ mod tests {
         assert_eq!(plain(false).glyphs(), Glyphs::Unicode);
 
         let asked = Style::resolve(
-            None,
-            Some(Configured::Ascii),
-            None,
-            None,
+            Output {
+                glyphs: Some(Wanted::Ascii),
+                ..Output::default()
+            },
             true,
             &environment(&[]),
         );
@@ -250,7 +261,7 @@ mod tests {
 
         let shouting = environment(&[(NO_COLOR, "1"), ("COLORTERM", "truecolor")]);
         assert!(
-            !Style::resolve(None, None, None, None, true, &shouting)
+            !Style::resolve(Output::default(), true, &shouting)
                 .palette()
                 .writes_color()
         );
@@ -258,7 +269,14 @@ mod tests {
         // And a run that overrode its way back on gets the depth its terminal
         // announced, even though nothing here is a terminal.
         let captured = environment(&[("COLORTERM", "truecolor")]);
-        let style = Style::resolve(Some(Color::Always), None, None, None, false, &captured);
+        let style = Style::resolve(
+            Output {
+                color: Some(Color::Always),
+                ..Output::default()
+            },
+            false,
+            &captured,
+        );
         assert!(style.palette().writes_color());
     }
 
@@ -273,10 +291,10 @@ mod tests {
     #[test]
     fn full_shows_as_much_as_the_terminal_is_wide() {
         let style = Style::resolve(
-            None,
-            None,
-            Some(ToolDetail::Full),
-            None,
+            Output {
+                detail: Some(ToolDetail::Full),
+                ..Output::default()
+            },
             true,
             &environment(&[]),
         );
@@ -291,7 +309,14 @@ mod tests {
         // rows it drew so it can move back over them. Compact is a ceiling on a
         // wide terminal and the window is the ceiling on a narrow one.
         for detail in [ToolDetail::Compact, ToolDetail::Full] {
-            let style = Style::resolve(None, None, Some(detail), None, true, &environment(&[]));
+            let style = Style::resolve(
+                Output {
+                    detail: Some(detail),
+                    ..Output::default()
+                },
+                true,
+                &environment(&[]),
+            );
 
             assert_eq!(style.args(20), 20, "{detail:?}");
             assert_eq!(style.output(20), 20, "{detail:?}");

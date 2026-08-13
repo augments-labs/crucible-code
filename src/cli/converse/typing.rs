@@ -92,7 +92,6 @@ pub(crate) fn ask<T: Terminal>(
     }
 
     let glyphs = style.glyphs();
-    let editor = editor;
 
     let mut says = saying(runner);
 

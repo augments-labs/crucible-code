@@ -308,10 +308,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // the render path may ask either of them again.
     let terms = Terms {
         style: Style::resolve(
-            settings.color(),
-            settings.glyphs(),
-            settings.tool_detail(),
-            settings.mouse(),
+            style::Output {
+                color: settings.color(),
+                glyphs: settings.glyphs(),
+                detail: settings.tool_detail(),
+                mouse: settings.mouse(),
+            },
             renderer.is_terminal(),
             &from,
         ),
