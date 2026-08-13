@@ -1,10 +1,15 @@
 //! The prompt component: the box a line is typed in, and the row under it.
 //!
-//! Three rows in every state, and a fourth under them that is not part of the
-//! box. The border is coloured by the mode in force and the row underneath says
-//! what that colour means in words, which is the arrangement that keeps the
-//! colour from being the only thing that says it — a terminal with no colour at
-//! all still reads the mode off the screen.
+//! A border, as many rows as the line needs, a border, and a row under them
+//! that is not part of the box. The border is coloured by the mode in force and
+//! the row underneath says what that colour means in words, which is the
+//! arrangement that keeps the colour from being the only thing that says it — a
+//! terminal with no colour at all still reads the mode off the screen.
+//!
+//! The line wraps rather than scrolling sideways, because a prompt is written
+//! and read at the same time and a paragraph scrolled out of sight is one
+//! nobody can check before sending. The box therefore grows, and stops growing
+//! at about half the window: past that the line scrolls under the top edge.
 //!
 //! The status sits below the frame rather than on its bottom edge. A frame is a
 //! container, and everything drawn on one reads as belonging to what is inside
@@ -40,8 +45,16 @@ const CLOSING: usize = 2;
 /// What stands before the line where there is no frame.
 const BARE: usize = 2;
 
-/// Which row of a framed prompt the line is typed on.
+/// Which row of a framed prompt the line starts on.
 const FRAMED_ROW: usize = 1;
+
+/// What a framed box costs beyond the line itself: two borders and the status
+/// row under them.
+///
+/// What [`Prompt::room`] takes off the height before halving it, so that a box
+/// filling its allowance is half the window rather than half the window plus
+/// three.
+const CHROME: usize = 3;
 
 /// What the prompt says, and where the cursor is in it.
 ///
@@ -68,32 +81,55 @@ pub struct Prompt<'a> {
     /// mode because the two are not the same kind of fact: the mode is true
     /// until somebody changes it, and this is true until the next keystroke.
     pub asking: Option<&'a str>,
+    /// How many rows of the line the box may show at once.
+    ///
+    /// The box grows to what the line needs and stops here. [`Prompt::room`] is
+    /// what a caller holding the window height works it out with; a caller
+    /// drawing a box nobody is typing into passes 1.
+    pub room: usize,
 }
 
 impl Prompt<'_> {
+    /// How many rows of the line a box may show in a window this tall.
+    ///
+    /// About half of it. A prompt is written and read at the same time, so a
+    /// paragraph being typed has to be visible as a paragraph; what it must not
+    /// do is take the screen away from what it is a reply to. Past the
+    /// allowance the line scrolls inside the box, which is the same bargain the
+    /// window along a single row used to make in one dimension.
+    #[must_use]
+    pub fn room(rows: usize) -> usize {
+        (rows / 2).saturating_sub(CHROME).max(1)
+    }
+
     /// The component, drawn for a terminal `columns` wide.
     ///
-    /// Four rows where there is a frame and two where there is not, and one
-    /// more than that while something is asking. Fixed against the line either
-    /// way: a box that grew a row as a line got longer would push everything
-    /// above it up the screen on a keystroke, where this grows on the keystroke
-    /// that put the question there.
+    /// The box is as tall as the line needs and never taller than [`room`]. It
+    /// grows on the keystroke that fills a row, which does push what is above it
+    /// up the screen — the alternative is a line that scrolls sideways out of
+    /// sight, and a prompt too long to see is worse than a transcript that moved.
+    /// The ceiling is what keeps the growth bounded: the region is taken back by
+    /// moving the cursor over it, so one taller than the screen could not be
+    /// taken back at all.
+    ///
+    /// [`room`]: Prompt::room
     #[must_use]
     pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let mut rows = if columns < FRAMED_AT {
-            vec![self.bare(columns, glyphs), self.status(columns)]
+            let mut rows = self.bare(columns, glyphs);
+            rows.push(self.status(columns));
+            rows
         } else {
             let bar = glyphs.horizontal();
             let (open, opened) = glyphs.top();
             let (close, closed) = glyphs.bottom();
             let across = bar.repeat(columns.saturating_sub(2));
 
-            vec![
-                Row::new().then(self.tone, format!("{open}{across}{opened}")),
-                self.typed(columns, glyphs),
-                Row::new().then(self.tone, format!("{close}{across}{closed}")),
-                self.status(columns),
-            ]
+            let mut rows = vec![Row::new().then(self.tone, format!("{open}{across}{opened}"))];
+            rows.extend(self.typed(columns, glyphs));
+            rows.push(Row::new().then(self.tone, format!("{close}{across}{closed}")));
+            rows.push(self.status(columns));
+            rows
         };
 
         // Clipped rather than dropped when it does not fit. Unlike the keys
@@ -115,15 +151,16 @@ impl Prompt<'_> {
     /// cursor moved through it.
     #[must_use]
     pub fn caret(&self, columns: usize) -> Caret {
-        let (row, before) = if columns < FRAMED_AT {
+        let (first, before) = if columns < FRAMED_AT {
             (0, BARE)
         } else {
             (FRAMED_ROW, FRAMED)
         };
+        let shown = self.window(inner(columns));
 
         Caret {
-            row,
-            column: before + self.window(inner(columns)).1,
+            row: first + shown.row,
+            column: before + shown.column,
         }
     }
 
@@ -141,39 +178,64 @@ impl Prompt<'_> {
             .then(Slot::Plain, said)
     }
 
-    /// The row the line is typed on, inside the frame.
-    fn typed(&self, columns: usize, glyphs: Glyphs) -> Row {
+    /// The rows the line is typed on, inside the frame.
+    ///
+    /// The mark goes on the first of them and the ones under it are indented to
+    /// match, so a line that wrapped reads as one line rather than as a stack of
+    /// separate ones.
+    fn typed(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let inner = inner(columns);
         let edge = glyphs.vertical();
-        let (shown, _) = self.window(inner);
 
-        let mut line = Row::plain(shown);
-        line.pad(inner);
+        self.window(inner)
+            .rows
+            .into_iter()
+            .enumerate()
+            .map(|(at, shown)| {
+                // Clipped as well as broken, for the one row breaking cannot
+                // make fit: a character wider than the whole box. Half of one
+                // cannot be drawn, so none of it is, and the row still ends
+                // where the border expects it.
+                let mut line = Row::plain(width::clip(shown, inner));
+                line.pad(inner);
 
-        Row::new()
-            .then(self.tone, edge)
-            .then(Slot::Plain, " ")
-            .then(Slot::Accent, glyphs.caret())
-            .then(Slot::Plain, " ")
-            .join(line)
-            .then(Slot::Plain, " ")
-            .then(self.tone, edge)
+                let mark = if at == 0 { glyphs.caret() } else { " " };
+
+                Row::new()
+                    .then(self.tone, edge)
+                    .then(Slot::Plain, " ")
+                    .then(Slot::Accent, mark)
+                    .then(Slot::Plain, " ")
+                    .join(line)
+                    .then(Slot::Plain, " ")
+                    .then(self.tone, edge)
+            })
+            .collect()
     }
 
-    /// The same row with no frame around it.
-    fn bare(&self, columns: usize, glyphs: Glyphs) -> Row {
+    /// The same rows with no frame around them.
+    fn bare(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         // The mark and the space after it are the last chrome there is, and a
         // terminal too narrow for even that gets nothing: a row wider than the
         // screen is one the terminal wraps itself, which leaves the cursor a
         // row below where the next frame expects it.
         if columns < BARE {
-            return Row::new();
+            return vec![Row::new()];
         }
 
-        Row::new()
-            .then(Slot::Accent, glyphs.caret())
-            .then(Slot::Plain, " ")
-            .then(Slot::Plain, self.window(inner(columns)).0)
+        self.window(inner(columns))
+            .rows
+            .into_iter()
+            .enumerate()
+            .map(|(at, shown)| {
+                let mark = if at == 0 { glyphs.caret() } else { " " };
+
+                Row::new()
+                    .then(Slot::Accent, mark)
+                    .then(Slot::Plain, " ")
+                    .then(Slot::Plain, width::clip(shown, inner(columns)))
+            })
+            .collect()
     }
 
     /// The row under the box: the mode, and the keys that change it.
@@ -196,36 +258,111 @@ impl Prompt<'_> {
         row
     }
 
-    /// The part of the line there is room for, and where the cursor sits in it.
+    /// The rows of the line the box has room for, and where the cursor sits
+    /// among them.
     ///
-    /// A line longer than the box is windowed rather than wrapped, because the
-    /// box is a fixed number of rows and a wrap would need another one. The
-    /// window is worked out from the cursor every time rather than remembered:
-    /// a kept scroll position is a second piece of state that the line can get
-    /// out of step with, and there is nothing it would buy.
+    /// The whole line is broken into rows the width of the box and a window of
+    /// [`room`] of them is kept — the one the cursor is on, and the ones above
+    /// it. Worked out from the cursor every time rather than remembered: a kept
+    /// scroll position is a second piece of state the line can get out of step
+    /// with, and there is nothing it would buy.
     ///
-    /// One column is left for the cursor itself. Without it a line that filled
-    /// the box exactly would put the cursor on the border.
-    fn window(&self, inner: usize) -> (&str, usize) {
-        let start = self.column.saturating_sub(inner.saturating_sub(1));
-        let mut gone = width::clip(self.said, start);
+    /// A line that exactly fills its last row is followed by an empty one, so
+    /// the cursor after the last character has somewhere to stand that is not
+    /// the border.
+    ///
+    /// [`room`]: Prompt::room
+    fn window(&self, inner: usize) -> Window<'_> {
+        let broken = broken(self.said, inner);
+        let (row, column) = place(&broken, self.column);
 
-        // A wide character lying across the start of the window is skipped
-        // whole rather than kept. Half of one cannot be drawn, and the half
-        // that could would leave the cursor a column further along than the
-        // box has room for -- which is the row, and only that row, closing a
-        // column early.
-        if width::columns(gone) < start {
-            gone = width::clip(self.said, start + 1);
+        // The cursor's row is the last one shown, so a line being written grows
+        // the box downwards and a line longer than the allowance scrolls under
+        // it. Moving back up the line brings the rows above into view for the
+        // same reason.
+        let room = self.room.max(1);
+        let first = row.saturating_sub(room - 1);
+        Window {
+            rows: broken.get(first..).unwrap_or_default().to_vec(),
+            row: row - first,
+            column,
+        }
+    }
+}
+
+/// What the box is showing of the line, and where the cursor is in it.
+struct Window<'a> {
+    /// The rows on screen, top first.
+    rows: Vec<&'a str>,
+    /// Which of them the cursor is on.
+    row: usize,
+    /// How many columns into that row it sits.
+    column: usize,
+}
+
+/// The line broken into rows no wider than the box.
+///
+/// Broken at the column rather than at a space, which is what an input box owes
+/// the person typing into it: a word moving to the next row as it is written
+/// would move the cursor with it, and the character just typed would not be
+/// where it was put.
+fn broken(said: &str, inner: usize) -> Vec<&str> {
+    if inner == 0 {
+        return vec![""];
+    }
+
+    let mut rows = Vec::new();
+    let mut rest = said;
+
+    // `cut` answers with nothing where the rest fits, which is what ends this.
+    while let Some(at) = width::cut(rest, inner) {
+        // A character wider than the whole row takes no bytes off the front and
+        // this would not end. It is drawn a column over instead, which is the
+        // one row a box this narrow cannot hold either way.
+        let at = if at == 0 { step(rest) } else { at };
+
+        rows.push(rest.get(..at).unwrap_or_default());
+        rest = rest.get(at..).unwrap_or_default();
+    }
+
+    rows.push(rest);
+
+    // A line that exactly fills its last row is followed by an empty one, so
+    // the cursor after the last character stands at the start of a row rather
+    // than on the padding beside the border — which is where the next character
+    // is going to appear anyway.
+    if width::columns(rest) == inner {
+        rows.push("");
+    }
+
+    rows
+}
+
+/// The offset one character in.
+fn step(text: &str) -> usize {
+    text.char_indices()
+        .nth(1)
+        .map_or(text.len(), |(offset, _)| offset)
+}
+
+/// Which row `column` display columns into the line falls on, and where in it.
+///
+/// A cursor at the very end of a full row belongs at the start of the next one,
+/// which is where the character about to be typed will appear.
+fn place(rows: &[&str], column: usize) -> (usize, usize) {
+    let mut before = 0;
+
+    for (at, row) in rows.iter().enumerate() {
+        let wide = width::columns(row);
+
+        if column < before + wide || at + 1 == rows.len() {
+            return (at, column - before.min(column));
         }
 
-        let rest = self.said.get(gone.len()..).unwrap_or_default();
-
-        (
-            width::clip(rest, inner),
-            self.column.saturating_sub(width::columns(gone)),
-        )
+        before += wide;
     }
+
+    (0, column)
 }
 
 /// How many columns of the line a terminal `columns` wide has room for.

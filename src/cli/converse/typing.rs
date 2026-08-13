@@ -248,6 +248,7 @@ fn draw<T: Terminal>(
         tone: says.tone,
         hint: says.keys,
         asking: says.asking,
+        room: Prompt::room(renderer.rows()),
     };
 
     let mut boxed = prompt.rows(columns, style.glyphs());
