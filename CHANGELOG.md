@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-08-13
+
 ### Added
 
 - **`providers.<name>.baseUrl` points a provider at a gateway.** For a proxy or
@@ -1039,7 +1041,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.15...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/augments-labs/crucible-code/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/augments-labs/crucible-code/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/augments-labs/crucible-code/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/augments-labs/crucible-code/compare/v0.0.13...v0.0.14
