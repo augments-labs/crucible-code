@@ -1,0 +1,21 @@
+---
+source: crates/crucible-tui/src/panel.rs
+expression: "dump(&panel.rows(columns, glyphs), columns)"
+---
+<Accent>--------------------------------------------------------------------------------</>
+                                                                                
+<Strong>Log in</>                                                                          
+                                                                                
+Select a provider to use crucible as part of your subscription plan, or billed  
+based on API usage through your Console account.                                
+                                                                                
+  Anthropic                                                                     
+  <Quiet>Console API key, billed by usage</>                                              
+                                                                                
+<Accent>></> <Strong>MoonshotAI</>                                                                    
+  <Quiet>Kimi Code plan, or a Platform key</>                                             
+                                                                                
+  OpenAI                                                                        
+  <Quiet>Console API key, billed by usage</>                                              
+                                                                                
+<Quiet>esc to cancel</>

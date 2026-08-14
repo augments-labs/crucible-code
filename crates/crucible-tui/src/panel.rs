@@ -172,6 +172,9 @@ fn shortened(text: &str, room: usize, glyphs: Glyphs) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
+    use crate::color::Palette;
+    use crate::dump::dump;
+
     use super::*;
 
     /// The sentence the login panel opens with, which is prose and runs to two
@@ -222,6 +225,23 @@ mod tests {
     /// What the panel says, row by row.
     fn art(panel: &Panel<'_>, columns: usize, glyphs: Glyphs) -> Vec<String> {
         panel.rows(columns, glyphs).iter().map(Row::text).collect()
+    }
+
+    /// Which slots one row opened, in order.
+    fn slots(row: &Row) -> Vec<Slot> {
+        row.spans().map(|(slot, _)| slot).collect()
+    }
+
+    /// The panel at `columns`, against the picture checked in beside it under
+    /// `name@columns`.
+    ///
+    /// The width is the suffix rather than something written into the name, so
+    /// a picture cannot end up read against a drawing of some other terminal:
+    /// one argument decides both what was drawn and which file it is read from.
+    fn pictured(name: &str, panel: &Panel<'_>, columns: usize, glyphs: Glyphs) {
+        insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+            insta::assert_snapshot!(name, dump(&panel.rows(columns, glyphs), columns));
+        });
     }
 
     #[test]
@@ -302,6 +322,51 @@ mod tests {
     }
 
     #[test]
+    fn the_descriptions_are_quiet_in_every_state() {
+        // Quiet by role, chosen or not.
+        let shown = offered();
+        let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
+
+        for at in [8, 11, 14] {
+            let says = rows.get(at).expect("a description row");
+            assert_eq!(slots(says), [Slot::Plain, Slot::Quiet], "{says:?}");
+        }
+    }
+
+    #[test]
+    fn a_passed_over_name_is_plain_rather_than_quiet() {
+        // Habit writes Quiet here, because that is what a menu does to a row
+        // the choice has passed over. Greying the name as well as the
+        // description would flatten the entry and lose the difference between
+        // the name and what it is.
+        let shown = offered();
+        let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
+        let passed = rows.get(10).expect("the name of a passed-over entry");
+
+        assert!(slots(passed).contains(&Slot::Plain), "{passed:?}");
+        assert!(!slots(passed).contains(&Slot::Quiet), "{passed:?}");
+
+        // And no hue for it reaches the terminal either, on one that has them all.
+        let hues = Palette::resolve(true, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let painted = passed.paint(hues);
+        assert!(!painted.contains(hues.open(Slot::Quiet)), "{painted:?}");
+    }
+
+    #[test]
+    fn the_chosen_name_is_drawn_strong() {
+        // The twin of the test above, and the half of that rule a picture was
+        // the only gate on: the entry the mark points at is emphasised, and it
+        // is the name that carries it rather than the whole entry.
+        let shown = offered();
+        let rows = login(&shown, 0).rows(80, Glyphs::Unicode);
+        let chosen = rows.get(7).expect("the name of the chosen entry");
+
+        assert!(slots(chosen).contains(&Slot::Strong), "{chosen:?}");
+    }
+
+    #[test]
     fn a_font_without_the_mark_still_says_which_entry_it_is_on() {
         // The set changes what the mark is drawn with and nothing about the
         // column it stands in, so the names below it do not move either.
@@ -374,5 +439,40 @@ mod tests {
             rows.last().map(String::as_str),
             Some("press enter to continue")
         );
+    }
+
+    // The drawings, whole. Every test above holds one rule and would go green
+    // on a panel nobody would ship; these are the assertion that what is drawn
+    // is the thing that was designed, and the diff on one of them is what
+    // moved on screen.
+
+    #[test]
+    fn the_login_panel_is_drawn_the_way_it_was_designed() {
+        let shown = offered();
+
+        pictured("login", &login(&shown, 0), 80, Glyphs::Unicode);
+    }
+
+    #[test]
+    fn the_mark_moves_and_nothing_else_on_the_panel_does() {
+        let shown = offered();
+
+        pictured("second", &login(&shown, 1), 80, Glyphs::Unicode);
+    }
+
+    #[test]
+    fn a_narrow_window_folds_the_sentence_and_ends_a_description() {
+        // Thirty-four columns: half of the narrowest terminal anyone opens, and
+        // the width at which the two ways this panel loses text both show.
+        let shown = offered();
+
+        pictured("narrow", &login(&shown, 0), 34, Glyphs::Unicode);
+    }
+
+    #[test]
+    fn a_font_without_the_glyphs_draws_the_same_panel() {
+        let shown = offered();
+
+        pictured("ascii", &login(&shown, 1), 80, Glyphs::Ascii);
     }
 }
