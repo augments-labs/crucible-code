@@ -1,0 +1,13 @@
+---
+source: crates/crucible-tui/src/ladder.rs
+expression: "dump(&effort(2).rows(80, Glyphs::Unicode), 80)"
+---
+<Accent>────────────────────────────────────────────────────────────────────────────────</>
+                                                                                
+<Strong>Effort · claude-sonnet-5</>                                                        
+                                                                                
+<Quiet>Faster</><Quiet>                                                 </><Quiet>Smarter</>                  
+<Accent>───────────────────────────────</><Strong>▲</><Accent>──────────────────────────────</>                  
+<Quiet>  </><Quiet>low</><Quiet>         </><Quiet>medium</><Quiet>         </><Strong>high</><Quiet>          </><Quiet>xhigh</><Quiet>          </><Quiet>max</>                   
+                                                                                
+<Quiet>←/→ to adjust · enter to confirm · esc to cancel</>

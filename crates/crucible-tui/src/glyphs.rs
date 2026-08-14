@@ -100,6 +100,18 @@ impl Glyphs {
         }
     }
 
+    /// The mark that stands on a track, pointing at the rung in force.
+    ///
+    /// One column either way, like the caret: it is drawn into a track of a
+    /// measured width, and a mark two columns wide would push the track's last
+    /// column past the one the row was laid out for.
+    pub(crate) fn mark(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25b2}",
+            Self::Ascii => "^",
+        }
+    }
+
     /// What stands where something did not fit.
     pub(crate) fn ellipsis(self) -> &'static str {
         match self {
