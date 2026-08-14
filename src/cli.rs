@@ -24,13 +24,14 @@ mod seen;
 mod startup;
 mod style;
 
+use std::cell::Cell;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::Parser;
 use crucible_auth::{Keys, Store};
 use crucible_config::{ConfigError, Home, Settings, Updates};
-use crucible_core::{Cancel, CredentialError, Effort, PathError, Workspace};
+use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
@@ -119,6 +120,30 @@ pub(crate) struct Served {
     /// remains the authority on what it serves.
     pub(crate) models: &'static [&'static str],
 }
+
+/// What one provider is set up with, once there is a key for it.
+///
+/// The three answers a launch reaches before the first prompt, in one value so
+/// that `/login` can reach them again from the prompt. A key is what all three
+/// waited on: a file that chose a model for a provider this machine could not
+/// reach was a file saying nothing about this run, and the moment a key arrives
+/// it is saying something.
+pub(crate) struct Resolved {
+    /// What a request is written to.
+    pub(crate) provider: Box<dyn Provider>,
+    /// The model the files name for it, where they name one.
+    pub(crate) model: Option<Box<str>>,
+    /// The rung they name for it, where they name one.
+    pub(crate) effort: Option<Effort>,
+}
+
+/// Sets one provider up from the keys in hand, the way the launch set this run's
+/// up.
+///
+/// Boxed rather than borrowed because what it closes over are borrows of the
+/// launch, and a lifetime here would follow the value that holds it into the
+/// signature of everything a command is handed.
+pub(crate) type Serving = Box<dyn Fn(Served, &Keys) -> Result<Resolved, Fatal>>;
 
 /// What crucible says when nothing on this machine is set up to answer.
 ///
@@ -419,10 +444,44 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         remembering: crucible_config::local(workspace.root()),
 
         // Who `/model` is choosing for, and where it writes the choice down.
-        // Both are settled here because both are facts about how this run was
-        // set up, and the prompt is not the place to work out either again.
-        provider: serving.map(|one| one.name),
+        // The second is a fact about how this run was set up and the prompt is
+        // not the place to work it out again; the first is the one thing here a
+        // command can change, because `/login` is what fills it in on a machine
+        // that started with nothing.
+        provider: Cell::new(serving.map(|one| one.name)),
         choosing: crucible_config::user(&home),
+
+        // What `/login` sets a session up with, answered the way this launch
+        // answered it for itself — so a key given at the prompt leaves the
+        // session asking what the next run here would ask, rather than what a
+        // second reading of the same files happened to say.
+        //
+        // The settings are cloned because this outlives every borrow in this
+        // function, and a lifetime on `Terms` would follow it into the
+        // signature of everything a command is handed. They are the files this
+        // run already read: nothing in them grows with the transcript.
+        serving: {
+            let settings = settings.clone();
+
+            Box::new(move |named: Served, stored: &Keys| {
+                Ok(Resolved {
+                    provider: startup::provider(
+                        Some(named),
+                        &settings,
+                        &|name| std::env::var(name).ok(),
+                        stored,
+                    )?,
+
+                    // No flag on either, and that is the whole of the
+                    // difference from the launch: what `--model` and `--effort`
+                    // said has already been applied, and re-applying it over
+                    // what the session has since been told would be this
+                    // answering a question somebody else already answered.
+                    model: wanted(&Choice::default(), &settings, Some(named)),
+                    effort: thinking(None, &settings, Some(named)),
+                })
+            })
+        },
 
         // The two `/resume` reads a directory of logs with. Both are settled
         // here for the same reason everything else in `Terms` is: the session
@@ -461,7 +520,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &Opening {
             model: model.as_deref(),
             effort,
-            unasked: unasked(serving.map(|one| one.name)),
+            unasked: unasked(terms.provider.get()),
             trouble: keys.trouble(),
             workspace: &workspace,
             sessions: &sessions,

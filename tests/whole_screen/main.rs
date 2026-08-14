@@ -143,6 +143,23 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_at_the_foot_of_it() {
 }
 
 #[test]
+fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
+    // The first minute on a machine that has never logged in, end to end: the
+    // welcome says there is nothing to ask, `/login` takes a key into a box that
+    // does not echo it, and the next thing typed is answered. Nothing restarts
+    // in between, which is the whole of what this case is here to prove — and
+    // only a real run can, since what a key has to reach is a socket.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("logged-in", 80, 24, &vendor);
+
+    window.types("/login anthropic\r");
+    window.types("not-a-key-and-nothing-reads-it\r");
+    window.types("what is 2+2\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // The size changes under a line that was laid out for the old one. What was
     // committed stays where the terminal put it; what is live is drawn again,

@@ -260,7 +260,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Login,
             rest,
-        } => login::run(rest, renderer, terms, keys)?,
+        } => login::run(rest, renderer, runner, terms, keys)?,
 
         Wanted::Known {
             command: Command::Logout,

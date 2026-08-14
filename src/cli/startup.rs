@@ -163,7 +163,10 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// *value* stays where it always was: read once, here, and applied to a header.
 ///
 /// `stored` is the other place a key can be, and the one `/login` writes to.
-fn provider(
+/// Reachable from the wiring root for exactly that: a key written at the prompt
+/// is a provider this run can be handed, and building it anywhere else would put
+/// the names below in a second file.
+pub(super) fn provider(
     serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,

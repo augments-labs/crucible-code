@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A key given to `/login` is what the next turn is sent with.** The session is
+  set up with that provider where it stands, rather than writing the key down for
+  a run you had to start yourself, and the model and rung your configuration
+  names for it arrive with the key wherever nothing has chosen one yet. What a
+  flag or a panel already answered is left alone.
+
 ## [0.1.2] - 2026-08-14
 
 ### Added

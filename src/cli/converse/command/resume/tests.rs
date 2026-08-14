@@ -51,9 +51,17 @@ fn terms(sample: &Sample) -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         remembering: sample.root().join("unwritten.json"),
-        provider: Some("anthropic"),
+        provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
+
+        // `/resume` never reaches it, and these terms have no provider to build
+        // one from either — the loop they drive answers from a script.
+        serving: Box::new(|named, _| {
+            Err(Fatal::Provider {
+                named: named.name.into(),
+            })
+        }),
         sessions: sample.logs(),
         workspace: sample.workspace(),
     }

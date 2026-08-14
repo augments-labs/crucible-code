@@ -78,7 +78,8 @@ export ANTHROPIC_API_KEY=...
 Or type `/login anthropic` inside a session and let crucible keep the key
 instead of your shell profile. The box that opens draws a dot per character and
 never the key, and what it takes goes to `~/.crucible/auth.json`, a file only
-you can read. An exported variable still wins over it.
+you can read. The session asks that provider from the next turn on — there is
+nothing to restart. An exported variable still wins over it.
 
 ## Run it
 
@@ -224,6 +225,12 @@ a panel where the prompt box was: ↑ and ↓ walk the providers this build serv
 Enter opens the box for the one marked. A run with no keyboard to walk it — and a
 window with no room to stand a panel in — gets those names as rows instead, with
 the variable each reads from.
+
+A key that is written lands on the session that took it: the provider is set up
+there and then, and the model and rung your configuration names for it come with
+it wherever nothing has chosen one yet. A run started with no key for anything is
+one command away from a turn, and the line under the box says which model it will
+be asking — or sends you to `/model` where the files name none.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one
