@@ -193,6 +193,29 @@ impl Runner {
         self.model.name = model.into();
     }
 
+    /// How hard this session is asking the model to think.
+    ///
+    /// `None` where nothing has said, which is not the middle rung: it is the
+    /// field left off the request altogether, and what a vendor does with a
+    /// request that does not carry one is the vendor's own default per model.
+    #[must_use]
+    pub const fn effort(&self) -> Option<Effort> {
+        self.model.effort
+    }
+
+    /// Asks for a different rung from the next turn on.
+    ///
+    /// There is no way back to `None` from here, and that is the honest shape:
+    /// a rung asked for is a rung the caller can see on the screen, and a
+    /// session cannot un-see it by being handed the vendor's default again — a
+    /// default this program is never told the name of.
+    ///
+    /// Reachable between turns, where [`Runner::ask`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub const fn think(&mut self, effort: Effort) {
+        self.model.effort = Some(effort);
+    }
+
     /// Hands the session out, for the caller that is finished driving turns.
     ///
     /// The loop ends owning the runner, and closing a session properly means
