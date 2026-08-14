@@ -172,6 +172,26 @@ fn how_hard_the_session_was_told_to_think_is_on_every_request() {
 }
 
 #[test]
+fn a_rung_asked_for_mid_session_is_on_the_next_request_and_not_the_last_one() {
+    // The half `/effort` needs: a session opens on whatever the command line
+    // and the files settled, and what is chosen afterwards has to reach the
+    // wire without ending the session to do it.
+    let script = Script::new(vec![saying("first"), saying("second")]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+
+    assert_eq!(scripted.runner.effort(), None, "nothing has said yet");
+    scripted.turn("go").expect("the turn to finish");
+
+    scripted.runner.think(Effort::Low);
+    assert_eq!(scripted.runner.effort(), Some(Effort::Low));
+    scripted.turn("again").expect("the turn to finish");
+
+    let sent = scripted.sent.lock().unwrap();
+    let asked: Vec<Option<Effort>> = sent.iter().map(|request| request.effort).collect();
+    assert_eq!(asked, [None, Some(Effort::Low)]);
+}
+
+#[test]
 fn a_turn_that_yields_records_what_the_model_said() {
     let script = Script::new(vec![vec![
         Delta::Text("Hello".into()),

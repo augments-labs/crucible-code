@@ -72,6 +72,52 @@ fn allows_only(text: &str, command: &str) {
     );
 }
 
+/// The settings the file this text describes resolves to.
+///
+/// The whole property both provider answers owe: what was spliced in is read
+/// back by the parser that reads it at startup. A key spelled one way here and
+/// another way there is a file crucible writes and then ignores.
+fn resolving(text: &str) -> Settings {
+    let document = Document::parse(text, "config.json", Origin::User)
+        .expect("what was written is a document crucible reads");
+
+    Settings::resolve(vec![document])
+}
+
+#[test]
+fn a_file_that_is_not_there_yet_becomes_one_holding_the_rung() {
+    let written = thinking("", "config.json", "anthropic", Effort::Max)
+        .expect("an empty file is one to write whole");
+
+    assert_eq!(resolving(&written).effort("anthropic"), Some(Effort::Max));
+}
+
+#[test]
+fn a_rung_and_a_model_are_two_answers_under_one_provider() {
+    // The two keys are spliced by one walk, so this is the case that says the
+    // walk is putting each under its own name: a second answer that landed on
+    // the first would be a model silently replaced by the word `max`.
+    let chosen = choosing("", "config.json", "openai", "gpt-5.6-terra")
+        .expect("an empty file is one to write whole");
+    let written = thinking(&chosen, "config.json", "openai", Effort::Low)
+        .expect("a provider already written is one to write beside");
+
+    let settings = resolving(&written);
+    assert_eq!(settings.model("openai"), Some("gpt-5.6-terra"));
+    assert_eq!(settings.effort("openai"), Some(Effort::Low));
+}
+
+#[test]
+fn a_rung_chosen_again_is_written_over_rather_than_written_twice() {
+    let first = thinking("", "config.json", "moonshot", Effort::High)
+        .expect("an empty file is one to write whole");
+    let written = thinking(&first, "config.json", "moonshot", Effort::Xhigh)
+        .expect("a rung already there is one to write over");
+
+    assert_eq!(resolving(&written).effort("moonshot"), Some(Effort::Xhigh));
+    assert_eq!(written.matches("effort").count(), 1, "{written}");
+}
+
 #[test]
 fn a_file_that_is_not_there_yet_becomes_one_holding_the_rule() {
     let written = allowing_command("", "cargo test");

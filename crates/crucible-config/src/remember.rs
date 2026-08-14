@@ -10,7 +10,7 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
-use crucible_core::Minted;
+use crucible_core::{Effort, Minted};
 use serde_json::Value;
 
 use crate::error::ConfigError;
@@ -23,9 +23,9 @@ mod tests;
 /// The file crucible writes when it has no rule to add to.
 const FRESH: &str = "{\n  \"permissions\": {\n    \"allow\": [\n      RULE\n    ]\n  }\n}\n";
 
-/// The file crucible writes when it has no model to write beside.
-const CHOSEN: &str =
-    "{\n  \"providers\": {\n    PROVIDER: {\n      \"model\": MODEL\n    }\n  }\n}\n";
+/// The file crucible writes when it has nothing to write a provider's answer
+/// beside.
+const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
 
 /// The text of a configuration file with one more `allow` rule in it.
 ///
@@ -113,15 +113,56 @@ pub fn choosing(
     provider: &str,
     model: &str,
 ) -> Result<String, ConfigError> {
-    // Both as JSON reads them. A provider or a model name is somebody else's
-    // string, and one holding a quote written raw would end the document.
+    beside(text, file, provider, "model", model)
+}
+
+/// The text of a configuration file that asks `provider` to think this hard.
+///
+/// The same splice as [`choosing`], into the key beside it. A rung is written
+/// as the word the ladder spells it with, because that is the word the schema
+/// accepts and the word the person reading the file afterwards has to
+/// recognise.
+///
+/// # Errors
+///
+/// The same two, for the same reasons.
+pub fn thinking(
+    text: &str,
+    file: &str,
+    provider: &str,
+    effort: Effort,
+) -> Result<String, ConfigError> {
+    beside(text, file, provider, "effort", effort.as_str())
+}
+
+/// The text of a configuration file where `providers.<provider>.<key>` says
+/// `answer`.
+///
+/// One walk for both answers, because they differ in a key and in nothing else:
+/// the object to create, the object to insert into, and the value to write over
+/// are the same three cases either way, and two copies of them would be two
+/// places for the day a fourth case appears.
+///
+/// An answer already written there is written over rather than added beside:
+/// the same key twice is a document the parser reads one way and its author
+/// reads the other.
+fn beside(
+    text: &str,
+    file: &str,
+    provider: &str,
+    key: &str,
+    answer: &str,
+) -> Result<String, ConfigError> {
+    // Both as JSON reads them. A provider name is somebody else's string, and
+    // one holding a quote written raw would end the document.
     let named = Value::String(provider.to_owned()).to_string();
-    let written = Value::String(model.to_owned()).to_string();
+    let written = Value::String(answer.to_owned()).to_string();
 
     if text.trim().is_empty() {
         return Ok(CHOSEN
             .replace("PROVIDER", &named)
-            .replace("MODEL", &written));
+            .replace("KEY", &Value::String(key.to_owned()).to_string())
+            .replace("ANSWER", &written));
     }
 
     let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
@@ -131,13 +172,15 @@ pub fn choosing(
         problem: crate::document::without_position(&source.to_string()).into(),
     })?;
 
-    if asking(&value, provider) == Some(model) {
+    if answered(&value, provider, key) == Some(answer) {
         return Ok(text.to_owned());
     }
 
+    // The key as JSON reads it too, for the same reason the two values are.
+    let spelled = Value::String(key.to_owned()).to_string();
     let refuse = || ConfigError::Unspliceable {
         file: file.into(),
-        at: format!("providers.{provider}.model").into(),
+        at: format!("providers.{provider}.{key}").into(),
         written: written.clone().into(),
     };
     let root = splice::root(text)
@@ -151,9 +194,9 @@ pub fn choosing(
     let Some(providers) = value.get("providers") else {
         return Ok(splice::insert(text, root, |indent| match indent {
             Some(indent) => format!(
-                "\"providers\": {{\n{indent}  {named}: {{\n{indent}    \"model\": {written}\n{indent}  }}\n{indent}}}"
+                "\"providers\": {{\n{indent}  {named}: {{\n{indent}    {spelled}: {written}\n{indent}  }}\n{indent}}}"
             ),
-            None => format!("\"providers\": {{{named}: {{\"model\": {written}}}}}"),
+            None => format!("\"providers\": {{{named}: {{{spelled}: {written}}}}}"),
         }));
     };
     let block = splice::member(text, root, "providers").ok_or_else(refuse)?;
@@ -161,30 +204,26 @@ pub fn choosing(
     let Some(chosen) = providers.get(provider) else {
         return Ok(splice::insert(text, block, |indent| match indent {
             Some(indent) => {
-                format!("{named}: {{\n{indent}  \"model\": {written}\n{indent}}}")
+                format!("{named}: {{\n{indent}  {spelled}: {written}\n{indent}}}")
             }
-            None => format!("{named}: {{\"model\": {written}}}"),
+            None => format!("{named}: {{{spelled}: {written}}}"),
         }));
     };
     let held = splice::member(text, block, provider).ok_or_else(refuse)?;
 
-    if chosen.get("model").is_none() {
+    if chosen.get(key).is_none() {
         return Ok(splice::insert(text, held, |_| {
-            format!("\"model\": {written}")
+            format!("{spelled}: {written}")
         }));
     }
 
-    let name = splice::member(text, held, "model").ok_or_else(refuse)?;
-    Ok(splice::over(text, name, &written))
+    let was = splice::member(text, held, key).ok_or_else(refuse)?;
+    Ok(splice::over(text, was, &written))
 }
 
-/// The model a document already asks this provider for.
-fn asking<'a>(value: &'a Value, provider: &str) -> Option<&'a str> {
-    value
-        .get("providers")?
-        .get(provider)?
-        .get("model")?
-        .as_str()
+/// The answer a document already gives under this provider's key.
+fn answered<'a>(value: &'a Value, provider: &str, key: &str) -> Option<&'a str> {
+    value.get("providers")?.get(provider)?.get(key)?.as_str()
 }
 
 /// Whether this rule is one the file already states.
