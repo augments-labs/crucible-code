@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A run holding no key for any provider opens on the panel that takes one.**
+  Before a first prompt is read, so a machine with nothing set up reaches a turn
+  without knowing `/login` exists. Escape skips it and leaves exactly the session
+  every other run starts with; a run reading a prompt down a pipe never sees it.
+
 ### Changed
 
 - **A key given to `/login` is what the next turn is sent with.** The session is

@@ -176,6 +176,10 @@ settle
 for it arrive with the key, wherever nothing has already chosen one. A flag or a
 panel that named one is your answer and is left alone.
 
+Where no variable above is set and that file names nobody, crucible stands that
+same panel before it reads a first prompt, so a machine with nothing set up is
+one Enter and one key away from a turn. Escape skips it; `/login` opens it again.
+
 `/logout <provider>` takes one back out again, and `/logout` on its own
 offers the providers a key is written down for. Editing the file by hand works
 too — crucible only reads what is there, and a name under `keys` that this build
