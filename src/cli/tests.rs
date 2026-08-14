@@ -369,3 +369,15 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
         );
     }
 }
+
+#[test]
+fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
+    // The panel is a handful to look down, not a catalogue. Five is where a
+    // list stops being read and starts being searched — and a name that is not
+    // on it is still typed, which is what keeps the ceiling a ceiling rather
+    // than a claim about what the vendor serves.
+    for one in PROVIDERS {
+        assert!(!one.models.is_empty(), "{}", one.name);
+        assert!(one.models.len() <= 5, "{}: {}", one.name, one.models.len());
+    }
+}

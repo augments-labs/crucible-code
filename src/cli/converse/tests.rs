@@ -550,6 +550,37 @@ fn the_model_a_session_is_asking_is_the_one_it_was_built_with() {
 }
 
 #[test]
+fn model_down_a_pipe_lists_what_this_provider_can_be_asked_for() {
+    // Naming none opens the panel where there is a keyboard to walk it with.
+    // Down a pipe there is not, so the same line answers the question the panel
+    // would have asked: under the model in force, the ones a name would reach
+    // without anybody going to look up how the vendor spells them.
+    let (written, asked) = commanding("/model\n");
+    let serving = plain().provider.expect("these terms name a provider");
+    let served = crate::cli::PROVIDERS
+        .into_iter()
+        .find(|one| one.name == serving)
+        .expect("this build serves it");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("script"), "{written}");
+    for model in served.models {
+        assert!(written.contains(&format!("/model {model}")), "{written}");
+    }
+}
+
+#[test]
+fn model_lists_only_the_provider_this_run_is_set_up_for() {
+    // A name off this list is asked of whichever vendor the key belongs to, so
+    // one from another vendor is a refusal with somebody's model name in it.
+    // Offering it would be this program spelling that mistake out for them.
+    let (written, _) = commanding("/model\n");
+
+    assert!(!written.contains("gpt-"), "{written}");
+    assert!(!written.contains("kimi-"), "{written}");
+}
+
+#[test]
 fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is() {
     // Said back so it can be seen to be a typo, and the list under it so the
     // next thing typed is the right one. Nothing is a turn: a mistyped command

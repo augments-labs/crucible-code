@@ -66,7 +66,13 @@ reading every remaining line and answering none of them.
 `/model <name>` asks for that model from the next
 turn on and writes it to `~/.crucible/config.json` under the provider this run
 is set up for, so the next run starts with it. `/model` on its own says which
-model is being asked.
+model is being asked, and lists a few of that provider's as the line that asks
+for each.
+
+Only that provider's are listed, because a name is asked of whichever vendor the
+key belongs to. A model the list does not carry is still named — what is listed
+is a shortcut past the vendor's documentation, and the vendor remains the
+authority on what it serves.
 
 A model belongs to the provider serving it. crucible never writes a name under
 one provider and sends it to another — the pairing is settled once, from the key
