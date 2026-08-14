@@ -192,6 +192,7 @@ session.
 | `/help` | Lists these |
 | `/model` | The model this session is asking, or the one to ask from now on |
 | `/login` | Takes a key for a provider and writes it down |
+| `/logout` | Forgets a key crucible wrote down |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |
@@ -209,6 +210,12 @@ a panel where the prompt box was: ↑ and ↓ walk the providers this build serv
 Enter opens the box for the one marked. A run with no keyboard to walk it — and a
 window with no room to stand a panel in — gets those names as rows instead, with
 the variable each reads from.
+
+`/logout` is the same panel over what is actually there: the providers a key was
+written down for, and nothing else. `/logout <provider>` forgets that one
+directly, and a name with no key here says so and lists the ones that have. It
+reaches `~/.crucible/auth.json` and only that — a key exported into your shell is
+untouched and goes on winning — which is what the line under the answer says.
 
 `/clear` empties the transcript: the next prompt is the first one the model
 sees, and the turns before it are neither sent nor paid for again. It is the
