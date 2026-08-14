@@ -109,13 +109,23 @@ pub fn fold(text: &str, columns: usize) -> Vec<&str> {
             break;
         };
 
-        // The last space inside the row, so a word is not halved. Failing that
-        // the row is one long word and the cut stands. Never zero: a character
-        // wider than the whole row would otherwise take no bytes off the front
-        // and this would not end.
-        let at = match rest[..over].rfind(' ') {
-            Some(space) if space > 0 => space,
-            _ => over.max(step(rest)),
+        // What stopped the row decides where it breaks. A space there means the
+        // row filled to the column on a whole word and what came next was the
+        // gap after it, so the row is already whole words — looking further
+        // back for a space would move a word that fitted down to the next row
+        // and leave a column of every such row empty.
+        //
+        // Otherwise the cut fell inside a word, so the last space before it is
+        // the break. Failing that the row is one long word and the cut stands.
+        // Never zero: a character wider than the whole row would take no bytes
+        // off the front and this would not end.
+        let at = if rest[over..].starts_with(char::is_whitespace) {
+            over
+        } else {
+            match rest[..over].rfind(' ') {
+                Some(space) if space > 0 => space,
+                _ => over.max(step(rest)),
+            }
         };
 
         rows.push(rest[..at].trim_end());
@@ -199,6 +209,17 @@ mod tests {
     /// One column as text, two once the selector follows it. Spelled out
     /// because a selector is invisible in a source file.
     const WARNING: &str = "\u{26A0}\u{FE0F}";
+
+    #[test]
+    fn a_word_ending_exactly_on_the_last_column_stays_on_that_row() {
+        // The row is full and the word is whole, so there is nothing to move
+        // down. Breaking at the space before it instead loses a column of every
+        // row it happens on, and it happens on every row whose last word lands
+        // on the edge — a paragraph in a narrow terminal reads ragged for no
+        // reason a reader can see.
+        assert_eq!(fold("ab cd ef", 5), vec!["ab cd", "ef"]);
+        assert_eq!(fold("one two three", 7), vec!["one two", "three"]);
+    }
 
     #[test]
     fn text_that_already_fits_is_not_cut() {

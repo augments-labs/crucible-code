@@ -13,8 +13,8 @@ expression: window.picture()
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
-|Warning: No models available. Use /login or set an API key environment          |
-|variable. Then use /model to select a model.                                    |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
 |                                                                                |
 |› /help     what these are                                                      |
 |  /model    which model answers, or set one                                     |

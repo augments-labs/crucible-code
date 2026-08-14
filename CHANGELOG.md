@@ -15,6 +15,12 @@ Notable changes to crucible. Format follows
   and nothing in the key says which. crucible asks the coding console; an open
   platform key sets `providers.moonshot.baseUrl` to `https://api.moonshot.ai/v1`.
 
+### Fixed
+
+- **A word that ends exactly on the last column no longer drops to the next
+  row.** Wrapped prose gave up its final column on every row where the last
+  word landed on the edge, which reads as ragged text in a narrow terminal.
+
 ### Documentation
 
 - **crucible will not log in with a vendor's chat subscription, and the docs now
