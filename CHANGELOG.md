@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-14
+
 ### Added
 
 - **`/effort` picks a rung mid-session.** On its own it stands a panel over the
@@ -1151,7 +1153,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/augments-labs/crucible-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/augments-labs/crucible-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/augments-labs/crucible-code/compare/v0.0.17...v0.1.0
 [0.0.17]: https://github.com/augments-labs/crucible-code/compare/v0.0.16...v0.0.17
