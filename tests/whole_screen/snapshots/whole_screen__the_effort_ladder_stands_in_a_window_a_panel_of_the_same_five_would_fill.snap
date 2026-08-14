@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 20,0 scrolled 12
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
+|                                                                                |
+|› /login anthropic                                                              |
+|                                                                                |
+|logged in to anthropic, asking claude-test-1                                    |
+|                                                                                |
+|› /effort                                                                       |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Effort · claude-test-1                                                          |
+|                                                                                |
+|Faster                                                 Smarter                  |
+|───────────────────────────────▲──────────────────────────────                  |
+|  low         medium         high          xhigh          max                   |
+|                                                                                |
+|←/→ to adjust · enter to confirm · esc to cancel                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |

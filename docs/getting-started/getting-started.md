@@ -222,13 +222,16 @@ Either way the name is written to `~/.crucible/config.json` under the provider
 this run is set up for, so the next crucible started anywhere begins with it.
 See [Providers and models](../providers/providers.md).
 
-`/effort` is the same shape over the five rungs — `low`, `medium`, `high`,
-`xhigh`, `max` — and is written to the same file beside the model. The panel
+`/effort` asks the same question over the five rungs — `low`, `medium`, `high`,
+`xhigh`, `max` — and is written to the same file beside the model. It draws a
+ladder rather than a panel: one track with the rungs under it, `Faster` at one
+end and `Smarter` at the other, walked with the left and right arrows. The mark
 opens on `high` where nothing has chosen yet, which is a place to start walking
 from rather than a rung being asked for: leaving it leaves the session asking for
 none, and what applies then is the vendor's own default for that model. All five
 are offered wherever you are, because which of them a model serves is the
-vendor's answer and differs between models of one vendor.
+vendor's answer and differs between models of one vendor. A session with no model
+chosen is sent to `/model` first, since a rung is asked of a model.
 
 `/login <provider>` opens a box for the key — never the command line, which
 would put it in your shell's history, in the process listing and in the

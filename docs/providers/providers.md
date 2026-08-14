@@ -120,8 +120,12 @@ Where a rung was chosen, the welcome says so beside the model. Where none was,
 nothing is drawn in its place: the rung in force is then the vendor's, and
 crucible is never told which it picked.
 
-Mid-session, `/effort` stands a panel over the five rungs and `/effort <rung>`
-takes one outright. Either way it applies from the next turn on and is written to
+Mid-session, `/effort` stands a ladder over the five rungs and `/effort <rung>`
+takes one outright. The ladder is a track with the rungs written under it,
+`Faster` at one end and `Smarter` at the other; the left and right arrows move
+the mark, Enter takes what is under it and Escape leaves it. It is stood over a
+model by name and asks which model is being asked first, since a rung is one
+word in one request and what it buys is that model's to say. Either way it applies from the next turn on and is written to
 `~/.crucible/config.json` beside the model, so the next run here asks for the
 same. There is no way back to asking for nothing from inside a session — a rung
 you can see on the screen cannot be un-seen by being handed a default this

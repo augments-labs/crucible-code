@@ -204,6 +204,24 @@ fn a_plan_crucible_cannot_sign_with_yet_says_so_rather_than_asking_for_a_key() {
 }
 
 #[test]
+fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
+    // Five one-word rungs, drawn the way a choice between waiting and thinking
+    // reads: one track, one mark, both ends named. The panel this replaced spent
+    // two rows on each rung under a three-row paragraph and came to twenty-four
+    // — the whole window, for five words. This is the case that says it fits,
+    // and it is a whole-screen one rather than a component one because fitting
+    // is a fact about the window and the box underneath, not about the rows.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("effort-ladder", 80, 24, &vendor);
+
+    window.types("/login anthropic\r");
+    window.types("not-a-key-and-nothing-reads-it\r");
+    window.types("/effort\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
     // Escape is an answer, and the answer is "the screen I had". `/login` left
     // this way used to fall through to the list of every provider and the
