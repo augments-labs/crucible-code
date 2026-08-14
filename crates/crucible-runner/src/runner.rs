@@ -180,6 +180,17 @@ impl Runner {
         &self.model.name
     }
 
+    /// The vendor this session is writing to, by the name it is asked for on
+    /// the command line and written down under.
+    ///
+    /// Read off the provider rather than remembered beside it, so that
+    /// [`Runner::serve`] cannot leave the two disagreeing: what a status row
+    /// says is then the vendor the next turn actually reaches.
+    #[must_use]
+    pub fn serving(&self) -> &'static str {
+        self.provider.name()
+    }
+
     /// Asks a different model from the next turn on.
     ///
     /// The provider is not changed by this: which vendor is being written to was

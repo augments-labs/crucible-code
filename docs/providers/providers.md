@@ -51,6 +51,13 @@ A name this build has nothing for is refused the same way there as on the flag,
 so a file written by a later crucible is a sentence rather than a silent fall
 back to whichever key is exported.
 
+Whichever rung settled it, the answer is on screen: the welcome card and the row
+under the prompt box both name the vendor before the model, in the
+`provider/model` shape `--model` takes back. The card says what this run opened
+with; the row is redrawn on every keystroke, so it is the one that keeps up when
+`/login` hands the session to another vendor mid-way. Where nothing has chosen a
+model at all, neither says a vendor either — there is nothing being asked of it.
+
 ## Which model
 
 There is **no model built in**, and none of these rungs is a guess:
@@ -133,9 +140,9 @@ A word that is not a rung is refused before anything is drawn:
 crucible: no effort called maximum; crucible takes low, medium, high, xhigh, max
 ```
 
-Where a rung was chosen, the welcome says so beside the model. Where none was,
-nothing is drawn in its place: the rung in force is then the vendor's, and
-crucible is never told which it picked.
+Where a rung was chosen, the row under the prompt box says so after the model.
+Where none was, nothing is drawn in its place: the rung in force is then the
+vendor's, and crucible is never told which it picked.
 
 Mid-session, `/effort` stands a ladder over the rungs the model in force serves
 and `/effort <rung>` takes one outright. The ladder is a track with the rungs

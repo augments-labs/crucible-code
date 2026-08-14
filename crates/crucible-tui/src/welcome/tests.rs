@@ -28,6 +28,7 @@ fn welcome<'a>(sessions: &'a [Recent<'a>]) -> Welcome<'a> {
     Welcome {
         version: "v0.0.8",
         model: "claude-sonnet-5",
+        provider: "anthropic",
         root: "~/code/crucible-code",
         sessions,
     }
@@ -266,6 +267,30 @@ fn a_deep_directory_gives_up_its_middle_rather_than_its_name() {
     let drawn = drawn(&deep, 80, Glyphs::Unicode);
 
     assert!(drawn.contains("~/…/crucible-code"), "{drawn}");
+}
+
+#[test]
+fn the_card_says_whose_model_it_is_before_saying_which() {
+    // A model name says which model and never whose. On a machine holding keys
+    // for two vendors that is the question the card is there to answer, and
+    // the shape it answers it in is the one `--model` takes back.
+    let drawn = drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode);
+
+    assert!(drawn.contains("anthropic/claude-sonnet-5"), "{drawn}");
+}
+
+#[test]
+fn a_card_with_no_vendor_named_says_only_which_model() {
+    // The two are one row and not two, so a vendor nobody named cannot leave a
+    // separator standing on its own in front of the model.
+    let alone = Welcome {
+        provider: "",
+        ..welcome(&WORKED_IN)
+    };
+    let drawn = drawn(&alone, 80, Glyphs::Unicode);
+
+    assert!(drawn.contains("claude-sonnet-5"), "{drawn}");
+    assert!(!drawn.contains("/claude-sonnet-5"), "{drawn}");
 }
 
 #[test]

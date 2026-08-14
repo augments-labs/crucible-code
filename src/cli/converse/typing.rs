@@ -237,6 +237,8 @@ pub(super) struct Says {
     keys: &'static str,
     /// Which model the next turn goes to, at the other end of the row.
     model: String,
+    /// The vendor it is asked of, drawn before it.
+    provider: &'static str,
     /// How hard it is being asked to think. `None` where no rung is in force.
     effort: Option<&'static str>,
     /// What the border and the sentence are both drawn in.
@@ -371,6 +373,7 @@ fn saying(runner: &Runner) -> Says {
         mode: Cow::Borrowed(mode.sentence()),
         keys: CYCLE,
         model: runner.model().to_owned(),
+        provider: runner.serving(),
         effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
@@ -422,6 +425,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         tone: says.tone,
         hint: says.keys,
         model: says.model.as_str(),
+        provider: says.provider,
         effort: says.effort,
         asking: says.asking,
         room,
