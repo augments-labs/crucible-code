@@ -2,20 +2,20 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-40x24 cursor 9,4 scrolled 0
+40x24 cursor 10,4 scrolled 0
 |CRUCIBLE                                |
 |no model selected                       |
 |/…/workspace                            |
 |                                        |
 |                                        |
-|Warning: No model selected. Use /model  |
-|to select the model to ask.             |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
 |                                        |
 |╭──────────────────────────────────────╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

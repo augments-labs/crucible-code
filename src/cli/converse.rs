@@ -146,19 +146,6 @@ pub(crate) fn converse<T: Terminal>(
     // turn from here on would bury the turns.
     let mut told = false;
 
-    // A run with no key for any provider opens on the panel that takes one,
-    // before the first prompt is read. The warning above it names `/login`, and
-    // somebody meeting crucible for the first time has no reason to know that is
-    // a thing they can type — so the command stands itself, once, on the one run
-    // where there is nothing else to do first.
-    //
-    // Only where there is a keyboard. Down a pipe the warning is the whole
-    // answer, and a panel waiting on a key nobody can press is a session that
-    // stopped before it started.
-    if keys && terms.provider.get().is_none() {
-        command::first(renderer, &mut runner, terms)?;
-    }
-
     loop {
         // The window may have changed while the last turn was streaming. The
         // box notices a resize as it happens, because in raw mode the terminal

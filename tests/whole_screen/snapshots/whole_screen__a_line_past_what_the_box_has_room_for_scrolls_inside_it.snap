@@ -2,14 +2,14 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,26 scrolled 9
-|│                                  │ · /          opens the command list       │|
+80x16 cursor 13,26 scrolled 10
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
-|Warning: No model selected. Use /model to select the model to ask.              |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › g. the quick brown fox jumps over the lazy dog. the quick brown fox jumps  │|
