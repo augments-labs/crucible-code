@@ -1,5 +1,7 @@
 //! What the command line and the files together decide.
 
+use clap::CommandFactory;
+
 use super::*;
 use crate::cli::sample::Sample;
 
@@ -265,4 +267,21 @@ fn a_model_configured_for_another_provider_is_not_configured_for_this_one() {
         wanted(&Choice::default(), &elsewhere, Some(serving("anthropic"))),
         None
     );
+}
+
+#[test]
+fn the_help_text_names_every_provider_this_build_serves_and_its_variable() {
+    // The pair `PROVIDERS` and `long_about` can disagree, and a user meets
+    // whichever of them is wrong: a provider the parser accepts and the help
+    // text never mentions is one nobody finds, and a variable named in the help
+    // text with no entry behind it is one they export and watch do nothing.
+    let help = Cli::command().render_long_help().to_string();
+
+    for one in PROVIDERS {
+        assert!(
+            help.contains(one.key),
+            "the help text never says where {}'s key is read from",
+            one.name
+        );
+    }
 }

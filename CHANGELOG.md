@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **MoonshotAI is a provider.** `MOONSHOT_API_KEY` and `--model moonshot/…`
+  reach Kimi over Chat Completions, which crucible had no reader for until now.
+  One thing to know before setting it up: MoonshotAI issues a key against
+  either the Kimi Code Console or the Open Platform and refuses it at the other,
+  and nothing in the key says which. crucible asks the coding console; an open
+  platform key sets `providers.moonshot.baseUrl` to `https://api.moonshot.ai/v1`.
+
 ### Internal
 
 - **The 400-line ceiling now blocks, and blocks everywhere.** It was a CI job

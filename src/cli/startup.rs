@@ -13,7 +13,7 @@ use std::path::Path;
 
 use crucible_config::Settings;
 use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
-use crucible_provider::{Anthropic, Endpoint, Https, OpenAi, Unavailable};
+use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
@@ -171,6 +171,18 @@ fn provider(
         "anthropic" => Ok(Box::new(Anthropic::at(
             sending.unwrap_or(Anthropic::VENDOR),
             key(variable, Header::bare("x-api-key"), from)?,
+            Box::new(Https::new()),
+        ))),
+
+        // The one provider with two vendor addresses. A key is issued against
+        // one console and refused by the other, and nothing in the key says
+        // which, so the choice cannot be made by reading it. This build asks
+        // the coding console, which is the plan sold for what crucible does;
+        // a key from the open platform sets `providers.moonshot.baseUrl` to
+        // the other address, and that is what the help text and the docs say.
+        "moonshot" => Ok(Box::new(Moonshot::at(
+            sending.unwrap_or(Moonshot::CODING),
+            key(variable, Header::bearer(), from)?,
             Box::new(Https::new()),
         ))),
 
