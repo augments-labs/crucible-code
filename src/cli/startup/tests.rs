@@ -217,11 +217,15 @@ fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
     // The list and the match are two halves of one change. A provider added to
     // the list alone reaches here as a name nothing can build, and this is the
     // arm that says so instead of returning a provider for the wrong vendor.
+    // Qualified: `Model` here is the one a turn is asked of, and this is the one
+    // a panel offers.
+    const OFFERED: &[crate::cli::Model] = &[crate::cli::Model::new("llama-4", &[])];
+
     let unarmed = Served {
         name: "ollama",
         shown: "Ollama",
         key: "OLLAMA_API_KEY",
-        models: &["llama-4"],
+        models: OFFERED,
     };
 
     let problem = built(Some(unarmed), &Settings::default(), &|_| {

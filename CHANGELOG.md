@@ -16,6 +16,22 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **`/effort` offers the rungs the model in force serves, and no others.** The
+  ladder was crucible's five whichever model was being asked, so a session on
+  `claude-haiku-4-5` could walk to a rung its vendor has never served and read the
+  refusal a keystroke later. Each model now carries what it takes: three rungs on
+  MoonshotAI's K3, four on `gpt-5.5`, none at all on the two Kimi coding models
+  and on `claude-haiku-4-5`, which are told so rather than offered a ladder. Only
+  the offer narrows — `--effort` and `/effort <rung>` still go to the vendor, and
+  a model this build has not heard of is offered all five.
+
+- **MoonshotAI's models are named the way the console crucible asks spells them.**
+  `/model` offered `kimi-k3` and `kimi-k2.7-code`, which are the open platform's
+  names; the coding console is what crucible asks by default and it serves `k3`,
+  `k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. Picking one off
+  the list reached a name that console does not serve. A key from the open
+  platform sets `providers.moonshot.baseUrl` and types the longer name, as before.
+
 - **What the next turn is asked of moved under the prompt box.** The model and the
   rung it is asked on sat on the welcome card, which is scrollback the moment the
   next thing is drawn — so `/model` and `/effort` changed what a session was doing
