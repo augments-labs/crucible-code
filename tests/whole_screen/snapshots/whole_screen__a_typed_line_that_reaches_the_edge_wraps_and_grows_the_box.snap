@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 20,65 scrolled 0
-|╭─ crucible v0.1.1 ────────────────────────────────────────────────────────────╮|
+|╭─ crucible v0.1.2 ────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
