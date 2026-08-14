@@ -16,10 +16,13 @@ use crucible_core::{Effort, EffortError};
 use crucible_runner::Runner;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
 
-use crate::cli::converse::picking;
+use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{Fatal, NOTHING_TO_ASK, remember};
 
-use super::Terms;
+use super::{Terms, say};
+
+/// What escape leaves behind, in place of the listing it used to write.
+const LEFT: &str = "cancelled, no rung taken";
 
 /// The sentence under the panel's title: what standing there cannot show.
 const SAID: &str = concat!(
@@ -82,8 +85,14 @@ pub(super) fn run<T: Terminal>(
         };
     }
 
-    if keys && let Some(effort) = chosen(renderer, runner, terms)? {
-        return taken(effort, provider, renderer, runner, terms);
+    if keys {
+        match chosen(renderer, runner, terms)? {
+            Taken::Took(effort) => return taken(effort, provider, renderer, runner, terms),
+            // Escape asked for the screen that was there before the panel. A
+            // listing under it would be the same question put a second time.
+            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Cramped => {}
+        }
     }
 
     listed(renderer, runner, terms)
@@ -91,13 +100,12 @@ pub(super) fn run<T: Terminal>(
 
 /// Stands the panel where the prompt box was, and says which rung came off it.
 ///
-/// `None` is a panel that was left and a window with no room to stand one in
-/// alike. Neither is a rung, and both come out as the listing below.
+/// A window with no room to stand one in comes out as the listing below.
 fn chosen<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
     terms: &Terms,
-) -> Result<Option<Effort>, Fatal> {
+) -> Result<Taken<Effort>, Fatal> {
     let asking = runner.effort();
 
     // Which rung is in force goes here rather than beside a row: it is one fact
@@ -126,11 +134,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
-        return Ok(None);
-    };
-
-    Ok(Effort::LADDER.get(at).copied())
+    Ok(picking::pick(renderer, terms.style, panel)?.of(&Effort::LADDER))
 }
 
 /// Asks for it from the next turn on, and writes it down for the next run.

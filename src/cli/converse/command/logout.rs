@@ -14,7 +14,7 @@
 
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
-use crate::cli::converse::picking;
+use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{Fatal, PROVIDERS, Served};
 
 use super::{Terms, say};
@@ -28,6 +28,9 @@ const SAID: &str = concat!(
 
 /// What is left to say once a key has been forgotten.
 const KEPT: &str = "only what was written down; a key in the environment still wins";
+
+/// What escape leaves behind, in place of the rows it used to write.
+const LEFT: &str = "cancelled, nothing signed out";
 
 /// Runs it: the one named forgotten, one chosen off the panel forgotten, or
 /// what there is to choose from.
@@ -57,11 +60,14 @@ pub(super) fn run<T: Terminal>(
 
     // Nobody named and a keyboard to walk a list with: the panel, and what comes
     // off it is the same fact as a name typed on the line.
-    if keys
-        && said.is_empty()
-        && let Some(taken) = chosen(&held, renderer, terms)?
-    {
-        return forgetting(taken, renderer, terms);
+    if keys && said.is_empty() {
+        match chosen(&held, renderer, terms)? {
+            Taken::Took(taken) => return forgetting(taken, renderer, terms),
+            // Escape asked for the screen that was there before the panel. The
+            // rows under it would be the same question put a second time.
+            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Cramped => {}
+        }
     }
 
     // The word came off the line and was never shape-checked — anything at all
@@ -119,7 +125,7 @@ fn chosen<T: Terminal>(
     held: &[Served],
     renderer: &mut Renderer<T>,
     terms: &Terms,
-) -> Result<Option<Served>, Fatal> {
+) -> Result<Taken<Served>, Fatal> {
     let says: Vec<String> = held.iter().copied().map(reaches).collect();
 
     let shown: Vec<Offered<'_>> = held
@@ -141,14 +147,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
-        return Ok(None);
-    };
-
-    // The index is into the list the panel was handed, which is this one — so a
-    // lookup that cannot miss, written as one that can rather than as an
-    // assertion nobody would read again.
-    Ok(held.get(at).copied())
+    Ok(picking::pick(renderer, terms.style, panel)?.of(held))
 }
 
 /// Forgets `named`'s key, and says what that reached.

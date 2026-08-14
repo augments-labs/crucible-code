@@ -205,8 +205,8 @@ session.
 | `/help` | Lists these |
 | `/model` | Picks the model to ask from now on, or takes the one you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
-| `/login` | Takes a key for a provider and writes it down |
-| `/logout` | Forgets a key crucible wrote down |
+| `/login` | Signs in with your provider account |
+| `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |

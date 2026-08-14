@@ -2,28 +2,28 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 21,5 scrolled 8
-|│  /…/workspace                    │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl-c     clears the line typed so far │|
+80x24 cursor 11,4 scrolled 12
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
-|› /help     what these are                                                      |
-|  /model    pick which model answers                                            |
-|  /effort   pick how hard it thinks                                             |
-|  /login    sign in with your provider account                                  |
-|  /logout   sign out from your provider account                                 |
-|  /mode     ask · allowEdits · fullAccess                                       |
-|  /resume   pick up an earlier session here                                     |
-|  /clear    forget what has been said                                           |
-|  /exit     leave                                                               |
+|› /login                                                                        |
+|                                                                                |
+|cancelled, nothing signed in                                                    |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ › /                                                                          │|
+|│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |

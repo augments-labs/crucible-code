@@ -21,6 +21,57 @@ use crucible_tui::{Caret, Key, Panel, Pressed, Renderer, Terminal, pressed};
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
+/// What came back off a panel.
+///
+/// Three answers rather than two, because what a caller owes differs in each.
+/// A panel that was left has already been answered — the person who pressed
+/// escape asked for the screen they had before it, and the list underneath
+/// would be this program insisting on the question a second time. What is owed
+/// there is one line saying the question was dropped, in the words of whatever
+/// asked it. A panel there was no room for was never drawn and read no key, so
+/// the answer still has to come from somewhere, and the list is it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Picked {
+    /// The entry at this index was taken. It is an index into the slice that
+    /// was handed in.
+    Took(usize),
+    /// The panel was left with nothing taken. What is owed is the caller's
+    /// line saying so.
+    Left,
+    /// There was no room to stand one. [`Panel::within`] gives up rows rather
+    /// than overflowing, and its last rung is nothing at all.
+    Cramped,
+}
+
+/// [`Picked`], with the index already looked up in what the panel was built
+/// from — which is the shape every caller wants, none of them having a use for
+/// a number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Taken<T> {
+    /// This entry was taken off the panel.
+    Took(T),
+    /// The panel was left. What is owed is the caller's line saying so.
+    Left,
+    /// Nothing was drawn and nothing read. The caller still owes an answer.
+    Cramped,
+}
+
+impl Picked {
+    /// Looks a taken index up in `all`, the slice the panel was built from.
+    ///
+    /// The index cannot miss — it came back out of a list this same slice was
+    /// mapped into. Written as a lookup that can rather than as an assertion
+    /// nobody would read again, and a miss falls to the answer a caller has for
+    /// a panel it could not stand, which is the one that draws something.
+    pub(super) fn of<T: Copy>(self, all: &[T]) -> Taken<T> {
+        match self {
+            Self::Took(at) => all.get(at).copied().map_or(Taken::Cramped, Taken::Took),
+            Self::Left => Taken::Left,
+            Self::Cramped => Taken::Cramped,
+        }
+    }
+}
+
 /// What one key does to a panel that is standing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Moved {
@@ -36,12 +87,8 @@ enum Moved {
 
 /// Stands `panel` where the prompt box was and reads keys until one is chosen.
 ///
-/// The index that comes back is into the slice that was handed in, and
-/// `panel.chosen` is where the mark starts. `None` is a panel that was left and
-/// a window with no room to draw one in alike — [`Panel::within`] gives up rows
-/// rather than overflowing, and its last rung is nothing at all. One answer,
-/// because to a caller they are one fact: nothing was taken. Not one to this
-/// function, which reads no key in the second case and cannot be looped on.
+/// `panel.chosen` is where the mark starts, and [`Picked`] says which of the
+/// three ways it ended.
 ///
 /// # Errors
 ///
@@ -50,10 +97,10 @@ pub(super) fn pick<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     mut panel: Panel<'_>,
-) -> Result<Option<usize>, Fatal> {
+) -> Result<Picked, Fatal> {
     let count = panel.shown.len();
     if count == 0 {
-        return Ok(None);
+        return Ok(Picked::Cramped);
     }
 
     let mut at = panel.chosen.min(count - 1);
@@ -63,7 +110,7 @@ pub(super) fn pick<T: Terminal>(
         if changed {
             panel.chosen = at;
             if !standing(renderer, style, panel)? {
-                return Ok(None);
+                return Ok(Picked::Cramped);
             }
         }
 
@@ -81,8 +128,8 @@ pub(super) fn pick<T: Terminal>(
         match moving(arrived, &mut at, count) {
             Moved::Redraw => changed = true,
             Moved::Still => changed = false,
-            Moved::Took => return leaving(renderer, Some(at)),
-            Moved::Left => return leaving(renderer, None),
+            Moved::Took => return leaving(renderer, Picked::Took(at)),
+            Moved::Left => return leaving(renderer, Picked::Left),
         }
     }
 }
@@ -116,10 +163,7 @@ fn standing<T: Terminal>(
 /// It is not written down. A panel is a question, and what belongs in the
 /// record is the answer to it — which is the caller's to commit, in the words
 /// that say what the answer meant.
-fn leaving<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    picked: Option<usize>,
-) -> Result<Option<usize>, Fatal> {
+fn leaving<T: Terminal>(renderer: &mut Renderer<T>, picked: Picked) -> Result<Picked, Fatal> {
     renderer.settle()?;
     Ok(picked)
 }

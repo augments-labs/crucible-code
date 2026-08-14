@@ -19,10 +19,10 @@
 use crucible_runner::Runner;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
 
-use crate::cli::converse::picking;
+use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{Fatal, NO_MODEL_CHOSEN, NOTHING_TO_ASK, PROVIDERS, remember};
 
-use super::Terms;
+use super::{Terms, say};
 
 /// The sentence under the panel's title: what standing there cannot show, which
 /// is that this outlives the session it was chosen in.
@@ -30,6 +30,9 @@ const SAID: &str = concat!(
     "Choose the model crucible asks from the next turn on. It is written down ",
     "for this workspace, so the next run here asks the same one."
 );
+
+/// What escape leaves behind, in place of the listing it used to write.
+const LEFT: &str = "cancelled, no model taken";
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
 /// now and what else could be.
@@ -60,8 +63,14 @@ pub(super) fn run<T: Terminal>(
         return taken(said, provider, renderer, runner, terms);
     }
 
-    if keys && let Some(name) = chosen(provider, renderer, runner, terms)? {
-        return taken(name, provider, renderer, runner, terms);
+    if keys {
+        match chosen(provider, renderer, runner, terms)? {
+            Taken::Took(name) => return taken(name, provider, renderer, runner, terms),
+            // Escape asked for the screen that was there before the panel. A
+            // listing under it would be the same question put a second time.
+            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Cramped => {}
+        }
     }
 
     listed(provider, renderer, runner, terms)
@@ -69,17 +78,16 @@ pub(super) fn run<T: Terminal>(
 
 /// Stands the panel where the prompt box was, and says which model came off it.
 ///
-/// `None` is a panel that was left and a window with no room to stand one in
-/// alike. Neither is a model, and both come out as the listing below — the
+/// A window with no room to stand one in comes out as the listing below — the
 /// answer `/model` always had, and the only one a short window can be given.
 fn chosen<T: Terminal>(
     provider: &str,
     renderer: &mut Renderer<T>,
     runner: &Runner,
     terms: &Terms,
-) -> Result<Option<&'static str>, Fatal> {
+) -> Result<Taken<&'static str>, Fatal> {
     let Some(served) = PROVIDERS.into_iter().find(|one| one.name == provider) else {
-        return Ok(None);
+        return Ok(Taken::Cramped);
     };
 
     // Which model is in force goes here rather than beside an entry: it is one
@@ -122,14 +130,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
-        return Ok(None);
-    };
-
-    // The index is into the list the panel was handed, built from the provider's
-    // models in order — so a lookup that cannot miss, written as one that can
-    // rather than as an assertion nobody would read again.
-    Ok(served.models.get(at).copied())
+    Ok(picking::pick(renderer, terms.style, panel)?.of(served.models))
 }
 
 /// Asks it from the next turn on, and writes it down for the next run.
