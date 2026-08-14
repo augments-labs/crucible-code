@@ -21,6 +21,19 @@ use std::time::{Duration, Instant};
 
 use crucible_core::ProviderError;
 
+/// What is said where a failure names no reason at all.
+///
+/// It says what to check rather than only that something went wrong, because
+/// the reader of this sentence is holding a turn that stopped and has to decide
+/// what to change. A response that fails with nothing under `error` is most
+/// often one whose request asked for something this model does not serve, and
+/// that is the one thing crucible can point at without being told.
+///
+/// One sentence for all three vendors, because it is the one part of a failure
+/// that is not the vendor's: it is what crucible says when the vendor said
+/// nothing.
+pub(crate) const SILENT: &str = "gave up on the response and named no reason; check that this model serves what was asked of it";
+
 /// The most of a refusal to read before giving up on it.
 ///
 /// A refusal is a sentence. Anything larger is a proxy's error page, and

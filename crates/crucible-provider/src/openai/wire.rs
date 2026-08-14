@@ -15,6 +15,7 @@ use crucible_core::{Delta, ProviderError, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::openai::NAME;
+use crate::refusal::SILENT;
 use crate::sse::SseEvent;
 use crate::stream::Wire;
 
@@ -253,18 +254,35 @@ fn cut(payload: &Value) -> StopReason {
 }
 
 /// A response the provider gave up on part-way through.
+///
+/// `error` is a field that can be present and null — a vendor spelling "no
+/// error" that way rather than by leaving it out — so null is absent here. The
+/// alternative is reading a code and a message off nothing, finding neither,
+/// and reporting that the provider said nothing about a response that had said
+/// its status and why it stopped.
 fn failed(payload: &Value) -> ProviderError {
-    let error = payload
-        .get("response")
-        .and_then(|response| response.get("error"));
+    let response = payload.get("response");
+    let error = response
+        .and_then(|response| response.get("error"))
+        .filter(|error| !error.is_null());
 
-    match error {
-        Some(error) => upstream(error),
-        None => ProviderError::Upstream {
-            provider: NAME,
-            kind: "error".into(),
-            message: "the provider reported a failure and did not say what".into(),
-        },
+    if let Some(error) = error {
+        return upstream(error);
+    }
+
+    // Nothing under `error`, so what is left is what the response says about
+    // itself: why it is incomplete, and failing that its own status as the kind.
+    ProviderError::Upstream {
+        provider: NAME,
+        kind: response
+            .and_then(|response| text(response, "status"))
+            .unwrap_or("error")
+            .into(),
+        message: response
+            .and_then(|response| response.get("incomplete_details"))
+            .and_then(|details| text(details, "reason"))
+            .unwrap_or(SILENT)
+            .into(),
     }
 }
 
@@ -276,9 +294,7 @@ fn upstream(error: &Value) -> ProviderError {
             .or_else(|| text(error, "type"))
             .unwrap_or("error")
             .into(),
-        message: text(error, "message")
-            .unwrap_or("the provider reported a failure and did not say what")
-            .into(),
+        message: text(error, "message").unwrap_or(SILENT).into(),
     }
 }
 

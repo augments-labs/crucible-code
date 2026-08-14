@@ -24,6 +24,14 @@ Notable changes to crucible. Format follows
   a console key were never the same person, and one panel over vendor names asked
   them the same question.
 
+- **A provider that fails a response without naming a reason says where to look.**
+  `openai: error: the provider reported a failure and did not say what` was what
+  a turn ended with, and there was nothing to do with it. A `"error": null` under
+  the response was being read as an error rather than as the absence of one, so
+  the status and the reason the response carried went unread; where there is
+  genuinely nothing, all three providers now say to check that the model serves
+  what was asked of it.
+
 - **`/effort` draws a ladder instead of a panel.** One track with the five rungs
   written under it, `Faster` at one end and `Smarter` at the other, walked with
   the left and right arrows. The panel spent two rows on each rung under a
