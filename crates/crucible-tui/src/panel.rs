@@ -27,6 +27,9 @@
 //! passed-over row, which reads correctly when a row is one line; here the
 //! description is quiet by role already, so greying the name too would flatten
 //! the entry.
+//!
+//! Height is [`Panel::within`]'s subject. [`Panel::rows`] draws the whole panel
+//! and assumes the caller has room for it.
 
 use std::borrow::Cow;
 
@@ -40,6 +43,18 @@ use crate::width::{clip, columns as wide, fold};
 /// them.
 const POINTING: usize = 2;
 
+/// Rows a scrolled panel spends on everything that is not an entry: the rule, a
+/// blank, the title, a blank above the list, and a blank and the footer under
+/// it.
+///
+/// The sentence is gone by the rung this counts for, and the row saying how many
+/// entries were left out is counted with the entries rather than here.
+const CHROME: usize = 6;
+
+/// Rows one more entry costs: its two, and the blank that parts it from the one
+/// above.
+const ENTRY: usize = 3;
+
 /// One thing a panel offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Offered<'a> {
@@ -50,13 +65,38 @@ pub struct Offered<'a> {
     pub says: &'a str,
 }
 
+/// A list as it stands after scrolling: what is on screen, which of that carries
+/// the mark, and how many entries are out of sight below it.
+///
+/// One value rather than three arguments, because the three only ever move
+/// together — a slice with somebody else's index against it is the defect this
+/// shape makes unwriteable.
+#[derive(Clone, Copy)]
+struct Scrolled<'a> {
+    shown: &'a [Offered<'a>],
+    chosen: usize,
+    more: usize,
+}
+
+impl<'a> Scrolled<'a> {
+    /// The list with nothing scrolled off it.
+    const fn whole(shown: &'a [Offered<'a>], chosen: usize) -> Self {
+        Self {
+            shown,
+            chosen,
+            more: 0,
+        }
+    }
+}
+
 /// A titled list of two-row entries, one of them marked.
 #[derive(Debug, Clone, Copy)]
 pub struct Panel<'a> {
     /// The few words at the top saying what is being chosen.
     pub title: &'a str,
-    /// The sentence under the title, where there is one worth reading, and
-    /// `None` where the choice explains itself.
+    /// The sentence under the title, where there is one worth reading. `None`
+    /// where the choice explains itself, and the first thing given up when the
+    /// window is short.
     pub said: Option<&'a str>,
     /// What to offer, in the order it is listed.
     pub shown: &'a [Offered<'a>],
@@ -75,10 +115,89 @@ impl Panel<'_> {
     ///
     /// Never wider than that anywhere: a row past the last column is one the
     /// terminal wraps itself, which leaves the cursor a row below where the
-    /// next frame expects it. Height is not considered — the caller is assumed
-    /// to have room.
+    /// next frame expects it. Height is not considered here — see
+    /// [`Panel::within`] for a caller that has a window to fit inside.
     #[must_use]
     pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+        self.laid(columns, glyphs, Scrolled::whole(self.shown, self.chosen))
+    }
+
+    /// The panel as it fits in `room` rows, and empty where nothing does.
+    ///
+    /// Four rungs, giving up explanation before choices and choices before the
+    /// live form itself: the whole panel, then the same without its sentence,
+    /// then the entries scrolled to whatever fits with the marked one kept in
+    /// view, then nothing at all.
+    ///
+    /// The last rung is the one that matters. A panel drawn at as-much-as-fits
+    /// reads as the whole panel, and the frame after it rewinds over rows the
+    /// terminal has already taken — so a caller with no room gets nothing back
+    /// and commits the list to the scrollback instead. Empty is the right
+    /// answer here, not a degraded one.
+    ///
+    /// Two functions rather than a `room` field, so which rung was taken is
+    /// visible where it was asked for and no caller can forget to pass a bound.
+    #[must_use]
+    pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        let whole = self.rows(columns, glyphs);
+        if whole.len() <= room {
+            return whole;
+        }
+
+        let quiet = Self {
+            said: None,
+            ..*self
+        };
+
+        let shorter = quiet.rows(columns, glyphs);
+        if shorter.len() <= room {
+            return shorter;
+        }
+
+        quiet.scrolled(columns, room, glyphs)
+    }
+
+    /// The panel with its entries cut down to what `room` holds, and empty where
+    /// not even one fits beside the rule, the title and the footer.
+    fn scrolled(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        let Some(fits) = self.fits(room) else {
+            return Vec::new();
+        };
+
+        // The window is placed so the marked entry is the last one in it, or at
+        // the top where the mark has not reached that far down yet. There is no
+        // scroll position to preserve between frames — the panel is drawn from
+        // the mark each time — so the rule that matters is the one the reader
+        // checks: the entry a key is about to act on is on screen.
+        let last = self.shown.len().saturating_sub(fits);
+        let from = self.chosen.saturating_sub(fits - 1).min(last);
+
+        self.laid(
+            columns,
+            glyphs,
+            Scrolled {
+                shown: self.shown.get(from..from + fits).unwrap_or_default(),
+                chosen: self.chosen.saturating_sub(from),
+                more: self.shown.len() - fits,
+            },
+        )
+    }
+
+    /// How many entries a panel of `room` rows has space for, counting the row
+    /// that says how many were left out, and `None` where that is none of them.
+    fn fits(&self, room: usize) -> Option<usize> {
+        let fits = (room.checked_sub(CHROME)? / ENTRY).min(self.shown.len());
+        (fits > 0).then_some(fits)
+    }
+
+    /// The panel drawing `scrolled` between its title and its footer.
+    fn laid(&self, columns: usize, glyphs: Glyphs, scrolled: Scrolled<'_>) -> Vec<Row> {
+        let Scrolled {
+            shown,
+            chosen,
+            more,
+        } = scrolled;
+
         // No room for the mark is no list to choose from: at that width it
         // would stand where the name's first column is, and the name is the
         // part that has to be typed.
@@ -93,11 +212,19 @@ impl Panel<'_> {
         rows.extend(self.sentence(columns));
         rows.push(Row::new());
 
-        for (at, one) in self.shown.iter().enumerate() {
+        for (at, one) in shown.iter().enumerate() {
             if at > 0 {
                 rows.push(Row::new());
             }
-            rows.extend(entry(columns, front, glyphs, one, at == self.chosen));
+            rows.extend(entry(columns, front, glyphs, one, at == chosen));
+        }
+
+        if more > 0 {
+            let mut row = Row::new();
+            row.pad(front);
+            let said = format!("{} {more} more", glyphs.dot());
+            row.push(Slot::Quiet, shortened(&said, columns - front, glyphs));
+            rows.push(row);
         }
 
         rows.push(Row::new());
@@ -209,6 +336,29 @@ mod tests {
                 says: "Console API key, billed by usage",
             },
         ]
+    }
+
+    /// A longer list, for the rungs that only exist because a list can outgrow
+    /// its window.
+    fn many() -> Vec<Offered<'static>> {
+        let mut many = offered().to_vec();
+
+        many.extend([
+            Offered {
+                name: "Third",
+                says: "a third thing",
+            },
+            Offered {
+                name: "Fourth",
+                says: "a fourth thing",
+            },
+            Offered {
+                name: "Fifth",
+                says: "a fifth thing",
+            },
+        ]);
+
+        many
     }
 
     /// The login panel over `shown`, with the mark on `chosen`.
@@ -474,5 +624,122 @@ mod tests {
         let shown = offered();
 
         pictured("ascii", &login(&shown, 1), 80, Glyphs::Ascii);
+    }
+
+    /// The rungs down, for a window the whole panel does not fit in.
+    mod ladder {
+        use super::*;
+
+        /// What the panel says in `room` rows, row by row.
+        fn within(panel: &Panel<'_>, columns: usize, room: usize) -> Vec<String> {
+            let rows = panel.within(columns, room, Glyphs::Unicode);
+            rows.iter().map(Row::text).collect()
+        }
+
+        /// The panel at `columns` in `room` rows, against the picture checked in
+        /// beside it under `name@columns x room`.
+        ///
+        /// Both numbers in the suffix, because both decide what was drawn: a
+        /// width alone would let two rungs of the same panel be read against one
+        /// picture.
+        fn pictured(name: &str, panel: &Panel<'_>, columns: usize, room: usize) {
+            insta::with_settings!({snapshot_suffix => format!("{columns}x{room}")}, {
+                insta::assert_snapshot!(
+                    name,
+                    dump(&panel.within(columns, room, Glyphs::Unicode), columns)
+                );
+            });
+        }
+
+        #[test]
+        fn the_sentence_is_the_first_thing_to_go() {
+            // Explanation before choices, and choices before the live form.
+            pictured("short", &login(&offered(), 0), 80, 14);
+        }
+
+        #[test]
+        fn a_list_too_long_for_the_room_scrolls_and_says_how_many_are_left() {
+            let shown = many();
+
+            pictured("scrolled", &login(&shown, 0), 80, 9);
+        }
+
+        #[test]
+        fn the_marked_entry_is_visible_on_every_rung() {
+            // The mark on the last entry, in room for one. A list scrolled to
+            // its top would leave a key about to act on something off screen.
+            let shown = many();
+            let rows = within(&login(&shown, 5), 80, 9);
+
+            assert!(
+                rows.iter().any(|row| row.contains("Fifth")),
+                "the marked entry is off screen: {rows:?}"
+            );
+        }
+
+        #[test]
+        fn no_room_for_the_shortest_rung_draws_nothing() {
+            // Empty, not truncated. A panel drawn at as-much-as-fits reads as
+            // the whole panel, and the rewind after it moves over rows the
+            // terminal has already taken.
+            let shown = many();
+
+            for room in 0..=8 {
+                assert!(
+                    within(&login(&shown, 0), 80, room).is_empty(),
+                    "something was drawn in {room} rows"
+                );
+            }
+        }
+
+        #[test]
+        fn the_count_is_of_entries_and_not_of_rows() {
+            // Six offered and one shown is five more, not the fifteen rows
+            // those five would have cost.
+            let shown = many();
+            let rows = within(&login(&shown, 0), 80, 9);
+
+            assert!(rows.iter().any(|row| row.trim() == "· 5 more"), "{rows:?}");
+        }
+
+        #[test]
+        fn a_panel_never_outgrows_the_room_it_was_given() {
+            // The check that stands between a panel replacing the prompt box
+            // and a corrupted screen. Everything else here is a picture of one
+            // case; this is every case.
+            let all = many();
+
+            for entries in 1..=all.len() {
+                let shown = all.get(..entries).expect("a prefix of the list");
+
+                for chosen in [0, entries / 2, entries - 1] {
+                    let panel = login(shown, chosen);
+
+                    for room in 1..=60 {
+                        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                            let rows = panel.within(80, room, glyphs);
+
+                            assert!(
+                                rows.len() <= room,
+                                "{} rows in room for {room}, {entries} on {chosen}",
+                                rows.len()
+                            );
+
+                            if rows.is_empty() {
+                                continue;
+                            }
+
+                            let text: Vec<String> = rows.iter().map(Row::text).collect();
+                            let name = shown.get(chosen).expect("the marked entry").name;
+
+                            assert!(
+                                text.iter().any(|row| row.contains(name)),
+                                "{name} is off screen in room for {room}: {text:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
