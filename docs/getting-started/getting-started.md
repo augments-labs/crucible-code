@@ -75,6 +75,11 @@ ask for — `/login` inside a session says which, and
 export ANTHROPIC_API_KEY=...
 ```
 
+Or type `/login anthropic` inside a session and let crucible keep the key
+instead of your shell profile. The box that opens draws a dot per character and
+never the key, and what it takes goes to `~/.crucible/auth.json`, a file only
+you can read. An exported variable still wins over it.
+
 ## Run it
 
 Start it in the directory you want it to work in. That directory is the
@@ -186,7 +191,7 @@ session.
 | --- | --- |
 | `/help` | Lists these |
 | `/model` | The model this session is asking, or the one to ask from now on |
-| `/login` | Where each provider reads its key from |
+| `/login` | Takes a key for a provider and writes it down |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |
@@ -197,10 +202,11 @@ one from the next turn on, and writes it to `~/.crucible/config.json` under the
 provider this run is set up for — so the next crucible started anywhere begins
 with it. See [Providers and models](../providers/providers.md).
 
-`/login` names the providers this build serves and the variable each one signs
-a request from; `/login <provider>` answers about that one alone. The key itself
-is never typed on the line — that would leave it in your shell's history, in the
-process listing and in the scrollback.
+`/login <provider>` opens a box for the key — never the command line, which
+would put it in your shell's history, in the process listing and in the
+scrollback. Escape leaves it without writing anything. `/login` on its own names
+the providers this build serves and the variable each reads from, and so does a
+run with no keyboard to open a box at.
 
 `/clear` empties the transcript: the next prompt is the first one the model
 sees, and the turns before it are neither sent nor paid for again. It is the

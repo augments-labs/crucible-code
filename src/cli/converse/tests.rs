@@ -5,6 +5,7 @@ use std::io;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
+use crucible_auth::Store;
 use crucible_core::{
     Delta, Mode, Permission, Rules, Settled, StopReason, ToolArgs, ToolCall, ToolId,
 };
@@ -34,6 +35,11 @@ fn plain() -> Terms {
         // configuration anybody keeps.
         provider: Some("anthropic"),
         choosing: unwritten.join("config.json"),
+
+        // The same again: `/login` is driven where a store of its own is
+        // watched, and a loop these terms drive must not write a key into
+        // whatever home the machine running the suite has.
+        logins: Store::in_home(&unwritten),
 
         // The same tree, equally absent: a loop these terms drive has no
         // sessions to list and none to pick up. What `/resume` does with ones
@@ -570,7 +576,10 @@ fn login_says_where_every_provider_reads_its_key_from() {
 }
 
 #[test]
-fn login_naming_one_provider_answers_about_that_one_and_not_the_others() {
+fn login_down_a_pipe_names_the_variable_rather_than_opening_a_box() {
+    // There is no keyboard, so a box asking for a key is a session that stops
+    // and never comes back — this test hanging is that defect. What is left is
+    // the other way in, and it is named rather than merely mentioned.
     let (written, asked) = commanding("/login openai\n");
 
     assert_eq!(asked, 0, "{written}");

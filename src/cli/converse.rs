@@ -28,6 +28,7 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
+use crucible_auth::Store;
 use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
 use crucible_runner::Runner;
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, TerminalError, pressed};
@@ -43,6 +44,7 @@ use typing::Asked;
 
 mod command;
 mod mode;
+mod secret;
 mod typing;
 
 /// What the user types after, where there is no box to type into.
@@ -81,6 +83,11 @@ pub(crate) struct Terms {
     /// about who is running crucible rather than about the checkout, so it is
     /// not the file beside `remembering`.
     pub(crate) choosing: PathBuf,
+    /// Where a key given to `/login` is written down. Built by the caller from
+    /// the same home directory the launch read its keys out of: a store built
+    /// here and one built there pointing at different files would be a `/login`
+    /// that wrote where nothing reads.
+    pub(crate) logins: Store,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -191,7 +198,7 @@ pub(crate) fn converse<T: Terminal>(
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
         if let Some(wanted) = command::wanted(&prompt) {
-            match command::run(wanted, renderer, &mut runner, terms)? {
+            match command::run(wanted, renderer, &mut runner, terms, keys)? {
                 Ran::Again => continue,
                 Ran::Leave => break,
             }

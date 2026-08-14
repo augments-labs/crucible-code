@@ -17,7 +17,7 @@ expression: window.picture()
 |                                                                                |
 |› /help     what these are                                                      |
 |  /model    which model answers, or set one                                     |
-|  /login    where a provider reads its key from                                 |
+|  /login    give crucible a key for a provider                                  |
 |  /mode     ask · allowEdits · fullAccess                                       |
 |  /resume   pick up an earlier session here                                     |
 |  /clear    forget what has been said                                           |

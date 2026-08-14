@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use crucible_auth::Store;
 use crucible_core::{Cancel, Message, StopReason};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tui::{Recording, Renderer};
@@ -51,6 +52,7 @@ fn terms(sample: &Sample) -> Terms {
         remembering: sample.root().join("unwritten.json"),
         provider: Some("anthropic"),
         choosing: sample.root().join("unwritten-home.json"),
+        logins: Store::in_home(&sample.root()),
         sessions: sample.logs(),
         workspace: sample.workspace(),
     }
