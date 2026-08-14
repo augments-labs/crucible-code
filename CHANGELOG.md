@@ -15,6 +15,11 @@ Notable changes to crucible. Format follows
   key belongs to — and a model the list does not carry is still named the way it
   always was.
 
+- **`/model` on its own opens a panel.** The same list, standing where the prompt
+  box was, walked with the arrows and taken with Enter, under the name of the
+  model being asked now. Escape leaves it and changes nothing. A run with no
+  keyboard to walk it gets the rows instead, as before.
+
 ### Fixed
 
 - **A crucible waiting its turn to write a key waits long enough.** Two of them

@@ -15,7 +15,7 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /help     what these are                                                      |
-|  /model    which model answers, or set one                                     |
+|  /model    pick which model answers                                            |
 |  /login    give crucible a key for a provider                                  |
 |  /logout   forget a key crucible wrote down                                    |
 |  /mode     ask · allowEdits · fullAccess                                       |

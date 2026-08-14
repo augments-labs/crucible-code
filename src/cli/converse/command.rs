@@ -115,7 +115,7 @@ impl Command {
     const fn says(self, glyphs: Glyphs) -> &'static str {
         match self {
             Self::Help => "what these are",
-            Self::Model => "which model answers, or set one",
+            Self::Model => "pick which model answers",
             Self::Login => "give crucible a key for a provider",
             Self::Logout => "forget a key crucible wrote down",
             // The ring itself rather than a sentence about it. `/mode` is the
@@ -187,8 +187,9 @@ pub(super) fn filtering(line: &str, glyphs: Glyphs) -> Vec<Listed<'static>> {
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
 ///
-/// `keys` is whether there is a keyboard, which `/login` and `/logout` need
-/// before either opens something nobody down a pipe could answer.
+/// `keys` is whether there is a keyboard, which `/model`, `/login` and
+/// `/logout` need before any of them opens something nobody down a pipe could
+/// answer.
 pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
@@ -243,7 +244,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Model,
             rest,
-        } => model::run(rest, renderer, runner, terms)?,
+        } => model::run(rest, renderer, runner, terms, keys)?,
 
         Wanted::Known {
             command: Command::Login,
