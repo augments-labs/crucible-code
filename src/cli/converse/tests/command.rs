@@ -96,6 +96,30 @@ fn model_lists_only_the_provider_this_run_is_set_up_for() {
 }
 
 #[test]
+fn a_model_taken_mid_session_is_what_the_next_turn_is_told_it_is() {
+    // The prompt says which model is answering and at which rung, because a
+    // model can find out neither for itself. `/model` and `/effort` are
+    // somebody changing exactly those two things — so a prompt written once at
+    // startup would go on naming the model the session opened with, and every
+    // turn after the first would be told something false about itself.
+    let script = Script::new(vec![saying("answered")]);
+    let under = script.under();
+    let runner = scripted(script, Tools::new());
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/model claude-haiku-4-5\n/effort max\nwhat are you\n".to_vec());
+
+    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+
+    let under = under.lock().expect("what the turn was asked under");
+    let said = under.last().expect("one turn was taken");
+
+    assert!(said.contains("claude-haiku-4-5"), "{said}");
+    assert!(said.contains("max effort"), "{said}");
+    assert!(!said.contains("script"), "{said}");
+}
+
+#[test]
 fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
     // Both halves, because either one alone leaves the next run here asking a
     // question this command just answered: the model says what to ask for, and

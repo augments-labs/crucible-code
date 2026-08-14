@@ -20,30 +20,11 @@ use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailabl
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
+use super::standing;
 use super::{Fatal, NOTHING_TO_ASK, PROVIDERS, Served};
 
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
-
-/// The standing instructions every turn carries.
-///
-/// Written for this harness. It says how to work and how to answer, and leaves
-/// what the tools do to the tools' own schemas — a system prompt that also
-/// describes each tool is a second place for that description to go stale.
-const SYSTEM: &str = "\
-You are crucible, a coding agent working in a terminal beside a developer.
-
-Work from what the code says rather than what it probably says: read a file \
-before changing it, and search before concluding something is not there. \
-Prefer the smallest change that finishes the job, and match the conventions of \
-the file you are editing rather than your own habits.
-
-Answer in plain prose, briefly. The developer is reading a terminal: put the \
-conclusion first, skip the preamble, and do not read a file's contents back \
-after editing it — say what changed and why.
-
-Ask when the answer would change what you build. Otherwise decide, say which \
-way you decided, and carry on.";
 
 /// Everything the wiring needs to build a runner.
 ///
@@ -286,11 +267,12 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
     tools
 }
 
-/// Which model to ask, and what it is standing on.
+/// Which model to ask, and what it is asked under.
 ///
-/// The root goes in the system prompt because every tool takes paths relative
-/// to it, and a model that has to guess the root spends its first tool call
-/// finding out.
+/// What a turn is asked under is [`standing::under`], read again before every
+/// turn because half of it is about the model in force — this is only the
+/// first of those reads, for the turn a session might take before anything
+/// changes.
 ///
 /// An unnamed model is the empty name, which is what the loop reads to find out
 /// that there is nothing to ask yet. It is the same absence [`Startup::model`]
@@ -301,15 +283,12 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
 /// means "nobody said", and the field left off is what a vendor reads as its own
 /// default.
 fn model(name: Option<&str>, effort: Option<Effort>, workspace: &Workspace) -> Model {
-    let system = format!(
-        "{SYSTEM}\n\nThe workspace root is {}. Every tool path is relative to it.",
-        workspace.root().display()
-    );
+    let name = name.unwrap_or_default();
 
     Model {
-        name: name.unwrap_or_default().into(),
+        system: Some(standing::under(name, effort, workspace).into()),
+        name: name.into(),
         max_tokens: MAX_TOKENS,
-        system: Some(system.into()),
         effort,
     }
 }

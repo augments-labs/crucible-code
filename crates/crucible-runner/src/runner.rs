@@ -194,6 +194,21 @@ impl Runner {
         self.model.name = model.into();
     }
 
+    /// Stands the session under different instructions from the next turn on.
+    ///
+    /// The caller writes them, because what a turn is asked under is a fact
+    /// about the harness rather than about the loop. This exists because part
+    /// of what they say is about the session itself — which model is answering,
+    /// and how hard it was asked to think — and both of those change while a
+    /// session runs. Written once at startup they would go on describing the
+    /// session the first turn was taken in.
+    ///
+    /// Reachable between turns, where [`Runner::ask`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub fn telling(&mut self, system: &str) {
+        self.model.system = Some(system.into());
+    }
+
     /// Writes to a different vendor from the next turn on.
     ///
     /// What a key given mid-session is for. Until there was one, the provider a

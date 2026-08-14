@@ -16,11 +16,21 @@ use crucible_core::{
 /// a runner.
 pub(crate) type Asked = Arc<AtomicUsize>;
 
+/// What each request was asked under, in the order the requests arrived and
+/// readable after the script has moved into a runner.
+///
+/// The system prompt is the one part of a request nothing on screen shows, and
+/// half of what it says is about the session rather than about the harness — so
+/// a session that changed model and went on saying it was the old one would
+/// look right from every other angle.
+pub(crate) type Under = Arc<Mutex<Vec<String>>>;
+
 /// Answers each request with the next batch of deltas it was given.
 #[derive(Debug)]
 pub(crate) struct Script {
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Asked,
+    under: Under,
     /// Refuses every request, for the path where the provider itself fails
     /// rather than the transcript going wrong inside a response.
     refusing: bool,
@@ -31,6 +41,7 @@ impl Script {
         Self {
             rounds: Mutex::new(rounds.into_iter()),
             asked: Asked::default(),
+            under: Under::default(),
             refusing: false,
         }
     }
@@ -47,6 +58,13 @@ impl Script {
     pub(crate) fn asked(&self) -> Asked {
         Arc::clone(&self.asked)
     }
+
+    /// A handle on what the requests were asked under, taken the same way and
+    /// for the same reason: the script itself is inside the runner by the time
+    /// there is anything to read.
+    pub(crate) fn under(&self) -> Under {
+        Arc::clone(&self.under)
+    }
 }
 
 impl Provider for Script {
@@ -56,10 +74,16 @@ impl Provider for Script {
 
     fn stream(
         &self,
-        _request: Request,
+        request: Request,
         _cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         self.asked.fetch_add(1, Ordering::Relaxed);
+
+        // A poisoned lock is a panic in another test's thread, which this one
+        // cannot report better than by having nothing to assert on.
+        if let Ok(mut under) = self.under.lock() {
+            under.push(request.system.unwrap_or_default().into());
+        }
 
         if self.refusing {
             return Err(ProviderError::Refused {
