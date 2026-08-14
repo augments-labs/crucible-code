@@ -28,6 +28,7 @@ use crate::cli::style::Style;
 
 use super::{Terms, mode};
 
+mod effort;
 mod login;
 mod logout;
 mod model;
@@ -43,6 +44,8 @@ pub(super) enum Command {
     Help,
     /// Which model answers.
     Model,
+    /// How hard it is asked to think.
+    Effort,
     /// A key for a provider, given to a box that does not echo it.
     Login,
     /// A key crucible wrote down, forgotten.
@@ -62,9 +65,10 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 8] = [
+const EVERY: [Command; 9] = [
     Command::Help,
     Command::Model,
+    Command::Effort,
     Command::Login,
     Command::Logout,
     Command::Mode,
@@ -102,6 +106,7 @@ impl Command {
         match self {
             Self::Help => "/help",
             Self::Model => "/model",
+            Self::Effort => "/effort",
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Mode => "/mode",
@@ -116,6 +121,7 @@ impl Command {
         match self {
             Self::Help => "what these are",
             Self::Model => "pick which model answers",
+            Self::Effort => "pick how hard it thinks",
             Self::Login => "give crucible a key for a provider",
             Self::Logout => "forget a key crucible wrote down",
             // The ring itself rather than a sentence about it. `/mode` is the
@@ -245,6 +251,11 @@ fn answer<T: Terminal>(
             command: Command::Model,
             rest,
         } => model::run(rest, renderer, runner, terms, keys)?,
+
+        Wanted::Known {
+            command: Command::Effort,
+            rest,
+        } => effort::run(rest, renderer, runner, terms, keys)?,
 
         Wanted::Known {
             command: Command::Login,

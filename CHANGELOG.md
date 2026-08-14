@@ -8,6 +8,13 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **`/effort` picks a rung mid-session.** On its own it stands a panel over the
+  five, `/effort <rung>` takes one outright, and either way it applies from the
+  next turn and is written down beside the model. All five are offered wherever
+  you are: which of them a model serves is its vendor's answer, and a rung
+  crucible filtered on your behalf would be a guess about somebody else's
+  documentation.
+
 - **`--effort` says how hard to think.** One of `low`, `medium`, `high`, `xhigh`
   or `max`, on every turn of the session, with `providers.<name>.effort` saying
   it once for a provider and the flag winning where both do. Left off, crucible

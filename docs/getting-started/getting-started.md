@@ -191,6 +191,7 @@ session.
 | --- | --- |
 | `/help` | Lists these |
 | `/model` | Picks the model to ask from now on, or takes the one you name |
+| `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/login` | Takes a key for a provider and writes it down |
 | `/logout` | Forgets a key crucible wrote down |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
@@ -207,6 +208,14 @@ the vendor's documentation, not the limit of what the vendor serves.
 Either way the name is written to `~/.crucible/config.json` under the provider
 this run is set up for, so the next crucible started anywhere begins with it.
 See [Providers and models](../providers/providers.md).
+
+`/effort` is the same shape over the five rungs — `low`, `medium`, `high`,
+`xhigh`, `max` — and is written to the same file beside the model. The panel
+opens on `high` where nothing has chosen yet, which is a place to start walking
+from rather than a rung being asked for: leaving it leaves the session asking for
+none, and what applies then is the vendor's own default for that model. All five
+are offered wherever you are, because which of them a model serves is the
+vendor's answer and differs between models of one vendor.
 
 `/login <provider>` opens a box for the key — never the command line, which
 would put it in your shell's history, in the process listing and in the
