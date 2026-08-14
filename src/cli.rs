@@ -48,29 +48,50 @@ use crate::cli::style::Style;
 /// [`startup::provider`] has one arm per entry, and adding a provider is an
 /// edit to both in the same commit.
 ///
-/// No model is written here, and none may be. A name in this file is a name
-/// this build was compiled with, and a model chosen that way is chosen for
-/// somebody who never asked for it — it outlives the model, it is asked for
-/// with whichever key happens to be set, and the first anyone hears of the
-/// mismatch is a refusal from a vendor they did not mean to write to. What to
-/// ask for comes from the person running it, through `--model` or through
-/// `providers.<name>.model`, and where neither says, crucible asks rather than
-/// guesses.
+/// The models are what `/model` offers and not what anything asks for. No
+/// default is written here and none may be: a model chosen at compile time is
+/// chosen for somebody who never asked for it — it outlives the model, it is
+/// asked for with whichever key happens to be set, and the first anyone hears
+/// of the mismatch is a refusal from a vendor they did not mean to write to.
+/// What to ask for comes from the person running it, through `--model` or
+/// through `providers.<name>.model`, and where neither says, crucible asks
+/// rather than guesses. An offer is how it asks; it is still they who answer.
+///
+/// So this list going stale costs a shortcut and nothing else. A model retired
+/// since the build is one nobody picked without the vendor refusing it by name,
+/// and a model released since is typed, which is the path that was there before
+/// any of these were written down.
 const PROVIDERS: [Served; 3] = [
     Served {
         name: "anthropic",
         shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
+        models: &[
+            "claude-fable-5",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ],
     },
     Served {
         name: "moonshot",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
+        models: &[
+            "kimi-k3",
+            "kimi-k2.7-code",
+            "kimi-k2.7-code-highspeed",
+            "kimi-k2.6",
+            "kimi-k2.5",
+        ],
     },
     Served {
         name: "openai",
         shown: "OpenAI",
         key: "OPENAI_API_KEY",
+        // The `-pro` variants are left off: they answer in one piece rather
+        // than streaming, and every turn here is drawn as it arrives.
+        models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
     },
 ];
 
@@ -89,6 +110,14 @@ pub(crate) struct Served {
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.
     pub(crate) key: &'static str,
+    /// The models `/model` offers for it, newest first, at most five.
+    ///
+    /// An offer and not a rung: nothing here is ever asked for unless somebody
+    /// chose it, and a name that is not on the list is typed the way it always
+    /// was. Which is what keeps this from being the model built into the build —
+    /// the list is a shortcut past the vendor's documentation, and the vendor
+    /// remains the authority on what it serves.
+    pub(crate) models: &'static [&'static str],
 }
 
 /// What crucible says when nothing on this machine is set up to answer.

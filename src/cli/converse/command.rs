@@ -21,15 +21,16 @@
 
 use crucible_core::Mode;
 use crucible_runner::Runner;
-use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
 
+use crate::cli::Fatal;
 use crate::cli::style::Style;
-use crate::cli::{Fatal, NO_MODEL_CHOSEN, NOTHING_TO_ASK, remember};
 
 use super::{Terms, mode};
 
 mod login;
 mod logout;
+mod model;
 mod resume;
 
 /// What a line beginning `/` can ask for.
@@ -242,7 +243,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Model,
             rest,
-        } => asked(rest, renderer, runner, terms)?,
+        } => model::run(rest, renderer, runner, terms)?,
 
         Wanted::Known {
             command: Command::Login,
@@ -276,68 +277,6 @@ fn answer<T: Terminal>(
         }
     }
 
-    Ok(())
-}
-
-/// `/model`: which model is being asked, or the one named, from the next turn
-/// on and from the next run on.
-///
-/// Written down as well as switched, because the answer to "which model" is the
-/// same answer every time this directory is opened and asking it once a session
-/// is asking it for ever. It goes to the file at home under the provider this
-/// run is set up for — a model belongs to the vendor that serves it, and a name
-/// written under the wrong one is the mismatch this release exists to stop.
-///
-/// A failure to write does not undo the switch. What is lost is the part that
-/// outlives the process, and the line drawn says so, which is the same bargain
-/// an answer of `always` is on.
-fn asked<T: Terminal>(
-    said: &str,
-    renderer: &mut Renderer<T>,
-    runner: &mut Runner,
-    terms: &Terms,
-) -> Result<(), Fatal> {
-    let style = terms.style;
-
-    if said.is_empty() {
-        // Read from configuration or off the command line either way, so it
-        // goes out the way arrived text goes out.
-        return match runner.model() {
-            "" if terms.provider.is_none() => renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from),
-            "" => renderer.commit(NO_MODEL_CHOSEN).map_err(Fatal::from),
-            name => renderer.commit(name).map_err(Fatal::from),
-        };
-    }
-
-    // Nothing holds a key, so there is no provider to write the name under and
-    // no vendor to send it to. Answering "chosen" here would be a session that
-    // says it is set up and refuses every turn.
-    let Some(provider) = terms.provider else {
-        return renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from);
-    };
-
-    runner.ask(said);
-    renderer.commit(&format!("{provider}/{said}"))?;
-
-    let said = match remember::choosing(&terms.choosing, provider, said) {
-        Ok(()) => format!("written to {}", terms.choosing.display()),
-        Err(problem) => {
-            // The switch stands either way: what a failed write costs is the
-            // part that outlives the process, which is the same bargain an
-            // answer of `always` is on.
-            renderer.commit(&format!("! {problem}"))?;
-            "asked for this session only".to_owned()
-        }
-    };
-
-    // Wrapped rather than clipped: a path is most of this row and half of one
-    // says nothing about where to look.
-    let rows: Vec<Row> = fold(&said, renderer.columns())
-        .into_iter()
-        .map(|row| Row::new().then(Slot::Quiet, row))
-        .collect();
-
-    renderer.present(&rows, style.palette())?;
     Ok(())
 }
 

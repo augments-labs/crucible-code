@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`/model` names a few models you could be asking.** It said which one was in
+  force and left you to go and look up how the vendor spells the others. It now
+  lists a handful of the ones your provider serves, written as the line that asks
+  for each. Only that provider's, because a name goes to whichever vendor your
+  key belongs to — and a model the list does not carry is still named the way it
+  always was.
+
 ## [0.1.0] - 2026-08-14
 
 The version line moves from `0.0.x` to `0.1.x`. What it promises is unchanged —

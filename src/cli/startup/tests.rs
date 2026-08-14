@@ -221,6 +221,7 @@ fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
         name: "ollama",
         shown: "Ollama",
         key: "OLLAMA_API_KEY",
+        models: &["llama-4"],
     };
 
     let problem = built(Some(unarmed), &Settings::default(), &|_| {
