@@ -4,7 +4,7 @@ assertion_line: 133
 expression: window.picture()
 ---
 80x24 cursor 17,4 scrolled 0
-|╭─ crucible v0.1.4 ────────────────────────────────────────────────────────────╮|
+|╭─ crucible v0.1.5 ────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
