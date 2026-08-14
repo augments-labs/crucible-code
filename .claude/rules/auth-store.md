@@ -45,12 +45,14 @@ A store found readable by others is tightened, reported, and used. Refusing the
 way `ssh` refuses a loose private key would leave a user unable to log in
 without shell surgery, which is worse than the sentence.
 
-## A write lands whole or not at all
+## Every write is lock, read, rename
 
-The bytes go to a sibling temporary and are renamed over the store, so a full
-disk leaves the old file rather than half a new one. Sibling, because `rename`
-across devices is a copy — which is what "write it to the system temporary
-directory" gets wrong every time.
+Two crucibles logging in at once must not each write a file that has forgotten
+the other's provider. The lock is advisory, on a sibling of the store, because a
+lock on the store itself would not survive the rename that replaces it. The
+temporary is a sibling too, or `rename` is a cross-device copy that is not
+atomic — which is what "write it to the system temporary directory" gets wrong
+every time.
 
 ## What does not belong here
 
