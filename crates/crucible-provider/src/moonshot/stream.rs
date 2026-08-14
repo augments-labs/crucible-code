@@ -13,7 +13,7 @@ pub(super) type Stream = Response<Completions>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
+    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
 
     use super::*;
 
@@ -90,6 +90,63 @@ pub(super) mod tests {
                 Delta::Text("Hi".into()),
                 Delta::Stopped(StopReason::Yielded),
             ]
+        );
+    }
+
+    #[test]
+    fn a_tool_call_is_named_once_and_then_arrives_in_fragments() {
+        // The name and the identity come with the first fragment and never
+        // again; the ones after it carry the index alone.
+        let body = format!(
+            "{}{}{}{}",
+            chunk(
+                r#"{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":""}}]}"#,
+                "null"
+            ),
+            chunk(
+                r#"{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}"#,
+                "null"
+            ),
+            chunk(
+                r#"{"tool_calls":[{"index":0,"function":{"arguments":"\"a.rs\"}"}}]}"#,
+                "null"
+            ),
+            chunk("{}", r#""tool_calls""#),
+        );
+        let mut stream = reading(&body, &Cancel::new());
+
+        assert_eq!(
+            deltas(&mut stream),
+            vec![
+                Delta::ToolStarted {
+                    id: ToolId::new("call_1"),
+                    name: "read".into(),
+                },
+                Delta::ToolArgs("{\"path\":".into()),
+                Delta::ToolArgs("\"a.rs\"}".into()),
+                Delta::Stopped(StopReason::WantsTools),
+            ]
+        );
+    }
+
+    #[test]
+    fn arguments_for_a_call_that_was_never_opened_are_refused() {
+        // Assembled onto whatever is open, they are one tool running on another
+        // tool's arguments — a wrong file read rather than a failure anyone can
+        // see.
+        let mut stream = reading(
+            &chunk(
+                r#"{"tool_calls":[{"index":3,"function":{"arguments":"{}"}}]}"#,
+                "null",
+            ),
+            &Cancel::new(),
+        );
+
+        let problem = stream.next().unwrap().unwrap_err();
+
+        assert!(
+            matches!(problem, ProviderError::Protocol { .. }),
+            "expected a stray fragment to be refused, got {problem:?}"
         );
     }
 
