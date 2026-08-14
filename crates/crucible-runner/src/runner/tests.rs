@@ -172,6 +172,36 @@ fn how_hard_the_session_was_told_to_think_is_on_every_request() {
 }
 
 #[test]
+fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
+    // The half a key given to `/login` needs: a run with no credential resolves
+    // the provider that answers nothing, and until it can be replaced that run
+    // refuses every turn no matter what it is handed afterwards.
+    let first = Script::new(vec![saying("from the first")]);
+    let mut scripted = Scripted::new(first, tools([]), Verdict::Allow);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let second = Script::new(vec![saying("from the second")]);
+    let after = second.sent();
+    scripted.runner.serve(Box::new(second));
+    scripted.turn("again").expect("the turn to finish");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        1,
+        "the one it started on"
+    );
+    assert_eq!(after.lock().unwrap().len(), 1, "the one it was handed");
+
+    // And what was said before the swap goes with it. A vendor is who a
+    // transcript is sent to, not something a transcript belongs to.
+    let sent = after.lock().unwrap();
+    let carried = sent.first().expect("the request it was just handed");
+    let said = format!("{:?}", carried.transcript);
+    assert!(said.contains("from the first"), "{said}");
+}
+
+#[test]
 fn a_rung_asked_for_mid_session_is_on_the_next_request_and_not_the_last_one() {
     // The half `/effort` needs: a session opens on whatever the command line
     // and the files settled, and what is chosen afterwards has to reach the

@@ -182,15 +182,35 @@ impl Runner {
 
     /// Asks a different model from the next turn on.
     ///
-    /// The provider is not changed and cannot be: which vendor is being written
-    /// to was settled by which credential the wiring resolved, and a name that
-    /// vendor does not serve comes back as its own refusal rather than as a
-    /// silent redirection to one that does.
+    /// The provider is not changed by this: which vendor is being written to was
+    /// settled by which credential the wiring resolved, and a name that vendor
+    /// does not serve comes back as its own refusal rather than as a silent
+    /// redirection to one that does. [`Runner::serve`] is what changes it, and
+    /// it costs a credential to call.
     ///
     /// Reachable between turns, where [`Runner::switch`] is and for the same
     /// reason: a turn owns the runner while it runs.
     pub fn ask(&mut self, model: &str) {
         self.model.name = model.into();
+    }
+
+    /// Writes to a different vendor from the next turn on.
+    ///
+    /// What a key given mid-session is for. Until there was one, the provider a
+    /// run resolved at startup was the provider it died with, so a machine that
+    /// had never logged in spent its whole first session refusing every turn —
+    /// the key it was just given being read by a run that had already finished
+    /// deciding.
+    ///
+    /// The transcript is kept across the swap, and that is deliberate rather
+    /// than incidental: what was said is what the user said, and a vendor is who
+    /// it gets sent to. What does not carry is anything the old vendor knows
+    /// about the old messages, which is nothing this program was ever told.
+    ///
+    /// Reachable between turns, where [`Runner::ask`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub fn serve(&mut self, provider: Box<dyn Provider>) {
+        self.provider = provider;
     }
 
     /// How hard this session is asking the model to think.
