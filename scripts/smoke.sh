@@ -78,10 +78,21 @@ if [[ -f $target ]]; then
     tarball=$(realpath "$target")
     echo "    a local file, so its checksum is not the published one"
     published=0
+
+    # A file names no version, so what this tree holds is the only expectation
+    # there is — and it is the right one, since a local tarball is one this tree
+    # just packaged.
+    expected=$version
 else
     # An artifact is named for the version it holds, not for the tag it was cut
     # from — the `v` belongs to git.
     name=crucible-${target#v}-$PLATFORM.tar.gz
+
+    # And so is what the binary inside it should say. Reading that off Cargo.toml
+    # instead would fail every release but the one this tree is on, which is the
+    # ordinary case: the gate is run again from a main that has moved on, and an
+    # artifact nobody has touched is reported broken.
+    expected=${target#v}
     command -v gh >/dev/null || {
         echo "    FAIL gh is not installed, and $target is not a file"
         exit 1
@@ -94,7 +105,7 @@ else
     tarball=$work/$name
     published=1
 fi
-readonly tarball published
+readonly tarball published expected
 printf '    %s\n' "$tarball"
 
 echo "==> checksum"
@@ -152,10 +163,10 @@ sandbox() {
 
 echo "==> it runs at all"
 said=$(sandbox /opt/crucible/crucible --version)
-if [[ $said == "crucible $version" ]]; then
+if [[ $said == "crucible $expected" ]]; then
     printf '    %s\n' "$said"
 else
-    printf '    FAIL --version said %q, expected %q\n' "$said" "crucible $version"
+    printf '    FAIL --version said %q, expected %q\n' "$said" "crucible $expected"
     failed=1
 fi
 

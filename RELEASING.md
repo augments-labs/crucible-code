@@ -147,6 +147,10 @@ changelog describe the binary people actually download.
    apart rather than averaged. It is the Linux x86-64 artifact it looks for: the
    sandbox it runs in is a Linux one, and the other six are proved by their own
    native build and by CI rather than from here.
+
+   The tag is what the version it reads back is measured against, so this runs
+   the same way months later from a `main` that has moved on — which is the
+   point of a gate about a published artifact.
 2. **If the schema changed, republish it.**
 
    ```bash
