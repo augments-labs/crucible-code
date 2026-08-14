@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 19,65 scrolled 0
+80x24 cursor 18,4 scrolled 0
 |╭─ crucible v0.1.2 ────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -21,9 +21,9 @@ expression: window.picture()
 |Warning: No model selected. Use /model to select the model to ask.              |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ › the quick brown fox jumps over the lazy dog. the quick brown fox jumps ove │|
-|│   r the lazy dog. the quick brown fox jumps over the lazy dog.               │|
+|│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
+|                                                                                |
 |                                                                                |
 |                                                                                |

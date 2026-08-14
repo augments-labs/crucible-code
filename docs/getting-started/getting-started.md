@@ -81,6 +81,14 @@ never the key, and what it takes goes to `~/.crucible/auth.json`, a file only
 you can read. The session asks that provider from the next turn on — there is
 nothing to restart. An exported variable still wins over it.
 
+You do not have to know that command to find it. A run holding no key for any
+provider opens on the panel `/login` stands, before it reads anything you type:
+choose one and the box for the key opens on the same screen. Escape skips it and
+leaves the session where every other run starts, with the offer still standing
+under the name of the command that opens it again. A run with nothing at the
+keyboard — one reading a prompt down a pipe — never meets it, and gets the
+warning alone.
+
 ## Run it
 
 Start it in the directory you want it to work in. That directory is the
@@ -224,7 +232,9 @@ scrollback. Escape leaves it without writing anything. `/login` on its own stand
 a panel where the prompt box was: ↑ and ↓ walk the providers this build serves,
 Enter opens the box for the one marked. A run with no keyboard to walk it — and a
 window with no room to stand a panel in — gets those names as rows instead, with
-the variable each reads from.
+the variable each reads from. That same panel is what a run holding no key for
+anything opens on, unasked, saying so above the list and offering escape as a
+skip rather than a cancel.
 
 A key that is written lands on the session that took it: the provider is set up
 there and then, and the model and rung your configuration names for it come with

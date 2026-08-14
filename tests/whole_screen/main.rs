@@ -59,7 +59,7 @@ fn taller_than_the_window() -> String {
 }
 
 #[test]
-fn a_session_with_no_credential_draws_the_welcome_the_warning_and_the_box() {
+fn a_session_with_no_model_draws_the_welcome_the_warning_and_the_box() {
     // Nothing typed: this is the whole of what crucible puts on screen before
     // it asks for anything, and the first frame is the one with no committed
     // row above it to rewind over.
@@ -149,10 +149,44 @@ fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     // does not echo it, and the next thing typed is answered. Nothing restarts
     // in between, which is the whole of what this case is here to prove — and
     // only a real run can, since what a key has to reach is a socket.
+    //
+    // The panel a run like this opens on is left first, which is what puts a
+    // prompt on screen to type the command at — and what proves the command is
+    // still the way in for somebody who skipped the screen offering it.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Window::keyless("logged-in", 80, 24, &vendor);
 
+    window.leaves();
     window.types("/login anthropic\r");
+    window.types("not-a-key-and-nothing-reads-it\r");
+    window.types("what is 2+2\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_run_with_no_key_for_anything_opens_on_the_panel_that_takes_one() {
+    // The screen a brand-new install meets, before a key is pressed. Nothing is
+    // typed at all: what this holds is the whole of it — the panel standing
+    // where the box would be, the sentence saying why, and the footer offering
+    // the way past that a panel somebody asked for would not need.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let window = Window::keyless("first-run", 80, 24, &vendor);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn the_panel_a_run_opens_on_reaches_a_turn_without_a_command_being_typed() {
+    // The reason that screen is worth opening on, and the whole of what it
+    // claims: from a machine that has never held a key, nothing is typed but
+    // Enter, a key, and a question — no command, and nothing restarted. The
+    // warning above still names `/login`, which is what somebody who skipped
+    // the screen would have had to know.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("first-turn", 80, 24, &vendor);
+
+    window.types("\r");
     window.types("not-a-key-and-nothing-reads-it\r");
     window.types("what is 2+2\r");
 
