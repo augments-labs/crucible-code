@@ -2,7 +2,7 @@
 source: crates/crucible-tui/src/ladder.rs
 expression: "dump(&effort(2).rows(80, Glyphs::Unicode), 80)"
 ---
-<Accent>────────────────────────────────────────────────────────────────────────────────</>
+<Quiet>────────────────────────────────────────────────────────────────────────────────</>
                                                                                 
 <Strong>Effort · claude-sonnet-5</>                                                        
                                                                                 

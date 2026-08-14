@@ -24,6 +24,11 @@
 //! and a terminal with no colour at all still has the mark's own shape saying
 //! which rung it stands over.
 //!
+//! The rule across the top is [`Slot::Quiet`] and not the accent a panel draws
+//! its one rule in, because this component has two horizontal lines and only
+//! one of them is the subject. Drawn in the same colour they compete, and the
+//! wider of the two — the one that is merely a boundary — wins.
+//!
 //! **What it will not do.** There is no bar, no fill and no percentage. Which
 //! rungs a model serves is its vendor's answer and how much thinking each buys
 //! is not a number this program is ever told, so a quantity drawn here would be
@@ -80,7 +85,7 @@ impl Ladder<'_> {
         };
 
         vec![
-            Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
+            Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns)),
             Row::new(),
             Row::new().then(Slot::Strong, clip(self.title, columns)),
             Row::new(),
