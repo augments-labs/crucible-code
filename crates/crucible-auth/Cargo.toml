@@ -1,0 +1,22 @@
+[package]
+name = "crucible-auth"
+description = "The keys crucible was given, written down where only this user can read them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `ApiKey`, which is what a stored key becomes on the way out. The secret is
+# handed back as the type that can only be applied to a request, never as the
+# string it was written down as.
+crucible-core.workspace = true
+# The store is JSON, read the same keyless way every other boundary here reads
+# one: the file is a version and a map of provider to key, and walking it is
+# shorter than a mirror struct plus the derive that fills it.
+serde_json.workspace = true
+
+[lints]
+workspace = true
