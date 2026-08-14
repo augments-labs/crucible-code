@@ -15,6 +15,7 @@ use crucible_core::{Delta, ProviderError, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::moonshot::NAME;
+use crate::refusal::SILENT;
 use crate::sse::SseEvent;
 use crate::stream::Wire;
 
@@ -193,9 +194,7 @@ fn upstream(error: &Value) -> ProviderError {
             .or_else(|| text(error, "code"))
             .unwrap_or("error")
             .into(),
-        message: text(error, "message")
-            .unwrap_or("the provider reported a failure and did not say what")
-            .into(),
+        message: text(error, "message").unwrap_or(SILENT).into(),
     }
 }
 

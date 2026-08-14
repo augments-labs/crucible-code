@@ -322,6 +322,40 @@ fn a_response_that_failed_carries_what_the_provider_said() {
 }
 
 #[test]
+fn a_null_error_is_an_absent_one_and_the_response_says_the_rest() {
+    // `"error": null` is a field that is there and holds nothing, which is not
+    // the same as a field that is absent — and a code and a message read off it
+    // find neither. This came out as "did not say what" for a response that had
+    // said its status and why it stopped.
+    let said = r#"{"type":"response.failed","response":{"status":"failed",
+        "error":null,"incomplete_details":{"reason":"unsupported reasoning.effort"}}}"#;
+
+    let problem = deltas(&event(said), &mut Open::default()).expect_err("a failure");
+
+    assert_eq!(
+        problem.to_string(),
+        "openai: failed: unsupported reasoning.effort"
+    );
+}
+
+#[test]
+fn a_failure_the_provider_named_nothing_about_says_where_to_look() {
+    // Nothing under `error`, nothing under `incomplete_details`. What is left
+    // has to be a sentence somebody can act on, and the likeliest thing behind
+    // a response failing silently is a request asking for what this model does
+    // not serve — which is the one thing crucible can point at itself.
+    let said = r#"{"type":"response.failed","response":{"status":"failed"}}"#;
+
+    let problem = deltas(&event(said), &mut Open::default()).expect_err("a failure");
+
+    assert_eq!(
+        problem.to_string(),
+        "openai: failed: gave up on the response and named no reason; \
+         check that this model serves what was asked of it"
+    );
+}
+
+#[test]
 fn a_failure_outside_any_response_arrives_flat() {
     let said = r#"{"type":"error","code":"rate_limit_exceeded","message":"slow down"}"#;
 
