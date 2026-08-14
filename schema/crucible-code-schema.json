@@ -144,6 +144,10 @@
       },
       "type": "object"
     },
+    "provider": {
+      "description": "Which provider to ask, by the name --model qualifies a model with. Not read from .crucible/config.json, which everyone who clones gets",
+      "type": "string"
+    },
     "providers": {
       "additionalProperties": false,
       "description": "Per-provider defaults, keyed by provider name",

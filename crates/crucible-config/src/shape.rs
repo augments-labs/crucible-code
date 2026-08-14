@@ -284,6 +284,29 @@ const PERMISSIONS: &[Field] = &[
 
 /// The document itself.
 pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
+    // The only key that says *which* provider. Everything under `providers` is
+    // a subordinate clause — when asking this one, use that model, that
+    // variable, that address — and none of them may be read as a choice of
+    // vendor. This is the main clause, and it is deliberately not a `Choice`:
+    // which providers exist is the binary's to say, and a set written down
+    // here would be a second declaration of it that goes stale on the release
+    // that adds the fourth.
+    //
+    // It widens for the reason `baseUrl` does, and more plainly: it decides
+    // who a turn is sent to, and therefore who receives the API key and the
+    // prompt. A repository everybody clones may not make that choice on behalf
+    // of whoever opened it. A machine that wants a provider pinned per project
+    // says so in `.crucible/config.local.json`, which no clone carries.
+    Field {
+        name: "provider",
+        about: "Which provider to ask, by the name --model qualifies a model with. Not read from .crucible/config.json, which everyone who clones gets",
+        shape: Shape::Text,
+        // No example. It would have to name one of the providers this build
+        // serves, and that list belongs to the binary rather than to this
+        // crate — the schema is generated from here and served to every editor.
+        examples: &[],
+        widens: true,
+    },
     Field {
         name: "providers",
         about: "Per-provider defaults, keyed by provider name",

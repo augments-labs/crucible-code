@@ -396,8 +396,7 @@ pub(crate) enum Fatal {
     /// More than one provider has a key, and nothing said which of them to ask.
     #[error(
         "more than one provider holds a key ({held}), so which to ask is not decided; \
-         qualify the name as --model provider/model, or set providers.<name>.model \
-         for one of them"
+         qualify the name as --model provider/model, or set provider to one of them"
     )]
     Ambiguous {
         /// The variables that hold one, named so the answer is a shell command
@@ -477,7 +476,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     let serving = match &choice.provider {
         Some(named) => Some(served(named)?),
-        None => chosen(&choice, &settings, &from, &keys)?,
+        None => chosen(&settings, &from, &keys)?,
     };
     let model = wanted(&choice, &settings, serving);
     let effort = thinking(cli.effort, &settings, serving);
@@ -644,32 +643,39 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 /// Which provider to ask when the flag named none, or `None` where this machine
 /// has nothing set up to ask.
 ///
-/// The only evidence a flagless run leaves is which key the machine holds.
-/// Somebody who has exported one key has set up one provider, and that is the
-/// provider — whatever model name they went on to type. This is the rung that
-/// stops `OPENAI_API_KEY` from being read beside a model only Anthropic serves:
-/// there is no provider written into this build for a bare name to fall back
-/// on, so the key decides, and a key that decides nothing is a run with no
-/// provider rather than a run against a guess.
+/// A key says a provider can be *reached*. Only a statement about providers
+/// chooses one, and `provider` in the configuration is the only statement there
+/// is — everything under `providers.<name>` is a subordinate clause about a
+/// provider already being asked. So the top rung here is that key, and it is
+/// read before any variable: which key a shell happens to carry is a fact about
+/// that shell, and a turn sent to the wrong vendor costs money there and leaves
+/// the prompt behind.
 ///
-/// Where the file says `apiKeyEnv`, that is the variable looked for: a key is
-/// configured by the name of the variable holding it, and this reads the name
-/// rather than the value — nothing here learns what any key is. A variable
-/// exported empty holds no key, the same way the lookup that reads one sees it,
-/// so `ANTHROPIC_API_KEY=` turns that provider off rather than competing.
+/// Below it, exactly one provider holding a key is that provider. That is not a
+/// choice between competitors — it is the absence of anything to choose, which
+/// is what lets a first run work with one exported key and no configuration at
+/// all. Where the file says `apiKeyEnv`, that is the variable looked for: a key
+/// is configured by the name of the variable holding it, and this reads the name
+/// rather than the value, so nothing here learns what any key is. A variable
+/// exported empty holds no key, so `ANTHROPIC_API_KEY=` turns that provider off
+/// rather than competing.
 ///
-/// Several keys and a model already chosen for exactly one of them is that one:
-/// a `providers.openai.model` written at home is an answer to this question,
-/// and the run after `/model` is the one it has to keep answering. Several keys
-/// and no such answer is [`Fatal::Ambiguous`] — two providers set up and nothing
-/// choosing between them is a question, and picking one would send a turn to a
-/// vendor over a coin toss.
+/// Several keys and nothing choosing between them is [`Fatal::Ambiguous`]. No
+/// key outranks another and no order between vendors is written down anywhere,
+/// so there is nothing here to break the tie with; picking one would send a turn
+/// to a vendor over a coin toss.
 fn chosen(
-    choice: &Choice,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
     keys: &Keys,
 ) -> Result<Option<Served>, Fatal> {
+    // Refused here where a name this build has nothing for is a sentence naming
+    // the ones it has, rather than carried as "nobody chose" into a session that
+    // would then look set up by a key nobody named.
+    if let Some(named) = settings.provider() {
+        return served(named).map(Some);
+    }
+
     let mut holding = keyed(settings, from, keys);
     let (Some(first), second) = (holding.next(), holding.next()) else {
         return Ok(None);
@@ -678,23 +684,13 @@ fn chosen(
         return Ok(Some(first));
     }
 
-    // The flag having named the model is what makes configuration unable to
-    // answer: `providers.<name>.model` is a choice of model, and the flag has
-    // already overruled it, so reading it here would pick a provider by a name
-    // this run is not going to ask for.
-    let mut answered = keyed(settings, from, keys)
-        .filter(|one| choice.model.is_none() && settings.model(one.name).is_some());
-
-    match (answered.next(), answered.next()) {
-        (Some(one), None) => Ok(Some(one)),
-        _ => Err(Fatal::Ambiguous {
-            held: keyed(settings, from, keys)
-                .map(|one| held(one, settings, from))
-                .collect::<Vec<_>>()
-                .join(", ")
-                .into(),
-        }),
-    }
+    Err(Fatal::Ambiguous {
+        held: keyed(settings, from, keys)
+            .map(|one| held(one, settings, from))
+            .collect::<Vec<_>>()
+            .join(", ")
+            .into(),
+    })
 }
 
 /// Every provider crucible holds a key for, in the order they are declared.

@@ -15,11 +15,19 @@ provider for `meta/llama-4`.
 
 ## Which provider
 
-Nothing but the qualified form names a provider outright. Everything else is
-settled by which key this machine holds, and by nothing else — **no provider is
-written into the build**. Exactly one of the variables in [Keys](#keys) holding
-a key is the provider asked, whatever model name you went on to type. That is
-what stops a machine set up for one vendor from sending a turn to the other.
+**No provider is written into the build**, and none of these rungs is a guess:
+
+1. `--model provider/model`, where it names one outright.
+2. `provider` in your [configuration](../configuration/configuration.md). This
+   is the only setting that chooses a vendor.
+3. Exactly one of the variables in [Keys](#keys) holding a key. That is not a
+   choice between providers so much as the absence of one to make, and it is
+   what lets a first run work with one key exported and nothing configured.
+
+A key says a provider **can be reached**, and never which to ask. Which variable
+your shell happens to carry is a fact about that shell, and a turn sent to the
+wrong vendor is billed there and leaves your prompt behind — so no key outranks
+another key, and no order between vendors is written down anywhere in crucible.
 
 A variable exported empty holds no key, so it does not compete: a shell carrying
 `ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. A provider
@@ -31,11 +39,17 @@ toss:
 ```
 crucible: more than one provider holds a key (ANTHROPIC_API_KEY, OPENAI_API_KEY),
 so which to ask is not decided; qualify the name as --model provider/model, or
-set providers.<name>.model for one of them
+set provider to one of them
 ```
 
-A model already chosen for exactly one of them — which is what `/model` writes
-down — answers it, so this is asked once and not every run.
+A model written under a provider does not answer it. `providers.openai.model`
+says what to ask OpenAI *for* — it is not a way of saying to ask OpenAI, and
+reading it as one is how a machine holding two keys used to end up at whichever
+vendor a model had been chosen for weeks earlier.
+
+A name this build has nothing for is refused the same way there as on the flag,
+so a file written by a later crucible is a sentence rather than a silent fall
+back to whichever key is exported.
 
 ## Which model
 
@@ -76,8 +90,9 @@ is a shortcut past the vendor's documentation, and the vendor remains the
 authority on what it serves.
 
 A model belongs to the provider serving it. crucible never writes a name under
-one provider and sends it to another — the pairing is settled once, from the key
-that was found, and the model rungs above are all read for that same provider.
+one provider and sends it to another — the pairing is settled once, by
+[Which provider](#which-provider), and the model rungs above are all read for
+that same provider.
 
 Naming a provider this build does not have is a startup failure that says which
 ones it has:
