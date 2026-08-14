@@ -7,8 +7,15 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
+use crucible_auth::{Keys, Store};
 use crucible_config::{Home, Settings};
 use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
+
+/// The key [`Sample::stored`] writes down.
+///
+/// Spelled differently from the one the tests export, because which of the two
+/// signed a request is the whole of what a test about precedence can watch.
+pub(super) const WRITTEN: &str = "a-written-key";
 
 /// A tree under the system temporary directory, removed when this is dropped.
 pub(super) struct Sample {
@@ -59,6 +66,19 @@ impl Sample {
     /// rather than testing what the setting does.
     pub(super) fn local(&self, document: &str) -> Settings {
         self.written("config.local.json", document)
+    }
+
+    /// The store this tree holds, having been told `provider`'s key.
+    ///
+    /// Written through [`Store::keep`] and read back through [`Store::read`],
+    /// rather than assembled: what a test hands the wiring is a file that went
+    /// out and came back the way a real one does, which is the half of `/login`
+    /// the wiring depends on and cannot see.
+    pub(super) fn stored(&self, provider: &str) -> Keys {
+        let store = Store::in_home(&self.base.join("home"));
+        store.keep(provider, WRITTEN).expect("a writable home");
+
+        store.read()
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.

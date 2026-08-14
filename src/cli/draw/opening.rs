@@ -32,6 +32,9 @@ pub(crate) struct Opening<'a> {
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
+    /// What reading the logins could not do, where it could not. `None` is the
+    /// ordinary case, which includes a machine that has never logged in.
+    pub(crate) trouble: Option<&'a str>,
     /// The directory being worked in.
     pub(crate) workspace: &'a Workspace,
     /// What was worked on here before, newest first.
@@ -115,6 +118,17 @@ pub(crate) fn opening<T: Terminal>(
         renderer.commit("")?;
     }
 
+    // Above the sentence about there being nothing to ask, because it is one of
+    // the reasons there might be nothing: a store that could not be read is a
+    // login that did not count, and somebody who ran `/login` yesterday would
+    // otherwise be told only that they have no key. Through `commit`, which is
+    // the path that wraps and drops escape sequences — the sentence carries a
+    // path off the disk.
+    if let Some(trouble) = opening.trouble {
+        renderer.commit(&format!("! {trouble}"))?;
+        renderer.commit("")?;
+    }
+
     // Bold and in the accent, which is the loudest this program gets, and not a
     // notice between rules like the one above it: the rules are what say a
     // block is about the release rather than about this run, and this one is
@@ -161,6 +175,7 @@ mod tests {
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
+                trouble: None,
                 update: None,
                 style: Style::plain(),
             },
@@ -300,6 +315,7 @@ mod tests {
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
+                trouble: None,
                 update: None,
                 style: Style::plain(),
             },
@@ -335,6 +351,7 @@ mod tests {
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
+                trouble: None,
                 update: Some(&newer),
                 style: Style::plain(),
             },

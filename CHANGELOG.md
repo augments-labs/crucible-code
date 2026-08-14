@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A key can be written down instead of exported.** crucible reads
+  `~/.crucible/auth.json` — a file only you can read — alongside the environment,
+  so a machine you would rather not keep a key on the shell profile of can still
+  be set up once. An exported variable still wins, and a file that cannot be read
+  is a sentence under the welcome rather than a run that ends.
+
 - **MoonshotAI is a provider.** `MOONSHOT_API_KEY` and `--model moonshot/…`
   reach Kimi over Chat Completions, which crucible had no reader for until now.
   One thing to know before setting it up: MoonshotAI issues a key against

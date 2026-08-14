@@ -32,12 +32,72 @@ fn exported<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String
     }
 }
 
-/// Which provider a flagless run on this machine lands on.
+/// Which provider a flagless run lands on, on a machine nobody has logged in
+/// from. The store is the other half of the same question and has its own
+/// helper below; every test that is about a variable is asking this one.
 fn lands(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Option<Served>, Fatal> {
-    chosen(&Choice::default(), settings, from)
+    landing(settings, from, &Keys::default())
+}
+
+/// The same, on a machine that has.
+fn landing(
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+    keys: &Keys,
+) -> Result<Option<Served>, Fatal> {
+    chosen(&Choice::default(), settings, from, keys)
+}
+
+#[test]
+fn a_key_written_down_sets_a_provider_up_with_no_variable_exported() {
+    // The whole point of `/login`: a key given once and a shell that says
+    // nothing about it ever again.
+    let sample = Sample::new("stored-only");
+    let keys = sample.stored("openai");
+
+    let found = landing(&Settings::default(), &holding(&[]), &keys).expect("one key, written down");
+
+    assert_eq!(found.map(|found| found.name), Some("openai"));
+}
+
+#[test]
+fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
+    // Somebody who logged in and then exported the same key — which is what
+    // happens the first time they put it in a shell profile. Counted twice it
+    // is two providers to the question of which to ask, and the run they were
+    // trying to set up ends by asking them to choose between openai and openai.
+    let sample = Sample::new("stored-and-exported");
+    let keys = sample.stored("openai");
+
+    let found = landing(&Settings::default(), &holding(&["OPENAI_API_KEY"]), &keys)
+        .expect("one provider, held twice");
+
+    assert_eq!(found.map(|found| found.name), Some("openai"));
+}
+
+#[test]
+fn a_machine_asked_which_provider_names_the_store_by_the_provider_it_holds() {
+    // The sentence exists to be acted on, and what the reader does about a key
+    // is unset the variable holding it. There is no variable behind a key that
+    // was written down, so naming the vendor's usual one would send them to
+    // look at something that was never set.
+    let sample = Sample::new("stored-ambiguous");
+    let keys = sample.stored("openai");
+
+    let problem = landing(
+        &Settings::default(),
+        &holding(&["ANTHROPIC_API_KEY"]),
+        &keys,
+    )
+    .expect_err("two providers, no choice");
+
+    let said = problem.to_string();
+    assert!(said.contains("ANTHROPIC_API_KEY"), "{said}");
+    assert!(said.contains("openai"), "{said}");
+    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
 }
 
 #[test]
@@ -137,6 +197,7 @@ fn a_bare_model_name_goes_to_the_provider_whose_key_is_set_and_never_to_a_fallba
             &choice("a-model-name"),
             &Settings::default(),
             &holding(&[one.key]),
+            &Keys::default(),
         )
         .expect("one key, no doubt");
 
@@ -194,7 +255,13 @@ fn a_model_named_on_the_flag_does_not_let_a_file_settle_the_provider() {
     let every = PROVIDERS.map(|one| one.key);
 
     assert!(
-        chosen(&choice("claude-opus-5"), &settings, &holding(&every)).is_err(),
+        chosen(
+            &choice("claude-opus-5"),
+            &settings,
+            &holding(&every),
+            &Keys::default()
+        )
+        .is_err(),
         "the flag named a model, so the file cannot say who serves it"
     );
 }

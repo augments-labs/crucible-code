@@ -28,6 +28,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::Parser;
+use crucible_auth::{Keys, Store};
 use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, PathError, Workspace};
 use crucible_provider::EndpointError;
@@ -282,6 +283,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let home = Home::find(&|name| std::env::var_os(name))?;
     let settings = Settings::read(&home, workspace.root())?;
 
+    // What was logged in with, read once and from the same directory. A store
+    // that cannot be read comes back empty with a sentence rather than as an
+    // error, and the sentence is drawn under the welcome: a file that is only
+    // ever an alternative to an exported variable must not be what ends a run
+    // that never needed it.
+    let keys = Store::in_home(home.path()).read();
+
     // Widened after the files are read because the root is what found them:
     // `.crucible/config.json` is looked for in the directory crucible was
     // started in, so the workspace has to exist before it can be told what else
@@ -304,7 +312,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     let serving = match &choice.provider {
         Some(named) => Some(served(named)?),
-        None => chosen(&choice, &settings, &from)?,
+        None => chosen(&choice, &settings, &from, &keys)?,
     };
     let model = wanted(&choice, &settings, serving);
 
@@ -400,6 +408,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &Opening {
             model: model.as_deref(),
             unasked: unasked(serving.map(|one| one.name)),
+            trouble: keys.trouble(),
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
@@ -421,6 +430,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         workspace: &workspace,
         cancel: &cancel,
         from: &from,
+        stored: &keys,
     })?;
     let outcome = converse::converse(runner, &mut renderer, &terms, &mut io::stdin().lock());
 
@@ -455,8 +465,9 @@ fn chosen(
     choice: &Choice,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
+    keys: &Keys,
 ) -> Result<Option<Served>, Fatal> {
-    let mut holding = keyed(settings, from);
+    let mut holding = keyed(settings, from, keys);
     let (Some(first), second) = (holding.next(), holding.next()) else {
         return Ok(None);
     };
@@ -468,14 +479,14 @@ fn chosen(
     // answer: `providers.<name>.model` is a choice of model, and the flag has
     // already overruled it, so reading it here would pick a provider by a name
     // this run is not going to ask for.
-    let mut answered = keyed(settings, from)
+    let mut answered = keyed(settings, from, keys)
         .filter(|one| choice.model.is_none() && settings.model(one.name).is_some());
 
     match (answered.next(), answered.next()) {
         (Some(one), None) => Ok(Some(one)),
         _ => Err(Fatal::Ambiguous {
-            held: keyed(settings, from)
-                .map(|one| settings.api_key_env(one.name).unwrap_or(one.key))
+            held: keyed(settings, from, keys)
+                .map(|one| held(one, settings, from))
                 .collect::<Vec<_>>()
                 .join(", ")
                 .into(),
@@ -483,15 +494,44 @@ fn chosen(
     }
 }
 
-/// Every provider whose variable holds a key, in the order they are declared.
+/// Every provider crucible holds a key for, in the order they are declared.
+///
+/// Two places to look and one entry either way. A provider whose key is both
+/// exported and written down is one provider: listed twice it would be two to
+/// the question above, and somebody who exported the key they had already
+/// logged in with would be asked to choose between a provider and itself.
 fn keyed<'a>(
     settings: &'a Settings,
     from: &'a dyn Fn(&str) -> Option<String>,
+    keys: &'a Keys,
 ) -> impl Iterator<Item = Served> + 'a {
-    PROVIDERS.into_iter().filter(move |one| {
-        from(settings.api_key_env(one.name).unwrap_or(one.key))
-            .is_some_and(|value| !value.trim().is_empty())
-    })
+    PROVIDERS
+        .into_iter()
+        .filter(move |one| exported(*one, settings, from) || keys.get(one.name).is_some())
+}
+
+/// Whether this provider's variable holds a key.
+///
+/// Blank is not one. `ANTHROPIC_API_KEY=` is how a shell turns a provider off,
+/// and a variable that is set and empty used to count as one held.
+fn exported(one: Served, settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> bool {
+    from(settings.api_key_env(one.name).unwrap_or(one.key))
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+/// How a provider holding a key is named back, in the sentence that asks which
+/// of them to ask.
+///
+/// The variable, where that is where the key is: unsetting it is what the
+/// reader would go and do about it. The provider's own name where the key was
+/// written down instead — there is no variable to unset, and naming one that
+/// was never set sends them to look at the wrong thing.
+fn held(one: Served, settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> String {
+    if exported(one, settings, from) {
+        return settings.api_key_env(one.name).unwrap_or(one.key).to_owned();
+    }
+
+    one.name.to_owned()
 }
 
 /// Which model to ask for, once the command line and the files have both spoken.

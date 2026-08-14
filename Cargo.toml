@@ -15,20 +15,23 @@ authors = ["Peguy Njoyim"]
 # not reviewed:
 #
 #   core       -> (nothing)
+#   auth       -> core            the keys `/login` wrote down
 #   config     -> core            where crucible's files are and what they say
 #   provider   -> core
 #   tools      -> core
 #   runner     -> core            drives turns through traits only
 #   tui        -> core
-#   crucible-code (this package) -> all six, and is the only place concrete
+#   crucible-code (this package) -> all seven, and is the only place concrete
 #                                   types are wired together
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing
-# below reaches up to ask what the user configured.
+# below reaches up to ask what the user configured. `auth` sits there too, and
+# is handed the directory `config` resolved rather than resolving one itself.
 [workspace.dependencies]
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
+crucible-auth = { path = "crates/crucible-auth" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-provider = { path = "crates/crucible-provider" }
@@ -220,6 +223,7 @@ path = "src/main.rs"
 # in this package or they are not drawn at all.
 [dependencies]
 clap.workspace = true
+crucible-auth.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
 crucible-provider.workspace = true
