@@ -150,3 +150,119 @@ fn a_key_appears_in_no_debug_output_anywhere() {
         );
     }
 }
+
+#[test]
+fn a_key_written_down_is_the_key_read_back() {
+    let scratch = Scratch::new("keep");
+    let store = Store::in_home(scratch.home());
+
+    store.keep("openai", SECRET).expect("a writable home");
+
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+}
+
+#[test]
+fn one_provider_replaces_its_own_key_and_leaves_the_others_alone() {
+    let scratch = Scratch::new("replace");
+    let store = Store::in_home(scratch.home());
+
+    store.keep("openai", "first").expect("a writable home");
+    store.keep("moonshot", SECRET).expect("a writable home");
+    store.keep("openai", "second").expect("a writable home");
+
+    assert_eq!(held(&store, "openai").as_deref(), Some("second"));
+    assert_eq!(held(&store, "moonshot").as_deref(), Some(SECRET));
+}
+
+#[test]
+fn forgetting_removes_one_provider_and_reports_whether_there_was_one() {
+    let scratch = Scratch::new("forget");
+    let store = Store::in_home(scratch.home());
+
+    store.keep("openai", SECRET).expect("a writable home");
+    store.keep("moonshot", SECRET).expect("a writable home");
+
+    assert!(store.forget("openai").expect("a writable home"));
+    assert!(
+        !store.forget("openai").expect("a writable home"),
+        "the second one had nothing to forget"
+    );
+
+    assert_eq!(held(&store, "openai"), None);
+    assert_eq!(held(&store, "moonshot").as_deref(), Some(SECRET));
+}
+
+#[test]
+fn writing_over_a_store_that_cannot_be_read_is_refused() {
+    let scratch = Scratch::new("clobber");
+    let store = scratch.holding("{not json at all");
+
+    let refused = store.keep("openai", SECRET);
+
+    assert!(
+        matches!(refused, Err(AuthError::Unreadable { .. })),
+        "a file this program cannot read is still the only copy of something"
+    );
+}
+
+#[test]
+fn a_written_key_appears_in_no_debug_output_anywhere() {
+    let scratch = Scratch::new("write-redacted");
+    let store = Store::in_home(scratch.home());
+    store.keep("openai", SECRET).expect("a writable home");
+
+    let keys = store.read();
+    for printed in [format!("{keys:?}"), format!("{store:?}")] {
+        assert!(
+            !printed.contains(SECRET),
+            "a key reached a Debug line: {printed}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_file_and_the_directory_it_makes_are_readable_only_by_their_owner() {
+    let scratch = Scratch::new("modes");
+    let home = scratch.home().join("never-made");
+    let store = Store::in_home(&home);
+    store.keep("openai", SECRET).expect("a writable home");
+
+    assert_eq!(mode_of(&home.join(FILE)), 0o600);
+    assert_eq!(mode_of(&home), 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_left_too_open_is_tightened_and_reported_rather_than_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("loose");
+    let store = Store::in_home(scratch.home());
+    store.keep("openai", SECRET).expect("a writable home");
+
+    let file = scratch.home().join(FILE);
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("a writable home");
+
+    let keys = store.read();
+
+    assert_eq!(
+        held(&store, "openai").as_deref(),
+        Some(SECRET),
+        "a user who cannot log in without shell surgery is worse off"
+    );
+    assert!(keys.trouble().is_some(), "and is told it was too open");
+    assert_eq!(mode_of(&file), 0o600);
+}
+
+/// The mode `path` is at, for a test that is about exactly that.
+#[cfg(unix)]
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .expect("still there")
+        .permissions()
+        .mode()
+        & 0o777
+}

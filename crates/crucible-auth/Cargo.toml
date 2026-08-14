@@ -17,6 +17,8 @@ crucible-core.workspace = true
 # one: the file is a version and a map of provider to key, and walking it is
 # shorter than a mirror struct plus the derive that fills it.
 serde_json.workspace = true
+# `AuthError`, which the wiring turns into something the user reads.
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -21,6 +21,8 @@
 //! directory, because `crucible_config::Home` is the one place that answers
 //! where anything is.
 
+mod error;
 mod store;
 
+pub use error::AuthError;
 pub use store::{Keys, Store};
