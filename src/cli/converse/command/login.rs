@@ -38,7 +38,7 @@
 use crucible_runner::Runner;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
-use crate::cli::converse::picking;
+use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret;
 use crate::cli::{Fatal, PROVIDERS, Served};
 
@@ -51,6 +51,7 @@ use super::{Terms, say};
 /// not the same question as which vendor — somebody paying for a plan and
 /// somebody holding that same vendor's console key are two people, and only one
 /// of them has a key to type.
+#[derive(Clone, Copy)]
 struct Way {
     /// What it is called on the panel.
     shown: &'static str,
@@ -116,6 +117,9 @@ const SAID: &str = concat!(
 /// list with a mark on it is already saying.
 const CANCEL: &str = "esc to cancel";
 
+/// What escape leaves behind, in place of the rows it used to write.
+const LEFT: &str = "cancelled, nothing signed in";
+
 /// Runs it: a key taken for the one named, one chosen off the panel, or where
 /// each of them reads a key from.
 ///
@@ -173,17 +177,23 @@ pub(super) fn run<T: Terminal>(
 /// key — which vendor's. A plan does not reach the second, since there is
 /// nothing to type for one yet.
 ///
-/// `false` is a panel that was left and a window with no room to stand one in
-/// alike. Neither is an answer, and both fall through to the rows the caller
-/// draws instead — which is what `/login` has always done, and the only thing a
-/// short window can be given.
+/// `false` is a window with no room to stand a panel in, and only that: the
+/// caller draws the rows instead, which is the one answer a short window can be
+/// given. Escape comes back `true`, because leaving a panel is an answer — the
+/// screen from before it is what was asked for, and a list of every provider
+/// underneath would be the same question put a second time.
 fn walked<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<bool, Fatal> {
-    let Some(way) = asked(renderer, terms)? else {
-        return Ok(false);
+    let way = match asked(renderer, terms)?.of(&WAYS) {
+        Taken::Took(way) => way,
+        Taken::Left => {
+            say(renderer, terms, LEFT)?;
+            return Ok(true);
+        }
+        Taken::Cramped => return Ok(false),
     };
 
     if !way.reaches {
@@ -192,8 +202,13 @@ fn walked<T: Terminal>(
         return Ok(true);
     }
 
-    let Some(named) = chosen(renderer, terms)? else {
-        return Ok(false);
+    let named = match chosen(renderer, terms)?.of(&PROVIDERS) {
+        Taken::Took(named) => named,
+        Taken::Left => {
+            say(renderer, terms, LEFT)?;
+            return Ok(true);
+        }
+        Taken::Cramped => return Ok(false),
     };
 
     given(named, renderer, runner, terms)?;
@@ -201,11 +216,8 @@ fn walked<T: Terminal>(
     Ok(true)
 }
 
-/// Stands the panel that asks how, and says which way was taken off it.
-fn asked<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-) -> Result<Option<&'static Way>, Fatal> {
+/// Stands the panel that asks how, and says how it ended.
+fn asked<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
     let shown: Vec<Offered<'_>> = WAYS
         .iter()
         .map(|way| Offered {
@@ -222,22 +234,11 @@ fn asked<T: Terminal>(
         footer: CANCEL,
     };
 
-    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
-        return Ok(None);
-    };
-
-    // The index is into the list the panel was handed, built from `WAYS` in
-    // order — so a lookup that cannot miss, written as one that can rather than
-    // as an assertion nobody would read again.
-    Ok(WAYS.get(at))
+    picking::pick(renderer, terms.style, panel)
 }
 
-/// Stands the panel that asks whose console, and says which was taken off it.
-///
-/// `None` is a panel that was left and a window with no room to stand one in
-/// alike. Neither is a provider, and both come out as the rows above — the
-/// answer `/login` always has, and the only one a short window can be given.
-fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Option<Served>, Fatal> {
+/// Stands the panel that asks whose console, and says how it ended.
+fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
     // Where else the same key can come from — and the one thing that differs
     // between rows that would otherwise read identically.
     let says: Vec<String> = PROVIDERS
@@ -262,14 +263,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Opti
         footer: CANCEL,
     };
 
-    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
-        return Ok(None);
-    };
-
-    // The index is into the list the panel was handed, built from `PROVIDERS`
-    // in order — so a lookup that cannot miss, written as one that can rather
-    // than as an assertion nobody would read again.
-    Ok(PROVIDERS.get(at).copied())
+    picking::pick(renderer, terms.style, panel)
 }
 
 /// Asks for a key, writes it down, and sets this session up with it.

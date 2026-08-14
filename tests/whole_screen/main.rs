@@ -204,6 +204,21 @@ fn a_plan_crucible_cannot_sign_with_yet_says_so_rather_than_asking_for_a_key() {
 }
 
 #[test]
+fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
+    // Escape is an answer, and the answer is "the screen I had". `/login` left
+    // this way used to fall through to the list of every provider and the
+    // variable each reads from — three rows into the scrollback, for somebody
+    // who had just said they did not want to be asked. One line is what it owes:
+    // enough that the record says the question was asked, and no more.
+    let mut window = Window::open("login-left", 80, 24);
+
+    window.types("/login\r");
+    window.types("\x1b");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // The size changes under a line that was laid out for the old one. What was
     // committed stays where the terminal put it; what is live is drawn again,

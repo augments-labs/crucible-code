@@ -24,6 +24,19 @@ Notable changes to crucible. Format follows
   a console key were never the same person, and one panel over vendor names asked
   them the same question.
 
+- **A panel left with escape writes one line, not its whole list.** `/login`,
+  `/logout`, `/model` and `/effort` all fell through to their list of rows when a
+  panel was escaped, so saying "not this" put three or five rows of it into the
+  scrollback anyway. Escape is an answer now, and what it leaves is one line
+  saying the question was dropped — `cancelled, no rung taken` and its like. A
+  window with no room to stand a panel in still gets the rows, which is the one
+  case they were for.
+
+- **`/login` and `/logout` say what they do rather than what crucible stores.**
+  "Sign in with your provider account" and "sign out from your provider account".
+  The old rows named a key, which is one of the ways in and not the question the
+  row is read to answer.
+
 - **`/model` and `/effort` stop naming the file they wrote to.** It is the same
   file every time and crucible chose it, so a session reporting it on every model
   and every rung was reading its own bookkeeping out loud. The path still appears

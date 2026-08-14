@@ -122,8 +122,11 @@ impl Command {
             Self::Help => "what these are",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
-            Self::Login => "give crucible a key for a provider",
-            Self::Logout => "forget a key crucible wrote down",
+            // How you are signed in, rather than what crucible signs with. A
+            // key is one of the ways in and the row is read by somebody who
+            // does not know yet which of them is theirs.
+            Self::Login => "sign in with your provider account",
+            Self::Logout => "sign out from your provider account",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
