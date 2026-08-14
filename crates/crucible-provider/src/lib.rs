@@ -13,6 +13,7 @@
 mod anthropic;
 mod endpoint;
 mod json;
+mod moonshot;
 mod openai;
 mod refusal;
 mod sse;
@@ -22,6 +23,7 @@ mod unavailable;
 
 pub use anthropic::Anthropic;
 pub use endpoint::{Endpoint, EndpointError};
+pub use moonshot::Moonshot;
 pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};

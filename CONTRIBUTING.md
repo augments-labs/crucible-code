@@ -118,10 +118,25 @@ somebody sat down to read. The ceiling is about the reader in front of the diff,
 and every pull request has one.
 
 A change that does not fit is a sequence of pull requests that each stand on
-their own, not one larger one with a note about its size. The one diff this
-measures wrongly is code that only moves, and no diff can prove that about
-itself: ask for the `moves-only` label, which grants the exception and leaves it
-visible on the pull request afterwards.
+their own, not one larger one with a note about its size.
+
+Two diffs are measured wrongly, and no diff can prove either about itself, so
+each is a label — somebody saying so, left visible on the pull request
+afterwards:
+
+- `moves-only`, for code that only moves. Nothing changed but where it lives.
+- `whole-module`, for a module whose parts do not compile apart. `-D warnings`
+  makes an unreached function a failed build, so a new provider, tool or
+  renderer arrives exported and working or it does not build at all. Where that
+  floor is already over the ceiling, the only smaller pull request is one that
+  lands the code and leaves its tests for the next — which is a worse thing to
+  ask a reviewer to approve than a long diff.
+
+The second is the narrower of the two and is meant to stay that way. It is not
+for a change that is merely large, or awkward to split, or all one topic: the
+question is whether an intermediate pull request would *compile*, and the answer
+has to be no. Say in the pull request where the floor is and what you measured
+it at, so the next reader can check the claim rather than take it.
 
 ## Commit messages
 

@@ -117,10 +117,15 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
     Additions plus deletions, generated files aside. Past that a review stops
     being one, and that is true of the reader in front of a diff into a
     collecting branch as much as one into `main`. The remedy is a sequence of
-    pull requests that each stand on their own; code that only moves is measured
-    wrongly by this and takes the `moves-only` label, which is the only way past
-    and stays visible on the pull request afterwards. `CONTRIBUTING.md` has the
-    rest.
+    pull requests that each stand on their own. Two diffs are measured wrongly
+    and each takes a label, which is the only way past and stays visible on the
+    pull request afterwards: `moves-only` for code that only moves, and
+    `whole-module` for a module whose parts do not compile apart — `-D warnings`
+    makes an unreached function a failed build, so where a module's floor is
+    already over the ceiling, the only smaller pull request is one that lands
+    code without the tests that prove it. The test of the second is whether an
+    intermediate pull request would compile, not whether the change is large or
+    awkward to split. `CONTRIBUTING.md` has the rest.
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym
