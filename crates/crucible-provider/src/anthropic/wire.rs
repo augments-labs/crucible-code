@@ -14,6 +14,24 @@ use serde_json::Value;
 
 use crate::anthropic::NAME;
 use crate::sse::SseEvent;
+use crate::stream::Wire;
+
+/// The Messages API, being narrated.
+///
+/// Nothing is carried between events. This endpoint names a tool call in full
+/// in the event that opens it, so a fragment arriving afterwards never has to
+/// be matched against something read earlier — which is the state the other
+/// protocol has no choice but to keep.
+#[derive(Debug, Default)]
+pub(super) struct Messages;
+
+impl Wire for Messages {
+    const PROVIDER: &'static str = NAME;
+
+    fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        Ok(delta(event)?.into_iter().collect())
+    }
+}
 
 /// What an event means, or nothing if it means nothing to us.
 ///
