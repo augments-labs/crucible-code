@@ -267,6 +267,41 @@ fn mode_of(path: &Path) -> u32 {
         & 0o777
 }
 
+/// How long the crucible ahead of this one takes to finish its write, in the
+/// test about waiting for it.
+///
+/// Longer than the rename it stands for, shorter than the budget it has to fit
+/// inside. A machine slow enough to stretch this hold stretches the waiter's
+/// own pauses by the same amount, so the order of the two never turns over and
+/// the test cannot fail for being run somewhere slow.
+const HELD: std::time::Duration = std::time::Duration::from_millis(1500);
+
+#[test]
+fn a_crucible_slow_to_write_does_not_cost_the_next_one_its_login() {
+    // What the budget is really for. Not one rename: however many crucibles are
+    // ahead of this one, each syncing a few hundred bytes to a disk somebody
+    // else is using too. Sized for the rename alone it turns an ordinary queue
+    // into a refusal, and a refusal here is a login nobody wrote down.
+    let scratch = Scratch::new("slow-writer");
+    let home = scratch.home().to_path_buf();
+
+    let taken = Lock::take(&home.join(LOCK), &home.join(FILE)).expect("nobody else holds it");
+    let ahead = std::thread::spawn(move || {
+        std::thread::sleep(HELD);
+        drop(taken);
+    });
+
+    Store::in_home(&home)
+        .keep("openai", SECRET)
+        .expect("a wait that outlasts the crucible ahead of it");
+
+    ahead.join().expect("the one ahead finished");
+    assert_eq!(
+        held(&Store::in_home(&home), "openai").as_deref(),
+        Some(SECRET)
+    );
+}
+
 #[test]
 fn a_second_crucible_writing_at_the_same_time_loses_nobody_a_login() {
     let scratch = Scratch::new("concurrent");

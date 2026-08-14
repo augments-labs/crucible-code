@@ -15,6 +15,13 @@ Notable changes to crucible. Format follows
   key belongs to — and a model the list does not carry is still named the way it
   always was.
 
+### Fixed
+
+- **A crucible waiting its turn to write a key waits long enough.** Two of them
+  logging in at once take the file one after the other, and the one at the back
+  gave up after a second and told you to try again. The wait is now sized for the
+  queue rather than for the single rename it stands for.
+
 ## [0.1.0] - 2026-08-14
 
 The version line moves from `0.0.x` to `0.1.x`. What it promises is unchanged —
