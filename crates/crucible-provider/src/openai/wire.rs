@@ -16,6 +16,21 @@ use serde_json::Value;
 
 use crate::openai::NAME;
 use crate::sse::SseEvent;
+use crate::stream::Wire;
+
+/// The Responses API, being narrated.
+#[derive(Debug, Default)]
+pub(super) struct Responses {
+    open: Open,
+}
+
+impl Wire for Responses {
+    const PROVIDER: &'static str = NAME;
+
+    fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        deltas(event, &mut self.open)
+    }
+}
 
 /// The tool call the response has open, and whether its arguments have started
 /// arriving.
@@ -26,7 +41,7 @@ use crate::sse::SseEvent;
 /// the finished item repeats arguments already streamed or supplies ones that
 /// never were.
 #[derive(Debug, Default)]
-pub(super) struct Open {
+struct Open {
     /// The item id this endpoint keys its fragments by, empty where none is
     /// open.
     item: String,
@@ -42,7 +57,7 @@ pub(super) struct Open {
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when an event does not parse, announces a tool
 /// call by part of its identity, or contradicts what is open.
-pub(super) fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
     // A heartbeat, which a proxy may spell any way it likes and may send with
     // no data line at all. There is nothing to parse; reading it as an event
     // fails the turn and discards the answer that had already arrived.

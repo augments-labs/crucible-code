@@ -3,7 +3,7 @@
 //! Separate from the stream next door only because it reached the per-file cap.
 //! Everything here is about `Stream` and the queue under it.
 
-use crucible_core::ToolId;
+use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
 
 use super::*;
 use crate::transport::{Paused, Said};

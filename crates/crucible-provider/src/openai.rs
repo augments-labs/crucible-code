@@ -4,6 +4,10 @@
 //! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
 //! one, and this file is the request itself — the headers and the status.
 //!
+//! Only two of those are this vendor's. Delivering a response is the same job
+//! whoever sent it, so the loop that does it lives in `crate::stream` and
+//! [`stream`] is where this protocol is handed to it.
+//!
 //! It names no HTTP client and no credential kind. A [`Transport`] is handed in
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.

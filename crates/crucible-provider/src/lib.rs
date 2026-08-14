@@ -16,6 +16,7 @@ mod json;
 mod openai;
 mod refusal;
 mod sse;
+mod stream;
 mod transport;
 mod unavailable;
 
