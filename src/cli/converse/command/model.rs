@@ -154,17 +154,19 @@ fn taken<T: Terminal>(
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
     renderer.commit(&format!("{provider}/{name}"))?;
 
-    let said = match remember::choosing(&terms.choosing, provider, name) {
-        Ok(()) => format!("written to {}", terms.choosing.display()),
-        Err(problem) => {
-            renderer.commit(&format!("! {problem}"))?;
-            "asked for this session only".to_owned()
-        }
+    // Written, and the row above already says what to. Where it went is not
+    // news: it is the same file every time, chosen by crucible rather than by
+    // the reader, and naming it on every model is a session reading its own
+    // bookkeeping out loud.
+    let Err(problem) = remember::choosing(&terms.choosing, provider, name) else {
+        return Ok(());
     };
 
-    // Wrapped rather than clipped: a path is most of this row and half of one
-    // says nothing about where to look.
-    let rows: Vec<Row> = fold(&said, renderer.columns())
+    renderer.commit(&format!("! {problem}"))?;
+
+    // Wrapped rather than clipped: short as this row is, a narrow enough window
+    // would still cut it, and half of it says nothing about what was lost.
+    let rows: Vec<Row> = fold("asked for this session only", renderer.columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();

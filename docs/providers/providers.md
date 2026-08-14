@@ -168,8 +168,11 @@ what a machine you do not want a key on the profile of wants:
 ```
 
 `/login <provider>` inside a session is what writes it, into a box that draws a
-dot per character rather than the key; `/login` on its own asks which provider
-first. The session is then set up with that provider, from the next turn on and
+dot per character rather than the key; `/login` on its own asks how you pay
+first — a console account billed by usage, which is what this page is about and
+what works today, or one of the two subscription plans it lists without being
+connected to yet. A console account then asks whose. The session is set up with
+that provider, from the next turn on and
 without restarting — the same resolution the next run here would do, so the model
 and rung [Which model](#which-model) and [How hard to think](#how-hard-to-think)
 settle
@@ -177,7 +180,7 @@ for it arrive with the key, wherever nothing has already chosen one. A flag or a
 panel that named one is your answer and is left alone.
 
 Where no variable above is set and that file names nobody, the warning under the
-welcome names this command, and the prompt box is there underneath it as usual.
+welcome names this command, and the prompt is there underneath it as usual.
 
 `/logout <provider>` takes one back out again, and `/logout` on its own
 offers the providers a key is written down for. Editing the file by hand works

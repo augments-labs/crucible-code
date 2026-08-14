@@ -89,7 +89,9 @@ Warning: No models available. Use /login or set an API key environment
 variable. Then use /model to select a model.
 ```
 
-The prompt box is there underneath it, the way it is on every other run.
+The prompt is there underneath it, the way it is on every other run. crucible
+does not stand a panel in front of that screen — the sentence is the whole
+answer, and it stays readable while you type at the box under it.
 
 ## Run it
 
@@ -230,11 +232,21 @@ vendor's answer and differs between models of one vendor.
 
 `/login <provider>` opens a box for the key — never the command line, which
 would put it in your shell's history, in the process listing and in the
-scrollback. Escape leaves it without writing anything. `/login` on its own stands
-a panel where the prompt box was: ↑ and ↓ walk the providers this build serves,
-Enter opens the box for the one marked. A run with no keyboard to walk it — and a
-window with no room to stand a panel in — gets those names as rows instead, with
-the variable each reads from.
+scrollback. Escape leaves it without writing anything.
+
+`/login` on its own asks how crucible should sign its requests, which is a
+different question from which vendor: somebody paying for a ChatGPT plan and
+somebody holding an OpenAI console key are two people, and only one of them has a
+key to type. So the panel offers three ways — OpenAI's ChatGPT Plus, Pro,
+Business and Enterprise plans; MoonshotAI's Kimi Code; and a console account
+billed by API usage. **The two plans are listed but not connected yet**; choosing
+one says so rather than opening a box you have nothing to type into. The console
+account is what works today, and choosing it asks whose console before opening
+the box.
+
+A run with no keyboard to walk that panel — and a window with no room to stand
+one in — gets the provider names as rows instead, with the variable each reads
+from.
 
 A key that is written lands on the session that took it: the provider is set up
 there and then, and the model and rung your configuration names for it come with

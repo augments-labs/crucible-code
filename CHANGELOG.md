@@ -8,11 +8,26 @@ Notable changes to crucible. Format follows
 
 ### Removed
 
-- **A run with no key no longer opens on the login panel.** What a first run gets
-  back is the screen every other run starts with: the welcome, the warning naming
-  `/login` and `/model`, and the box. The warning was already the whole answer,
-  and a panel standing in front of it asked a question before saying where you
-  were. `/login` opens the same panel whenever you want it.
+- **A run with no key no longer opens on the login panel.** 0.1.3 stood it in
+  front of the first prompt; what a first run gets back is the screen every other
+  run starts with — the welcome, the warning naming `/login` and `/model`, and
+  the box. The warning was already the whole answer, and a panel in front of it
+  asked a question before saying where you were.
+
+### Changed
+
+- **`/login` asks how you pay, not which vendor.** Three ways: OpenAI's ChatGPT
+  Plus, Pro, Business and Enterprise plans, MoonshotAI's Kimi Code, and a console
+  account billed by API usage. The two plans are listed but not connected yet and
+  say so when chosen; the console account is what works today and asks whose
+  console before opening the box. Somebody paying for a plan and somebody holding
+  a console key were never the same person, and one panel over vendor names asked
+  them the same question.
+
+- **`/model` and `/effort` stop naming the file they wrote to.** It is the same
+  file every time and crucible chose it, so a session reporting it on every model
+  and every rung was reading its own bookkeeping out loud. The path still appears
+  where the write *fails*, which is the case you have to know about.
 
 ## [0.1.3] - 2026-08-14
 
