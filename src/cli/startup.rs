@@ -13,7 +13,9 @@ use std::path::Path;
 
 use crucible_auth::Keys;
 use crucible_config::Settings;
-use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
+use crucible_core::{
+    ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Mode, Provider, Workspace,
+};
 use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
@@ -56,6 +58,9 @@ pub(super) struct Startup<'a> {
     /// Which model of it, resolved the same way. `None` where nothing named
     /// one, which is a session that can do everything but take a turn.
     pub(super) model: Option<&'a str>,
+    /// How hard to ask it to think, resolved the same way again. `None` sends
+    /// no such field at all, which is the vendor's own default for the model.
+    pub(super) effort: Option<Effort>,
     /// Whether to carry on the most recent session for this directory.
     pub(super) resuming: bool,
     /// The mode the permission engine starts in. The caller resolves it once
@@ -105,7 +110,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     let mut runner = Runner::new(
         provider,
         tools(workspace, startup.cancel, settings),
-        model(startup.model, workspace),
+        model(startup.model, startup.effort, workspace),
         session,
     )
     .permitting(settings.permission(startup.mode));
@@ -288,7 +293,11 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
 /// that there is nothing to ask yet. It is the same absence [`Startup::model`]
 /// carries, spelled the way a `Model` can hold it — the alternative is an
 /// `Option` threaded through every turn to describe a state no turn is taken in.
-fn model(name: Option<&str>, workspace: &Workspace) -> Model {
+///
+/// The effort stays an `Option` for the opposite reason: there is no rung that
+/// means "nobody said", and the field left off is what a vendor reads as its own
+/// default.
+fn model(name: Option<&str>, effort: Option<Effort>, workspace: &Workspace) -> Model {
     let system = format!(
         "{SYSTEM}\n\nThe workspace root is {}. Every tool path is relative to it.",
         workspace.root().display()
@@ -298,7 +307,7 @@ fn model(name: Option<&str>, workspace: &Workspace) -> Model {
         name: name.unwrap_or_default().into(),
         max_tokens: MAX_TOKENS,
         system: Some(system.into()),
-        effort: None,
+        effort,
     }
 }
 

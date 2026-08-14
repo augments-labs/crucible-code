@@ -89,6 +89,14 @@ const PROVIDER: Shape = Shape::Fields(&[
         examples: &[],
         widens: false,
     },
+    Field {
+        name: "effort",
+        about: "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
+        shape: Shape::Choice(EFFORT),
+        // A `Choice` lists its own answers.
+        examples: &[],
+        widens: false,
+    },
     // The *name*. A key never appears in a configuration file: this workspace
     // resolves one from the environment by the name given here, and the value
     // has no path into a document, a session file or a log line.
@@ -118,6 +126,15 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// the environment and the environment holds strings. `"12"` is what the
 /// variable would have to be to arrive any other way.
 const VALUE: Shape = Shape::Text;
+
+/// Every answer `providers.<name>.effort` accepts, weakest first.
+///
+/// The rungs [`crucible_core::Effort`] holds, spelled the way it spells them —
+/// this is the declaration an editor completes from, and the type is what turns
+/// one back into a value. A test walks this list through that parse, so a rung
+/// added to one and not the other is a build that fails rather than a key the
+/// schema accepts and the program drops.
+pub(crate) const EFFORT: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 /// Every answer `output.color` accepts, in the order the schema lists them.
 ///

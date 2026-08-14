@@ -4,12 +4,13 @@
 //! decides which layer wins a position. A block that carries meaning of its own
 //! has a module beside it under `settings/`, so its keys, the types they become
 //! and the tests for both sit in one place. `providers` and `env` stay here:
-//! they are read out as the strings they were written as, and there is nothing
-//! to interpret.
+//! what they hold is read straight back out. The one value that is not a string
+//! afterwards — how hard to think — becomes a type this crate does not own, so
+//! there is no meaning here for a module to hold.
 
 use std::fmt;
 
-use crucible_core::Rules;
+use crucible_core::{Effort, Rules};
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -107,6 +108,26 @@ impl Settings {
             .get(provider)?
             .get("baseUrl")?
             .as_str()
+    }
+
+    /// How hard to think, for every turn sent to this provider.
+    ///
+    /// A rung rather than the word it was written as, because the word is only
+    /// ever one of five and the type that holds them is [`crucible_core`]'s.
+    /// Nothing under `settings/` owns this one: there is no meaning here beyond
+    /// the rung, and the shape is what refuses anything that is not one.
+    ///
+    /// `None` is "no layer said", not the middle rung — the vendor's own
+    /// default is what a session nobody has an opinion about runs on.
+    #[must_use]
+    pub fn effort(&self, provider: &str) -> Option<Effort> {
+        self.value
+            .get("providers")?
+            .get(provider)?
+            .get("effort")?
+            .as_str()?
+            .parse()
+            .ok()
     }
 
     /// The name of the variable this provider's key is read from.
@@ -225,6 +246,23 @@ mod tests {
             Some("WORK_ANTHROPIC_KEY")
         );
         assert_eq!(settings.api_key_env("openai"), None);
+    }
+
+    #[test]
+    fn a_provider_can_be_told_how_hard_to_think_before_a_session_starts() {
+        let user = Document::sample(
+            r#"{"providers": {"anthropic": {"effort": "max"}}}"#,
+            Origin::User,
+        );
+
+        let settings = Settings::resolve(vec![user]);
+
+        assert_eq!(settings.effort("anthropic"), Some(Effort::Max));
+
+        // Not a default for the rest. A provider no layer mentioned is one the
+        // vendor's own default applies to, and answering `high` here would send
+        // a field nobody asked for to every model on every other list.
+        assert_eq!(settings.effort("openai"), None);
     }
 
     #[test]

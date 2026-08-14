@@ -48,8 +48,15 @@ Keyed by provider name — `anthropic`, `openai`.
 | Key | Means |
 | --- | --- |
 | `model` | The model to ask when `--model` does not name one. |
+| `effort` | How hard to think before answering, when `--effort` does not say. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
+
+`effort` is one of `low`, `medium`, `high`, `xhigh` or `max`, and it is set per
+provider because which rungs exist is the vendor's business — a rung chosen for
+the one serving it says nothing about the one that would refuse it. Left out,
+crucible asks for no rung at all and the vendor's own default for that model
+applies. See [Providers and models](../providers/providers.md).
 
 `apiKeyEnv` takes a **name**, never a key. A key is read from the environment at
 startup and has no path into a document, a session file or a log line. Pointing

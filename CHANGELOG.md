@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`--effort` says how hard to think.** One of `low`, `medium`, `high`, `xhigh`
+  or `max`, on every turn of the session, with `providers.<name>.effort` saying
+  it once for a provider and the flag winning where both do. Left off, crucible
+  asks for no rung at all and the vendor's own default for that model applies —
+  which is what keeps a rung nobody chose from reaching a model that does not
+  take the field.
+
 ## [0.1.1] - 2026-08-14
 
 ### Added

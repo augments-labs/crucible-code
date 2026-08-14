@@ -175,6 +175,65 @@ fn a_model_configured_as_nothing_at_all_is_no_model() {
 }
 
 #[test]
+fn the_flag_says_how_hard_to_think_over_anything_a_file_says() {
+    let sample = Sample::new("effort-flag");
+    let settings = sample.settings(r#"{"providers": {"anthropic": {"effort": "low"}}}"#);
+
+    assert_eq!(
+        thinking(Some(Effort::Max), &settings, Some(serving("anthropic"))),
+        Some(Effort::Max)
+    );
+}
+
+#[test]
+fn a_run_that_says_nothing_takes_the_rung_configured_for_the_provider_it_is_going_to() {
+    // Per provider rather than one answer for the machine, because which rungs
+    // exist is the vendor's business: a file that chose `xhigh` for the one
+    // serving it has said nothing about the one that would refuse it.
+    let sample = Sample::new("effort-file");
+    let settings = sample.settings(
+        r#"{"providers": {"anthropic": {"effort": "xhigh"},
+                          "openai": {"effort": "low"}}}"#,
+    );
+
+    assert_eq!(
+        thinking(None, &settings, Some(serving("anthropic"))),
+        Some(Effort::Xhigh)
+    );
+    assert_eq!(
+        thinking(None, &settings, Some(serving("openai"))),
+        Some(Effort::Low)
+    );
+    assert_eq!(thinking(None, &settings, Some(serving("moonshot"))), None);
+}
+
+#[test]
+fn a_run_nobody_told_how_hard_to_think_asks_for_no_rung_at_all() {
+    // Not the middle one, and not the rung the picker opens on. Every vendor
+    // here chose a default per model, and one asked for on somebody's behalf
+    // would reach the models that do not take the field at all — turning a
+    // session nobody configured into a refusal from a vendor they did not
+    // knowingly ask anything of.
+    assert_eq!(
+        thinking(None, &Settings::default(), Some(serving("anthropic"))),
+        None
+    );
+    assert_eq!(thinking(None, &Settings::default(), None), None);
+}
+
+#[test]
+fn a_rung_that_is_not_one_is_refused_with_the_rungs_that_are() {
+    // The flag is parsed before there is anything on screen to look at, so the
+    // sentence is the whole of what somebody who mistyped gets back.
+    let refused =
+        Cli::try_parse_from(["crucible", "--effort", "maximum"]).expect_err("a rung nobody serves");
+
+    let said = refused.to_string();
+    assert!(said.contains("no effort called maximum"), "{said}");
+    assert!(said.contains("low, medium, high, xhigh, max"), "{said}");
+}
+
+#[test]
 fn a_run_that_named_no_provider_goes_to_the_one_whose_key_is_set() {
     // The defect: `crucible` on a machine holding only OPENAI_API_KEY opened on
     // an Anthropic model, so the provider the session ran against was the one

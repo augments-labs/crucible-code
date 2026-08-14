@@ -142,6 +142,10 @@ pub enum Effort {
 }
 
 impl Effort {
+    /// Every rung, weakest first — what a picker walks and what a refusal
+    /// lists.
+    pub const LADDER: [Self; 5] = [Self::Low, Self::Medium, Self::High, Self::Xhigh, Self::Max];
+
     /// The rung as all three vendors spell it, which is the same word.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -152,6 +156,36 @@ impl Effort {
             Self::Xhigh => "xhigh",
             Self::Max => "max",
         }
+    }
+}
+
+/// The word given for a rung was not one.
+///
+/// Names what was typed and then every rung there is, because this is reached
+/// where there is nothing on screen to look at: a flag being parsed before the
+/// first frame, or a key in a file somebody is reading with an editor open.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no effort called {named}; crucible takes {}", Effort::LADDER.map(Effort::as_str).join(", "))]
+pub struct EffortError {
+    /// What was asked for.
+    pub named: Box<str>,
+}
+
+impl std::str::FromStr for Effort {
+    type Err = EffortError;
+
+    /// Trimmed and lowercased first. A word this short is typed at a shell in
+    /// whatever case the person was already in, and refusing `--effort HIGH`
+    /// teaches nothing that accepting it does not.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let named = text.trim().to_ascii_lowercase();
+
+        Self::LADDER
+            .into_iter()
+            .find(|rung| rung.as_str() == named)
+            .ok_or_else(|| EffortError {
+                named: text.trim().into(),
+            })
     }
 }
 
@@ -245,6 +279,40 @@ impl fmt::Debug for dyn DeltaStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_rung_is_read_back_from_the_word_it_is_written_as() {
+        for rung in [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::Xhigh,
+            Effort::Max,
+        ] {
+            assert_eq!(rung.as_str().parse(), Ok(rung));
+        }
+    }
+
+    #[test]
+    fn a_rung_nobody_serves_is_refused_with_the_ones_that_are() {
+        // The sentence is the whole of what somebody who mistyped gets: there
+        // is no list on screen at the moment a flag is parsed, and `--effort
+        // maximum` is the obvious thing to type.
+        let refused = "maximum".parse::<Effort>().expect_err("not a rung");
+
+        assert_eq!(
+            refused.to_string(),
+            "no effort called maximum; crucible takes low, medium, high, xhigh, max"
+        );
+    }
+
+    #[test]
+    fn a_rung_is_read_however_it_was_capitalised() {
+        // A word this short, typed at a shell, is typed in whatever case the
+        // person was already in. Refusing `--effort HIGH` teaches nothing.
+        assert_eq!("HIGH".parse(), Ok(Effort::High));
+        assert_eq!(" Max ".parse(), Ok(Effort::Max));
+    }
 
     #[test]
     fn a_refusal_carries_what_the_provider_said() {

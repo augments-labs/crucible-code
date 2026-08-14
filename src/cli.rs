@@ -30,7 +30,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use crucible_auth::{Keys, Store};
 use crucible_config::{ConfigError, Home, Settings, Updates};
-use crucible_core::{Cancel, CredentialError, PathError, Workspace};
+use crucible_core::{Cancel, CredentialError, Effort, PathError, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
@@ -183,6 +183,12 @@ other, and nothing in the key says which. crucible asks the coding console; a \
 key from the open platform sets providers.moonshot.baseUrl to \
 https://api.moonshot.ai/v1.
 
+--effort says how hard to think, as low, medium, high, xhigh or max, on every \
+turn of the session. Left off, it is providers.<name>.effort, and where nothing \
+says either, whatever the vendor's own default is for the model being asked. \
+Not every model takes one, and a rung named for a model that does not is \
+refused by its vendor rather than dropped.
+
 There is no model built in. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
 and asks rather than picking one, and /model writes your answer down.
@@ -205,6 +211,12 @@ struct Cli {
     /// whatever your configuration chose for the provider whose key is set.
     #[arg(short, long)]
     model: Option<String>,
+
+    /// How hard to think: low, medium, high, xhigh or max. Left off, it is
+    /// what your configuration chose for this provider, and where nothing
+    /// says, the vendor's own default for the model.
+    #[arg(short, long, value_name = "RUNG")]
+    effort: Option<Effort>,
 }
 
 /// Why crucible could not run, or could not carry on.
@@ -353,6 +365,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         None => chosen(&choice, &settings, &from, &keys)?,
     };
     let model = wanted(&choice, &settings, serving);
+    let effort = thinking(cli.effort, &settings, serving);
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -447,6 +460,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &mut renderer,
         &Opening {
             model: model.as_deref(),
+            effort,
             unasked: unasked(serving.map(|one| one.name)),
             trouble: keys.trouble(),
             workspace: &workspace,
@@ -463,6 +477,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let runner = assemble(&Startup {
         provider: serving,
         model: model.as_deref(),
+        effort,
         resuming: cli.r#continue,
         mode,
         settings: &settings,
@@ -597,6 +612,22 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
     let configured = settings.model(serving?.name)?.trim();
 
     (!configured.is_empty()).then(|| configured.into())
+}
+
+/// How hard to think, once the command line and the files have both spoken.
+///
+/// The flag, then `providers.<name>.effort` for the provider this run is going
+/// to, then nothing — the rungs `--model` is resolved down, and the bottom one
+/// is missing for the same reason. A run nobody said anything to about effort
+/// is one the vendor's own default applies to, and that default is per model:
+/// answering `high` here on everybody's behalf would send the field to a model
+/// that does not take it, and turn a session nobody configured into a refusal.
+///
+/// A provider with no key set is a run with no provider, and a file that chose
+/// a rung for one it is not going to is a file that said nothing about this
+/// run — the same reading `--model openai/` gets.
+fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
+    asked.or_else(|| settings.effort(serving?.name))
 }
 
 /// Writes a fatal error where the user will see it.
