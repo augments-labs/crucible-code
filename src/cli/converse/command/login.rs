@@ -1,8 +1,15 @@
-//! `/login`: a provider taken off a panel, and a key given to a box that does
-//! not echo it.
+//! `/login`: how crucible is paid for, taken off a panel, and a key given to a
+//! box that does not echo it.
 //!
-//! The provider is named on the line or chosen from the panel, and the key is
-//! neither. A key typed after a command is a key in the shell's history file,
+//! Two panels, because they are two questions. The first is how you already pay
+//! a vendor — a subscription plan, or a console account billed by API usage —
+//! and only the console account reaches the second, which asks whose. A plan is
+//! drawn without being connected to yet, and says so when it is chosen: a panel
+//! listing only what works would let somebody holding a plan conclude their plan
+//! is unsupported, when what is true is that it is unbuilt.
+//!
+//! The vendor is named on the line or chosen from the second panel, and the key
+//! is neither. A key typed after a command is a key in the shell's history file,
 //! in the process listing while the command runs, and in the scrollback
 //! afterwards — three places it was never meant to be, none of which this
 //! program could clear. So the two halves are asked for separately: who the key
@@ -13,12 +20,20 @@
 //! in front of them, and the file it lands in is what makes the run after this
 //! one ask the same thing rather than what makes this one ask at all.
 //!
+//! A run with no key for anything is left alone to draw its prompt. The warning
+//! under the welcome names this command and `/model` both, which is the whole of
+//! what somebody meeting crucible for the first time has to read; a panel
+//! standing in front of that prompt would be this program answering a question
+//! nobody asked it, on the one screen where the reader is still finding out
+//! where they are.
+//!
 //! Naming somebody this build has never heard of, a panel that was left, and a
 //! window with no room to stand one in all come out the same way: which names
 //! crucible knows and which variable each of them signs a request from, written
 //! into the scrollback where it can be scrolled. Every one of those halves comes
-//! off [`PROVIDERS`], so a provider this build serves and cannot be logged in to
-//! is not a state that exists.
+//! off [`PROVIDERS`], so a vendor this build serves and cannot be logged in to
+//! is not a state that exists — which is a claim about console keys, since a
+//! plan cannot be logged in to at all yet.
 
 use crucible_runner::Runner;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
@@ -29,12 +44,77 @@ use crate::cli::{Fatal, PROVIDERS, Served};
 
 use super::{Terms, say};
 
-/// The sentence under the panel's title: what standing there cannot show, which
-/// is that the key is asked for next and where it goes.
+/// One way of giving crucible something to sign its requests with.
+///
+/// Two are subscription plans and one is a console key billed by usage. What a
+/// reader is choosing between here is how they already pay a vendor, which is
+/// not the same question as which vendor — somebody paying for a plan and
+/// somebody holding that same vendor's console key are two people, and only one
+/// of them has a key to type.
+struct Way {
+    /// What it is called on the panel.
+    shown: &'static str,
+
+    /// What it buys. The part being chosen between, so it names the plans in
+    /// the vendor's own words rather than describing them.
+    says: &'static str,
+
+    /// Whether choosing it reaches a key today.
+    ///
+    /// A plan crucible cannot use yet is still drawn. A panel listing only what
+    /// works would let somebody holding one conclude their plan is unsupported,
+    /// when what is true is that it is unbuilt — and the two are answered by
+    /// different people on different days.
+    reaches: bool,
+}
+
+/// What the panel offers, in the order it lists them.
+///
+/// Plans first and the console account last. A reader holding a plan is the one
+/// who most needs telling that crucible cannot sign with it yet, and a row under
+/// the one that works is a row they would have walked past.
+const WAYS: [Way; 3] = [
+    Way {
+        shown: "OpenAI",
+        says: "ChatGPT Plus, Pro, Business and Enterprise plans — not connected yet",
+        reaches: false,
+    },
+    Way {
+        shown: "MoonshotAI",
+        says: "Kimi Code — not connected yet",
+        reaches: false,
+    },
+    Way {
+        shown: "Console account",
+        says: "API usage billing",
+        reaches: true,
+    },
+];
+
+/// The sentence under the title of the panel that asks how.
+const HOW: &str = "Choose how crucible signs its requests.";
+
+/// What a plan that is drawn but not connected answers with.
+///
+/// It says where the reader is rather than only that they cannot go on: the row
+/// they chose is still on the panel a moment later, and a refusal that did not
+/// name the way that does work would send them back to walk the same list.
+const UNBUILT: &str = "plans are not connected yet; a console key is the way in today";
+
+/// The sentence under the title of the second panel, which only a console
+/// account reaches: whose console, and what happens to the key.
+///
+/// It names the console outright. Standing where it does, under a row the
+/// reader chose a moment ago, a sentence about "a provider" and "a key" would
+/// read as the whole of `/login` rather than as the half of it below the plans.
 const SAID: &str = concat!(
-    "Choose the provider to give crucible a key for. It is typed into a box ",
-    "that does not echo it, and asked from the next turn on."
+    "Choose the vendor whose console the key comes from. It is typed into a ",
+    "box that does not echo it, and signs requests from the next turn on."
 );
+
+/// The one key worth naming on either panel: the arrows and Enter are what a
+/// list with a mark on it is already saying.
+const CANCEL: &str = "esc to cancel";
 
 /// Runs it: a key taken for the one named, one chosen off the panel, or where
 /// each of them reads a key from.
@@ -57,12 +137,11 @@ pub(super) fn run<T: Terminal>(
             return given(named, renderer, runner, terms);
         }
 
-        // Nobody named and a keyboard to walk a list with: the panel, and what
-        // comes off it is the same fact as a name typed on the line.
-        if said.is_empty()
-            && let Some(chose) = chosen(renderer, terms)?
-        {
-            return given(chose, renderer, runner, terms);
+        // Nobody named and a keyboard to walk a list with: the panels, which
+        // ask how first and which vendor second. A name typed on the line
+        // answered both at once, which is why it never sees either.
+        if said.is_empty() && walked(renderer, runner, terms)? {
+            return Ok(());
         }
     }
 
@@ -87,7 +166,73 @@ pub(super) fn run<T: Terminal>(
     Ok(renderer.present(&rows, terms.style.palette())?)
 }
 
-/// Stands the panel where the prompt box was, and says what was taken off it.
+/// Asks how crucible should sign its requests, and takes the answer to an end.
+///
+/// Two panels rather than one, because the two questions have different answers
+/// for the same person: how you pay a vendor, and then — where that is a console
+/// key — which vendor's. A plan does not reach the second, since there is
+/// nothing to type for one yet.
+///
+/// `false` is a panel that was left and a window with no room to stand one in
+/// alike. Neither is an answer, and both fall through to the rows the caller
+/// draws instead — which is what `/login` has always done, and the only thing a
+/// short window can be given.
+fn walked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<bool, Fatal> {
+    let Some(way) = asked(renderer, terms)? else {
+        return Ok(false);
+    };
+
+    if !way.reaches {
+        say(renderer, terms, &format!("{} {UNBUILT}", way.shown))?;
+
+        return Ok(true);
+    }
+
+    let Some(named) = chosen(renderer, terms)? else {
+        return Ok(false);
+    };
+
+    given(named, renderer, runner, terms)?;
+
+    Ok(true)
+}
+
+/// Stands the panel that asks how, and says which way was taken off it.
+fn asked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+) -> Result<Option<&'static Way>, Fatal> {
+    let shown: Vec<Offered<'_>> = WAYS
+        .iter()
+        .map(|way| Offered {
+            name: way.shown,
+            says: way.says,
+        })
+        .collect();
+
+    let panel = Panel {
+        title: "Log in",
+        said: Some(HOW),
+        shown: &shown,
+        chosen: 0,
+        footer: CANCEL,
+    };
+
+    let Some(at) = picking::pick(renderer, terms.style, panel)? else {
+        return Ok(None);
+    };
+
+    // The index is into the list the panel was handed, built from `WAYS` in
+    // order — so a lookup that cannot miss, written as one that can rather than
+    // as an assertion nobody would read again.
+    Ok(WAYS.get(at))
+}
+
+/// Stands the panel that asks whose console, and says which was taken off it.
 ///
 /// `None` is a panel that was left and a window with no room to stand one in
 /// alike. Neither is a provider, and both come out as the rows above — the
@@ -114,9 +259,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Opti
         said: Some(SAID),
         shown: &shown,
         chosen: 0,
-        // The one key worth naming: the arrows and Enter are what a list with a
-        // mark on it is already saying.
-        footer: "esc to cancel",
+        footer: CANCEL,
     };
 
     let Some(at) = picking::pick(renderer, terms.style, panel)? else {
