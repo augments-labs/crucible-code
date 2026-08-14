@@ -15,6 +15,14 @@ Notable changes to crucible. Format follows
   and nothing in the key says which. crucible asks the coding console; an open
   platform key sets `providers.moonshot.baseUrl` to `https://api.moonshot.ai/v1`.
 
+### Documentation
+
+- **crucible will not log in with a vendor's chat subscription, and the docs now
+  say why.** A plan is sold scoped to that vendor's own software — accounts have
+  been closed for pointing another program at one — so the login is not a gap
+  waiting to be filled. A plan a vendor publishes for other programs is an API
+  key and a `baseUrl`, which already work.
+
 ### Internal
 
 - **The 400-line ceiling now blocks, and blocks everywhere.** It was a CI job

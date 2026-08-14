@@ -2,9 +2,9 @@
 //!
 //! Authentication is a separate axis from the wire protocol. A provider is
 //! handed something implementing [`Credential`] and never learns whether it
-//! came from an environment variable, a keyring or a subscription login, so a
-//! new way to authenticate is a new implementation here rather than an edit to
-//! every provider.
+//! came from an environment variable, a file, or something else's signature, so
+//! a new way to authenticate is a new implementation here rather than an edit
+//! to every provider.
 //!
 //! The secret is *applied*, never returned. [`Credential::authorize`] takes the
 //! outgoing request and writes into it, so no caller ever holds the value and
@@ -357,8 +357,8 @@ mod tests {
     }
 
     /// A credential that has to renew something before it can answer, and
-    /// cannot. The shape a subscription login takes when its token has expired
-    /// and the renewal was refused.
+    /// cannot. The shape one takes when what it holds has expired and renewing
+    /// it was refused.
     #[derive(Debug)]
     struct Stale;
 

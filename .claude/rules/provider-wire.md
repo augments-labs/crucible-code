@@ -48,6 +48,28 @@ A provider that needs a *header name* rather than a credential kind is asking
 the right question — that is what `HeaderKey` carries. Wanting to know which
 kind is behind it means a seam is about to move into the wrong crate.
 
+That indifference is what makes the next rule a rule rather than an accident of
+the current code. **crucible offers no vendor subscription login, for any
+vendor.** A subscription is sold scoped to its vendor's own clients: Anthropic's
+terms permit a Claude Pro or Max plan in Claude Code and not in another harness,
+and people have been banned for pointing one elsewhere. Where a vendor instead
+lists their own CLI, their own IDE extension and their own app as what a plan
+covers, and prices everything else at API rates, that is the same scoping said
+in a quieter voice — absence of a quoted prohibition is not permission, and a
+credential this program mints is a credential this program is answerable for.
+
+So a subscription reaches crucible however its vendor publishes for third
+parties, or not at all. Where that path exists it is an API key and the base URL
+the key is bound to — MoonshotAI's Kimi Code plan is exactly that shape — which
+is a provider module and an arm in `startup::provider`, not a new credential
+kind. An `impl Credential` that opens a browser is the one that gets sent back,
+however cleanly it is written.
+
+The other half of arriving honestly is the header. **crucible identifies itself
+as crucible.** It never sends another harness's client identifier or user agent,
+to reach a plan or for any other reason. MoonshotAI writes that into its terms;
+it would be the rule here if nobody had written it anywhere.
+
 ## Parsing
 
 A vendor field that is absent, null, or a type nobody expected becomes a typed
