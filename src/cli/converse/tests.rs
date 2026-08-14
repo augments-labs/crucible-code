@@ -5,7 +5,7 @@ use std::io;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use crucible_auth::Store;
+use crucible_auth::{Keys, Store};
 use crucible_core::{
     Delta, Mode, Permission, Rules, Settled, StopReason, ToolArgs, ToolCall, ToolId,
 };
@@ -597,6 +597,80 @@ fn login_naming_a_provider_this_build_has_none_of_says_so() {
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("! no provider called gemini"), "{written}");
     assert!(written.contains("OPENAI_API_KEY"), "{written}");
+}
+
+#[test]
+fn logout_says_so_where_nothing_was_ever_written_down() {
+    // These terms point at a store inside a tree nothing created, which is
+    // every machine that has not logged in. There is no panel to stand and no
+    // row to draw, so this is said before either is reached.
+    let (written, asked) = commanding("/logout\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("nothing is logged in"), "{written}");
+}
+
+/// Drives the loop over a store of its own that was told `provider`'s key.
+///
+/// Returns what the terminal ended up with and what the store held afterwards.
+/// The second half is why this exists: whether a key is gone is a question only
+/// the file can answer, and a session that said it forgot one and did not is the
+/// defect worth a temporary tree. `tree` keeps two of them apart, since these
+/// run at once and each removes its own on the way out.
+fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, Keys) {
+    let sample = Sample::new(&format!("logout-{tree}"));
+    sample.stored(provider);
+
+    let terms = Terms {
+        logins: sample.store(),
+        ..plain()
+    };
+
+    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    (
+        renderer.terminal().written().to_string(),
+        terms.logins.read(),
+    )
+}
+
+#[test]
+fn logout_naming_a_provider_forgets_its_key_and_says_what_it_left() {
+    let (written, left) = logging_out("named", "openai", "/logout openai\n");
+
+    assert!(written.contains("logged out of openai"), "{written}");
+    assert!(left.get("openai").is_none(), "{written}");
+
+    // The other place a key can be is nobody's to take away here. An answer
+    // that stopped at "logged out" would be one somebody trusts and should not.
+    assert!(written.contains("environment"), "{written}");
+}
+
+#[test]
+fn logout_down_a_pipe_lists_what_is_logged_in_and_forgets_none_of_it() {
+    // No keyboard, so the panel would be a session that stopped — this test
+    // hanging is that defect. The names it would have offered are written
+    // instead, and being asked what there is takes nothing away.
+    let (written, left) = logging_out("piped", "moonshot", "/logout\n");
+
+    assert!(written.contains("/logout moonshot"), "{written}");
+    assert!(left.get("moonshot").is_some(), "{written}");
+}
+
+#[test]
+fn logout_naming_a_provider_with_no_key_here_says_so_and_lists_what_has_one() {
+    let (written, left) = logging_out("other", "openai", "/logout anthropic\n");
+
+    assert!(
+        written.contains("! not logged in to anthropic"),
+        "{written}"
+    );
+    assert!(written.contains("/logout openai"), "{written}");
+    assert!(left.get("openai").is_some(), "{written}");
 }
 
 #[test]

@@ -75,10 +75,16 @@ impl Sample {
     /// out and came back the way a real one does, which is the half of `/login`
     /// the wiring depends on and cannot see.
     pub(super) fn stored(&self, provider: &str) -> Keys {
-        let store = Store::in_home(&self.base.join("home"));
+        let store = self.store();
         store.keep(provider, WRITTEN).expect("a writable home");
 
         store.read()
+    }
+
+    /// The store this tree keeps, which is the file `/login` writes and
+    /// `/logout` takes a name back out of.
+    pub(super) fn store(&self) -> Store {
+        Store::in_home(&self.base.join("home"))
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.

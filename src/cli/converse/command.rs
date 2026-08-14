@@ -29,6 +29,7 @@ use crate::cli::{Fatal, NO_MODEL_CHOSEN, NOTHING_TO_ASK, remember};
 use super::{Terms, mode};
 
 mod login;
+mod logout;
 mod resume;
 
 /// What a line beginning `/` can ask for.
@@ -43,6 +44,8 @@ pub(super) enum Command {
     Model,
     /// A key for a provider, given to a box that does not echo it.
     Login,
+    /// A key crucible wrote down, forgotten.
+    Logout,
     /// The permission mode: the one in force, or the one named.
     Mode,
     /// The sessions recorded here, and picking one of them up.
@@ -58,10 +61,11 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 7] = [
+const EVERY: [Command; 8] = [
     Command::Help,
     Command::Model,
     Command::Login,
+    Command::Logout,
     Command::Mode,
     Command::Resume,
     Command::Clear,
@@ -98,6 +102,7 @@ impl Command {
             Self::Help => "/help",
             Self::Model => "/model",
             Self::Login => "/login",
+            Self::Logout => "/logout",
             Self::Mode => "/mode",
             Self::Resume => "/resume",
             Self::Clear => "/clear",
@@ -111,6 +116,7 @@ impl Command {
             Self::Help => "what these are",
             Self::Model => "which model answers, or set one",
             Self::Login => "give crucible a key for a provider",
+            Self::Logout => "forget a key crucible wrote down",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -180,8 +186,8 @@ pub(super) fn filtering(line: &str, glyphs: Glyphs) -> Vec<Listed<'static>> {
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
 ///
-/// `keys` is whether there is a keyboard, which `/login` needs before it opens
-/// a box nobody down a pipe could type into.
+/// `keys` is whether there is a keyboard, which `/login` and `/logout` need
+/// before either opens something nobody down a pipe could answer.
 pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
@@ -242,6 +248,11 @@ fn answer<T: Terminal>(
             command: Command::Login,
             rest,
         } => login::run(rest, renderer, terms, keys)?,
+
+        Wanted::Known {
+            command: Command::Logout,
+            rest,
+        } => logout::run(rest, renderer, terms, keys)?,
 
         Wanted::Known {
             command: Command::Mode,
@@ -390,6 +401,16 @@ fn forgotten(held: usize, columns: usize) -> Vec<Row> {
             clip("what is on screen stays where it is", columns),
         ),
     ]
+}
+
+/// Says one line back, quietly, clipped to the window it is said in.
+///
+/// What `/login` and `/logout` answer with when there is one thing to say: a key
+/// was written down, a key was forgotten, or neither happened and here is why.
+fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Result<(), Fatal> {
+    let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
+
+    Ok(renderer.present(&[row], terms.style.palette())?)
 }
 
 /// The row that says which mode is in force, in the colour that mode is drawn

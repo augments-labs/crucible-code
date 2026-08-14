@@ -17,6 +17,12 @@ Notable changes to crucible. Format follows
   keyboard to walk it gets those names as rows, with the variable each reads
   from.
 
+- **`/logout` takes a key back out.** The same panel over what is actually
+  there — the providers a key was written down for — or `/logout <provider>` for
+  one of them by name. It reaches `~/.crucible/auth.json` and nothing else: a key
+  exported into your shell is untouched and goes on winning, which is what the
+  line under the answer says rather than leaving you to remember it.
+
 - **A key can be written down instead of exported.** crucible reads
   `~/.crucible/auth.json` — a file only you can read — alongside the environment,
   so a machine you would rather not keep a key on the shell profile of can still

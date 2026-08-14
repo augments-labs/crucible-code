@@ -121,7 +121,10 @@ what a machine you do not want a key on the profile of wants:
 
 `/login <provider>` inside a session is what writes it, into a box that draws a
 dot per character rather than the key; `/login` on its own asks which provider
-first. Editing the file by hand works too — crucible only reads what is there.
+first. `/logout <provider>` takes one back out again, and `/logout` on its own
+offers the providers a key is written down for. Editing the file by hand works
+too — crucible only reads what is there, and a name under `keys` that this build
+does not serve is left alone rather than offered for logging out of.
 
 The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version
@@ -132,7 +135,8 @@ run — a second account, a work key, one rotated an hour ago — and it lasts a
 long as the shell it was exported in. What is written down is the standing
 answer underneath it, so `OPENAI_API_KEY=` turns off the *variable* and leaves
 the file's key doing its job. A provider holding a key both ways is still one
-provider, not two.
+provider, not two — and `/logout` reaches the written-down half of it, which is
+why what it says names the other.
 
 A file crucible cannot read is a sentence under the welcome — `! auth.json could
 not be read: …` — and not the end of the run: nobody is logged in for that run,

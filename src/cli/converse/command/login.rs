@@ -23,7 +23,7 @@ use crate::cli::converse::picking;
 use crate::cli::converse::secret;
 use crate::cli::{Fatal, PROVIDERS, Served};
 
-use super::Terms;
+use super::{Terms, say};
 
 /// The sentence under the panel's title: what standing there cannot show, which
 /// is that the key is asked for next and that this run is not the one it
@@ -154,11 +154,4 @@ fn given<T: Terminal>(
         // that something did.
         Err(problem) => say(renderer, terms, &format!("! {problem}")),
     }
-}
-
-/// Says one line back, quietly, clipped to the window it is said in.
-fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Result<(), Fatal> {
-    let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
-
-    Ok(renderer.present(&[row], terms.style.palette())?)
 }
