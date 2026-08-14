@@ -225,6 +225,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-auth"
+version = "0.0.17"
+dependencies = [
+ "crucible-core",
+ "serde_json",
+]
+
+[[package]]
 name = "crucible-code"
 version = "0.0.17"
 dependencies = [
