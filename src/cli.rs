@@ -519,7 +519,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &mut renderer,
         &Opening {
             model: model.as_deref(),
-            effort,
             unasked: unasked(terms.provider.get()),
             trouble: keys.trouble(),
             workspace: &workspace,

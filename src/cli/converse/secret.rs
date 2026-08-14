@@ -107,6 +107,12 @@ fn standing<T: Terminal>(
         // changed because a key was being asked for.
         tone: Slot::Accent,
         hint: CANCEL,
+        // Nothing about the model or the rung, which are facts about the next
+        // turn. This box is not one: what is typed into it goes to no
+        // provider, and naming one over a key being pasted in would say it
+        // was about to be sent somewhere.
+        model: "",
+        effort: None,
         asking: None,
         room: Prompt::room(renderer.rows()),
     };

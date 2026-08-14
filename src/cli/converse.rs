@@ -319,7 +319,11 @@ fn take<T: Terminal>(
     // Read here because the runner is about to leave, and nothing changes the
     // mode while it is away. Drawn below rather than here, where a failure would
     // be a turn that never ran.
-    let mode = runner.mode();
+    //
+    // The model beside it for the same two reasons: the row says it, and only
+    // `/model` and `/effort` change it — neither of which can be run while the
+    // turn they would change is the one running.
+    let says = typing::under(&runner);
     let prompt = taking.prompt;
 
     // Whatever stopped the last turn is spent, and this is the last moment at
@@ -344,7 +348,7 @@ fn take<T: Terminal>(
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
-    let mut held = typing::stand(renderer, taking.editor, mode, terms.style);
+    let mut held = typing::stand(renderer, taking.editor, &says, terms.style);
 
     // Ends when the worker drops both senders, which happens when the turn is
     // over. The wait is bounded rather than blocking so that the keyboard is
@@ -374,7 +378,7 @@ fn take<T: Terminal>(
         // here is kept for the loop above: running it now would start a second
         // turn inside this one.
         if held.is_ok() && taking.answers.keys {
-            match typing::during(renderer, taking.editor, mode, terms.style, &terms.cancel) {
+            match typing::during(renderer, taking.editor, &says, terms.style, &terms.cancel) {
                 Ok(said) => queue(taking.queued, said),
                 Err(problem) => held = Err(problem),
             }

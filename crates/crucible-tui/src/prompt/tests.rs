@@ -13,6 +13,15 @@ const MODE: &str = "ask before edits";
 /// What is said quietly after it.
 const HINT: &str = "(shift+tab to cycle)";
 
+/// The model the other end of the status row says the next turn goes to.
+const NAMED: &str = "claude-sonnet-5";
+
+/// How hard it says that model is being asked to think.
+const RUNG: &str = "high";
+
+/// The two of them as the row joins them.
+const MODEL: &str = "claude-sonnet-5 · high";
+
 /// The three modes as the row under the box spells them, the colour each puts
 /// on the border, and the name of the picture each is checked against.
 ///
@@ -50,8 +59,21 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         mode: MODE,
         tone: Slot::Accent,
         hint: HINT,
+        // Empty, so that every test written before this row had a right-hand
+        // end is still a test about its left-hand one.
+        model: "",
+        effort: None,
         asking: None,
         room: ROOM,
+    }
+}
+
+/// The same box, with a model to say on the right of its status row.
+fn asking_of(said: &str) -> Prompt<'_> {
+    Prompt {
+        model: NAMED,
+        effort: Some(RUNG),
+        ..typed(said)
     }
 }
 
@@ -392,6 +414,64 @@ fn a_hint_is_drawn_only_where_the_whole_of_it_fits() {
         format!("{MODE} {HINT}")
     );
     assert_eq!(row(&typed(""), 3, together - 1, Glyphs::Unicode), MODE);
+}
+
+#[test]
+fn the_model_being_asked_stands_against_the_right_edge_of_the_status_row() {
+    // The one fact the welcome card cannot keep. `/model` and `/effort` both
+    // change it, and by then the card is scrollback -- which this process
+    // draws inline and can never go back over. So it lives on the one row that
+    // is redrawn every keystroke, at the end away from the mode: the mode is
+    // what the next tool call costs and this is what the next turn is asked
+    // of, and run together they read as one sentence.
+    let status = row(&asking_of(""), 3, 80, Glyphs::Unicode);
+
+    assert!(status.starts_with(MODE), "{status:?}");
+    assert!(status.ends_with(MODEL), "{status:?}");
+    assert_eq!(width::columns(&status), 80, "{status:?}");
+}
+
+#[test]
+fn the_status_row_is_the_mode_in_its_own_colour_and_everything_else_quietly() {
+    // The mode is the subject of the row: it is the one fact on it that says
+    // what a tool call arriving now costs. The keys and the model are both
+    // quiet, at opposite ends, so neither competes with it for the eye.
+    pictured("status", &asking_of(""), 80, Glyphs::Unicode);
+}
+
+#[test]
+fn the_keys_go_before_the_model_does() {
+    // Both are drawn where both fit. Past that the keys are what gives way:
+    // they are a reminder of a key that is also on the welcome card, and the
+    // model is the only place this fact is said at all.
+    let all = width::columns(MODE) + 1 + width::columns(HINT) + APART + width::columns(MODEL);
+    let both = row(&asking_of(""), 3, all, Glyphs::Unicode);
+
+    assert!(both.contains(HINT), "{both:?}");
+    assert!(both.ends_with(MODEL), "{both:?}");
+
+    let tight = row(&asking_of(""), 3, all - 1, Glyphs::Unicode);
+
+    assert!(!tight.contains(HINT), "{tight:?}");
+    assert!(tight.ends_with(MODEL), "{tight:?}");
+}
+
+#[test]
+fn a_model_with_no_room_beside_the_mode_is_not_drawn_at_all() {
+    // Half a model name says which model and half an effort says nothing, so
+    // neither is drawn: what the row owes above everything is the mode, and a
+    // clipped fact crowding it is worse than the fact being absent.
+    let least = width::columns(MODE) + APART + width::columns(MODEL);
+
+    assert!(row(&asking_of(""), 3, least, Glyphs::Unicode).ends_with(MODEL));
+
+    // A column narrower and none of it is there -- not the name on its own,
+    // and not a shortened one. The room it gave up goes back to the keys,
+    // which is the row this width had before there was anything on its right.
+    let tight = row(&asking_of(""), 3, least - 1, Glyphs::Unicode);
+
+    assert!(!tight.contains(NAMED), "{tight:?}");
+    assert_eq!(tight, row(&typed(""), 3, least - 1, Glyphs::Unicode));
 }
 
 #[test]

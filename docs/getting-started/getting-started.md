@@ -113,13 +113,19 @@ asking, and where. Under the card is the box:
 ╭────────────────────────────────────────────────────────────╮
 │ ›                                                          │
 ╰────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)
+ask mode on (shift+tab to cycle)      claude-sonnet-5 · high
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
 next row rather than scrolling sideways — so the box grows downwards as you
 write. It stops at about half the window; past that the line scrolls under the
 top edge and what you are writing stays in view.
+
+The row under the box has two ends. On the left is the permission mode and the
+key that steps it; on the right is which model the next turn goes to and how
+hard it is being asked to think. Both ends change while a session runs, and that
+row is redrawn on every keystroke — which the card above it is not, since what
+crucible has already written belongs to the terminal's scrollback.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
 moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</kbd>
@@ -164,7 +170,7 @@ result of that call, and the model decides what to do about it.
 ╭────────────────────────────────────────────────────────────╮
 │ ›                                                          │
 ╰────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)
+ask mode on (shift+tab to cycle)      claude-sonnet-5 · high
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`

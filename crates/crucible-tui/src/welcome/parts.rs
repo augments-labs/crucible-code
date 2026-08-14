@@ -67,24 +67,15 @@ pub(super) fn wordmark(columns: usize, glyphs: Glyphs) -> Vec<Row> {
     }
 }
 
-/// Which model is being asked, and how hard it is being asked to think.
+/// Which model is being asked.
 ///
-/// Nothing about the provider, which the model implies, and nothing about the
-/// permission mode, which lives under the prompt where it changes.
+/// Nothing about the provider, which the model implies. Nothing about the
+/// permission mode or the rung the model is being asked on either, and for one
+/// reason: both change while a session runs, and this card is scrollback the
+/// moment the next thing is drawn. They live on the row under the prompt, which
+/// is redrawn on every keystroke. The model is here because it is what the card
+/// is introducing — and where `/model` changes it, that row is what says so.
 pub(super) fn model(welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) -> Row {
-    if let Some(effort) = welcome.effort {
-        let row = Row::plain(welcome.model)
-            .then(Slot::Quiet, format!(" {} ", glyphs.dot()))
-            .then(Slot::Plain, format!("{effort} effort"));
-
-        if row.columns() <= columns {
-            return row;
-        }
-    }
-
-    // No room for both. The effort goes whole rather than being shortened: half
-    // a model name still says which model, and half a word for how hard it is
-    // thinking says nothing at all.
     Row::plain(fit::elide(welcome.model, columns, glyphs))
 }
 

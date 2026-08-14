@@ -14,8 +14,17 @@
 //! The status sits below the frame rather than on its bottom edge. A frame is a
 //! container, and everything drawn on one reads as belonging to what is inside
 //! it; the mode is a fact about the session rather than about the line being
-//! typed. Outside the frame it is a row like any other, so a later release
-//! putting a second fact beside it moves nothing and re-borders nothing.
+//! typed. Outside the frame it is a row like any other, which is what let the
+//! model join it without re-bordering anything.
+//!
+//! That row now has two ends, and what decides which end a fact goes to is
+//! whether it is about this program or about the next turn. The mode is the
+//! first: it says what a tool call arriving now costs, and it stands where the
+//! eye starts. The model and the rung it is being asked on are the second, and
+//! they stand at the far end. It is also the row those two facts live on at
+//! all — they used to be on the welcome card, which is scrollback by the time
+//! `/model` or `/effort` changes them, and this process draws inline and can
+//! never go back over what it has committed.
 //!
 //! Like [`crate::Welcome`] this returns [`Row`]s and draws nothing, so every
 //! width is asserted with no terminal attached. Unlike it, the rows are live:
@@ -48,6 +57,10 @@ const BARE: usize = 2;
 /// Which row of a framed prompt the line starts on.
 const FRAMED_ROW: usize = 1;
 
+/// At least this much between what the status row says on the left and what it
+/// says on the right, so that the two never read as one sentence.
+const APART: usize = 2;
+
 /// What a framed box costs beyond the line itself: two borders and the status
 /// row under them.
 ///
@@ -74,6 +87,15 @@ pub struct Prompt<'a> {
     /// What is said quietly after it — the keys that change the mode. Nothing
     /// is drawn in its place when there is none.
     pub hint: &'a str,
+    /// Which model the next turn goes to, against the end of the status row
+    /// away from the mode. Empty where there is none to say, and then nothing
+    /// is drawn there.
+    pub model: &'a str,
+    /// How hard that model is being asked to think, after it. `None` where no
+    /// rung is in force — the vendor's own default is not this program's to
+    /// name, and a rung drawn here that was never sent is the one thing a
+    /// status row must never be.
+    pub effort: Option<&'a str>,
     /// A row under the status, for something waiting on the very next key.
     ///
     /// `None` in the ordinary state, and then the component is the height it
@@ -117,7 +139,7 @@ impl Prompt<'_> {
     pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let mut rows = if columns < FRAMED_AT {
             let mut rows = self.bare(columns, glyphs);
-            rows.push(self.status(columns));
+            rows.push(self.status(columns, glyphs));
             rows
         } else {
             let bar = glyphs.horizontal();
@@ -128,7 +150,7 @@ impl Prompt<'_> {
             let mut rows = vec![Row::new().then(self.tone, format!("{open}{across}{opened}"))];
             rows.extend(self.typed(columns, glyphs));
             rows.push(Row::new().then(self.tone, format!("{close}{across}{closed}")));
-            rows.push(self.status(columns));
+            rows.push(self.status(columns, glyphs));
             rows
         };
 
@@ -279,24 +301,57 @@ impl Prompt<'_> {
             .collect()
     }
 
-    /// The row under the box: the mode, and the keys that change it.
+    /// The row under the box: the mode and the keys that change it, and at the
+    /// other end the model the next turn goes to.
     ///
-    /// Not padded out to the width. It is the one row of this component that is
-    /// not holding an edge up, and trailing spaces on it would be bytes written
-    /// every keystroke to draw nothing.
-    fn status(&self, columns: usize) -> Row {
+    /// Two ends rather than one sentence, because the two facts are about
+    /// different things — what a tool call arriving now costs, and what the
+    /// next turn is asked of — and run together they read as one. It is also
+    /// what keeps the mode starting in the same column every frame: a model
+    /// changing length moves nothing on the left of the row.
+    ///
+    /// Padded only as far as the model, and no further. This is the one row of
+    /// the component not holding an edge up, so anything after the last thing
+    /// it says is bytes written every keystroke to draw nothing.
+    fn status(&self, columns: usize, glyphs: Glyphs) -> Row {
         let mut row = Row::new().then(self.tone, width::clip(self.mode, columns));
 
-        // A hint that does not fit whole is not drawn at all. Half of the keys
-        // to press is not half as useful as all of them — it is a fragment
-        // beside the one fact this row exists to carry.
+        let said = self.asked(glyphs);
+        let wide = width::columns(&said);
+
+        // Whole or not at all, and only with a gap after the mode. Half a model
+        // name still says which model, but it says it crowded against the one
+        // fact this row must never be read wrong.
+        let at = (wide > 0 && row.columns() + APART + wide <= columns).then(|| columns - wide);
+
+        // What is left for the keys: up to the gap before the model, or to the
+        // width where there is no model. A hint that does not fit whole is not
+        // drawn at all — half of the keys to press is not half as useful as all
+        // of them, it is a fragment beside the facts this row carries.
+        let room = at.map_or(columns, |at| at.saturating_sub(APART));
         let wanted = width::columns(self.hint);
-        let left = columns.saturating_sub(row.columns());
-        if wanted > 0 && wanted < left {
+        if wanted > 0 && wanted < room.saturating_sub(row.columns()) {
             row.push(Slot::Quiet, format!(" {}", self.hint));
         }
 
+        if let Some(at) = at {
+            row.pad(at);
+            row.push(Slot::Quiet, said);
+        }
+
         row
+    }
+
+    /// The model and the rung it is being asked on, as one string.
+    ///
+    /// Joined here rather than by the caller so that the dot comes out of the
+    /// set in force — the same join [`crate::Welcome`] makes, so the fact reads
+    /// the same wherever it is said.
+    fn asked(&self, glyphs: Glyphs) -> String {
+        match self.effort.filter(|_| !self.model.is_empty()) {
+            Some(effort) => format!("{} {} {effort}", self.model, glyphs.dot()),
+            None => self.model.to_owned(),
+        }
     }
 
     /// The rows of the line the box has room for, and where the cursor sits

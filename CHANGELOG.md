@@ -16,6 +16,13 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **What the next turn is asked of moved under the prompt box.** The model and the
+  rung it is asked on sat on the welcome card, which is scrollback the moment the
+  next thing is drawn — so `/model` and `/effort` changed what a session was doing
+  and left the card saying what it used to do. The row under the box is redrawn
+  every keystroke and now carries both at the end away from the mode. The card
+  still names the model the session opened with.
+
 - **`/login` asks how you pay, not which vendor.** Three ways: OpenAI's ChatGPT
   Plus, Pro, Business and Enterprise plans, MoonshotAI's Kimi Code, and a console
   account billed by API usage. The two plans are listed but not connected yet and
