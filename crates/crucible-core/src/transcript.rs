@@ -71,7 +71,7 @@ pub enum StopReason {
     /// Not an ending, which it shares with [`Self::WantsTools`] and with no
     /// other variant here: the answer is unfinished, and what the provider is
     /// waiting for is the transcript back with this much of it already in.
-    /// 0.0.x does not carry on by itself, so what this buys is the user being
+    /// 0.x does not carry on by itself, so what this buys is the user being
     /// told rather than handed a paused answer that reads as a complete one.
     Paused,
     /// The user cancelled.

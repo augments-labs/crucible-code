@@ -177,4 +177,4 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   Scrollback belongs to the terminal, which is what keeps rendering free as a
   transcript grows. A full-screen renderer would move that job into this
   process; what it may not move is the budget, so it would owe a virtualized
-  viewport in exchange. The budget is the rule; inline is how 0.0.x meets it.
+  viewport in exchange. The budget is the rule; inline is how 0.x meets it.

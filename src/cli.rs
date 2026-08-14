@@ -124,8 +124,8 @@ fn names() -> String {
 
 /// The command-line surface.
 ///
-/// Unstable for the whole 0.0.x line: flags may be renamed or removed in any
-/// 0.0.x release without a deprecation period.
+/// Unstable for the whole 0.x line: flags may be renamed or removed in any
+/// 0.x release without a deprecation period.
 ///
 /// `long_about` is spelled out rather than left to this doc comment, which clap
 /// would otherwise print: what a contributor needs to know about this struct is
@@ -165,7 +165,7 @@ started in. Nearer wins; the command line is nearer than all of them.
 Sessions are written one file per session, and --continue picks up the most \
 recent one for this directory.
 
-Flags, session files and config are unstable for the whole 0.0.x line."
+Flags, session files and config are unstable for the whole 0.x line."
 )]
 struct Cli {
     /// Carry on the most recent session for this directory.

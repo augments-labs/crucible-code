@@ -56,7 +56,7 @@ pub fn schema() -> String {
             // Said in the schema itself, because an editor showing this file's
             // documentation is exactly where somebody needs to know it.
             "Settings for the crucible coding agent. Formats are unstable while \
-             the version is 0.0.x: any key here may be renamed or removed in \
+             the version is 0.x: any key here may be renamed or removed in \
              any release, with no deprecation period."
                 .into(),
         );

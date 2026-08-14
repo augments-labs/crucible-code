@@ -204,7 +204,7 @@ in `deny.toml` with the reasoning, so the next person knows it was considered.
 
 ## Scope
 
-The 0.0.x line is deliberately small, and a good idea that is out of scope is
+The 0.x line is deliberately small, and a good idea that is out of scope is
 still out of scope for it. If a pull request adds a capability that is not
 on the current milestone, expect a request to split it out rather than a
 rejection of the idea.

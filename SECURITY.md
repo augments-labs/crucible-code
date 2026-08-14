@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-While the project is on `0.0.x`, only the most recent release is supported.
+While the project is on `0.x`, only the most recent release is supported.
 Fixes ship forward as a new patch release; older tags are not patched.
 
 ## Reporting a vulnerability

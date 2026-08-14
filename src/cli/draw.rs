@@ -278,7 +278,7 @@ fn notice(stop: StopReason) -> Option<&'static str> {
         // in the one way that cannot work.
         StopReason::Filtered => Some("! unfinished: the provider's filter cut the answer short"),
 
-        // The answer is not over, and 0.0.x has no way to resume it. Saying so
+        // The answer is not over, and 0.x has no way to resume it. Saying so
         // is what turns it into something the user can act on — the same prompt
         // again picks up from a transcript that already holds this much.
         StopReason::Paused => Some("! unfinished: the provider paused this turn; ask it to go on"),

@@ -4,7 +4,12 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-08-14
+
+The version line moves from `0.0.x` to `0.1.x`. What it promises is unchanged —
+configuration, session files and the command line may still change in any release
+before 1.0, with no deprecation period — and every sentence that said so now says
+`0.x` rather than naming the series it happened to be written in.
 
 ### Added
 
@@ -1105,7 +1110,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.0.17...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/augments-labs/crucible-code/compare/v0.0.17...v0.1.0
 [0.0.17]: https://github.com/augments-labs/crucible-code/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/augments-labs/crucible-code/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/augments-labs/crucible-code/compare/v0.0.14...v0.0.15

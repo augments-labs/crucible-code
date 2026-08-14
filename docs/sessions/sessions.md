@@ -231,7 +231,7 @@ value is ever written to one of these files.
 
 ## Stability
 
-The session format is unstable for the whole 0.0.x line. `format` may be
-incremented in any 0.0.x release, and when it is, older files are refused rather
+The session format is unstable for the whole 0.x line. `format` may be
+incremented in any 0.x release, and when it is, older files are refused rather
 than migrated — a refusal says a session cannot be continued, which is a better
 answer than continuing a different one.

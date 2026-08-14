@@ -5,8 +5,8 @@ in CI, before the tag exists.
 
 ## Versioning
 
-`0.0.x` while the shape is still moving. Configuration files, session files and
-the command-line surface may change in any `0.0.x` release with no deprecation
+`0.x` while the shape is still moving. Configuration files, session files and
+the command-line surface may change in any `0.x` release with no deprecation
 period, and the changelog says so at the top.
 
 The version lives in exactly one place — `[workspace.package] version` in the
@@ -185,7 +185,7 @@ changelog describe the binary people actually download.
 
    Only one copy is served, so it describes the newest release and not the one
    somebody is running. That is why the schema's own description says the format
-   is unstable for the whole 0.0.x line — an editor is a hint, and the program is
+   is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
 3. Open a fresh `Unreleased` section in the changelog.
 4. If the release is broken, do not delete or move the tag. Fix forward with a

@@ -385,7 +385,7 @@ fn every_notice_is_a_single_line() {
 
 #[test]
 fn a_paused_turn_says_it_is_unfinished_rather_than_ending_quietly() {
-    // The provider is waiting to be asked to carry on and 0.0.x does not, so
+    // The provider is waiting to be asked to carry on and 0.x does not, so
     // with nothing said the user reads a half-answer as the whole of it.
     let paused = notice(StopReason::Paused).expect("an incomplete answer");
 
