@@ -539,7 +539,7 @@ fn a_command_is_answered_here_rather_than_by_the_model() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("/model"), "{written}");
-    assert!(written.contains("which model answers"), "{written}");
+    assert!(written.contains("pick which model answers"), "{written}");
 }
 
 #[test]

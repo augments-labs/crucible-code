@@ -190,7 +190,7 @@ session.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/model` | The model this session is asking, and a few it could be asking |
+| `/model` | Picks the model to ask from now on, or takes the one you name |
 | `/login` | Takes a key for a provider and writes it down |
 | `/logout` | Forgets a key crucible wrote down |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
@@ -198,14 +198,15 @@ session.
 | `/clear` | Forgets what has been said, keeping the session |
 | `/exit` | Ends the session |
 
-`/model` on its own says which model is being asked, and under it a few of the
-ones your provider serves, written as the line that would ask for each. `/model
-<name>` asks that one from the next turn on, and writes it to
-`~/.crucible/config.json` under the provider this run is set up for — so the next
-crucible started anywhere begins with it. A model the list does not carry is
-still named this way: the list is a shortcut past the vendor's documentation, not
-the limit of what the vendor serves. See
-[Providers and models](../providers/providers.md).
+`/model` on its own stands a panel where the prompt box was, holding a few of
+the models your provider serves with the one being asked now named above them.
+Escape leaves it and changes nothing. `/model <name>` skips the panel, and is
+also how to ask for a model the panel does not carry: the list is a shortcut past
+the vendor's documentation, not the limit of what the vendor serves.
+
+Either way the name is written to `~/.crucible/config.json` under the provider
+this run is set up for, so the next crucible started anywhere begins with it.
+See [Providers and models](../providers/providers.md).
 
 `/login <provider>` opens a box for the key — never the command line, which
 would put it in your shell's history, in the process listing and in the
