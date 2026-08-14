@@ -71,7 +71,7 @@ pub(super) fn run<T: Terminal>(
 ) -> Result<(), Fatal> {
     // Nothing holds a key, so there is no provider to write a rung under and no
     // vendor to send it to. The rung would be real and would reach nothing.
-    let Some(provider) = terms.provider else {
+    let Some(provider) = terms.provider.get() else {
         return renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from);
     };
 

@@ -21,6 +21,7 @@
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -33,12 +34,12 @@ use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspa
 use crucible_runner::Runner;
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, TerminalError, pressed};
 
-use super::Fatal;
 use super::draw;
 use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
 use super::unasked;
+use super::{Fatal, Serving};
 use command::Ran;
 use typing::Asked;
 
@@ -61,14 +62,19 @@ const TICK: Duration = Duration::from_millis(16);
 
 /// What every turn in a conversation is taken under.
 ///
-/// All of these are settled before the first prompt and none changes at one:
+/// Almost all of these are settled before the first prompt and never change:
 /// the style comes from the files and the terminal together, and the cancel is
 /// the same one the tools were built with. One value rather than three
 /// parameters carried down through every turn.
 ///
-/// The mode is not among them. It is the one thing about a session that changes
-/// after it has started, so it is read from the engine that holds it every time
-/// it is drawn rather than copied here and kept in step.
+/// Which provider is being asked is the exception, and `/login` is why: a run
+/// that started with no key for anything is one command away from having one,
+/// and what is written down afterwards has to go under the name that key was
+/// for.
+///
+/// The mode is not among them at all. It is the other thing about a session that
+/// changes after it has started, so it is read from the engine that holds it
+/// every time it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
     /// Whether to write colour, and how much of a tool call to show.
     pub(crate) style: Style,
@@ -79,7 +85,11 @@ pub(crate) struct Terms {
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
     /// there is no name to write it under.
-    pub(crate) provider: Option<&'static str>,
+    ///
+    /// A cell because `/login` fills it in. Every command is handed these terms
+    /// by reference, and taking them mutably for the one that changes this
+    /// would put a `&mut` through every arm that does not.
+    pub(crate) provider: Cell<Option<&'static str>>,
     /// The file at home that `/model` writes its answer into. A model is a fact
     /// about who is running crucible rather than about the checkout, so it is
     /// not the file beside `remembering`.
@@ -89,6 +99,12 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
+    /// Sets a provider up the way the launch set this run's up.
+    ///
+    /// `/login` is what calls it, handing back the keys it just wrote — so what
+    /// the session asks from the next turn is what the next run here would ask,
+    /// resolved once and out of the same files.
+    pub(crate) serving: Serving,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -216,7 +232,7 @@ pub(crate) fn converse<T: Terminal>(
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
         if runner.model().is_empty() {
-            let said = unasked(terms.provider);
+            let said = unasked(terms.provider.get());
 
             // Down a pipe there is nobody to type `/model`, so carrying on
             // reads every remaining line and answers none of them — and ends

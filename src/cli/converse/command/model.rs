@@ -52,7 +52,7 @@ pub(super) fn run<T: Terminal>(
     // Nothing holds a key, so there is no provider to write a name under and no
     // vendor to send it to. Answering "chosen" here would be a session that says
     // it is set up and refuses every turn.
-    let Some(provider) = terms.provider else {
+    let Some(provider) = terms.provider.get() else {
         return renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from);
     };
 

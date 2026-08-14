@@ -46,7 +46,7 @@ fn model_down_a_pipe_lists_what_this_provider_can_be_asked_for() {
     // would have asked: under the model in force, the ones a name would reach
     // without anybody going to look up how the vendor spells them.
     let (written, asked) = commanding("/model\n");
-    let serving = plain().provider.expect("these terms name a provider");
+    let serving = plain().provider.get().expect("these terms name a provider");
     let served = crate::cli::PROVIDERS
         .into_iter()
         .find(|one| one.name == serving)

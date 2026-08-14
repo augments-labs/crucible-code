@@ -33,13 +33,23 @@ fn plain() -> Terms {
         // A provider, so `/model` has a name to write its answer under, and a
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.
-        provider: Some("anthropic"),
+        provider: Cell::new(Some("anthropic")),
         choosing: unwritten.join("config.json"),
 
         // The same again: `/login` is driven where a store of its own is
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
+
+        // Unreachable from here and truthful about it: `/login` asks for a key
+        // from a keyboard, and a loop driven off a pipe has none. What a key
+        // given at one sets a session up with is proved where there is a
+        // terminal to type it into.
+        serving: Box::new(|named, _| {
+            Err(Fatal::Provider {
+                named: named.name.into(),
+            })
+        }),
 
         // The same tree, equally absent: a loop these terms drive has no
         // sessions to list and none to pick up. What `/resume` does with ones

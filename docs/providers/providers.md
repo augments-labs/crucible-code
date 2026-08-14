@@ -169,7 +169,14 @@ what a machine you do not want a key on the profile of wants:
 
 `/login <provider>` inside a session is what writes it, into a box that draws a
 dot per character rather than the key; `/login` on its own asks which provider
-first. `/logout <provider>` takes one back out again, and `/logout` on its own
+first. The session is then set up with that provider, from the next turn on and
+without restarting — the same resolution the next run here would do, so the model
+and rung [Which model](#which-model) and [How hard to think](#how-hard-to-think)
+settle
+for it arrive with the key, wherever nothing has already chosen one. A flag or a
+panel that named one is your answer and is left alone.
+
+`/logout <provider>` takes one back out again, and `/logout` on its own
 offers the providers a key is written down for. Editing the file by hand works
 too — crucible only reads what is there, and a name under `keys` that this build
 does not serve is left alone rather than offered for logging out of.

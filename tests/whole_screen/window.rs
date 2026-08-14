@@ -113,7 +113,7 @@ impl Window {
     /// No provider: this is crucible with nothing to answer, which is every
     /// case about what is on screen before a turn.
     pub(crate) fn open(case: &str, columns: u16, rows: u16) -> Self {
-        Self::started(case, columns, rows, None)
+        Self::started(case, columns, rows, None, false)
     }
 
     /// The same, with a provider on this machine that answers what it is asked.
@@ -123,12 +123,22 @@ impl Window {
     /// typing while one runs — and none of it was reachable from here while the
     /// address a request goes to was a constant.
     pub(crate) fn answering(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
-        Self::started(case, columns, rows, Some(vendor))
+        Self::started(case, columns, rows, Some(vendor), true)
+    }
+
+    /// A provider to reach and nothing to sign a request with.
+    ///
+    /// The machine `/login` is for: a vendor is there and configured, and this
+    /// run started without the variable that would have chosen it, so the only
+    /// way to a turn is through the command. Both halves matter — a case with
+    /// no vendor could not tell a key that arrived from one that never did.
+    pub(crate) fn keyless(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        Self::started(case, columns, rows, Some(vendor), false)
     }
 
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
-    fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>) -> Self {
+    fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
         // One flat directory per case, so the last thing a case does can take
         // the whole of what it made with it.
         let scratch = std::env::temp_dir().join(format!(
@@ -148,7 +158,7 @@ impl Window {
         fs::write(home.join("config.json"), document(vendor)).expect("a configuration file");
 
         let (terminal, inside) = pair(columns, rows);
-        let child = start(&scratch, &home, &workspace, vendor.is_some(), inside);
+        let child = start(&scratch, &home, &workspace, keyed, inside);
         let (sender, bytes) = mpsc::channel();
         let reading = terminal
             .try_clone()

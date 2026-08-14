@@ -6,9 +6,12 @@
 //! in the process listing while the command runs, and in the scrollback
 //! afterwards — three places it was never meant to be, none of which this
 //! program could clear. So the two halves are asked for separately: who the key
-//! is for, out loud, and the key itself into a box. What that writes is read by
-//! the next launch, which is where a stored key becomes the provider a run is
-//! set up for.
+//! is for, out loud, and the key itself into a box.
+//!
+//! What that writes is then read straight back, and the session is handed the
+//! provider it buys. A key is given by somebody who wants to type at the screen
+//! in front of them, and the file it lands in is what makes the run after this
+//! one ask the same thing rather than what makes this one ask at all.
 //!
 //! Naming somebody this build has never heard of, a panel that was left, and a
 //! window with no room to stand one in all come out the same way: which names
@@ -17,6 +20,7 @@
 //! off [`PROVIDERS`], so a provider this build serves and cannot be logged in to
 //! is not a state that exists.
 
+use crucible_runner::Runner;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::converse::picking;
@@ -26,11 +30,10 @@ use crate::cli::{Fatal, PROVIDERS, Served};
 use super::{Terms, say};
 
 /// The sentence under the panel's title: what standing there cannot show, which
-/// is that the key is asked for next and that this run is not the one it
-/// changes.
+/// is that the key is asked for next and where it goes.
 const SAID: &str = concat!(
     "Choose the provider to give crucible a key for. It is typed into a box ",
-    "that does not echo it, and written down for the next run to read."
+    "that does not echo it, and asked from the next turn on."
 );
 
 /// Runs it: a key taken for the one named, one chosen off the panel, or where
@@ -43,6 +46,7 @@ const SAID: &str = concat!(
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
+    runner: &mut Runner,
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
@@ -50,15 +54,15 @@ pub(super) fn run<T: Terminal>(
 
     if keys {
         if let Some(named) = named {
-            return given(named, renderer, terms);
+            return given(named, renderer, runner, terms);
         }
 
         // Nobody named and a keyboard to walk a list with: the panel, and what
         // comes off it is the same fact as a name typed on the line.
         if said.is_empty()
-            && let Some(taken) = chosen(renderer, terms)?
+            && let Some(chose) = chosen(renderer, terms)?
         {
-            return given(taken, renderer, terms);
+            return given(chose, renderer, runner, terms);
         }
     }
 
@@ -125,10 +129,11 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Opti
     Ok(PROVIDERS.get(at).copied())
 }
 
-/// Asks for a key and writes it down, saying which of those happened.
+/// Asks for a key, writes it down, and sets this session up with it.
 fn given<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
+    runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let Some(key) = secret::ask(renderer, terms.style, &format!("{} api key", named.name))? else {
@@ -136,22 +141,64 @@ fn given<T: Terminal>(
     };
 
     match terms.logins.keep(named.name, &key) {
-        // What the key changes is which provider the *next* run is set up for.
-        // This one was built against whatever was there when it started, and a
-        // line saying only "logged in" would leave somebody typing at a session
-        // that goes on refusing every turn.
-        Ok(()) => say(
-            renderer,
-            terms,
-            &format!(
-                "logged in to {}; crucible asks it from the next run",
-                named.name
-            ),
-        ),
+        Ok(()) => taken(named, renderer, runner, terms),
 
         // The key is still in hand and the box is gone, so there is nothing to
         // retry from — which is why this says what stopped rather than only
         // that something did.
         Err(problem) => say(renderer, terms, &format!("! {problem}")),
     }
+}
+
+/// Hands this session the provider the key that was just written down buys.
+///
+/// The key is on disk, so this run is now the run the next launch would be, and
+/// reading it back through the same resolution is what makes that true here
+/// instead of only at the next start. What it costs is a second read of a file
+/// written a line ago; what it buys is that somebody who has just logged in can
+/// type at the session in front of them.
+///
+/// A model and a rung come with it, and only where nothing has answered yet: a
+/// flag or a command that named one is somebody's own answer, and a file that
+/// said nothing about this run while there was no key does not get to overrule
+/// it now that there is. Where nothing names a model either, the line says so —
+/// `/model` is the other half of a first minute, and a session that stopped at
+/// "logged in" would leave the reader to find that out from the next refusal.
+fn taken<T: Terminal>(
+    named: Served,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let set = match (terms.serving)(named, &terms.logins.read()) {
+        Ok(set) => set,
+
+        // Written and unusable, which is exactly what the next run would meet.
+        // Said now rather than left for it: a session that looked logged in and
+        // refused every turn is the state this whole command exists to end.
+        Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+    };
+
+    runner.serve(set.provider);
+    terms.provider.set(Some(named.name));
+
+    if runner.model().is_empty()
+        && let Some(model) = set.model
+    {
+        runner.ask(&model);
+    }
+
+    if runner.effort().is_none()
+        && let Some(effort) = set.effort
+    {
+        runner.think(effort);
+    }
+
+    let said = if runner.model().is_empty() {
+        format!("logged in to {}; choose a model with /model", named.name)
+    } else {
+        format!("logged in to {}, asking {}", named.name, runner.model())
+    };
+
+    say(renderer, terms, &said)
 }
