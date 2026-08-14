@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-14
+
 ### Added
 
 - **`/model` names a few models you could be asking.** It said which one was in
@@ -1133,7 +1135,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/augments-labs/crucible-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/augments-labs/crucible-code/compare/v0.0.17...v0.1.0
 [0.0.17]: https://github.com/augments-labs/crucible-code/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/augments-labs/crucible-code/compare/v0.0.15...v0.0.16
