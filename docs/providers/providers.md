@@ -120,6 +120,13 @@ Where a rung was chosen, the welcome says so beside the model. Where none was,
 nothing is drawn in its place: the rung in force is then the vendor's, and
 crucible is never told which it picked.
 
+Mid-session, `/effort` stands a panel over the five rungs and `/effort <rung>`
+takes one outright. Either way it applies from the next turn on and is written to
+`~/.crucible/config.json` beside the model, so the next run here asks for the
+same. There is no way back to asking for nothing from inside a session — a rung
+you can see on the screen cannot be un-seen by being handed a default this
+program is never told the name of. Remove the key from the file for that.
+
 ## Keys
 
 A key is read at startup and goes no further than the header it signs a request
