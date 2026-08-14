@@ -168,6 +168,17 @@
               ],
               "type": "string"
             },
+            "effort": {
+              "description": "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
             "model": {
               "description": "The model to ask when --model does not name one",
               "type": "string"

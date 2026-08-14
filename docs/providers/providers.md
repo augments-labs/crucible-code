@@ -86,6 +86,40 @@ ones it has:
 crucible: no provider called gemini; this build has anthropic, moonshot, openai
 ```
 
+## How hard to think
+
+Models that reason before answering take a rung saying how much of that to do.
+crucible's rungs are `low`, `medium`, `high`, `xhigh` and `max`, and they mean
+the same thing whichever provider a session is on:
+
+1. `--effort`, where it names one.
+2. `providers.<name>.effort` in your
+   [configuration](../configuration/configuration.md), for the provider being
+   asked.
+3. Nothing. crucible asks for no rung, and the vendor's own default for that
+   model is what applies.
+
+```bash
+crucible --effort max
+```
+
+The bottom rung is not a default in disguise. Which rungs a model serves — and
+whether it takes one at all — is decided by its vendor and differs between
+models of the same vendor, so a rung crucible chose on your behalf would reach
+models that refuse the field outright. Naming one for a model that does not take
+it is refused by the vendor rather than dropped here, the same bargain a model
+name is already on.
+
+A word that is not a rung is refused before anything is drawn:
+
+```
+crucible: no effort called maximum; crucible takes low, medium, high, xhigh, max
+```
+
+Where a rung was chosen, the welcome says so beside the model. Where none was,
+nothing is drawn in its place: the rung in force is then the vendor's, and
+crucible is never told which it picked.
+
 ## Keys
 
 A key is read at startup and goes no further than the header it signs a request

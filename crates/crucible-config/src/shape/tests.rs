@@ -6,6 +6,7 @@
 //! to every editor that resolves the schema. So each one is put through the
 //! same read a real document gets, from the same entry point.
 
+use crucible_core::Effort;
 use serde_json::{Map, Value, json};
 
 use crate::document::{Document, Origin};
@@ -107,6 +108,25 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
             path.join(".")
         );
     }
+}
+
+#[test]
+fn every_effort_a_document_may_write_is_a_rung_the_program_holds() {
+    // The one `Choice` in this file whose meaning belongs to another crate, so
+    // the two lists it spans cannot be tested where the others are. Both
+    // directions matter: a word here that no longer parses is a key the schema
+    // completes and the program drops on the floor, and a rung added to the
+    // ladder and not to this list is one no configuration file can reach.
+    for name in super::EFFORT {
+        let rung: Effort = name.parse().unwrap_or_else(|_| panic!("no rung: {name}"));
+        assert_eq!(rung.as_str(), *name);
+    }
+
+    assert_eq!(
+        super::EFFORT.len(),
+        Effort::LADDER.len(),
+        "a rung the ladder holds that no document may write"
+    );
 }
 
 #[test]

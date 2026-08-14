@@ -7,7 +7,7 @@
 
 use std::time::SystemTime;
 
-use crucible_core::Workspace;
+use crucible_core::{Effort, Workspace};
 use crucible_runner::Recorded;
 use crucible_tui::{Notice, Recent, Renderer, Terminal, TerminalError, Welcome};
 
@@ -29,6 +29,11 @@ const UNCHOSEN: &str = "no model selected";
 pub(crate) struct Opening<'a> {
     /// The model this session will ask, or `None` where nothing chose one.
     pub(crate) model: Option<&'a str>,
+    /// How hard it is being asked to think, where the flag or a file said.
+    /// `None` is a session running on the vendor's own default, which is the
+    /// one thing this screen cannot state: it is per model and per vendor, and
+    /// naming a rung crucible did not ask for would be a guess drawn as a fact.
+    pub(crate) effort: Option<Effort>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
@@ -91,10 +96,11 @@ pub(crate) fn opening<T: Terminal>(
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
         model: opening.model.unwrap_or(UNCHOSEN),
-        // Nothing crucible asks for yet. A line saying how hard the model is
-        // being asked to think, drawn where no such request is being made,
-        // would be the one thing on this screen that is not true.
-        effort: None,
+        // Only where crucible is going to ask for one. Drawn under a session
+        // that says nothing about effort, a rung would be the one thing on this
+        // screen that is not true — the vendor picks it, per model, and this
+        // program never learns which it picked.
+        effort: opening.effort.map(Effort::as_str),
         root: &root,
         sessions: &recent,
     };
@@ -172,6 +178,7 @@ mod tests {
             terminal,
             &Opening {
                 model: Some("claude-sonnet-5"),
+                effort: None,
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
@@ -312,6 +319,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                effort: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
@@ -324,6 +332,35 @@ mod tests {
         assert!(screen.contains("No models available"), "{screen}");
         assert!(screen.contains("/model"), "{screen}");
         assert!(screen.contains(UNCHOSEN), "{screen}");
+    }
+
+    #[test]
+    fn a_session_told_how_hard_to_think_says_so_beside_the_model() {
+        // Beside the model because that is what it is about: the same rung is
+        // a different amount of thinking on a different model, and the two read
+        // as one fact about this session.
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                model: Some("claude-sonnet-5"),
+                effort: Some(Effort::Xhigh),
+                unasked: NOTHING_TO_ASK,
+                workspace: &workspace,
+                sessions: &[],
+                trouble: None,
+                update: None,
+                style: Style::plain(),
+            },
+        );
+
+        assert!(screen.contains("xhigh effort"), "{screen}");
+
+        // And nothing at all where nobody said. The vendor picks a rung per
+        // model and never tells this program which, so any word drawn here for
+        // such a session would be one crucible made up.
+        assert!(!opened(80, false).contains("effort"), "{screen}");
     }
 
     #[test]
@@ -348,6 +385,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                effort: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],

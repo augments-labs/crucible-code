@@ -263,6 +263,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     let Err(problem) = assemble(&Startup {
         provider: Some(serving("openai")),
         model: Some("gpt-5.6-terra"),
+        effort: None,
         resuming: false,
         mode: Mode::Ask,
         settings: &Settings::default(),
@@ -292,6 +293,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     let runner = assemble(&Startup {
         provider: None,
         model: None,
+        effort: None,
         resuming: false,
         mode: Mode::Ask,
         settings: &Settings::default(),
@@ -304,4 +306,20 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     .expect("a session with nothing set up still starts");
 
     assert_eq!(runner.model(), "", "an unnamed model is the empty name");
+}
+
+#[test]
+fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
+    // The one thing this function does with it: a rung that stopped here would
+    // be shown on the welcome and asked for nowhere.
+    let sample = Sample::new("effort-model");
+    let workspace = sample.workspace();
+
+    let asking = model(Some("claude-opus-5"), Some(Effort::Xhigh), &workspace);
+
+    assert_eq!(asking.effort, Some(Effort::Xhigh));
+
+    // And nothing where nothing said, which is the field left off rather than
+    // a rung this program chose on the vendor's behalf.
+    assert_eq!(model(Some("claude-opus-5"), None, &workspace).effort, None);
 }

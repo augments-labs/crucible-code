@@ -92,9 +92,15 @@ nothing chooses between them, so qualify the name or set
 configure one, or run `/model` in the session and take one off the panel, which
 writes the answer down.
 
+`--effort` says how hard to think — `low`, `medium`, `high`, `xhigh` or `max` —
+on every turn of the session, and `providers.<name>.effort` says it once. Left
+off, crucible asks for no rung and the vendor's own default for that model is
+what applies.
+
 ```bash
 crucible --model openai/gpt-5.6-terra   # reads OPENAI_API_KEY
 crucible --model moonshot/kimi-k3       # reads MOONSHOT_API_KEY
+crucible --effort max                   # think as hard as this model does
 crucible --continue                     # carry on this directory's last session
 ```
 
