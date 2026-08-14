@@ -148,19 +148,19 @@ fn taken<T: Terminal>(
     runner.think(effort);
 
     let said = match remember::thinking(&terms.choosing, provider, effort) {
-        Ok(()) => format!(
-            "{} effort, written to {}",
-            effort.as_str(),
-            terms.choosing.display()
-        ),
+        // Where it went is not news. It is the same file every time, chosen by
+        // crucible rather than by the reader, and naming it on every rung is a
+        // session reading its own bookkeeping out loud. What the reader asked
+        // for is the rung, so the rung is the answer.
+        Ok(()) => format!("{} effort", effort.as_str()),
         Err(problem) => {
             renderer.commit(&format!("! {problem}"))?;
             format!("{} effort, this session only", effort.as_str())
         }
     };
 
-    // Wrapped rather than clipped: a path is most of this row and half of one
-    // says nothing about where to look.
+    // Wrapped rather than clipped: short as this row is, a narrow enough window
+    // would still cut it, and half of it says nothing about what was asked for.
     let rows: Vec<Row> = fold(&said, renderer.columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))

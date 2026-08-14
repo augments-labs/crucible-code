@@ -59,10 +59,16 @@ fn taller_than_the_window() -> String {
 }
 
 #[test]
-fn a_session_with_no_credential_draws_the_welcome_the_warning_and_the_box() {
+fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
     // Nothing typed: this is the whole of what crucible puts on screen before
     // it asks for anything, and the first frame is the one with no committed
     // row above it to rewind over.
+    //
+    // It is also the screen a first run meets, and the reason this case is the
+    // gate on that: nothing holds a key here, so the warning is the one naming
+    // both `/login` and `/model` — and what stands under it is the prompt box,
+    // not a panel. A run that opened on a panel instead would put the reader in
+    // front of a question before it had said where they were.
     let window = Window::open("welcome", 80, 24);
 
     insta::assert_snapshot!(window.picture());
@@ -149,12 +155,50 @@ fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     // does not echo it, and the next thing typed is answered. Nothing restarts
     // in between, which is the whole of what this case is here to prove — and
     // only a real run can, since what a key has to reach is a socket.
+    //
+    // Named on the line, which is what skips both panels: this is the way in for
+    // somebody who already knows whose key they hold.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Window::keyless("logged-in", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
     window.types("not-a-key-and-nothing-reads-it\r");
     window.types("what is 2+2\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn the_two_panels_of_login_reach_a_turn_without_a_provider_being_named() {
+    // `/login` with nothing after it, walked the whole way: how crucible is paid
+    // for, then whose console the key is from, then the key. Two panels because
+    // they are two questions, and this is the case that proves the second one is
+    // reached and that what comes off the pair signs the turn after it.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("login-walked", 80, 24, &vendor);
+
+    window.types("/login\r");
+    // Down twice to the console account, past the two plans; Enter opens the
+    // panel asking whose console, and Enter again takes the one under the mark.
+    window.types("\x1b[B\x1b[B\r");
+    window.types("\r");
+    window.types("not-a-key-and-nothing-reads-it\r");
+    window.types("what is 2+2\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_plan_crucible_cannot_sign_with_yet_says_so_rather_than_asking_for_a_key() {
+    // The honest half of a panel that draws more than it can do. A plan row is
+    // there so somebody holding one learns crucible knows about it — and the
+    // moment they choose it, it has to say that it is unbuilt rather than open
+    // a key box, which is the thing a plan holder has no key for.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("unbuilt", 80, 24, &vendor);
+
+    window.types("/login\r");
+    window.types("\r");
 
     insta::assert_snapshot!(window.picture());
 }

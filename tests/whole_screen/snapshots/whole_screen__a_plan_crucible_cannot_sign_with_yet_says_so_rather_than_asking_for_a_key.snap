@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 11,4 scrolled 12
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
+|                                                                                |
+|› /login                                                                        |
+|                                                                                |
+|OpenAI plans are not connected yet; a console key is the way in today           |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
