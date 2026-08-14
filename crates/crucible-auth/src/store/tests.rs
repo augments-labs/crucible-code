@@ -266,3 +266,34 @@ fn mode_of(path: &Path) -> u32 {
         .mode()
         & 0o777
 }
+
+#[test]
+fn a_second_crucible_writing_at_the_same_time_loses_nobody_a_login() {
+    let scratch = Scratch::new("concurrent");
+    let home = scratch.home().to_path_buf();
+
+    let writers: Vec<_> = ["openai", "anthropic", "moonshot", "zed", "acme"]
+        .into_iter()
+        .map(|provider| {
+            let home = home.clone();
+            std::thread::spawn(move || {
+                Store::in_home(&home)
+                    .keep(provider, SECRET)
+                    .expect("a writable home");
+            })
+        })
+        .collect();
+
+    for writer in writers {
+        writer.join().expect("no writer panicked");
+    }
+
+    let store = Store::in_home(&home);
+    let keys = store.read();
+    let listed: Vec<_> = keys.providers().collect();
+    assert_eq!(
+        listed,
+        ["acme", "anthropic", "moonshot", "openai", "zed"],
+        "a write that read the file before another finished would have dropped one"
+    );
+}

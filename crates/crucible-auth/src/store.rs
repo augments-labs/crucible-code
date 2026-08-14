@@ -9,11 +9,14 @@
 //! absent, truncated, half-written, written by a version that does not exist
 //! yet — resolves to a list of keys and at most one sentence, never to a stop.
 //!
-//! Writing reads what is there and renames a sibling temporary over the target,
-//! which is what stops a full disk leaving half a file where a whole one was.
+//! Writing is the same three steps every time: take the lock, read what is
+//! there, rename a sibling temporary over the target. The lock is what stops
+//! two crucibles logging in at once from each writing a file that has forgotten
+//! the other's provider; the rename is what stops a full disk leaving half a
+//! file where a whole one was.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -24,10 +27,22 @@ use crate::error::AuthError;
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
 
-/// The temporary the write renames from — a sibling of the file itself, or
-/// `rename` is a cross-device copy that fails with `EXDEV` on the machines
-/// where it matters.
+/// The lock beside it, and the temporary the write renames from.
+///
+/// Both are siblings of the file itself. The temporary has to be, or `rename`
+/// is a cross-device copy that is not atomic and fails with `EXDEV` on the
+/// machines where it matters — which is the failure "write it to the system
+/// temporary directory" has every time.
+const LOCK: &str = "auth.lock";
 const PARTIAL: &str = "auth.json.new";
+
+/// How long to wait for another crucible to finish writing.
+///
+/// Short: the thing being waited for is a few hundred bytes and a rename. A
+/// wait that could outlast a user's patience is worse than a sentence telling
+/// them to try again, which is why this gives up rather than blocking.
+const ATTEMPTS: u32 = 50;
+const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
 ///
@@ -98,7 +113,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// [`AuthError`] when the store cannot be read back or cannot be written.
+    /// [`AuthError`] when the store cannot be read back, when another crucible
+    /// holds the lock, or when the file cannot be written.
     pub fn keep(&self, provider: &str, key: &str) -> Result<(), AuthError> {
         self.change(|keys| {
             keys.insert(provider.to_owned(), key.to_owned());
@@ -131,6 +147,7 @@ impl Store {
         change: impl FnOnce(&mut BTreeMap<String, String>) -> bool,
     ) -> Result<(), AuthError> {
         self.directory()?;
+        let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
 
         let mut keys = match fs::read_to_string(&self.path) {
             Ok(text) => parse(&text).map_err(|_| AuthError::Unreadable {
@@ -335,6 +352,50 @@ fn tighten(path: &Path) -> Option<String> {
 #[cfg(not(unix))]
 fn tighten(_path: &Path) -> Option<String> {
     None
+}
+
+/// The lock two crucibles logging in at once contend for.
+///
+/// Advisory, on a file of its own beside the store: locking the store itself
+/// would not survive the rename that replaces it. Released by `Drop`, so an
+/// error on any line between taking it and renaming leaves nothing held.
+struct Lock {
+    /// Held open because closing it releases the lock; read only to unlock.
+    file: File,
+}
+
+impl Lock {
+    /// Takes it, waiting briefly for whoever has it.
+    ///
+    /// `store` is only for the error: a sentence naming a lock file the user
+    /// never created explains nothing, and the thing they are trying to write
+    /// is the store.
+    fn take(lock: &Path, store: &Path) -> Result<Self, AuthError> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock)
+            .map_err(AuthError::at(lock))?;
+
+        for _ in 0..ATTEMPTS {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { file }),
+                Err(fs::TryLockError::WouldBlock) => std::thread::sleep(PAUSE),
+                Err(fs::TryLockError::Error(trouble)) => return Err(AuthError::at(lock)(trouble)),
+            }
+        }
+
+        Err(AuthError::Busy {
+            path: store.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 #[cfg(test)]

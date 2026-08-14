@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 /// Why a key could not be written down.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
-    /// The directory or the file itself would not open.
+    /// The directory, the lock or the file itself would not open.
     ///
     /// Names the path, because the remedy is nearly always about that path —
     /// a read-only home, a full disk, a directory somebody else owns.
@@ -19,6 +19,17 @@ pub enum AuthError {
         path: PathBuf,
         /// What the operating system said.
         source: std::io::Error,
+    },
+
+    /// Another crucible is writing to the store and did not finish in time.
+    ///
+    /// Waiting is what the lock is for; giving up is what stops two logins
+    /// racing from silently dropping one of them. The remedy is to try again,
+    /// which is why this says so rather than naming a lock file nobody set up.
+    #[error("another crucible is writing to {path} — try again")]
+    Busy {
+        /// The store, not the lock file beside it.
+        path: PathBuf,
     },
 
     /// The store on disk could not be parsed, so writing would destroy it.
