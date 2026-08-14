@@ -2,12 +2,101 @@
 
 use std::cell::RefCell;
 
+use crucible_core::Outgoing;
+
 use super::*;
-use crate::cli::sample::Sample;
+use crate::cli::sample::{Sample, WRITTEN};
 
 /// The entry the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
     served(named).expect("a provider this build has")
+}
+
+/// What gets built on a machine nobody has logged in from. The store is the
+/// other half of the same question and the tests about it call [`provider`]
+/// themselves; every test about a variable is asking this one.
+fn built(
+    serving: Option<Served>,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Provider>, Fatal> {
+    provider(serving, settings, from, &Keys::default())
+}
+
+/// What a credential writes into the header it signs with.
+///
+/// The one place a key is legitimately read back, and the only way to tell two
+/// of them apart: the value is applied to a request and never returned, which
+/// is the property, so the request is where an assertion about *which* key was
+/// used has to look.
+fn signing(credential: &dyn Credential) -> String {
+    let mut request = Outgoing::new();
+    credential
+        .authorize(&mut request)
+        .expect("a key is applied rather than renewed");
+
+    request
+        .headers()
+        .iter()
+        .find(|(name, _)| &**name == "authorization")
+        .map(|(_, value)| value.to_string())
+        .expect("the header it was built for")
+}
+
+#[test]
+fn a_key_written_down_signs_the_request_where_no_variable_holds_one() {
+    // What `/login` is for: given once, and the shell says nothing about it
+    // ever again.
+    let sample = Sample::new("key-stored");
+    let keys = sample.stored("openai");
+
+    let signed = key(
+        "OPENAI_API_KEY",
+        Header::bearer(),
+        &|_| None,
+        keys.get("openai"),
+    )
+    .expect("a key written down");
+
+    assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
+}
+
+#[test]
+fn a_variable_signs_the_request_over_the_key_written_down_for_it() {
+    // A second account, a work key, or one that was rotated an hour ago. What
+    // is exported is chosen for this run and lasts as long as the shell it was
+    // exported in, so it is the one that wins over what is on the disk.
+    let sample = Sample::new("key-exported-over-stored");
+    let keys = sample.stored("openai");
+
+    let signed = key(
+        "OPENAI_API_KEY",
+        Header::bearer(),
+        &|_| Some("an-exported-key".to_owned()),
+        keys.get("openai"),
+    )
+    .expect("a key exported");
+
+    assert_eq!(signing(&*signed), "Bearer an-exported-key");
+}
+
+#[test]
+fn a_variable_exported_blank_leaves_the_key_written_down_standing() {
+    // `OPENAI_API_KEY=` turns off the variable, which is all it can say
+    // anything about. Somebody who ran `/login` said so once and for every run
+    // after it, and their shell profile is not where they unsay it.
+    let sample = Sample::new("key-blanked");
+    let keys = sample.stored("openai");
+
+    let signed = key(
+        "OPENAI_API_KEY",
+        Header::bearer(),
+        &|_| Some(String::new()),
+        keys.get("openai"),
+    )
+    .expect("a key written down");
+
+    assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
 }
 
 #[test]
@@ -23,9 +112,9 @@ fn each_provider_reads_the_key_belonging_to_it() {
     let nothing = Settings::default();
 
     for one in PROVIDERS {
-        let built = provider(Some(serving(one.name)), &nothing, &from).expect("a provider");
+        let made = built(Some(serving(one.name)), &nothing, &from).expect("a provider");
 
-        assert_eq!(built.name(), one.name);
+        assert_eq!(made.name(), one.name);
     }
 
     assert_eq!(read.into_inner(), PROVIDERS.map(|one| one.key));
@@ -40,7 +129,7 @@ fn a_provider_reads_the_variable_its_configuration_names() {
         sample.settings(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
 
     let read = RefCell::new(Vec::new());
-    provider(Some(serving("anthropic")), &settings, &|name: &str| {
+    built(Some(serving("anthropic")), &settings, &|name: &str| {
         read.borrow_mut().push(name.to_owned());
         Some("a-key".to_owned())
     })
@@ -61,12 +150,12 @@ fn a_provider_is_built_at_the_address_its_configuration_names() {
     let settings =
         sample.local(r#"{"providers": {"anthropic": {"baseUrl": "https://gateway.example/v1"}}}"#);
 
-    let built = provider(Some(serving("anthropic")), &settings, &|_| {
+    let made = built(Some(serving("anthropic")), &settings, &|_| {
         Some("a-key".to_owned())
     })
     .expect("a provider pointed at a gateway");
 
-    assert_eq!(built.name(), "anthropic");
+    assert_eq!(made.name(), "anthropic");
 }
 
 #[test]
@@ -78,7 +167,7 @@ fn an_address_that_would_put_the_key_on_the_wire_stops_the_run() {
     let settings =
         sample.local(r#"{"providers": {"anthropic": {"baseUrl": "http://gateway.example"}}}"#);
 
-    let problem = provider(Some(serving("anthropic")), &settings, &|_| {
+    let problem = built(Some(serving("anthropic")), &settings, &|_| {
         Some("a-key".to_owned())
     })
     .expect_err("plain http to somewhere else to be refused");
@@ -98,7 +187,7 @@ fn a_missing_key_names_the_variable_to_set_and_not_its_value() {
     // allowed to reach a terminal. Reachable because the flag can name a
     // provider outright — a provider chosen from the keys held has one by
     // construction.
-    let problem = provider(Some(serving("openai")), &Settings::default(), &|_| None)
+    let problem = built(Some(serving("openai")), &Settings::default(), &|_| None)
         .expect_err("no key was set");
 
     assert_eq!(problem.to_string(), "OPENAI_API_KEY is not set");
@@ -110,7 +199,7 @@ fn a_machine_with_no_key_at_all_gets_the_provider_that_answers_nothing() {
     // ending the process takes away the screen that is done on.
     let read = RefCell::new(Vec::new());
 
-    let nowhere = provider(None, &Settings::default(), &|name: &str| {
+    let nowhere = built(None, &Settings::default(), &|name: &str| {
         read.borrow_mut().push(name.to_owned());
         Some("a-key".to_owned())
     })
@@ -133,7 +222,7 @@ fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
         key: "OLLAMA_API_KEY",
     };
 
-    let problem = provider(Some(unarmed), &Settings::default(), &|_| {
+    let problem = built(Some(unarmed), &Settings::default(), &|_| {
         Some("a-key".to_owned())
     })
     .expect_err("this build has no such provider");
@@ -148,7 +237,7 @@ fn every_name_the_check_accepts_is_one_an_arm_can_build() {
     // announced its model and then said the provider does not exist.
     for one in PROVIDERS {
         served(one.name).expect("a check that agrees with the arm");
-        provider(Some(one), &Settings::default(), &|_| {
+        built(Some(one), &Settings::default(), &|_| {
             Some("a-key".to_owned())
         })
         .expect("an arm for every name the check accepts");
@@ -179,6 +268,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
+        stored: &Keys::default(),
     }) else {
         panic!("a startup with no key was accepted");
     };
@@ -207,6 +297,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
+        stored: &Keys::default(),
     })
     .expect("a session with nothing set up still starts");
 

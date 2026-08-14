@@ -81,8 +81,8 @@ crucible: no provider called gemini; this build has anthropic, moonshot, openai
 
 ## Keys
 
-A key is read from the environment at startup and never written anywhere. Which
-variable is read follows from the provider:
+A key is read at startup and goes no further than the header it signs a request
+with. Which variable is read follows from the provider:
 
 | Provider | Variable | Sent as |
 | --- | --- | --- |
@@ -107,6 +107,33 @@ the other: `ANTHROPIC_API_KEY` is then not read at all.
 A key never appears in a log line, an error message, a session file, or
 anything crucible prints. If you see one, that is a bug worth
 [reporting privately](../../SECURITY.md).
+
+### A key written down instead of exported
+
+The other place crucible looks is `~/.crucible/auth.json`, a file it creates
+readable by nobody else and tightens to that if it finds it otherwise. A key
+kept there is set up once and needs nothing from your shell afterwards, which is
+what a machine you do not want a key on the profile of wants:
+
+```json
+{ "version": 1, "keys": { "openai": "sk-…" } }
+```
+
+The names under `keys` are provider names, the same ones `--model openai/…`
+takes. `version` says which crucible wrote the file, so one from a later version
+is left alone rather than guessed at.
+
+**The variable wins.** A key exported into a run is the one you chose for that
+run — a second account, a work key, one rotated an hour ago — and it lasts as
+long as the shell it was exported in. What is written down is the standing
+answer underneath it, so `OPENAI_API_KEY=` turns off the *variable* and leaves
+the file's key doing its job. A provider holding a key both ways is still one
+provider, not two.
+
+A file crucible cannot read is a sentence under the welcome — `! auth.json could
+not be read: …` — and not the end of the run: nobody is logged in for that run,
+which leaves the environment, and ending it would take away the session the file
+gets fixed from.
 
 ## Authentication is a separate axis
 

@@ -11,6 +11,7 @@
 
 use std::path::Path;
 
+use crucible_auth::Keys;
 use crucible_config::Settings;
 use crucible_core::{ApiKey, Cancel, Credential, Header, HeaderKey, Mode, Provider, Workspace};
 use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
@@ -73,6 +74,9 @@ pub(super) struct Startup<'a> {
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
     pub(super) from: &'a dyn Fn(&str) -> Option<String>,
+    /// What `/login` wrote down. Read once by the caller, because the same
+    /// answer is what decided which provider this run is for.
+    pub(super) stored: &'a Keys,
 }
 
 /// The runner the loop drives, built from what the startup resolved.
@@ -89,7 +93,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // session writes a file, and one written for a run that never happened is
     // then the newest for this directory — which is what `--continue` would
     // offer instead of the last real session.
-    let provider = provider(startup.provider, settings, startup.from)?;
+    let provider = provider(startup.provider, settings, startup.from, startup.stored)?;
 
     let (session, earlier) = if startup.resuming {
         let (session, transcript) = Session::resume(sessions, workspace)?;
@@ -152,10 +156,13 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// variables and one of them is not the vendor's usual name. Failing that it is
 /// the vendor's usual name, written beside the provider in `PROVIDERS`. The
 /// *value* stays where it always was: read once, here, and applied to a header.
+///
+/// `stored` is the other place a key can be, and the one `/login` writes to.
 fn provider(
     serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
+    stored: &Keys,
 ) -> Result<Box<dyn Provider>, Fatal> {
     let Some(serving) = serving else {
         return Ok(Box::new(Unavailable::new(NOTHING_TO_ASK)));
@@ -163,6 +170,7 @@ fn provider(
 
     let named = serving.name;
     let variable = settings.api_key_env(named).unwrap_or(serving.key);
+    let written = stored.get(named);
     let sending = sending_to(settings, named)?;
 
     match named {
@@ -170,7 +178,7 @@ fn provider(
         // Authentication is a separate axis, and this is what that buys.
         "anthropic" => Ok(Box::new(Anthropic::at(
             sending.unwrap_or(Anthropic::VENDOR),
-            key(variable, Header::bare("x-api-key"), from)?,
+            key(variable, Header::bare("x-api-key"), from, written)?,
             Box::new(Https::new()),
         ))),
 
@@ -182,13 +190,13 @@ fn provider(
         // the other address, and that is what the help text and the docs say.
         "moonshot" => Ok(Box::new(Moonshot::at(
             sending.unwrap_or(Moonshot::CODING),
-            key(variable, Header::bearer(), from)?,
+            key(variable, Header::bearer(), from, written)?,
             Box::new(Https::new()),
         ))),
 
         "openai" => Ok(Box::new(OpenAi::at(
             sending.unwrap_or(OpenAi::VENDOR),
-            key(variable, Header::bearer(), from)?,
+            key(variable, Header::bearer(), from, written)?,
             Box::new(Https::new()),
         ))),
 
@@ -217,16 +225,31 @@ fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fata
         .transpose()
 }
 
-/// A key from the environment, ready to sign a request with.
+/// A key, ready to sign a request with.
 ///
 /// The variable's name is what is configured; the value is read once, here, and
 /// goes no further than the header it is applied to.
+///
+/// The variable first and what `/login` wrote down second. A key exported into
+/// this run is the one whoever started it chose for this run — it is how a
+/// second account, a work key, or a key that has just been rotated is used
+/// without touching what is on the disk, and it lasts exactly as long as the
+/// shell it was exported in. `written` is the standing answer underneath it.
 fn key(
     variable: &str,
     header: Header,
     from: &dyn Fn(&str) -> Option<String>,
+    written: Option<ApiKey>,
 ) -> Result<Box<dyn Credential>, Fatal> {
-    let key = ApiKey::from_lookup(variable, from)?;
+    let key = match ApiKey::from_lookup(variable, from) {
+        Ok(exported) => exported,
+
+        // Unset, or set to blank — which is how a shell turns a provider off.
+        // Off for the variable rather than for crucible: somebody who ran
+        // `/login` said so once and for every run after it, and a blank export
+        // is what the machine has to say about the variable it is blanking.
+        Err(absent) => written.ok_or(absent)?,
+    };
 
     Ok(Box::new(HeaderKey::new(key, header)))
 }
