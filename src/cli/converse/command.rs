@@ -41,7 +41,7 @@ pub(super) enum Command {
     Help,
     /// Which model answers.
     Model,
-    /// Which providers there are, and where each reads a key from.
+    /// A key for a provider, given to a box that does not echo it.
     Login,
     /// The permission mode: the one in force, or the one named.
     Mode,
@@ -110,7 +110,7 @@ impl Command {
         match self {
             Self::Help => "what these are",
             Self::Model => "which model answers, or set one",
-            Self::Login => "where a provider reads its key from",
+            Self::Login => "give crucible a key for a provider",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -179,11 +179,15 @@ pub(super) fn filtering(line: &str, glyphs: Glyphs) -> Vec<Listed<'static>> {
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
+///
+/// `keys` is whether there is a keyboard, which `/login` needs before it opens
+/// a box nobody down a pipe could type into.
 pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
+    keys: bool,
 ) -> Result<Ran, Fatal> {
     // Nothing is drawn on the way out. The loop is about to end and the shell's
     // own prompt is the next thing on the screen; a row saying goodbye is a row
@@ -197,7 +201,7 @@ pub(super) fn run<T: Terminal>(
     // block's neighbours — the line that asked, the box below — are rows the
     // eye is already resting on.
     renderer.commit("")?;
-    answer(wanted, renderer, runner, terms)?;
+    answer(wanted, renderer, runner, terms, keys)?;
     renderer.commit("")?;
 
     Ok(Ran::Again)
@@ -209,6 +213,7 @@ fn answer<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
+    keys: bool,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let style = terms.style;
@@ -236,7 +241,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Login,
             rest,
-        } => login::run(rest, renderer, terms)?,
+        } => login::run(rest, renderer, terms, keys)?,
 
         Wanted::Known {
             command: Command::Mode,
