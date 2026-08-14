@@ -270,6 +270,7 @@ fn measure() -> Result<f64, ProbeError> {
             name: "bench".into(),
             max_tokens: 8192,
             system: Some("Measured, not asked.".into()),
+            effort: None,
         },
         Session::start(&scratch.logs(), &workspace)?,
     );

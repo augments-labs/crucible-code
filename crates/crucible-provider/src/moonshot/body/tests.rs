@@ -1,4 +1,4 @@
-use crucible_core::{ToolArgs, ToolCall, ToolId, ToolOutput, Transcript};
+use crucible_core::{Effort, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript};
 
 use super::*;
 
@@ -12,6 +12,7 @@ fn request(transcript: Transcript) -> Request {
         tools: Vec::new(),
         max_tokens: 1024,
         system: None,
+        effort: None,
     }
 }
 
@@ -40,6 +41,26 @@ fn a_request_streams_and_names_its_model() {
         at(&body, "/messages/0"),
         &json!({"role": "user", "content": "hello"})
     );
+}
+
+#[test]
+fn a_session_nobody_told_how_hard_to_think_says_nothing_about_it() {
+    // Kimi's own default is what a model gets otherwise, and this vendor serves
+    // three of the five rungs — so a request nobody had an opinion about is one
+    // that cannot be refused for naming a rung this model has never heard of.
+    let body = build(&request(said("hello")));
+
+    assert_eq!(at(&body, "/reasoning_effort"), &NOTHING);
+}
+
+#[test]
+fn an_effort_somebody_chose_reaches_the_model_at_the_top_of_the_body() {
+    // Not nested. This wire is the older chat-completions shape, where the
+    // field sits beside `model` rather than under an object of its own.
+    let mut asking = request(said("hello"));
+    asking.effort = Some(Effort::Max);
+
+    assert_eq!(at(&build(&asking), "/reasoning_effort"), &json!("max"));
 }
 
 #[test]

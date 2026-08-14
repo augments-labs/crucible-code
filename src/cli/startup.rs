@@ -298,6 +298,7 @@ fn model(name: Option<&str>, workspace: &Workspace) -> Model {
         name: name.unwrap_or_default().into(),
         max_tokens: MAX_TOKENS,
         system: Some(system.into()),
+        effort: None,
     }
 }
 

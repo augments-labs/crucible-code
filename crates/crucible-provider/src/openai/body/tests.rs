@@ -3,7 +3,7 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::{ToolArgs, ToolId, ToolOutput, Transcript};
+use crucible_core::{Effort, ToolArgs, ToolId, ToolOutput, Transcript};
 
 use super::*;
 
@@ -17,6 +17,7 @@ fn request(transcript: Transcript) -> Request {
         tools: Vec::new(),
         max_tokens: 1024,
         system: None,
+        effort: None,
     }
 }
 
@@ -64,6 +65,24 @@ fn no_ceiling_is_sent_at_all() {
     assert_eq!(at(&body, "/max_output_tokens"), &NOTHING);
     assert_eq!(at(&body, "/max_completion_tokens"), &NOTHING);
     assert_eq!(at(&body, "/max_tokens"), &NOTHING);
+}
+
+#[test]
+fn a_session_nobody_told_how_hard_to_think_says_nothing_about_it() {
+    // Which rungs a model serves is the model's business here, and one it does
+    // not serve is a refusal. Leaving the field off is what keeps a session
+    // nobody has an opinion about working on every model on the list.
+    let body = build(&request(said("hello")));
+
+    assert_eq!(at(&body, "/reasoning"), &NOTHING);
+}
+
+#[test]
+fn an_effort_somebody_chose_reaches_the_model_under_reasoning() {
+    let mut asking = request(said("hello"));
+    asking.effort = Some(Effort::Xhigh);
+
+    assert_eq!(at(&build(&asking), "/reasoning/effort"), "xhigh");
 }
 
 #[test]

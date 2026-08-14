@@ -43,6 +43,7 @@ impl Scripted {
                     name: "claude-test".into(),
                     max_tokens: 1024,
                     system: None,
+                    effort: None,
                 },
                 session,
             ),
@@ -148,6 +149,26 @@ fn saying(text: &str) -> Vec<Delta> {
         Delta::Text(text.into()),
         Delta::Stopped(StopReason::Yielded),
     ]
+}
+
+#[test]
+fn how_hard_the_session_was_told_to_think_is_on_every_request() {
+    // Every turn, not the first one. The loop asks again after each tool call,
+    // and a rung that reached only the opening request would leave the thinking
+    // the user paid for on the turn that did the least work.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
+    scripted.runner.model.effort = Some(Effort::Max);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let sent = scripted.sent.lock().unwrap();
+    assert_eq!(sent.len(), 2, "one request, then one after the tool ran");
+    assert!(
+        sent.iter()
+            .all(|request| request.effort == Some(Effort::Max)),
+        "a request went out without it: {sent:?}"
+    );
 }
 
 #[test]

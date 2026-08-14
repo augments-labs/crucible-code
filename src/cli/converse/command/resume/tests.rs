@@ -40,6 +40,7 @@ fn over(session: Session) -> Runner {
             name: "script".into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         session,
     )

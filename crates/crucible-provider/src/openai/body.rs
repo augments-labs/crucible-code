@@ -9,8 +9,9 @@
 //! a flat list of *items* rather than a list of messages, a tool call and its
 //! result are items of their own rather than parts of a message, tool arguments
 //! travel as JSON *text* rather than as an object, a tool is declared flat
-//! rather than nested under a `function` object, and a failed result is marked
-//! by a prefix on the text because there is no field for it.
+//! rather than nested under a `function` object, a failed result is marked by a
+//! prefix on the text because there is no field for it, and how hard to think
+//! is nested under `reasoning` rather than named at the top of the body.
 
 use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
@@ -41,6 +42,14 @@ pub(super) fn build(request: &Request) -> Value {
     // may answer rather than the instructions it answers under.
     if let Some(system) = &request.system {
         body.insert("instructions".to_owned(), json!(&**system));
+    }
+
+    // Only where somebody chose one. Which rungs a model serves is the model's
+    // business on this endpoint and one it does not serve is a refusal, so a
+    // session nobody has an opinion about sends nothing and takes the vendor's
+    // own default for whichever model it is on.
+    if let Some(effort) = request.effort {
+        body.insert("reasoning".to_owned(), json!({ "effort": effort.as_str() }));
     }
 
     body.insert("input".to_owned(), Value::Array(input(request)));
