@@ -2,7 +2,7 @@
 //!
 //! One JSON object per line, in the order the messages happened. The shape is
 //! owned here rather than derived from the domain types, for the same reason
-//! each provider owns its own: a 0.0.x file format may change in any release,
+//! each provider owns its own: a 0.x file format may change in any release,
 //! and pinning [`Message`] to one would make every such change a change to the
 //! domain everything else is written against.
 //!

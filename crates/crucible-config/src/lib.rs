@@ -34,7 +34,7 @@
 //!   is refused there outright rather than warned about, so an arbitrary value
 //!   has no path into the one file that reaches everyone who clones.
 //!
-//! `0.0.x` is unstable: every key here may be renamed or removed in any `0.0.x`
+//! `0.x` is unstable: every key here may be renamed or removed in any `0.x`
 //! release with no deprecation period.
 
 mod document;
