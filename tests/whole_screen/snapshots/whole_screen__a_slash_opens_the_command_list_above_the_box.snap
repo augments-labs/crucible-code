@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 21,5 scrolled 7
-|│                                  │ Tips                                      │|
+80x24 cursor 21,5 scrolled 8
 |│  /…/workspace                    │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
@@ -16,6 +15,7 @@ expression: window.picture()
 |                                                                                |
 |› /help     what these are                                                      |
 |  /model    pick which model answers                                            |
+|  /effort   pick how hard it thinks                                             |
 |  /login    give crucible a key for a provider                                  |
 |  /logout   forget a key crucible wrote down                                    |
 |  /mode     ask · allowEdits · fullAccess                                       |

@@ -71,6 +71,61 @@ fn model_lists_only_the_provider_this_run_is_set_up_for() {
 }
 
 #[test]
+fn a_rung_named_on_the_line_is_asked_for_and_written_down() {
+    // The whole of what `/effort <rung>` owes: the session asks for it from the
+    // next turn on, and the file at home is what makes the next run ask too.
+    let sample = Sample::new("effort-named");
+    let choosing = sample.root().join("config.json");
+    let terms = Terms {
+        choosing: choosing.clone(),
+        ..plain()
+    };
+
+    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/effort max\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written().to_string();
+    assert!(written.contains("max effort"), "{written}");
+
+    let held = std::fs::read_to_string(&choosing).expect("the file it said it wrote");
+    assert!(held.contains("\"effort\""), "{held}");
+    assert!(held.contains("\"max\""), "{held}");
+    assert!(held.contains("anthropic"), "{held}");
+}
+
+#[test]
+fn effort_down_a_pipe_lists_every_rung_under_the_one_in_force() {
+    // Naming none opens the panel where there is a keyboard to walk it with.
+    // Down a pipe there is not, so the same line answers the question the panel
+    // would have asked. What is in force is named as the vendor's rather than
+    // as a rung, because this session was told nothing and the vendor never
+    // says which it picked.
+    let (written, asked) = commanding("/effort\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("the vendor's own default"), "{written}");
+    for rung in ["low", "medium", "high", "xhigh", "max"] {
+        assert!(written.contains(&format!("/effort {rung}")), "{written}");
+    }
+}
+
+#[test]
+fn a_word_that_is_not_a_rung_is_said_back_with_the_rungs_that_are() {
+    // The same sentence `--effort` is refused with before the session starts.
+    // One question asked twice deserves one answer, and nothing about it is a
+    // turn: a mistyped command that reached the provider would be a request
+    // paid for by a slip.
+    let (written, asked) = commanding("/effort maximum\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("! no effort called maximum"), "{written}");
+    assert!(written.contains("/effort max"), "{written}");
+}
+
+#[test]
 fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is() {
     // Said back so it can be seen to be a typo, and the list under it so the
     // next thing typed is the right one. Nothing is a turn: a mistyped command

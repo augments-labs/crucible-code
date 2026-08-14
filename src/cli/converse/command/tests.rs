@@ -97,7 +97,7 @@ fn a_bare_slash_opens_the_whole_list() {
 fn what_has_been_typed_is_what_is_left_on_the_list() {
     assert_eq!(shown("/m"), ["/model", "/mode"]);
     assert_eq!(shown("/mod"), ["/model", "/mode"]);
-    assert_eq!(shown("/e"), ["/exit"]);
+    assert_eq!(shown("/e"), ["/effort", "/exit"]);
 
     // A finished name that is also the start of a longer one keeps both. The
     // list says what pressing return would run *and* what one more character
@@ -143,6 +143,7 @@ fn help_answers_with_a_name_and_what_it_does() {
         [
             "/help     what these are",
             "/model    pick which model answers",
+            "/effort   pick how hard it thinks",
             "/login    give crucible a key for a provider",
             "/logout   forget a key crucible wrote down",
             "/mode     ask · allowEdits · fullAccess",
@@ -160,6 +161,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
         [
             "/help     what these are",
             "/model    pick which model answers",
+            "/effort   pick how hard it thinks",
             "/login    give crucible a key for a provider",
             "/logout   forget a key crucible wrote down",
             "/mode     ask, allowEdits, fullAccess",

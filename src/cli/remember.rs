@@ -1,9 +1,9 @@
 //! Writing one answer into a configuration file.
 //!
-//! Two of them, into two files: the rule an answer of `always` leaves behind
-//! goes into the layer a project keeps out of git, and the model `/model` picks
-//! goes into the one at home, because a model is a fact about who is running
-//! crucible rather than about the checkout.
+//! Into two files: the rule an answer of `always` leaves behind goes into the
+//! layer a project keeps out of git, and what `/model` and `/effort` pick goes
+//! into the one at home, because which model to ask and how hard to think are
+//! facts about who is running crucible rather than about the checkout.
 //!
 //! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crucible_config::ConfigError;
-use crucible_core::Minted;
+use crucible_core::{Effort, Minted};
 
 /// What can stop an answer of `always` from lasting.
 ///
@@ -35,6 +35,43 @@ pub(crate) enum RememberError {
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the rule and nothing else.
 pub(crate) fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::allowing(text, named, rule)
+    })
+}
+
+/// Writes `model` down as the one to ask `provider` for.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the choice and nothing else.
+pub(crate) fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::choosing(text, named, provider, model)
+    })
+}
+
+/// Writes `effort` down as how hard to think for everything asked of
+/// `provider`.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the rung and nothing else.
+pub(crate) fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::thinking(text, named, provider, effort)
+    })
+}
+
+/// Reads the file, hands what it holds to `splice`, and puts back what comes
+/// out.
+///
+/// The three above differ in that one call and in nothing else — which file is
+/// opened, what a missing one means, and what a half-written one would cost are
+/// one answer for all of them, and three copies of it would be three places to
+/// fix the day the answer changes.
+fn answering(
+    file: &Path,
+    splice: impl FnOnce(&str, &str) -> Result<String, ConfigError>,
+) -> Result<(), RememberError> {
     // Named the way the user would name it, because that is what a refusal
     // from below tells them to open.
     let named = file.display().to_string();
@@ -51,29 +88,7 @@ pub(crate) fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> 
         Err(source) => return Err(unwritable(source)),
     };
 
-    let written = crucible_config::allowing(&text, &named, rule)?;
-
-    put(file, &written).map_err(unwritable)
-}
-
-/// Writes `model` down as the one to ask `provider` for.
-///
-/// Everything already in the file stays where it was, byte for byte. A file
-/// that is not there yet becomes one holding the choice and nothing else.
-pub(crate) fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
-    let named = file.display().to_string();
-    let unwritable = |source| RememberError::Unwritable {
-        file: named.clone().into(),
-        source,
-    };
-
-    let text = match fs::read_to_string(file) {
-        Ok(text) => text,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(unwritable(source)),
-    };
-
-    let written = crucible_config::choosing(&text, &named, provider, model)?;
+    let written = splice(&text, &named)?;
 
     put(file, &written).map_err(unwritable)
 }
