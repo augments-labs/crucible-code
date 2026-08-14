@@ -199,6 +199,16 @@ impl Window {
         self.screen.picture()
     }
 
+    /// crucible's own home for this case, where what a command wrote down
+    /// lands.
+    ///
+    /// A case that reads it is asserting on the half of a command that outlives
+    /// the process, which no picture can show: the screen says a thing was
+    /// written, and the file is whether it was.
+    pub(crate) fn home(&self) -> PathBuf {
+        self.scratch.join("home")
+    }
+
     /// Reads until the screen settles, and fails plainly when it never does.
     ///
     /// Settled means two things at once: the terminal has gone [`QUIET`], and

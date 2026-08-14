@@ -23,6 +23,9 @@ mod tests;
 /// The file crucible writes when it has no rule to add to.
 const FRESH: &str = "{\n  \"permissions\": {\n    \"allow\": [\n      RULE\n    ]\n  }\n}\n";
 
+/// The file crucible writes when the provider to ask is all it has to say.
+const ASKED: &str = "{\n  \"provider\": PROVIDER\n}\n";
+
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
 const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
@@ -91,6 +94,61 @@ pub fn allowing(text: &str, file: &str, rule: &Minted) -> Result<String, ConfigE
     let allow = splice::member(text, block, "allow").ok_or_else(refuse)?;
 
     Ok(splice::insert(text, allow, |_| written.clone()))
+}
+
+/// The text of a configuration file that asks `provider` from now on.
+///
+/// `text` is what the file holds now, and empty for a file that is not there
+/// yet. The name goes to the top-level `provider` key — the one setting that
+/// chooses a vendor — and one already written there is written over rather
+/// than added beside: the same key twice is a document the parser reads one
+/// way and its author reads the other.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
+/// into without rewriting.
+pub fn asking(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+    // As JSON reads it. A provider name is somebody else's string, and one
+    // holding a quote written raw would end the document.
+    let written = Value::String(provider.to_owned()).to_string();
+
+    if text.trim().is_empty() {
+        return Ok(ASKED.replace("PROVIDER", &written));
+    }
+
+    let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })?;
+
+    if value.get("provider").and_then(Value::as_str) == Some(provider) {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: "provider".into(),
+        written: written.clone().into(),
+    };
+    let root = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+
+    // One level rather than the three the two below walk, which is the whole
+    // difference between a key that chooses a provider and a key that says
+    // something about one already chosen.
+    if value.get("provider").is_none() {
+        return Ok(splice::insert(text, root, |_| {
+            format!("\"provider\": {written}")
+        }));
+    }
+
+    let was = splice::member(text, root, "provider").ok_or_else(refuse)?;
+    Ok(splice::over(text, was, &written))
 }
 
 /// The text of a configuration file that asks `provider` for `model`.

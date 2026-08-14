@@ -79,7 +79,9 @@ reading every remaining line and answering none of them.
 
 `/model <name>` asks for that model from the next
 turn on and writes it to `~/.crucible/config.json` under the provider this run
-is set up for, so the next run starts with it. `/model` on its own stands a panel
+is set up for, so the next run starts with it. It writes `provider` beside it, so
+the next run asks the same vendor rather than settling that question again from
+whichever keys the shell is carrying. `/model` on its own stands a panel
 of a few of that provider's models to take one off, under the name of the one
 being asked now; down a pipe, where nobody can walk a panel, it writes that same
 list out as the line that asks for each.
@@ -207,13 +209,18 @@ what a machine you do not want a key on the profile of wants:
 dot per character rather than the key; `/login` on its own asks how you pay
 first — a console account billed by usage, which is what this page is about and
 what works today, or one of the two subscription plans it lists without being
-connected to yet. A console account then asks whose. The session is set up with
-that provider, from the next turn on and
-without restarting — the same resolution the next run here would do, so the model
-and rung [Which model](#which-model) and [How hard to think](#how-hard-to-think)
-settle
-for it arrive with the key, wherever nothing has already chosen one. A flag or a
-panel that named one is your answer and is left alone.
+connected to yet. A console account then asks whose.
+
+The session is then set up with that provider from the next turn on, without
+restarting — the same resolution the next run here would do, so the model and
+rung [Which model](#which-model) and
+[How hard to think](#how-hard-to-think) settle for it arrive with the key,
+wherever nothing has already chosen one. A flag or a panel that named one is
+your answer and is left alone.
+
+`provider` is written down for it too, because a key says a vendor can be
+reached and never which to ask — logging in is somebody saying which, and the
+next run here should not have to be asked again.
 
 Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.

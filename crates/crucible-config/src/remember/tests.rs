@@ -293,3 +293,38 @@ fn a_file_that_is_not_an_object_is_left_for_a_person_to_fix() {
     assert!(said.contains("bash(cargo test)"), "{said}");
     assert!(said.contains(FILE), "{said}");
 }
+
+#[test]
+fn the_provider_to_ask_is_written_where_a_file_holding_nothing_else_says_it() {
+    let written = asking("", "config.json", "openai").expect("an empty file is one to write whole");
+
+    assert_eq!(resolving(&written).provider(), Some("openai"));
+}
+
+#[test]
+fn the_provider_to_ask_is_written_beside_what_the_file_already_held() {
+    // The case `/login` meets: a file that has been set up for one vendor and
+    // is now being told about another. Everything else stays where it was.
+    let written = asking(
+        r#"{"providers": {"openai": {"model": "gpt-5.6-terra"}}}"#,
+        "config.json",
+        "anthropic",
+    )
+    .expect("an object is one to write into");
+
+    let settings = resolving(&written);
+    assert_eq!(settings.provider(), Some("anthropic"));
+    assert_eq!(settings.model("openai"), Some("gpt-5.6-terra"));
+}
+
+#[test]
+fn a_provider_chosen_again_is_written_over_rather_than_written_twice() {
+    // Two of the same key is a document the parser reads one way and whoever
+    // opens it reads the other — and this one decides which vendor sees the
+    // prompt, so the two readings disagree about that.
+    let first = asking("", "config.json", "moonshot").expect("an empty file is one to write whole");
+    let written = asking(&first, "config.json", "anthropic").expect("a name already there");
+
+    assert_eq!(resolving(&written).provider(), Some("anthropic"));
+    assert_eq!(written.matches("provider").count(), 1, "{written}");
+}

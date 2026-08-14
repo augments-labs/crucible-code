@@ -40,6 +40,16 @@ pub(crate) fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> 
     })
 }
 
+/// Writes `provider` down as the one to ask from now on.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the name and nothing else.
+pub(crate) fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::asking(text, named, provider)
+    })
+}
+
 /// Writes `model` down as the one to ask `provider` for.
 ///
 /// Everything already in the file stays where it was, byte for byte. A file

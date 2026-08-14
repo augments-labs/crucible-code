@@ -189,6 +189,35 @@ fn the_two_panels_of_login_reach_a_turn_without_a_provider_being_named() {
 }
 
 #[test]
+fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
+    // The half of `/login` a picture cannot show. A key says a provider can be
+    // reached and never which to ask, so a run that logged in and wrote only
+    // the key would meet the same question at the next launch — with one more
+    // key in hand to be undecided between.
+    //
+    // Here rather than beside the command's own tests because the walk needs a
+    // keyboard: the key goes into a box that does not echo it, and a loop
+    // driven off a pipe has nothing to type into one. It is the one case in
+    // this suite with no snapshot, because what it asserts is a file.
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Window::keyless("login-written", 80, 24, &vendor);
+
+    window.types("/login\r");
+    window.types("\x1b[B\x1b[B\r");
+    window.types("\r");
+    window.types("not-a-key-and-nothing-reads-it\r");
+
+    let held = std::fs::read_to_string(window.home().join("config.json"))
+        .expect("the configuration file this case was given");
+
+    assert!(held.contains("\"provider\": \"anthropic\""), "{held}");
+    // What was already in it, byte for byte: the file is spliced rather than
+    // rewritten, and a `/login` that dropped the address this case reaches its
+    // vendor at would have taken the rest of the suite with it.
+    assert!(held.contains("\"baseUrl\""), "{held}");
+}
+
+#[test]
 fn a_plan_crucible_cannot_sign_with_yet_says_so_rather_than_asking_for_a_key() {
     // The honest half of a panel that draws more than it can do. A plan row is
     // there so somebody holding one learns crucible knows about it — and the

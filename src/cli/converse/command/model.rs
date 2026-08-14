@@ -153,11 +153,18 @@ fn taken<T: Terminal>(
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
     renderer.commit(&format!("{provider}/{name}"))?;
 
-    // Written, and the row above already says what to. Where it went is not
-    // news: it is the same file every time, chosen by crucible rather than by
-    // the reader, and naming it on every model is a session reading its own
-    // bookkeeping out loud.
-    let Err(problem) = remember::choosing(&terms.choosing, provider, name) else {
+    // Both halves written, and the row above already says what to. Where they
+    // went is not news: it is the same file every time, chosen by crucible
+    // rather than by the reader, and naming it on every model is a session
+    // reading its own bookkeeping out loud.
+    //
+    // The provider first, because it is the half a machine holding two keys
+    // needs — a model written under a provider says what to ask that provider
+    // for and never which provider to ask, so writing only that would leave the
+    // next run here asking the same question this command just answered.
+    let written = remember::asking(&terms.choosing, provider)
+        .and_then(|()| remember::choosing(&terms.choosing, provider, name));
+    let Err(problem) = written else {
         return Ok(());
     };
 
