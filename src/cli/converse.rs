@@ -44,6 +44,7 @@ use typing::Asked;
 
 mod command;
 mod mode;
+mod picking;
 mod secret;
 mod typing;
 

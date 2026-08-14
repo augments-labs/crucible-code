@@ -219,6 +219,7 @@ fn a_name_in_the_list_with_no_arm_behind_it_is_refused_rather_than_built() {
     // arm that says so instead of returning a provider for the wrong vendor.
     let unarmed = Served {
         name: "ollama",
+        shown: "Ollama",
         key: "OLLAMA_API_KEY",
     };
 
