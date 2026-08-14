@@ -38,10 +38,17 @@ const PARTIAL: &str = "auth.json.new";
 
 /// How long to wait for another crucible to finish writing.
 ///
-/// Short: the thing being waited for is a few hundred bytes and a rename. A
-/// wait that could outlast a user's patience is worse than a sentence telling
-/// them to try again, which is why this gives up rather than blocking.
-const ATTEMPTS: u32 = 50;
+/// The thing being waited for is not one rename. Nothing queues here — every
+/// waiter wakes on the same pause and takes whatever it finds — so what a
+/// crucible waits out is every other one that keeps winning ahead of it, each
+/// syncing a few hundred bytes to a disk somebody else is using too. A budget
+/// sized for the rename alone turns an ordinary handful of terminals into a
+/// refusal, and a refusal here is a login nobody wrote down.
+///
+/// Five seconds, then: long enough for that queue on a machine under load,
+/// short enough that a crucible which died holding the lock is a sentence
+/// telling them to try again rather than something that looks like a hang.
+const ATTEMPTS: u32 = 250;
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
