@@ -119,6 +119,9 @@ what a machine you do not want a key on the profile of wants:
 { "version": 1, "keys": { "openai": "sk-…" } }
 ```
 
+`/login` inside a session names the providers and the variable each one reads,
+which is the same table as above without leaving the terminal.
+
 The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version
 is left alone rather than guessed at.

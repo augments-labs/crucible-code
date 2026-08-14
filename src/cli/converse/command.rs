@@ -28,6 +28,7 @@ use crate::cli::{Fatal, NO_MODEL_CHOSEN, NOTHING_TO_ASK, remember};
 
 use super::{Terms, mode};
 
+mod login;
 mod resume;
 
 /// What a line beginning `/` can ask for.
@@ -40,6 +41,8 @@ pub(super) enum Command {
     Help,
     /// Which model answers.
     Model,
+    /// Which providers there are, and where each reads a key from.
+    Login,
     /// The permission mode: the one in force, or the one named.
     Mode,
     /// The sessions recorded here, and picking one of them up.
@@ -55,9 +58,10 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 6] = [
+const EVERY: [Command; 7] = [
     Command::Help,
     Command::Model,
+    Command::Login,
     Command::Mode,
     Command::Resume,
     Command::Clear,
@@ -93,6 +97,7 @@ impl Command {
         match self {
             Self::Help => "/help",
             Self::Model => "/model",
+            Self::Login => "/login",
             Self::Mode => "/mode",
             Self::Resume => "/resume",
             Self::Clear => "/clear",
@@ -105,6 +110,7 @@ impl Command {
         match self {
             Self::Help => "what these are",
             Self::Model => "which model answers, or set one",
+            Self::Login => "where a provider reads its key from",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -226,6 +232,11 @@ fn answer<T: Terminal>(
             command: Command::Model,
             rest,
         } => asked(rest, renderer, runner, terms)?,
+
+        Wanted::Known {
+            command: Command::Login,
+            rest,
+        } => login::run(rest, renderer, terms)?,
 
         Wanted::Known {
             command: Command::Mode,

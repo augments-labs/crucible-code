@@ -66,9 +66,10 @@ cargo build --release
 
 ## Give it a key
 
-crucible reads a key from the environment and never stores one. Which variable
-is read depends on the provider serving the model you ask for — see
-[Providers and models](../providers/providers.md).
+crucible reads a key from the environment, or from a file you can write it into
+instead. Which variable is read depends on the provider serving the model you
+ask for — `/login` inside a session says which, and
+[Providers and models](../providers/providers.md) has the rest.
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -185,6 +186,7 @@ session.
 | --- | --- |
 | `/help` | Lists these |
 | `/model` | The model this session is asking, or the one to ask from now on |
+| `/login` | Where each provider reads its key from |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Forgets what has been said, keeping the session |
@@ -194,6 +196,11 @@ session.
 one from the next turn on, and writes it to `~/.crucible/config.json` under the
 provider this run is set up for — so the next crucible started anywhere begins
 with it. See [Providers and models](../providers/providers.md).
+
+`/login` names the providers this build serves and the variable each one signs
+a request from; `/login <provider>` answers about that one alone. The key itself
+is never typed on the line — that would leave it in your shell's history, in the
+process listing and in the scrollback.
 
 `/clear` empties the transcript: the next prompt is the first one the model
 sees, and the turns before it are neither sent nor paid for again. It is the

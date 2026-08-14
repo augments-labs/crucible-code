@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **`/login` exists.** A run with no key has always said to use it, and there
+  was no such command. It names the providers this build serves and the variable
+  each one signs a request from; `/login <provider>` answers about that one.
+
 - **A key can be written down instead of exported.** crucible reads
   `~/.crucible/auth.json` — a file only you can read — alongside the environment,
   so a machine you would rather not keep a key on the shell profile of can still

@@ -556,6 +556,40 @@ fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is(
 }
 
 #[test]
+fn login_says_where_every_provider_reads_its_key_from() {
+    // Naming none is not an error: the welcome sends somebody here who has just
+    // been told they have no key, and does not yet know which words the next
+    // line may hold or which variable any of them wants.
+    let (written, asked) = commanding("/login\n");
+
+    assert_eq!(asked, 0, "{written}");
+    for one in crate::cli::PROVIDERS {
+        assert!(written.contains(one.name), "{written}");
+        assert!(written.contains(one.key), "{written}");
+    }
+}
+
+#[test]
+fn login_naming_one_provider_answers_about_that_one_and_not_the_others() {
+    let (written, asked) = commanding("/login openai\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("OPENAI_API_KEY"), "{written}");
+    assert!(!written.contains("ANTHROPIC_API_KEY"), "{written}");
+}
+
+#[test]
+fn login_naming_a_provider_this_build_has_none_of_says_so() {
+    // And goes on to say what it does have, which is the answer to the
+    // question a misspelled name was asking.
+    let (written, asked) = commanding("/login gemini\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("! no provider called gemini"), "{written}");
+    assert!(written.contains("OPENAI_API_KEY"), "{written}");
+}
+
+#[test]
 fn a_line_that_opens_with_a_path_is_a_prompt_and_takes_a_turn() {
     let (written, asked) = commanding("/etc/hosts is wrong\n");
 
