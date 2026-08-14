@@ -4,11 +4,20 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` and `unlabeled` are not in the default set, and without them
+    # the one remedy this repository documents for an oversized pull request
+    # does nothing: the size job has already run and failed by the time
+    # somebody adds `moves-only` or `whole-module`, and nothing asks it again.
+    # A rule whose exception only applies on the next push is not the rule
+    # `CONTRIBUTING.md` describes.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # A second push to the same branch makes the first run's answer stale, so
-# stop paying for it.
+# stop paying for it. A label is the exception and gets a group of its own: it
+# changes no file, so it makes nothing stale, and cancelling the run that is
+# still building would turn a pull request red for having been labelled.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event.action == 'labeled' || github.event.action == 'unlabeled' }}
   cancel-in-progress: true
 
 permissions:
@@ -18,6 +27,9 @@ jobs:
   gate:
     name: scripts/check.sh
     runs-on: ubuntu-latest
+    # Every job below this one reads the tree, and a label leaves the tree
+    # exactly where it was. Only the job that reads the labels runs again.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -114,6 +126,7 @@ jobs:
     # FreeBSD is not here. It builds in a virtual machine, which is minutes per
     # run, and it shares the Unix half of every split with the two runners that
     # are — the release workflow is where it gets its own build.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -138,6 +151,7 @@ jobs:
     # which is why it blocks: `scripts/bench.sh` treats a budget with no probe
     # as a failure rather than a skip, so this job goes red both when the code
     # got slower and when a budget quietly stopped being checked.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

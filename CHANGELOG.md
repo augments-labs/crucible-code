@@ -21,7 +21,10 @@ Notable changes to crucible. Format follows
   that floor is already over 400 lines, the only smaller pull request is one that
   lands the code without its tests. The test is whether an intermediate pull
   request would compile, not whether the change is large. `moves-only` is
-  unchanged, and both stay visible on the pull request.
+  unchanged, and both stay visible on the pull request. Adding either now
+  re-measures on its own — `labeled` is not one of the events a pull request
+  workflow listens to by default, so until now the documented remedy did
+  nothing until the next push.
 
 ## [0.0.17] - 2026-08-13
 
