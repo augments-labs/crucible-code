@@ -4,6 +4,16 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **A run with no key no longer opens on the login panel.** What a first run gets
+  back is the screen every other run starts with: the welcome, the warning naming
+  `/login` and `/model`, and the box. The warning was already the whole answer,
+  and a panel standing in front of it asked a question before saying where you
+  were. `/login` opens the same panel whenever you want it.
+
 ## [0.1.3] - 2026-08-14
 
 ### Added

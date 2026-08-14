@@ -2,7 +2,11 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 13,4 scrolled 12
+80x24 cursor 17,4 scrolled 8
+|│  /…/workspace                    │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl-c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -19,10 +23,6 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

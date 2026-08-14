@@ -34,11 +34,6 @@ mod logout;
 mod model;
 mod resume;
 
-/// The one thing here a session reaches without a command having been typed:
-/// the screen a run with no key for any provider opens on. It is `/login`
-/// standing unasked, so it lives with the command rather than beside it.
-pub(super) use login::first;
-
 /// What a line beginning `/` can ask for.
 ///
 /// Closed, and matched arm by arm where it is run, so a command added here is a

@@ -13,11 +13,6 @@
 //! in front of them, and the file it lands in is what makes the run after this
 //! one ask the same thing rather than what makes this one ask at all.
 //!
-//! The same two halves are what a run with no key for anything opens on, before
-//! any prompt is read. That screen is this command standing without being asked
-//! — the warning under the welcome names it, and somebody meeting crucible for
-//! the first time has no reason to know it is a thing they can type.
-//!
 //! Naming somebody this build has never heard of, a panel that was left, and a
 //! window with no room to stand one in all come out the same way: which names
 //! crucible knows and which variable each of them signs a request from, written
@@ -40,25 +35,6 @@ const SAID: &str = concat!(
     "Choose the provider to give crucible a key for. It is typed into a box ",
     "that does not echo it, and asked from the next turn on."
 );
-
-/// The same, on the screen a run opens with when nothing at all is set up.
-///
-/// Different because the reader did not ask for this one and the first thing it
-/// owes them is why it is standing there. The rest is the sentence above, which
-/// is true wherever the panel is.
-const FIRST: &str = concat!(
-    "crucible holds no key for any provider, so there is nothing it can ask ",
-    "yet. Choose one to give a key for. It is typed into a box that does not ",
-    "echo it, and asked from the next turn on."
-);
-
-/// What escape does where the panel was asked for.
-const CANCEL: &str = "esc to cancel";
-
-/// What it does on the screen a run opens with. Not `esc to cancel`: there is no
-/// prompt behind that screen to cancel back to, and leaving it takes nothing
-/// back — the offer stands, under the name of the command that opens it again.
-const SKIP: &str = "esc to skip; /login opens this again";
 
 /// Runs it: a key taken for the one named, one chosen off the panel, or where
 /// each of them reads a key from.
@@ -84,7 +60,7 @@ pub(super) fn run<T: Terminal>(
         // Nobody named and a keyboard to walk a list with: the panel, and what
         // comes off it is the same fact as a name typed on the line.
         if said.is_empty()
-            && let Some(chose) = chosen(renderer, terms, SAID, CANCEL)?
+            && let Some(chose) = chosen(renderer, terms)?
         {
             return given(chose, renderer, runner, terms);
         }
@@ -111,46 +87,12 @@ pub(super) fn run<T: Terminal>(
     Ok(renderer.present(&rows, terms.style.palette())?)
 }
 
-/// The screen a run with no key for any provider opens on.
-///
-/// The warning under the welcome names this command, and somebody meeting
-/// crucible for the first time has no reason to know that is a thing they can
-/// type. So the same panel stands before the first prompt is read, unasked —
-/// which is the one difference, and it is what `said` and the footer are for.
-///
-/// Only where there is a keyboard, and that is the caller's to know: a panel
-/// waiting for something nobody can press is a session that stopped.
-pub(in crate::cli::converse) fn first<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    runner: &mut Runner,
-    terms: &Terms,
-) -> Result<(), Fatal> {
-    match chosen(renderer, terms, FIRST, SKIP)? {
-        Some(named) => given(named, renderer, runner, terms),
-
-        // Left, and nothing said about it. The warning the welcome drew is
-        // still standing above the box this returns to, naming both ways out of
-        // a run with no key — so a line here would be that sentence again,
-        // written under it.
-        None => Ok(()),
-    }
-}
-
 /// Stands the panel where the prompt box was, and says what was taken off it.
-///
-/// `said` is the sentence under the title and `footer` the row under the
-/// entries. They are the caller's because the two screens this panel stands on
-/// differ in nothing else: one was asked for and one was not.
 ///
 /// `None` is a panel that was left and a window with no room to stand one in
 /// alike. Neither is a provider, and both come out as the rows above — the
 /// answer `/login` always has, and the only one a short window can be given.
-fn chosen<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-    said: &str,
-    footer: &str,
-) -> Result<Option<Served>, Fatal> {
+fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Option<Served>, Fatal> {
     // Where else the same key can come from — and the one thing that differs
     // between rows that would otherwise read identically.
     let says: Vec<String> = PROVIDERS
@@ -169,12 +111,12 @@ fn chosen<T: Terminal>(
 
     let panel = Panel {
         title: "Log in",
-        said: Some(said),
+        said: Some(SAID),
         shown: &shown,
         chosen: 0,
         // The one key worth naming: the arrows and Enter are what a list with a
         // mark on it is already saying.
-        footer,
+        footer: "esc to cancel",
     };
 
     let Some(at) = picking::pick(renderer, terms.style, panel)? else {

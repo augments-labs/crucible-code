@@ -60,14 +60,6 @@ const CEILING: Duration = Duration::from_secs(20);
 /// the box, which is the last thing written before crucible waits for a key.
 const READY: &str = "ask mode on";
 
-/// What is on screen once a run with no key for anything has finished opening.
-///
-/// Such a run opens on the panel that takes one, so there is no box under it
-/// and [`READY`] never arrives. This is the panel's footer, which is the last
-/// row of it — and the part of that row that survives the narrowest window a
-/// case here uses.
-const SKIPPING: &str = "esc to skip";
-
 /// The model a case with something to ask asks for.
 ///
 /// It reaches [`Vendor`], which answers whatever it is asked, so the name only
@@ -118,21 +110,10 @@ impl Window {
     /// `case` names the directory this run is given, so two cases running at
     /// once share no session log, no configuration and no working directory.
     ///
-    /// No model and nowhere to send one: this is crucible with nothing to
-    /// answer, which is every case about what is on screen before a turn.
-    ///
-    /// The variable is set even so, and that is what keeps these cases about
-    /// the screen they are named for: a run with no key for anything opens on
-    /// the panel that takes one, and a panel is taller than what is left of a
-    /// short window under the welcome. So it holds a key, names no model, and
-    /// meets the other half of the warning.
-    ///
-    /// **No case built this way may take a turn.** There is no `baseUrl` here,
-    /// so a request would leave this machine for the vendor's own address —
-    /// [`Window::answering`] is what a case with something to ask uses, and it
-    /// is pointed at a socket that never leaves the loopback.
+    /// No provider: this is crucible with nothing to answer, which is every
+    /// case about what is on screen before a turn.
     pub(crate) fn open(case: &str, columns: u16, rows: u16) -> Self {
-        Self::started(case, columns, rows, None, true)
+        Self::started(case, columns, rows, None, false)
     }
 
     /// The same, with a provider on this machine that answers what it is asked.
@@ -149,12 +130,8 @@ impl Window {
     ///
     /// The machine `/login` is for: a vendor is there and configured, and this
     /// run started without the variable that would have chosen it, so the only
-    /// way to a turn is through a key given at the screen. Both halves matter —
-    /// a case with no vendor could not tell a key that arrived from one that
-    /// never did.
-    ///
-    /// It settles on the panel rather than on the box, because a run with no key
-    /// for anything opens on the panel and there is no box behind it yet.
+    /// way to a turn is through the command. Both halves matter — a case with
+    /// no vendor could not tell a key that arrived from one that never did.
     pub(crate) fn keyless(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         Self::started(case, columns, rows, Some(vendor), false)
     }
@@ -195,10 +172,7 @@ impl Window {
             screen: Screen::new(columns as usize, rows as usize),
             scratch,
         };
-        window.settle(
-            "crucible started",
-            Some(if keyed { READY } else { SKIPPING }),
-        );
+        window.settle("crucible started", Some(READY));
         window
     }
 
@@ -208,18 +182,6 @@ impl Window {
             .write_all(keys.as_bytes())
             .expect("keys go to the terminal");
         self.settle(&format!("{keys:?} was typed"), None);
-    }
-
-    /// Leaves the panel a run with no key opens on, and waits for the box.
-    ///
-    /// Waited for by name rather than by quiet: standing a panel down and
-    /// drawing the box under it is two frames, and the gap between them looks
-    /// from here like the end of the second.
-    pub(crate) fn leaves(&mut self) {
-        self.terminal
-            .write_all(b"\x1b")
-            .expect("keys go to the terminal");
-        self.settle("the panel was left", Some(READY));
     }
 
     /// Changes the size of the window, the way dragging its corner would.
