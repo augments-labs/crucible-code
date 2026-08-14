@@ -1,22 +1,28 @@
-//! A panel standing where the prompt box was, until one of its entries is
+//! Something standing where the prompt box was, until one of its entries is
 //! taken or it is left.
 //!
 //! The box and the row under it are what the live region holds while a line is
-//! being typed; this puts a panel there instead and reads keys against it. That
-//! is the whole of what "the panel replaces the prompt" means — nothing is
-//! drawn over anything, the region is simply given different rows, and the next
-//! frame after this returns is the box again.
+//! being typed; this puts a panel or a ladder there instead and reads keys
+//! against it. That is the whole of what "it replaces the prompt" means —
+//! nothing is drawn over anything, the region is simply given different rows,
+//! and the next frame after this returns is the box again.
 //!
-//! Nothing about the panel's *contents* is decided here. What is being chosen,
-//! what each entry says and what the footer names are the caller's, which is
-//! what lets `/login`, `/logout` and a first run that opens with the same list
-//! share one loop rather than one string.
+//! Nothing about the *contents* is decided here. What is being chosen, what
+//! each entry says and what the footer names are the caller's, which is what
+//! lets `/login`, `/logout` and a first run that opens with the same list share
+//! one loop rather than one string.
+//!
+//! Two loops rather than one, because the two shapes are read by different
+//! keys: a list is walked down and a ladder is walked along, and a component
+//! whose arrows disagree with its picture is one nobody trusts twice. What they
+//! share is what happens around the keys — the resize, the answer, and the box
+//! coming back.
 //!
 //! The one promise this module makes about the keys is that the mark stops at
 //! each end instead of wrapping. A ring puts the first entry one key past the
 //! last, so the key that went too far is the key that goes further.
 
-use crucible_tui::{Caret, Key, Panel, Pressed, Renderer, Terminal, pressed};
+use crucible_tui::{Caret, Key, Ladder, Panel, Pressed, Renderer, Row, Terminal, pressed};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -109,7 +115,8 @@ pub(super) fn pick<T: Terminal>(
     loop {
         if changed {
             panel.chosen = at;
-            if !standing(renderer, style, panel)? {
+            let rows = panel.within(renderer.columns(), renderer.rows(), style.glyphs());
+            if !standing(renderer, style, &rows)? {
                 return Ok(Picked::Cramped);
             }
         }
@@ -134,18 +141,72 @@ pub(super) fn pick<T: Terminal>(
     }
 }
 
-/// Draws the panel, and says whether there was room for one.
+/// Stands `ladder` where the prompt box was and reads keys until a rung is
+/// taken.
+///
+/// `ladder.chosen` is where the mark starts, and the index that comes back is
+/// into the rungs it was handed. Otherwise [`pick`], for a component read along
+/// rather than down.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn adjust<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    mut ladder: Ladder<'_>,
+) -> Result<Picked, Fatal> {
+    let count = ladder.rungs.len();
+    if count == 0 {
+        return Ok(Picked::Cramped);
+    }
+
+    let mut at = ladder.chosen.min(count - 1);
+    let mut changed = true;
+
+    loop {
+        if changed {
+            ladder.chosen = at;
+            let rows = ladder.rows(renderer.columns(), style.glyphs());
+            if !standing(renderer, style, &rows)? {
+                return Ok(Picked::Cramped);
+            }
+        }
+
+        let arrived = pressed()?;
+
+        if arrived == Pressed::Resized {
+            renderer.resized()?;
+        }
+
+        match sliding(arrived, &mut at, count) {
+            Moved::Redraw => changed = true,
+            Moved::Still => changed = false,
+            Moved::Took => return leaving(renderer, Picked::Took(at)),
+            Moved::Left => return leaving(renderer, Picked::Left),
+        }
+    }
+}
+
+/// Draws `rows` in the live region, and says whether there was room for them.
+///
+/// A component gives up rows rather than overflowing the width, and its last
+/// rung is nothing at all; the height is checked here, since a live region
+/// taller than the window is a frame that cannot be rewound over.
 ///
 /// The cursor is parked on the last row it drew. Nothing here hides it — this
-/// program never does — and the footer is the one row of a panel where it
-/// stands beside a key rather than inside a name somebody is reading.
+/// program never does — and the footer is the one row where it stands beside a
+/// key rather than inside a name somebody is reading.
 fn standing<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
-    panel: Panel<'_>,
+    rows: &[Row],
 ) -> Result<bool, Fatal> {
-    let rows = panel.within(renderer.columns(), renderer.rows(), style.glyphs());
-    let Some(last) = rows.len().checked_sub(1) else {
+    let Some(last) = rows
+        .len()
+        .checked_sub(1)
+        .filter(|_| rows.len() <= renderer.rows())
+    else {
         return Ok(false);
     };
 
@@ -154,7 +215,7 @@ fn standing<T: Terminal>(
         column: 0,
     };
 
-    renderer.live(&rows, caret, style.palette())?;
+    renderer.live(rows, caret, style.palette())?;
     Ok(true)
 }
 
@@ -177,6 +238,24 @@ fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     match arrived {
         Pressed::Up => step(at, at.checked_sub(1)),
         Pressed::Down => step(at, Some(*at + 1).filter(|next| *next < count)),
+        Pressed::Key(Key::Enter) => Moved::Took,
+        Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
+        Pressed::Resized => Moved::Redraw,
+        _ => Moved::Still,
+    }
+}
+
+/// What `arrived` does to a ladder of `count` rungs with `at` marked.
+///
+/// The arrows that walk it are the ones drawn under it, and they are the across
+/// pair: a ladder is one row of rungs, so up and down point at nothing. They are
+/// left alone rather than aliased onto the across pair, because a key that moves
+/// the mark in a direction the picture does not have is how somebody learns not
+/// to trust the picture.
+fn sliding(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
+    match arrived {
+        Pressed::Key(Key::Left) => step(at, at.checked_sub(1)),
+        Pressed::Key(Key::Right) => step(at, Some(*at + 1).filter(|next| *next < count)),
         Pressed::Key(Key::Enter) => Moved::Took,
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,

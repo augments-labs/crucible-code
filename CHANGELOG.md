@@ -24,6 +24,13 @@ Notable changes to crucible. Format follows
   a console key were never the same person, and one panel over vendor names asked
   them the same question.
 
+- **`/effort` draws a ladder instead of a panel.** One track with the five rungs
+  written under it, `Faster` at one end and `Smarter` at the other, walked with
+  the left and right arrows. The panel spent two rows on each rung under a
+  three-row paragraph and came to twenty-four rows — the whole of an 80×24
+  window, for five words. The ladder is nine. It also asks which model is being
+  asked first, and sends a session with none to `/model`.
+
 - **A panel left with escape writes one line, not its whole list.** `/login`,
   `/logout`, `/model` and `/effort` all fell through to their list of rows when a
   panel was escaped, so saying "not this" put three or five rows of it into the

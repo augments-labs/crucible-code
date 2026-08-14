@@ -1,4 +1,4 @@
-//! `/effort`: how hard to think, taken off a panel or named on the line.
+//! `/effort`: how hard to think, taken off a ladder or named on the line.
 //!
 //! The ladder is crucible's and it is the same everywhere — five rungs, in the
 //! same order, whichever vendor this session is on. Which of them a model
@@ -8,58 +8,50 @@
 //! name is already on: what is offered is a shortcut past somebody's
 //! documentation, not a claim about what is behind it.
 //!
+//! Which is why the ladder is stood over a model by name, and why a session
+//! with no model chosen is sent to `/model` instead of being asked this. A rung
+//! is not a setting of crucible's that a vendor happens to read — it is one
+//! word in one request, and what it buys is the model's to say.
+//!
 //! What is taken is written down beside the model, under the same provider, for
 //! the same reason: how hard to think is the same answer every time this
 //! machine is used, and asking it once a session is asking it for ever.
 
 use crucible_core::{Effort, EffortError};
 use crucible_runner::Runner;
-use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_tui::{Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::converse::picking::{self, Taken};
-use crate::cli::{Fatal, NOTHING_TO_ASK, remember};
+use crate::cli::{Fatal, remember, unasked};
 
 use super::{Terms, say};
 
 /// What escape leaves behind, in place of the listing it used to write.
 const LEFT: &str = "cancelled, no rung taken";
 
-/// The sentence under the panel's title: what standing there cannot show.
-const SAID: &str = concat!(
-    "Choose how hard crucible asks the model to think, from the next turn on. ",
-    "It is written down, so the next run here asks for the same. Which rungs a ",
-    "model serves is up to its vendor."
-);
-
-/// The rung the panel opens on where nothing has chosen one.
+/// What the two ends of the track are called.
 ///
-/// A list has to open somewhere, and the rung most sessions want is a better
-/// place to start from than the bottom. It is not what a run with no rung asks
-/// for — nothing is asked until a row is taken with Enter, and leaving the panel
-/// leaves the session asking for no rung at all.
+/// The trade rather than the amount: the amount is the word on each rung, and
+/// what somebody standing here is choosing between is waiting and thinking.
+const ENDS: (&str, &str) = ("Faster", "Smarter");
+
+/// The keys, under the track they work on.
+const FOOTER: &str = "←/→ to adjust · enter to confirm · esc to cancel";
+
+/// The rung the ladder opens on where nothing has chosen one.
+///
+/// A mark has to stand somewhere, and the rung most sessions want is a better
+/// place to start from than an end. It is not what a run with no rung asks for —
+/// nothing is asked until Enter, and leaving the ladder leaves the session
+/// asking for no rung at all.
 const OPENS_ON: Effort = Effort::High;
 
-/// What each rung is for, in the few words a row has room for.
-///
-/// Written about the cost rather than the amount, because the amount is the
-/// word already on the row. What somebody standing here is choosing between is
-/// waiting and thinking, and nothing else on the screen says so.
-const fn says(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "answers soonest, thinks least",
-        Effort::Medium => "some thought, little waiting",
-        Effort::High => "thinks before answering",
-        Effort::Xhigh => "long thought on hard questions",
-        Effort::Max => "as hard as this model thinks",
-    }
-}
-
-/// Runs it: the rung named, one taken off the panel, or the rung in force and
+/// Runs it: the rung named, one taken off the ladder, or the rung in force and
 /// the lines that ask for the others.
 ///
-/// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
-/// is not, and a panel waiting for a key nobody can press is a session that
-/// stopped — so what a piped run gets is the list, written where it can be
+/// `keys` is whether there is a keyboard to walk a ladder with. Down a pipe
+/// there is not, and a ladder waiting for a key nobody can press is a session
+/// that stopped — so what a piped run gets is the list, written where it can be
 /// scrolled and typed back a line at a time.
 ///
 /// # Errors
@@ -72,10 +64,13 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    // Nothing holds a key, so there is no provider to write a rung under and no
-    // vendor to send it to. The rung would be real and would reach nothing.
-    let Some(provider) = terms.provider.get() else {
-        return renderer.commit(NOTHING_TO_ASK).map_err(Fatal::from);
+    // A rung is asked of a model, so the ladder is stood over one by name and
+    // there has to be one. Without a provider there is nobody to write it under
+    // either, and the two want different sentences: one says set a key, the
+    // other says the key is fine and pick a model.
+    let named = terms.provider.get();
+    let Some(provider) = named.filter(|_| !runner.model().is_empty()) else {
+        return renderer.commit(unasked(named)).map_err(Fatal::from);
     };
 
     if !said.is_empty() {
@@ -98,7 +93,7 @@ pub(super) fn run<T: Terminal>(
     listed(renderer, runner, terms)
 }
 
-/// Stands the panel where the prompt box was, and says which rung came off it.
+/// Stands the ladder where the prompt box was, and says which rung came off it.
 ///
 /// A window with no room to stand one in comes out as the listing below.
 fn chosen<T: Terminal>(
@@ -106,35 +101,22 @@ fn chosen<T: Terminal>(
     runner: &Runner,
     terms: &Terms,
 ) -> Result<Taken<Effort>, Fatal> {
-    let asking = runner.effort();
+    let rungs: Vec<&str> = Effort::LADDER.iter().map(|one| one.as_str()).collect();
 
-    // Which rung is in force goes here rather than beside a row: it is one fact
-    // about the session, and a list that says it once is a list whose rows all
-    // read the same way.
-    let saying = match asking {
-        Some(effort) => format!("{} is what is asked now. {SAID}", effort.as_str()),
-        None => format!("The vendor's own default is in force. {SAID}"),
+    // The model by name, because a rung is asked of one model and what it buys
+    // differs between them. It is also the fact that stops this reading as a
+    // setting of crucible's — the ladder is what is sent, and this is who to.
+    let title = format!("Effort · {}", runner.model());
+
+    let ladder = Ladder {
+        title: &title,
+        rungs: &rungs,
+        chosen: rung(runner.effort().unwrap_or(OPENS_ON)),
+        ends: ENDS,
+        footer: FOOTER,
     };
 
-    let shown: Vec<Offered<'_>> = Effort::LADDER
-        .iter()
-        .map(|effort| Offered {
-            name: effort.as_str(),
-            says: says(*effort),
-        })
-        .collect();
-
-    let panel = Panel {
-        title: "Effort",
-        said: Some(&saying),
-        shown: &shown,
-        chosen: rung(asking.unwrap_or(OPENS_ON)),
-        // The one key worth naming: the arrows and Enter are what a list with a
-        // mark on it is already saying.
-        footer: "esc to cancel",
-    };
-
-    Ok(picking::pick(renderer, terms.style, panel)?.of(&Effort::LADDER))
+    Ok(picking::adjust(renderer, terms.style, ladder)?.of(&Effort::LADDER))
 }
 
 /// Asks for it from the next turn on, and writes it down for the next run.
@@ -228,9 +210,9 @@ fn listing<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(),
 
 /// Where on the ladder this rung stands.
 ///
-/// The list the panel is handed is the ladder in order, so this is a lookup
-/// that cannot miss — written as one that can rather than as an assertion
-/// nobody would read again.
+/// The rungs the ladder is handed are [`Effort::LADDER`] in order, so this is a
+/// lookup that cannot miss — written as one that can rather than as an
+/// assertion nobody would read again.
 fn rung(effort: Effort) -> usize {
     Effort::LADDER
         .iter()
