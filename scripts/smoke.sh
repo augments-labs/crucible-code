@@ -207,6 +207,16 @@ else
 fi
 
 echo "==> a session, end to end"
+# A key alone does not make a turn. There is no model built in and this home
+# directory was made a moment ago, so nothing here names one — and a run with
+# none stops at "no model selected" without opening a connection, which would
+# leave this gate passing on a binary that could not reach anything. The flag is
+# the one rung that needs no file.
+#
+# What either run below exits with is not the claim — what came back is — and
+# under `set -e` a non-zero one would take the script down where it stands,
+# before the line that says what that was.
+model=claude-sonnet-5
 if ((offline)); then
     echo '    SKIP --offline'
 elif [[ -n ${CRUCIBLE_SMOKE_KEY:-} ]]; then
@@ -217,7 +227,7 @@ elif [[ -n ${CRUCIBLE_SMOKE_KEY:-} ]]; then
     said=$(printf 'reply with the single word: forged\n' |
         sandbox --share-net --ro-bind /etc/resolv.conf /etc/resolv.conf \
             --setenv ANTHROPIC_API_KEY "$CRUCIBLE_SMOKE_KEY" \
-            /opt/crucible/crucible 2>&1)
+            /opt/crucible/crucible --model "$model" 2>&1) || true
     if [[ ${said,,} == *forged* ]]; then
         echo '    a model answered, and the answer reached the terminal'
     else
@@ -234,7 +244,7 @@ else
     said=$(printf 'hello\n' |
         sandbox --share-net --ro-bind /etc/resolv.conf /etc/resolv.conf \
             --setenv ANTHROPIC_API_KEY "not-a-key" \
-            /opt/crucible/crucible 2>&1)
+            /opt/crucible/crucible --model "$model" 2>&1) || true
     if [[ $said == *401* ]]; then
         echo '    reached the provider and drew its refusal — TLS needs no system certificates'
         echo '    SKIP no completed turn: set CRUCIBLE_SMOKE_KEY to spend a few tokens on one'
