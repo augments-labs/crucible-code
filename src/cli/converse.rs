@@ -39,7 +39,7 @@ use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
 use super::unasked;
-use super::{Fatal, Serving};
+use super::{Fatal, Serving, standing};
 use command::Ran;
 use typing::Asked;
 
@@ -295,7 +295,7 @@ pub(crate) fn converse<T: Terminal>(
 /// its `Drop` waits for. Leaving early would drop the join handle and detach
 /// all three, and the process would exit over a log still being written.
 fn take<T: Terminal>(
-    runner: Runner,
+    mut runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     mut taking: Taking<'_>,
@@ -326,6 +326,17 @@ fn take<T: Terminal>(
     let says = typing::under(&runner);
     let prompt = taking.prompt;
 
+    // Read here for the same reason and at the same moment: half of what a turn
+    // is asked under is about the session — which model is answering, and how
+    // hard it was asked to think — and a model can find out neither for itself.
+    // Written once at startup it would go on describing the session the first
+    // turn was taken in, so it is written again for each.
+    runner.telling(&standing::under(
+        runner.model(),
+        runner.effort(),
+        &terms.workspace,
+    ));
+
     // Whatever stopped the last turn is spent, and this is the last moment at
     // which clearing it can be certain of that: from the next line on there are
     // two threads, one of them reading the keyboard. A press arriving after
@@ -334,8 +345,6 @@ fn take<T: Terminal>(
     terms.cancel.reset();
 
     let working = thread::spawn(move || {
-        let mut runner = runner;
-
         // The runner reports what happened and returns why it stopped; nothing
         // else has posted the failure, so this is where it becomes visible.
         if let Err(problem) = runner.turn(prompt.trim(), &mut asking, &relay, &running) {

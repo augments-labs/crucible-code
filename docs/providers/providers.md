@@ -149,6 +149,27 @@ same. There is no way back to asking for nothing from inside a session — a run
 you can see on the screen cannot be un-seen by being handed a default this
 program is never told the name of. Remove the key from the file for that.
 
+### Asking crucible what it is
+
+Both answers are told to the model before every turn, so asking a session which
+model it is and how hard it is thinking gets what is actually on the request:
+
+```
+› what model are you?
+
+crucible, asking claude-opus-5 at max effort.
+```
+
+Neither is something a model can find out for itself. Its own name it would
+answer from training — which is whatever was true when it was trained, and is
+wrong the moment `/model` changes it — and the rung is a field on a request it
+never sees. Both are read off the session again before each turn rather than
+written down once, so the answer keeps up with `/model` and `/effort` instead of
+describing the session the first turn was taken in.
+
+Where no rung was named, what is said is that the vendor's own default applies —
+crucible is never told which rung that is, and neither is the model.
+
 ### The ladder holds what the model serves
 
 Which rungs a model takes is written down beside its name in the list `/model`

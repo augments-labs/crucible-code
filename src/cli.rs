@@ -21,6 +21,7 @@ mod remember;
 #[cfg(test)]
 mod sample;
 mod seen;
+mod standing;
 mod startup;
 mod style;
 

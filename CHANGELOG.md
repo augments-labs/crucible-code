@@ -15,6 +15,12 @@ Notable changes to crucible. Format follows
   `.crucible/config.json`, the file a clone carries, for the reason
   `providers.<name>.baseUrl` is.
 
+- **A session knows which model it is and how hard it was asked to think.**
+  Both go into the prompt before every turn, so asking crucible what it is gets
+  the model on the request rather than whatever the model was trained to say —
+  and the answer keeps up with `/model` and `/effort` instead of describing the
+  turn the session opened with.
+
 ### Changed
 
 - **`providers.<name>.model` no longer decides which provider is asked.** It is
