@@ -4,20 +4,30 @@
 //! listing of `openai.json` beside `moonshot.json` says which providers this
 //! user has logged in to without anybody being able to read either.
 //!
-//! Reading is what this module answers today, and it is the half that has to
-//! survive anything: a launch reads the store before it knows whether it needs
-//! one, so every shape the file could be in — absent, truncated, half-written,
-//! written by a version that does not exist yet — resolves to a list of keys
-//! and at most one sentence, never to a stop.
+//! Reading is the half that has to survive anything: a launch reads the store
+//! before it knows whether it needs one, so every shape the file could be in —
+//! absent, truncated, half-written, written by a version that does not exist
+//! yet — resolves to a list of keys and at most one sentence, never to a stop.
+//!
+//! Writing reads what is there and renames a sibling temporary over the target,
+//! which is what stops a full disk leaving half a file where a whole one was.
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crucible_core::ApiKey;
 
+use crate::error::AuthError;
+
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
+
+/// The temporary the write renames from — a sibling of the file itself, or
+/// `rename` is a cross-device copy that fails with `EXDEV` on the machines
+/// where it matters.
+const PARTIAL: &str = "auth.json.new";
 
 /// What this version of crucible writes, and the highest it can read.
 ///
@@ -31,6 +41,8 @@ const VERSION: u64 = 1;
 pub struct Store {
     /// The file itself.
     path: PathBuf,
+    /// The directory it lives in, which may not exist yet.
+    home: PathBuf,
 }
 
 impl Store {
@@ -43,6 +55,7 @@ impl Store {
     pub fn in_home(home: &Path) -> Self {
         Self {
             path: home.join(FILE),
+            home: home.to_path_buf(),
         }
     }
 
@@ -66,13 +79,90 @@ impl Store {
             }
         };
 
-        match parse(&text) {
+        let mut keys = match parse(&text) {
             Ok(keys) => Keys {
                 keys,
                 trouble: None,
             },
             Err(said) => Keys::nothing(&said),
+        };
+
+        if let Some(said) = tighten(&self.path) {
+            keys.also(&said);
         }
+
+        keys
+    }
+
+    /// Writes `key` down as `provider`'s, replacing one already there.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] when the store cannot be read back or cannot be written.
+    pub fn keep(&self, provider: &str, key: &str) -> Result<(), AuthError> {
+        self.change(|keys| {
+            keys.insert(provider.to_owned(), key.to_owned());
+            true
+        })
+    }
+
+    /// Forgets `provider`'s key. `false` when there was none to forget.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] as [`Store::keep`].
+    pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
+        let mut had = false;
+        self.change(|keys| {
+            had = keys.remove(provider).is_some();
+            had
+        })?;
+
+        Ok(had)
+    }
+
+    /// The read-modify-write, under the lock, once.
+    ///
+    /// `change` says whether anything moved: forgetting a provider that was
+    /// never there rewrites nothing, which keeps the file's modification time
+    /// honest about when somebody last logged in or out.
+    fn change(
+        &self,
+        change: impl FnOnce(&mut BTreeMap<String, String>) -> bool,
+    ) -> Result<(), AuthError> {
+        self.directory()?;
+
+        let mut keys = match fs::read_to_string(&self.path) {
+            Ok(text) => parse(&text).map_err(|_| AuthError::Unreadable {
+                path: self.path.clone(),
+            })?,
+            Err(trouble) if trouble.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(trouble) => return Err(AuthError::at(&self.path)(trouble)),
+        };
+
+        if !change(&mut keys) {
+            return Ok(());
+        }
+
+        let partial = self.home.join(PARTIAL);
+        write_private(&partial, &render(&keys))?;
+        fs::rename(&partial, &self.path).map_err(AuthError::at(&self.path))
+    }
+
+    /// The directory, created at a mode only this user can enter if it is not
+    /// there yet.
+    ///
+    /// One already on disk is left exactly as it is. `~/.crucible` holds the
+    /// configuration and the session logs and may predate this file by
+    /// releases; a directory the user made is theirs, and the file's own mode
+    /// is what protects the key.
+    fn directory(&self) -> Result<(), AuthError> {
+        if !self.home.is_dir() {
+            fs::create_dir_all(&self.home).map_err(AuthError::at(&self.home))?;
+            private(&self.home, 0o700).map_err(AuthError::at(&self.home))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -92,6 +182,15 @@ impl Keys {
             keys: BTreeMap::new(),
             trouble: Some(said.into()),
         }
+    }
+
+    /// Adds a second sentence, since a file can be both unreadable and too
+    /// open and the user is told once either way.
+    fn also(&mut self, said: &str) {
+        self.trouble = Some(match self.trouble.take() {
+            Some(first) => format!("{first}; {said}").into(),
+            None => said.into(),
+        });
     }
 
     /// `provider`'s key, as the type that can be applied and not read.
@@ -149,6 +248,93 @@ fn parse(text: &str) -> Result<BTreeMap<String, String>, String> {
         .iter()
         .filter_map(|(provider, key)| Some((provider.clone(), key.as_str()?.to_owned())))
         .collect())
+}
+
+/// The file's whole text.
+fn render(keys: &BTreeMap<String, String>) -> String {
+    let keys: serde_json::Map<_, _> = keys
+        .iter()
+        .map(|(provider, key)| (provider.clone(), serde_json::Value::from(key.as_str())))
+        .collect();
+
+    serde_json::Value::from(serde_json::Map::from_iter([
+        ("version".to_owned(), serde_json::Value::from(VERSION)),
+        ("keys".to_owned(), serde_json::Value::from(keys)),
+    ]))
+    .to_string()
+}
+
+/// Writes `text` to `path`, readable by nobody else, and does not return until
+/// the bytes are on the disk.
+///
+/// A temporary left behind by a crucible that died mid-write is cleared first,
+/// and `create_new` makes the file — which fails on a name already taken rather
+/// than following it, a symlink aimed elsewhere being the one that matters, so
+/// the gap between those two lines is not a way in. The mode is set at open
+/// time rather than after, because the window between creating a file at the
+/// umask's mode and tightening it is long enough to read a key out of.
+fn write_private(path: &Path, text: &str) -> Result<(), AuthError> {
+    let _ = fs::remove_file(path);
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path).map_err(AuthError::at(path))?;
+    file.write_all(text.as_bytes())
+        .map_err(AuthError::at(path))?;
+    file.sync_all().map_err(AuthError::at(path))
+}
+
+/// Sets `path` to `mode`, where the platform has one.
+///
+/// Windows has no mode: the file inherits the user profile's access control
+/// list, a weaker guarantee than `0600` and the same one the session logs
+/// already have — said here rather than papered over.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "the Windows arm has nothing to fail at, and a caller that had to know which platform it was on is the thing this hides"
+    )
+)]
+fn private(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+
+    Ok(())
+}
+
+/// Narrows `path` if it is readable by anyone else, and says so.
+///
+/// Warn, tighten, continue — rather than the refusal `ssh` gives a private key
+/// at the wrong mode. A user who cannot log in without shell surgery is worse
+/// off than one who is told their file was open and that it has been closed.
+#[cfg(unix)]
+fn tighten(path: &Path) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(path).ok()?.permissions().mode() & 0o777;
+    if mode == 0o600 {
+        return None;
+    }
+
+    let said = format!("{FILE} was readable by others (mode {mode:04o}) and has been tightened");
+    private(path, 0o600).ok().map(|()| said)
+}
+
+#[cfg(not(unix))]
+fn tighten(_path: &Path) -> Option<String> {
+    None
 }
 
 #[cfg(test)]

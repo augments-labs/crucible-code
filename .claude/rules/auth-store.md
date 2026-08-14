@@ -19,7 +19,7 @@ reach a log line by accident, and one function returning `&str` is all it takes
 to undo that. `Debug` is written by hand for anything that can reach a key, and
 a test greps every `Debug` output in the crate for a sentinel.
 
-## Reading never fails
+## Reading never fails, writing always may
 
 `Store::read` returns `Keys`, not `Result<Keys>`. Absent, truncated, or written
 by a version that does not exist yet all mean *nobody is logged in*, and most
@@ -27,6 +27,30 @@ launches need no stored key at all — so a damaged file may not be the reason
 somebody cannot start crucible. What could not be done comes out of
 `Keys::trouble` as one sentence for the user, and reading never rewrites what it
 could not understand.
+
+Writing is the opposite and owes a `Result`. In particular it refuses to write
+over a store it could not parse: a read-modify-write over an unreadable file is
+not a modification, it is a replacement, and what it replaces is the only copy
+of somebody's other logins.
+
+## The file is created private, not tightened afterwards
+
+The mode is set at open time through `OpenOptions`, because the window between
+creating a file at the umask's mode and narrowing it afterwards is long enough
+to read a key out of. The directory is created `0700` only when crucible is the
+one creating it — a `~/.crucible` the user already had is theirs, and what
+protects the key is the file's own mode.
+
+A store found readable by others is tightened, reported, and used. Refusing the
+way `ssh` refuses a loose private key would leave a user unable to log in
+without shell surgery, which is worse than the sentence.
+
+## A write lands whole or not at all
+
+The bytes go to a sibling temporary and are renamed over the store, so a full
+disk leaves the old file rather than half a new one. Sibling, because `rename`
+across devices is a copy — which is what "write it to the system temporary
+directory" gets wrong every time.
 
 ## What does not belong here
 
