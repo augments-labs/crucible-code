@@ -5,7 +5,7 @@ code itself live in [`CLAUDE.md`](CLAUDE.md) — read that before your first
 change; it is short, and it is what review checks against. (`AGENTS.md` is a
 symlink to it, so whichever name your tools look for, there is one source.)
 
-Each crate also has a rules file under `.claude/rules/` naming the obligations
+Each crate also has a rules file under `.agents/rules/` naming the obligations
 that only apply inside it — what a new provider has to touch, what a new tool
 has to declare. Agent tooling matches those to the files you touched and loads
 them on its own. A human has no such thing, so here is the same map; read the
@@ -14,13 +14,13 @@ review will ask about.
 
 | What you are changing | Read |
 | --- | --- |
-| `src/` | [`binary-wiring.md`](.claude/rules/binary-wiring.md) — the only place concrete types meet, and the only place an error becomes an exit code |
-| `crates/crucible-core/` | [`core-types.md`](.claude/rules/core-types.md) — what earns a place in a crate every other crate compiles, and which side of the open/closed line a new type is on |
-| `crates/crucible-config/`, `schema/` | [`config-document.md`](.claude/rules/config-document.md) — adding a setting, how layers merge, and what an error is allowed to say |
-| `crates/crucible-provider/` | [`provider-wire.md`](.claude/rules/provider-wire.md) — adding a provider, credentials, and where a vendor's `chunk` stops |
-| `crates/crucible-tools/` | [`tools-permission.md`](.claude/rules/tools-permission.md) — adding a tool, grants, and why a failed tool is a result rather than an error |
-| `crates/crucible-runner/` | [`runner-loop.md`](.claude/rules/runner-loop.md) — the loop over traits, ending a turn once, and the transcript being the only thing that grows |
-| `crates/crucible-tui/` | [`tui-render.md`](.claude/rules/tui-render.md) — the render budget, wrapping, and restoring the terminal you changed |
+| `src/` | [`binary-wiring.md`](.agents/rules/binary-wiring.md) — the only place concrete types meet, and the only place an error becomes an exit code |
+| `crates/crucible-core/` | [`core-types.md`](.agents/rules/core-types.md) — what earns a place in a crate every other crate compiles, and which side of the open/closed line a new type is on |
+| `crates/crucible-config/`, `schema/` | [`config-document.md`](.agents/rules/config-document.md) — adding a setting, how layers merge, and what an error is allowed to say |
+| `crates/crucible-provider/` | [`provider-wire.md`](.agents/rules/provider-wire.md) — adding a provider, credentials, and where a vendor's `chunk` stops |
+| `crates/crucible-tools/` | [`tools-permission.md`](.agents/rules/tools-permission.md) — adding a tool, grants, and why a failed tool is a result rather than an error |
+| `crates/crucible-runner/` | [`runner-loop.md`](.agents/rules/runner-loop.md) — the loop over traits, ending a turn once, and the transcript being the only thing that grows |
+| `crates/crucible-tui/` | [`tui-render.md`](.agents/rules/tui-render.md) — the render budget, wrapping, and restoring the terminal you changed |
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 

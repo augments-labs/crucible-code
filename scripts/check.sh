@@ -308,15 +308,26 @@ if ((linked == 0)); then
     failed=1
 fi
 
+# The per-crate rules are the same idea one directory down: written once under
+# .agents/, and reached under whichever name a harness looks for. A copy is the
+# failure — two sets of rules that agree today and diverge on the first edit.
+if [[ ! -L .claude/rules ]]; then
+    printf '    FAIL .claude/rules must be a symlink to ../.agents/rules, not a directory\n'
+    failed=1
+elif [[ "$(readlink .claude/rules)" != "../.agents/rules" ]]; then
+    printf '    FAIL .claude/rules points at %s, expected ../.agents/rules\n' "$(readlink .claude/rules)"
+    failed=1
+fi
+
 section "agent rules scope"
-# A rule under .claude/rules/ is read only when a file it claims is opened, so
+# A rule under .agents/rules/ is read only when a file it claims is opened, so
 # one without `paths:` is dead text that nothing ever loads — and it fails by
 # staying quiet, which is the same silent shape the symlink check above exists
 # to catch. The globs are checked too: a rule aimed at a crate that has since
 # been renamed stops applying without anyone noticing.
-rules=(.claude/rules/*.md)
+rules=(.agents/rules/*.md)
 if ((${#rules[@]} == 0)); then
-    printf '    FAIL .claude/rules/ holds no rules file; every per-crate rule has stopped loading\n'
+    printf '    FAIL .agents/rules/ holds no rules file; every per-crate rule has stopped loading\n'
     failed=1
 fi
 
@@ -398,7 +409,7 @@ done
 # `src/`.
 for package in crates/*/ src/; do
     if [[ $'\n'"$claimed" != *$'\n'"$package"* ]]; then
-        printf '    FAIL %s: no paths: frontmatter under .claude/rules/ claims it\n' "$package"
+        printf '    FAIL %s: no paths: frontmatter under .agents/rules/ claims it\n' "$package"
         failed=1
     fi
 done
