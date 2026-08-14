@@ -13,8 +13,15 @@ Notable changes to crucible. Format follows
   merged with a red mark beside the button; six did. It is required now, and the
   branch a pull request targets no longer exempts it — a collecting branch was
   measured only when it asked for `main`, which measured the collection and
-  never the pieces somebody actually read. `moves-only` remains the one way
-  past and stays visible on the pull request.
+  never the pieces somebody actually read.
+
+- **`whole-module` is a second way past the ceiling, for a module that only
+  compiles whole.** `-D warnings` makes an unreached function a failed build, so
+  a new provider or tool arrives exported and working or it does not build; where
+  that floor is already over 400 lines, the only smaller pull request is one that
+  lands the code without its tests. The test is whether an intermediate pull
+  request would compile, not whether the change is large. `moves-only` is
+  unchanged, and both stay visible on the pull request.
 
 ## [0.0.17] - 2026-08-13
 

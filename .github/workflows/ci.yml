@@ -54,6 +54,13 @@ jobs:
           # can prove that about itself. The label is somebody saying so, and it
           # stays on the pull request where the next reader can see it was said.
           MOVED: ${{ contains(github.event.pull_request.labels.*.name, 'moves-only') }}
+          # The other one, and it is the compiler that decides it rather than
+          # the author: a module whose parts do not compile apart has a floor,
+          # and where that floor is over the ceiling the only smaller pull
+          # request is one that lands the code without the tests that prove it.
+          # `-D warnings` is what sets it — an unreached function is a failed
+          # build here, so a module arrives whole or not at all.
+          WHOLE: ${{ contains(github.event.pull_request.labels.*.name, 'whole-module') }}
         run: |
           set -euo pipefail
 
@@ -79,9 +86,15 @@ jobs:
               exit 0
           fi
 
+          if [[ "$WHOLE" == true ]]; then
+              echo "$changed changed lines, labelled whole-module"
+              exit 0
+          fi
+
           echo "$changed changed lines into $INTO; the ceiling is 400"
           echo "split it into pull requests that each stand on their own,"
-          echo "or label it moves-only if nothing changed but where it lives"
+          echo "or label it moves-only if nothing changed but where it lives,"
+          echo "or whole-module if its parts do not compile apart"
           exit 1
 
   platforms:
