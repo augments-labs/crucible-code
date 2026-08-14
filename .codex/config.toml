@@ -14,7 +14,7 @@ approvals_reviewer = "auto_review"
 # The rules in CLAUDE.md are stated once and enforced across every crate; a
 # change that respects them usually has to be reasoned about, not pattern
 # matched.
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 
 # Rust answers age badly — a crate's API moves between minor versions and the
 # search result outlives it.
