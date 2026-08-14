@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-14
+
 ### Removed
 
 - **A run with no key no longer opens on the login panel.** 0.1.3 stood it in
@@ -1244,7 +1246,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/augments-labs/crucible-code/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/augments-labs/crucible-code/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/augments-labs/crucible-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/augments-labs/crucible-code/compare/v0.1.0...v0.1.1
