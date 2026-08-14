@@ -59,14 +59,17 @@ use crate::cli::style::Style;
 const PROVIDERS: [Served; 3] = [
     Served {
         name: "anthropic",
+        shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
     },
     Served {
         name: "moonshot",
+        shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
     },
     Served {
         name: "openai",
+        shown: "OpenAI",
         key: "OPENAI_API_KEY",
     },
 ];
@@ -76,6 +79,12 @@ const PROVIDERS: [Served; 3] = [
 pub(crate) struct Served {
     /// What `--model provider/…` and `providers.<name>` call it.
     pub(crate) name: &'static str,
+    /// How the vendor spells it, for a list somebody is reading down rather
+    /// than typing at. It reaches no argument, no config file and no request:
+    /// a name that is capitalised in one place and lowercase in another is one
+    /// somebody eventually types the wrong way round, so only [`Served::name`]
+    /// is ever matched against.
+    pub(crate) shown: &'static str,
     /// The variable its key is read from, unless `apiKeyEnv` names another.
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.

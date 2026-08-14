@@ -204,9 +204,11 @@ with it. See [Providers and models](../providers/providers.md).
 
 `/login <provider>` opens a box for the key — never the command line, which
 would put it in your shell's history, in the process listing and in the
-scrollback. Escape leaves it without writing anything. `/login` on its own names
-the providers this build serves and the variable each reads from, and so does a
-run with no keyboard to open a box at.
+scrollback. Escape leaves it without writing anything. `/login` on its own stands
+a panel where the prompt box was: ↑ and ↓ walk the providers this build serves,
+Enter opens the box for the one marked. A run with no keyboard to walk it — and a
+window with no room to stand a panel in — gets those names as rows instead, with
+the variable each reads from.
 
 `/clear` empties the transcript: the next prompt is the first one the model
 sees, and the turns before it are neither sent nor paid for again. It is the

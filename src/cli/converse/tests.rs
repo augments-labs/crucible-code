@@ -563,9 +563,10 @@ fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is(
 
 #[test]
 fn login_says_where_every_provider_reads_its_key_from() {
-    // Naming none is not an error: the welcome sends somebody here who has just
-    // been told they have no key, and does not yet know which words the next
-    // line may hold or which variable any of them wants.
+    // Naming none opens the panel where there is a keyboard to walk it with.
+    // Down a pipe there is not, so the same line answers the question the panel
+    // would have asked: which names crucible knows, and which variable each of
+    // them signs a request from.
     let (written, asked) = commanding("/login\n");
 
     assert_eq!(asked, 0, "{written}");

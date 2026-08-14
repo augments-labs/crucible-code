@@ -352,3 +352,20 @@ fn the_help_text_names_every_provider_this_build_serves_and_its_variable() {
         );
     }
 }
+
+#[test]
+fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
+    // Two spellings of one provider, and only one of them is ever matched
+    // against — so the one nobody types is the one free to drift. A panel
+    // offering `OpenAl` writes its key down under `openai` and reads correctly
+    // to everybody except the person deciding which vendor they are logging in
+    // to.
+    for one in PROVIDERS {
+        assert!(
+            one.shown.to_lowercase().starts_with(one.name),
+            "{} is offered as {}",
+            one.name,
+            one.shown
+        );
+    }
+}

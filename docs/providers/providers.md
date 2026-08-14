@@ -120,8 +120,8 @@ what a machine you do not want a key on the profile of wants:
 ```
 
 `/login <provider>` inside a session is what writes it, into a box that draws a
-dot per character rather than the key. Editing the file by hand works too —
-crucible only reads what is there.
+dot per character rather than the key; `/login` on its own asks which provider
+first. Editing the file by hand works too — crucible only reads what is there.
 
 The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version

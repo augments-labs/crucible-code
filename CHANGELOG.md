@@ -12,8 +12,10 @@ Notable changes to crucible. Format follows
   it, and there was no such command. `/login <provider>` now opens a box that
   draws a dot per character — never the command line, which would leave the key
   in your shell's history and in the process listing — and writes what it takes
-  down for the next run. `/login` on its own names the providers there are and
-  the variable each reads from, and so does a run with no keyboard to type at.
+  down for the next run. `/login` on its own stands a panel of the providers
+  there are where the prompt box was, to walk with the arrows; a run with no
+  keyboard to walk it gets those names as rows, with the variable each reads
+  from.
 
 - **A key can be written down instead of exported.** crucible reads
   `~/.crucible/auth.json` — a file only you can read — alongside the environment,
