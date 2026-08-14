@@ -25,7 +25,7 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, Mode};
+use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tui::{
     Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Reporting, Row, Slot,
@@ -230,11 +230,15 @@ fn together(offered: Option<Instant>, now: Instant) -> bool {
 /// The box is redrawn on every keystroke and this is the same row until a key
 /// changes the mode, so formatting it per frame would be work done to produce
 /// the bytes that were already there.
-struct Says {
+pub(super) struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
     mode: Cow<'static, str>,
     /// The keys that act on it, said quietly after.
     keys: &'static str,
+    /// Which model the next turn goes to, at the other end of the row.
+    model: String,
+    /// How hard it is being asked to think. `None` where no rung is in force.
+    effort: Option<&'static str>,
     /// What the border and the sentence are both drawn in.
     tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
@@ -255,21 +259,26 @@ struct Says {
 pub(super) fn working<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
-    mode: Mode,
+    says: &Says,
     style: Style,
 ) -> (Vec<Row>, Caret) {
     let columns = renderer.columns();
-    let prompt = Prompt {
-        said: editor.text(),
-        column: editor.column(),
-        mode: mode.sentence(),
-        tone: tone(mode),
-        hint: WORKING,
-        asking: None,
-        room: Prompt::room(renderer.rows()),
-    };
+    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
     (prompt.rows(columns, style.glyphs()), prompt.caret(columns))
+}
+
+/// What the row under a running turn says.
+///
+/// Read before the runner leaves for the worker, because nothing on this side
+/// can ask it anything while it is away — and nothing needs to: `/mode`,
+/// `/model` and `/effort` are all lines typed between turns, so none of the
+/// three facts here can change while the turn they describe is the one running.
+pub(super) fn under(runner: &Runner) -> Says {
+    Says {
+        keys: WORKING,
+        ..saying(runner)
+    }
 }
 
 /// Reads whatever the keyboard already has, and redraws the box if it moved.
@@ -289,7 +298,7 @@ pub(super) fn working<T: Terminal>(
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &mut Editor,
-    mode: Mode,
+    says: &Says,
     style: Style,
     cancel: &Cancel,
 ) -> Result<Option<String>, Fatal> {
@@ -335,7 +344,7 @@ pub(super) fn during<T: Terminal>(
     }
 
     if moved {
-        stand(renderer, editor, mode, style)?;
+        stand(renderer, editor, says, style)?;
     }
 
     Ok(finished)
@@ -345,10 +354,10 @@ pub(super) fn during<T: Terminal>(
 pub(super) fn stand<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
-    mode: Mode,
+    says: &Says,
     style: Style,
 ) -> Result<(), Fatal> {
-    let (rows, caret) = working(renderer, editor, mode, style);
+    let (rows, caret) = working(renderer, editor, says, style);
 
     renderer.under(&rows, Some(caret), style.palette())?;
     Ok(())
@@ -361,6 +370,8 @@ fn saying(runner: &Runner) -> Says {
     Says {
         mode: Cow::Borrowed(mode.sentence()),
         keys: CYCLE,
+        model: runner.model().to_owned(),
+        effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
     }
@@ -410,6 +421,8 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: says.keys,
+        model: says.model.as_str(),
+        effort: says.effort,
         asking: says.asking,
         room,
     }

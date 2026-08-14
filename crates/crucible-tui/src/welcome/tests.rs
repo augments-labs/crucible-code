@@ -28,7 +28,6 @@ fn welcome<'a>(sessions: &'a [Recent<'a>]) -> Welcome<'a> {
     Welcome {
         version: "v0.0.8",
         model: "claude-sonnet-5",
-        effort: None,
         root: "~/code/crucible-code",
         sessions,
     }
@@ -270,12 +269,13 @@ fn a_deep_directory_gives_up_its_middle_rather_than_its_name() {
 }
 
 #[test]
-fn how_hard_a_model_is_thinking_is_drawn_only_where_there_is_one() {
-    let asked = Welcome {
-        effort: Some("high"),
-        ..welcome(&WORKED_IN)
-    };
+fn the_card_names_the_model_and_not_the_rung_it_is_being_asked_on() {
+    // The rung is under the prompt box, where every keystroke redraws it. Drawn
+    // here it would be true until the first `/effort` and wrong after it — this
+    // card is the terminal's scrollback the moment the next thing is written,
+    // and nothing in this process can go back over it.
+    let drawn = drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode);
 
-    assert!(drawn(&asked, 80, Glyphs::Unicode).contains("claude-sonnet-5 · high effort"));
-    assert!(!drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode).contains("effort"));
+    assert!(drawn.contains("claude-sonnet-5"), "{drawn}");
+    assert!(!drawn.contains("effort"), "{drawn}");
 }

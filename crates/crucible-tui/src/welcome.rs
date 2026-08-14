@@ -52,9 +52,6 @@ pub struct Welcome<'a> {
     pub version: &'a str,
     /// The model this session will ask.
     pub model: &'a str,
-    /// How hard that model is being asked to think, where that is a thing it
-    /// takes. Nothing is drawn in its place when it is not.
-    pub effort: Option<&'a str>,
     /// The directory crucible is working in.
     pub root: &'a str,
     /// What happened in that directory before, newest first. More of them than
