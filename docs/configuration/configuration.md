@@ -41,6 +41,23 @@ into settings that mysteriously stopped applying.
 
 ## What you can set
 
+### `provider`
+
+Which provider to ask, by the name `--model` qualifies a model with:
+
+```json
+{ "provider": "anthropic" }
+```
+
+This is the only setting that chooses a vendor, and everything under
+`providers` below is about a provider already being asked rather than a way of
+picking one. `/model` and `/login` write it, so a machine that holds a key for
+more than one vendor answers the question once.
+
+It is one of the keys [the file that travels](#the-file-that-travels) may not
+set: whoever it names receives the prompt and bills for it, and that is not a
+repository's choice to make for everyone who clones it.
+
 ### `providers`
 
 Keyed by provider name — `anthropic`, `openai`.
@@ -226,12 +243,12 @@ crucible fixes — so a project may set one for everybody who clones it, and tha
 is still not a way to ship somebody's key.
 
 The same refusal covers every key that could loosen what crucible does unasked:
-`permissions.mode`, `permissions.allow`, `permissions.extraDirectories`, and
-`providers.<name>.baseUrl`. The last of those is not a permission, and it is
-here for the same reason — the address a request goes to is who receives the key
-that goes with it, and nothing on that path stops to ask. Each is read from your
-home file and from `.crucible/config.local.json`, and refused in the one file
-git carries.
+`permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
+`providers.<name>.baseUrl`, and `provider`. The last two are not permissions,
+and they are here for the same reason — who a request goes to is who receives
+the key that goes with it, and nothing on that path stops to ask. Each is read
+from your home file and from `.crucible/config.local.json`, and refused in the
+one file git carries.
 
 The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is

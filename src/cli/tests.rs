@@ -48,7 +48,7 @@ fn landing(
     from: &dyn Fn(&str) -> Option<String>,
     keys: &Keys,
 ) -> Result<Option<Served>, Fatal> {
-    chosen(&Choice::default(), settings, from, keys)
+    chosen(settings, from, keys)
 }
 
 #[test]
@@ -246,25 +246,6 @@ fn a_run_that_named_no_provider_goes_to_the_one_whose_key_is_set() {
 }
 
 #[test]
-fn a_bare_model_name_goes_to_the_provider_whose_key_is_set_and_never_to_a_fallback() {
-    // The same defect from the other side, and the one the user met:
-    // `--model gpt-5.6-terra` with only OPENAI_API_KEY exported went to
-    // Anthropic, because an unqualified name had a provider written into the
-    // parser. A name is now served by whoever this machine can authenticate to.
-    for one in PROVIDERS {
-        let found = chosen(
-            &choice("a-model-name"),
-            &Settings::default(),
-            &holding(&[one.key]),
-            &Keys::default(),
-        )
-        .expect("one key, no doubt");
-
-        assert_eq!(found.map(|found| found.name), Some(one.name), "{}", one.key);
-    }
-}
-
-#[test]
 fn a_machine_holding_no_key_at_all_has_no_provider() {
     // Not a fallback and not a refusal to start: there is nothing to ask, and
     // the session opens saying so with the prompt still there to set one up
@@ -292,11 +273,11 @@ fn a_machine_holding_every_key_and_choosing_none_is_asked_which() {
 }
 
 #[test]
-fn a_machine_holding_every_key_takes_the_provider_a_model_was_chosen_for() {
-    // What `/model` writes down is an answer to this question, so the run after
-    // it does not ask again.
-    let sample = Sample::new("model-decides");
-    let settings = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
+fn a_machine_holding_every_key_asks_the_provider_it_was_told_to() {
+    // The one setting that chooses a vendor, and the whole of what settles a
+    // machine set up for two.
+    let sample = Sample::new("provider-decides");
+    let settings = sample.local(r#"{"provider": "openai"}"#);
     let every = PROVIDERS.map(|one| one.key);
 
     let found = lands(&settings, &holding(&every)).expect("the file chose");
@@ -305,24 +286,47 @@ fn a_machine_holding_every_key_takes_the_provider_a_model_was_chosen_for() {
 }
 
 #[test]
-fn a_model_named_on_the_flag_does_not_let_a_file_settle_the_provider() {
-    // The file's answer is a choice of *model*, and the flag has already
-    // overruled it. Reading it to pick the provider would send the name that
-    // was typed to the vendor named beside a name that was not.
-    let sample = Sample::new("model-overruled");
+fn the_provider_a_file_names_is_asked_where_another_holds_the_only_key() {
+    // A key answers whether a provider can be reached and never which to ask.
+    // Reaching past what was written down because a *different* variable is
+    // exported is the shell choosing the vendor, which is the thing no rung
+    // here does — so this run is set up for anthropic, and its missing key is
+    // met as a missing key rather than papered over with somebody else's.
+    let sample = Sample::new("named-over-keyed");
+    let settings = sample.local(r#"{"provider": "anthropic"}"#);
+
+    let found = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect("the file chose");
+
+    assert_eq!(found.map(|found| found.name), Some("anthropic"));
+}
+
+#[test]
+fn a_model_written_under_a_provider_never_chooses_that_provider() {
+    // The failure this key was added for. `providers.openai.model` says what to
+    // ask openai for, and it used to be read as saying to ask openai — so a
+    // machine holding two keys was sent to whichever vendor a model had been
+    // picked for weeks earlier, with nothing on screen saying so.
+    let sample = Sample::new("model-is-not-a-provider");
     let settings = sample.settings(r#"{"providers": {"openai": {"model": "gpt-5.6"}}}"#);
     let every = PROVIDERS.map(|one| one.key);
 
     assert!(
-        chosen(
-            &choice("claude-opus-5"),
-            &settings,
-            &holding(&every),
-            &Keys::default()
-        )
-        .is_err(),
-        "the flag named a model, so the file cannot say who serves it"
+        lands(&settings, &holding(&every)).is_err(),
+        "a model is what to ask a provider for, not which provider to ask"
     );
+}
+
+#[test]
+fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
+    // Written by hand, or written by a later crucible and read back by this
+    // one. Either way it is the same sentence the flag gets, naming what this
+    // build has — and not a silent fall through to whichever key is exported.
+    let sample = Sample::new("named-nobody");
+    let settings = sample.local(r#"{"provider": "gemini"}"#);
+
+    let problem = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect_err("no such provider");
+
+    assert!(problem.to_string().contains("gemini"), "{problem}");
 }
 
 #[test]

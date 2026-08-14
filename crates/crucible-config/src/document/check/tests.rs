@@ -268,6 +268,30 @@ fn a_checked_in_file_cannot_choose_who_receives_the_api_key() {
 }
 
 #[test]
+fn a_checked_in_file_cannot_choose_which_vendor_a_turn_is_sent_to() {
+    // The same objection as the address above, one level up: whoever this
+    // names is who receives the prompt and bills for it. Choosing a vendor for
+    // everybody who clones a repository is not a repository's to do, and the
+    // person it is done to holds a key for that vendor already, so nothing on
+    // the path would look wrong.
+    let err = shared(r#"{"provider": "openai"}"#).unwrap_err();
+
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+    assert!(said.contains("provider"), "got {said}");
+}
+
+#[test]
+fn a_provider_can_still_be_chosen_from_the_files_that_did_not_travel() {
+    // Where crucible writes it itself. `/model` and `/login` answer into the
+    // user's own file, so a refusal reaching that layer would be crucible
+    // refusing to read back what it just wrote.
+    for read in [mine as fn(&str) -> Result<Document, ConfigError>, local] {
+        read(r#"{"provider": "anthropic"}"#).unwrap();
+    }
+}
+
+#[test]
 fn a_provider_can_still_be_pointed_somewhere_from_the_files_that_did_not_travel() {
     // The case the setting exists for: a gateway one person reaches, written
     // where only that person's machine reads it.

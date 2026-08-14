@@ -6,6 +6,22 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`provider` in the configuration says which provider to ask.** The one
+  setting that chooses a vendor, written where `--model` is not naming one.
+  `/model` and `/login` do not write it yet, so a machine holding two keys sets
+  it by hand for now. It is refused in `.crucible/config.json`, the file a clone
+  carries, for the reason `providers.<name>.baseUrl` is.
+
+### Changed
+
+- **`providers.<name>.model` no longer decides which provider is asked.** It is
+  what to ask that provider *for*, and reading it as a choice of provider sent a
+  machine holding two keys to whichever vendor a model had been picked for
+  earlier, with nothing on screen saying so. If that is how yours was being
+  settled, set `provider` — the sentence a two-key machine gets now names it.
+
 ## [0.1.4] - 2026-08-14
 
 ### Removed

@@ -85,6 +85,17 @@ impl Settings {
         Self { value, rules }
     }
 
+    /// Which provider to ask, when the command line names none.
+    ///
+    /// The one setting that chooses a vendor. A key says a provider can be
+    /// reached and nothing more, so this is what a machine holding two of them
+    /// is settled by — and the name is read back as it was written, since which
+    /// names are real is the binary's to know.
+    #[must_use]
+    pub fn provider(&self) -> Option<&str> {
+        self.value.get("provider")?.as_str()
+    }
+
     /// The model to ask this provider for, when the command line names none.
     #[must_use]
     pub fn model(&self, provider: &str) -> Option<&str> {
@@ -228,6 +239,34 @@ mod tests {
         // that pins its own model must not silently take away the model the
         // user set for a provider it never mentioned.
         assert_eq!(settings.model("openai"), Some("also-from-home"));
+    }
+
+    #[test]
+    fn the_provider_a_machine_asks_is_read_from_the_key_that_names_one() {
+        let user = Document::sample(
+            r#"{"provider": "openai",
+                "providers": {"anthropic": {"model": "claude-sonnet-5"}}}"#,
+            Origin::User,
+        );
+
+        let settings = Settings::resolve(vec![user]);
+
+        // The top-level key, and only it. A model written under a provider is
+        // what to ask *that* provider for, and reading it as a choice of
+        // provider is the failure this key exists to end.
+        assert_eq!(settings.provider(), Some("openai"));
+    }
+
+    #[test]
+    fn a_machine_that_has_not_chosen_a_provider_says_so_rather_than_naming_one() {
+        let user = Document::sample(
+            r#"{"providers": {"openai": {"model": "gpt-5.6-terra"}}}"#,
+            Origin::User,
+        );
+
+        let settings = Settings::resolve(vec![user]);
+
+        assert_eq!(settings.provider(), None);
     }
 
     #[test]
