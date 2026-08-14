@@ -96,6 +96,34 @@ fn model_lists_only_the_provider_this_run_is_set_up_for() {
 }
 
 #[test]
+fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
+    // Both halves, because either one alone leaves the next run here asking a
+    // question this command just answered: the model says what to ask for, and
+    // the provider is the only key that says who to ask. A file holding the
+    // first and not the second is a machine with two keys picking a vendor by
+    // whichever it finds, and then asking it for somebody else's model.
+    let sample = Sample::new("model-named");
+    let choosing = sample.root().join("config.json");
+    let terms = Terms {
+        choosing: choosing.clone(),
+        ..plain()
+    };
+
+    let runner = scripted(Script::new(vec![saying("answered")]), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/model claude-haiku-4-5\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written().to_string();
+    assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
+
+    let held = std::fs::read_to_string(&choosing).expect("the file it said it wrote");
+    assert!(held.contains("\"provider\": \"anthropic\""), "{held}");
+    assert!(held.contains("\"model\": \"claude-haiku-4-5\""), "{held}");
+}
+
+#[test]
 fn a_rung_named_on_the_line_is_asked_for_and_written_down() {
     // The whole of what `/effort <rung>` owes: the session asks for it from the
     // next turn on, and the file at home is what makes the next run ask too.

@@ -10,9 +10,10 @@ Notable changes to crucible. Format follows
 
 - **`provider` in the configuration says which provider to ask.** The one
   setting that chooses a vendor, written where `--model` is not naming one.
-  `/model` and `/login` do not write it yet, so a machine holding two keys sets
-  it by hand for now. It is refused in `.crucible/config.json`, the file a clone
-  carries, for the reason `providers.<name>.baseUrl` is.
+  `/model` and `/login` write it, so a machine holding a key for two vendors
+  answers the question once rather than at every launch. It is refused in
+  `.crucible/config.json`, the file a clone carries, for the reason
+  `providers.<name>.baseUrl` is.
 
 ### Changed
 

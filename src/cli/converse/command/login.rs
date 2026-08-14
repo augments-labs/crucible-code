@@ -40,7 +40,7 @@ use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret;
-use crate::cli::{Fatal, PROVIDERS, Served};
+use crate::cli::{Fatal, PROVIDERS, Served, remember};
 
 use super::{Terms, say};
 
@@ -318,6 +318,15 @@ fn taken<T: Terminal>(
 
     runner.serve(set.provider);
     terms.provider.set(Some(named.name));
+
+    // Written down as well as switched to, so the next run here opens on the
+    // vendor just logged in to instead of asking again — a key says a provider
+    // can be reached and never which to ask, and this command is somebody
+    // saying which. A failure loses the half that outlives the process and not
+    // the session in front of the reader, which is the bargain `/model` is on.
+    if let Err(problem) = remember::asking(&terms.choosing, named.name) {
+        say(renderer, terms, &format!("! {problem}"))?;
+    }
 
     if runner.model().is_empty()
         && let Some(model) = set.model
