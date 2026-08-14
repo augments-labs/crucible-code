@@ -440,3 +440,55 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
         assert!(one.models.len() <= 5, "{}: {}", one.name, one.models.len());
     }
 }
+
+#[test]
+fn every_model_serves_its_rungs_weakest_first_and_names_none_of_them_twice() {
+    // The ladder is drawn between two ends — faster on the left, smarter on the
+    // right — and those ends are a claim about the order of what is between
+    // them. A set written down out of order draws a track whose ends are wrong,
+    // which is worse than a missing rung: nothing on screen says so.
+    for one in PROVIDERS {
+        for model in one.models {
+            let ladder: Vec<usize> = model
+                .rungs
+                .iter()
+                .map(|rung| {
+                    Effort::LADDER
+                        .iter()
+                        .position(|known| known == rung)
+                        .expect("a rung of the ladder")
+                })
+                .collect();
+
+            // Strictly, which is what makes this the uniqueness check as well:
+            // a rung written down twice is a rung that stands still under an
+            // arrow key.
+            assert!(
+                ladder.is_sorted_by(|here, next| here < next),
+                "{}: {:?}",
+                model.name,
+                model.rungs
+            );
+        }
+    }
+}
+
+#[test]
+fn a_model_nobody_wrote_down_is_offered_every_rung_rather_than_none() {
+    // The table is read off somebody else's documentation and goes stale
+    // between releases. What is not in it is not a model that serves nothing —
+    // it is a model this build knows nothing about, and the choice is between
+    // offering a rung its vendor may refuse and withholding one it serves. The
+    // first is a sentence back from the vendor; the second is crucible deciding
+    // what a model it has never heard of can do.
+    assert_eq!(rungs("anthropic", "claude-opus-9"), Effort::LADDER);
+
+    // Including under a provider this build does not serve, which is the same
+    // ignorance arrived at from the other side.
+    assert_eq!(rungs("ollama", "llama-4"), Effort::LADDER);
+
+    // And a name is only known under the provider it was written down for: two
+    // vendors serving one name serve it on their own terms.
+    assert_eq!(rungs("openai", "claude-haiku-4-5"), Effort::LADDER);
+    assert!(rungs("anthropic", "claude-haiku-4-5").is_empty());
+}

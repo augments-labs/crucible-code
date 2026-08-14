@@ -68,22 +68,35 @@ const PROVIDERS: [Served; 3] = [
         shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
         models: &[
-            "claude-fable-5",
-            "claude-opus-5",
-            "claude-sonnet-5",
-            "claude-haiku-4-5",
+            Model::new("claude-fable-5", EVERY),
+            Model::new("claude-opus-5", EVERY),
+            Model::new("claude-sonnet-5", EVERY),
+            // The one model of this vendor's current three generations that
+            // takes no rung: it reasons against a token budget rather than
+            // against a word, and the field the other three read is one it has
+            // never been served.
+            Model::new("claude-haiku-4-5", NONE),
         ],
     },
     Served {
         name: "moonshot",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
+        // Spelled the way the coding console spells them, that being the one
+        // crucible asks. The open platform serves the same models under longer
+        // names and does not serve the second of these at all, so a key from
+        // there is a `baseUrl` and a typed name rather than a shorter list.
         models: &[
-            "kimi-k3",
-            "kimi-k2.7-code",
-            "kimi-k2.7-code-highspeed",
-            "kimi-k2.6",
-            "kimi-k2.5",
+            Model::new("k3", KIMI),
+            // The same model held to a quarter of its context. Offered beside
+            // it because the choice is a plan's rather than a preference: the
+            // full window is what the cheapest tier does not come with.
+            Model::new("k3-256k", KIMI),
+            // Both coding models think on every turn and are not asked how
+            // hard: the field is not theirs to read, and thinking cannot be
+            // turned off either.
+            Model::new("kimi-for-coding", NONE),
+            Model::new("kimi-for-coding-highspeed", NONE),
         ],
     },
     Served {
@@ -92,9 +105,63 @@ const PROVIDERS: [Served; 3] = [
         key: "OPENAI_API_KEY",
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
-        models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+        models: &[
+            Model::new("gpt-5.6-sol", EVERY),
+            Model::new("gpt-5.6-terra", EVERY),
+            Model::new("gpt-5.6-luna", EVERY),
+            // One generation back and one rung short of the others.
+            Model::new(
+                "gpt-5.5",
+                &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh],
+            ),
+        ],
     },
 ];
+
+/// What a model that takes every rung crucible has is written with.
+const EVERY: &[Effort] = &Effort::LADDER;
+
+/// The three rungs the Kimi thinking models serve.
+///
+/// It maps the two it does not serve onto these rather than refusing them, so
+/// this is the one place a narrowed ladder is a courtesy instead of the
+/// difference between a turn and an error. It is still narrowed: a rung offered
+/// is a rung asked for, and two words that reach the same rung are two words
+/// somebody has to be told are the same.
+const KIMI: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// What a model that takes none at all is written with.
+///
+/// Not the same as a model this build has never heard of. That one is offered
+/// all five and left to the vendor to refuse, because crucible knows nothing
+/// about it either way; this one is a model crucible knows serves no rung, and
+/// offering one would be inventing a fact rather than declining to have one.
+const NONE: &[Effort] = &[];
+
+/// One model a provider offers, and how hard it can be asked to think.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Model {
+    /// What `--model` and `/model` name it, spelled the way the vendor spells
+    /// it, because it is the vendor that has to recognise it.
+    pub(crate) name: &'static str,
+    /// The rungs of [`Effort`] this model serves, weakest first, as its
+    /// vendor's documentation had them when this was built.
+    ///
+    /// Empty is a model that takes no rung at all — several of these serve
+    /// none, and two vendors refuse the request outright rather than ignoring
+    /// the field. So this is what `/effort` walks rather than the whole ladder:
+    /// a rung offered here that the model does not serve is a refusal crucible
+    /// walked somebody into, one keystroke after showing them the word that
+    /// caused it.
+    pub(crate) rungs: &'static [Effort],
+}
+
+impl Model {
+    /// One entry of the table above.
+    const fn new(name: &'static str, rungs: &'static [Effort]) -> Self {
+        Self { name, rungs }
+    }
+}
 
 /// A provider this build has an arm for, and where its key is read from.
 #[derive(Debug, Clone, Copy)]
@@ -118,7 +185,13 @@ pub(crate) struct Served {
     /// was. Which is what keeps this from being the model built into the build —
     /// the list is a shortcut past the vendor's documentation, and the vendor
     /// remains the authority on what it serves.
-    pub(crate) models: &'static [&'static str],
+    ///
+    /// That last sentence binds the rungs beside each name too. They are read
+    /// off the same documentation and go stale the same way, and what a stale
+    /// one costs is a rung missing from a panel rather than a wrong request:
+    /// `--effort` and `/effort <rung>` both go straight to the vendor, which is
+    /// the path that was there before any of this was written down.
+    pub(crate) models: &'static [Model],
 }
 
 /// What one provider is set up with, once there is a key for it.
@@ -174,6 +247,23 @@ pub(crate) const fn unasked(provider: Option<&str>) -> &'static str {
 /// The provider names, for the sentence a name outside them gets back.
 fn names() -> String {
     PROVIDERS.map(|one| one.name).join(", ")
+}
+
+/// The rungs `model` serves, as far as this build knows.
+///
+/// All five for a name the table does not hold, which is the answer for every
+/// model released since the build and every one typed rather than picked.
+/// Nothing is known about it either way, and the choice is between offering a
+/// rung its vendor may refuse and withholding one it serves — the first is a
+/// sentence back from the vendor, the second is crucible deciding what a model
+/// it has never heard of can do.
+pub(crate) fn rungs(provider: &str, model: &str) -> &'static [Effort] {
+    PROVIDERS
+        .into_iter()
+        .filter(|one| one.name == provider)
+        .flat_map(|one| one.models)
+        .find(|one| one.name == model)
+        .map_or(EVERY, |one| one.rungs)
 }
 
 /// The command-line surface.

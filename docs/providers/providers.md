@@ -120,8 +120,9 @@ Where a rung was chosen, the welcome says so beside the model. Where none was,
 nothing is drawn in its place: the rung in force is then the vendor's, and
 crucible is never told which it picked.
 
-Mid-session, `/effort` stands a ladder over the five rungs and `/effort <rung>`
-takes one outright. The ladder is a track with the rungs written under it,
+Mid-session, `/effort` stands a ladder over the rungs the model in force serves
+and `/effort <rung>` takes one outright. The ladder is a track with the rungs
+written under it,
 `Faster` at one end and `Smarter` at the other; the left and right arrows move
 the mark, Enter takes what is under it and Escape leaves it. It is stood over a
 model by name and asks which model is being asked first, since a rung is one
@@ -130,6 +131,22 @@ word in one request and what it buys is that model's to say. Either way it appli
 same. There is no way back to asking for nothing from inside a session — a rung
 you can see on the screen cannot be un-seen by being handed a default this
 program is never told the name of. Remove the key from the file for that.
+
+### The ladder holds what the model serves
+
+Which rungs a model takes is written down beside its name in the list `/model`
+offers, so the ladder is the model's rather than crucible's: `moonshot/k3` gets
+three rungs, `openai/gpt-5.5` gets four, and a model whose vendor serves none is
+told so instead of being offered a ladder that cannot be answered. A rung that
+is missing is missing rather than drawn and greyed — a row the arrows have to
+step over is a row worth not drawing.
+
+That list is read off each vendor's documentation and goes stale between
+releases, so nothing is narrowed except the offer. `--effort` and
+`/effort <rung>` go to the vendor whatever this build has written down, and a
+model it has never heard of — one released since, or one typed rather than
+picked — is offered all five. What a stale entry costs is a missing row in a
+panel, never a refusal from the program that is not the one serving the model.
 
 ## Keys
 
@@ -288,6 +305,12 @@ from the open platform says so in
 ```json
 { "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1" } } }
 ```
+
+The two consoles also spell their models differently. What `/model` offers is
+the coding console's spelling, that being the one crucible asks: `k3`,
+`k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. The open platform
+serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
+serve a 256k K3 at all — so a key from there is a `baseUrl` and a typed name.
 
 Requests to this provider identify crucible by name in the `user-agent` header.
 MoonshotAI's terms require a client to say truthfully what it is, and treat a

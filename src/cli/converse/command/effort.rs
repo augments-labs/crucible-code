@@ -2,11 +2,21 @@
 //!
 //! The ladder is crucible's and it is the same everywhere — five rungs, in the
 //! same order, whichever vendor this session is on. Which of them a model
-//! actually serves, and whether it takes a rung at all, is the vendor's answer
-//! and it differs between models of one vendor, so all five are offered and the
-//! vendor is left to refuse what it does not serve. That is the bargain a model
-//! name is already on: what is offered is a shortcut past somebody's
-//! documentation, not a claim about what is behind it.
+//! actually serves is the vendor's answer and it differs between models of one
+//! vendor, so the ladder that gets stood up holds the rungs this build has
+//! written down for the model in force. Several models serve none at all, and
+//! those are told rather than offered a ladder with nothing on it.
+//!
+//! Narrowed rather than greyed. A rung drawn but unreachable is a row the
+//! arrows have to step over, and one nobody can act on is one the panel is
+//! better off not holding — what is left is short enough to read at a glance,
+//! which is the whole argument for a ladder over a list.
+//!
+//! What is typed is not narrowed. `/effort max` and `--effort max` go to the
+//! vendor whatever the table here says, because the table is read off somebody
+//! else's documentation and goes stale between releases: a rung it has not
+//! caught up with should cost a missing row in a panel, never a refusal from
+//! the program that is not the one serving the model.
 //!
 //! Which is why the ladder is stood over a model by name, and why a session
 //! with no model chosen is sent to `/model` instead of being asked this. A rung
@@ -22,12 +32,20 @@ use crucible_runner::Runner;
 use crucible_tui::{Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::converse::picking::{self, Taken};
-use crate::cli::{Fatal, remember, unasked};
+use crate::cli::{Fatal, remember, rungs, unasked};
 
 use super::{Terms, say};
 
 /// What escape leaves behind, in place of the listing it used to write.
 const LEFT: &str = "cancelled, no rung taken";
+
+/// What a model that serves no rung is said with, after its name.
+///
+/// The name rather than "this model", because the name is the half that can be
+/// acted on: it is what `/model` changes, and what the vendor's own
+/// documentation is indexed by.
+const NO_RUNG: &str =
+    "takes no rung: its vendor serves none for it. /model picks a model that does";
 
 /// What the two ends of the track are called.
 ///
@@ -73,15 +91,25 @@ pub(super) fn run<T: Terminal>(
         return renderer.commit(unasked(named)).map_err(Fatal::from);
     };
 
+    // Every rung for a model this build has not heard of, which is why this is
+    // read before the word typed after the command rather than instead of it:
+    // what is typed goes to the vendor either way, and this decides only what
+    // gets offered and what gets listed back.
+    let rungs = rungs(provider, runner.model());
+
     if !said.is_empty() {
         return match said.parse() {
             Ok(effort) => taken(effort, provider, renderer, runner, terms),
-            Err(refused) => mistyped(&refused, renderer, terms),
+            Err(refused) => mistyped(&refused, renderer, terms, rungs),
         };
     }
 
+    if rungs.is_empty() {
+        return say(renderer, terms, &format!("{} {NO_RUNG}", runner.model()));
+    }
+
     if keys {
-        match chosen(renderer, runner, terms)? {
+        match chosen(renderer, runner, terms, rungs)? {
             Taken::Took(effort) => return taken(effort, provider, renderer, runner, terms),
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
@@ -90,7 +118,7 @@ pub(super) fn run<T: Terminal>(
         }
     }
 
-    listed(renderer, runner, terms)
+    listed(renderer, runner, terms, rungs)
 }
 
 /// Stands the ladder where the prompt box was, and says which rung came off it.
@@ -100,8 +128,9 @@ fn chosen<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
     terms: &Terms,
+    served: &[Effort],
 ) -> Result<Taken<Effort>, Fatal> {
-    let rungs: Vec<&str> = Effort::LADDER.iter().map(|one| one.as_str()).collect();
+    let words: Vec<&str> = served.iter().map(|one| one.as_str()).collect();
 
     // The model by name, because a rung is asked of one model and what it buys
     // differs between them. It is also the fact that stops this reading as a
@@ -110,13 +139,13 @@ fn chosen<T: Terminal>(
 
     let ladder = Ladder {
         title: &title,
-        rungs: &rungs,
-        chosen: rung(runner.effort().unwrap_or(OPENS_ON)),
+        rungs: &words,
+        chosen: rung(runner.effort().unwrap_or(OPENS_ON), served),
         ends: ENDS,
         footer: FOOTER,
     };
 
-    Ok(picking::adjust(renderer, terms.style, ladder)?.of(&Effort::LADDER))
+    Ok(picking::adjust(renderer, terms.style, ladder)?.of(served))
 }
 
 /// Asks for it from the next turn on, and writes it down for the next run.
@@ -165,12 +194,13 @@ fn mistyped<T: Terminal>(
     refused: &EffortError,
     renderer: &mut Renderer<T>,
     terms: &Terms,
+    served: &[Effort],
 ) -> Result<(), Fatal> {
     // The word came off the line and was never shape-checked — anything at all
     // can follow `/effort ` — so it goes out the way arrived text goes out.
     renderer.commit(&format!("! {refused}"))?;
 
-    listing(renderer, terms)
+    listing(renderer, terms, served)
 }
 
 /// What is being asked now, and the lines that would ask for something else.
@@ -178,6 +208,7 @@ fn listed<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
     terms: &Terms,
+    served: &[Effort],
 ) -> Result<(), Fatal> {
     let saying = match runner.effort() {
         Some(effort) => effort.as_str(),
@@ -189,13 +220,21 @@ fn listed<T: Terminal>(
 
     renderer.present(&[row], terms.style.palette())?;
 
-    listing(renderer, terms)
+    listing(renderer, terms, served)
 }
 
-/// The whole ladder, as the line that asks for each rung.
-fn listing<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(), Fatal> {
+/// The rungs the model serves, as the line that asks for each one.
+///
+/// The same set the ladder would have stood over. A pipe gets the panel's
+/// answer written out, and two answers to one question that differ by which
+/// surface asked it are two answers.
+fn listing<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    served: &[Effort],
+) -> Result<(), Fatal> {
     let columns = renderer.columns();
-    let rows: Vec<Row> = Effort::LADDER
+    let rows: Vec<Row> = served
         .iter()
         .map(|effort| {
             Row::new().then(
@@ -210,12 +249,11 @@ fn listing<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(),
 
 /// Where on the ladder this rung stands.
 ///
-/// The rungs the ladder is handed are [`Effort::LADDER`] in order, so this is a
-/// lookup that cannot miss — written as one that can rather than as an
-/// assertion nobody would read again.
-fn rung(effort: Effort) -> usize {
-    Effort::LADDER
-        .iter()
-        .position(|one| *one == effort)
-        .unwrap_or(0)
+/// The weakest rung where it stands on none. A session already asking for a
+/// rung its model does not serve is one the mark has nowhere true to stand, and
+/// the end of the track is a better place to be put than the middle: it is
+/// visibly not where the session was, so the first arrow key reads as a move
+/// rather than as the panel having agreed with what was already in force.
+fn rung(effort: Effort, served: &[Effort]) -> usize {
+    served.iter().position(|one| *one == effort).unwrap_or(0)
 }

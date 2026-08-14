@@ -100,14 +100,13 @@ fn chosen<T: Terminal>(
 
     // The other way to the same model, which is the one thing that differs
     // between rows that would otherwise be a name and nothing else.
-    let says: Vec<String> = served
-        .models
+    let named: Vec<&str> = served.models.iter().map(|model| model.name).collect();
+    let says: Vec<String> = named
         .iter()
         .map(|model| format!("--model {provider}/{model}"))
         .collect();
 
-    let shown: Vec<Offered<'_>> = served
-        .models
+    let shown: Vec<Offered<'_>> = named
         .iter()
         .zip(&says)
         .map(|(model, says)| Offered { name: model, says })
@@ -120,8 +119,7 @@ fn chosen<T: Terminal>(
         // Opened on the one in force, so the first key moves off a known place
         // rather than towards one. A model chosen elsewhere is on no row here,
         // and the sentence above is where it is named.
-        chosen: served
-            .models
+        chosen: named
             .iter()
             .position(|model| *model == runner.model())
             .unwrap_or(0),
@@ -130,7 +128,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    Ok(picking::pick(renderer, terms.style, panel)?.of(served.models))
+    Ok(picking::pick(renderer, terms.style, panel)?.of(&named))
 }
 
 /// Asks it from the next turn on, and writes it down for the next run.
@@ -194,7 +192,12 @@ fn listed<T: Terminal>(
         .into_iter()
         .filter(|one| one.name == provider)
         .flat_map(|one| one.models)
-        .map(|model| Row::new().then(Slot::Quiet, clip(&format!("/model {model}"), columns)))
+        .map(|model| {
+            Row::new().then(
+                Slot::Quiet,
+                clip(&format!("/model {}", model.name), columns),
+            )
+        })
         .collect();
 
     Ok(renderer.present(&rows, terms.style.palette())?)

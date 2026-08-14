@@ -7,6 +7,7 @@
 //! taken under, and that `/exit` ends the session with the lines after it
 //! unread.
 
+use std::cell::Cell;
 use std::io::Cursor;
 
 use crucible_auth::Keys;
@@ -21,6 +22,27 @@ use super::{over, plain, saying, scripted};
 
 fn commanding(typed: &str) -> (String, usize) {
     over(Script::new(vec![saying("answered")]), Tools::new(), typed)
+}
+
+/// The same loop, over a named model of a named provider.
+///
+/// Which model is in force is the whole question `/effort` answers, and the one
+/// [`scripted`] hands back is a name no vendor serves — which is what every
+/// other test here wants and the one thing this one cannot use.
+fn asking(provider: &'static str, model: &str, typed: &str) -> String {
+    let terms = Terms {
+        provider: Cell::new(Some(provider)),
+        ..plain()
+    };
+
+    let mut runner = scripted(Script::new(vec![]), Tools::new());
+    runner.ask(model);
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+    renderer.terminal().written().to_string()
 }
 
 #[test]
@@ -55,7 +77,10 @@ fn model_down_a_pipe_lists_what_this_provider_can_be_asked_for() {
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("script"), "{written}");
     for model in served.models {
-        assert!(written.contains(&format!("/model {model}")), "{written}");
+        assert!(
+            written.contains(&format!("/model {}", model.name)),
+            "{written}"
+        );
     }
 }
 
@@ -103,6 +128,11 @@ fn effort_down_a_pipe_lists_every_rung_under_the_one_in_force() {
     // would have asked. What is in force is named as the vendor's rather than
     // as a rung, because this session was told nothing and the vendor never
     // says which it picked.
+    //
+    // Every rung because the model in force here is a name the table does not
+    // hold, which is the answer for every model released after a build. Nothing
+    // is known about it either way, and withholding a rung it may well serve
+    // would be this program deciding what a model it has never heard of can do.
     let (written, asked) = commanding("/effort\n");
 
     assert_eq!(asked, 0, "{written}");
@@ -110,6 +140,34 @@ fn effort_down_a_pipe_lists_every_rung_under_the_one_in_force() {
     for rung in ["low", "medium", "high", "xhigh", "max"] {
         assert!(written.contains(&format!("/effort {rung}")), "{written}");
     }
+}
+
+#[test]
+fn a_model_that_serves_three_rungs_is_offered_three() {
+    // The two it does not serve are missing rather than drawn and refused. A
+    // rung offered is a rung asked for, and asking for one this model has never
+    // been served is a refusal crucible walked somebody into one keystroke
+    // after showing them the word that caused it.
+    let written = asking("moonshot", "k3", "/effort\n");
+
+    for rung in ["low", "high", "max"] {
+        assert!(written.contains(&format!("/effort {rung}")), "{written}");
+    }
+    assert!(!written.contains("/effort medium"), "{written}");
+    assert!(!written.contains("/effort xhigh"), "{written}");
+}
+
+#[test]
+fn a_model_that_serves_no_rung_is_told_so_rather_than_offered_a_ladder() {
+    // A ladder with nothing on it is a panel that cannot be answered, and a
+    // ladder with five rungs on it is five ways to be refused. What is left to
+    // say is which model this is and what would change it — the model by name,
+    // because the name is the half that can be acted on.
+    let written = asking("anthropic", "claude-haiku-4-5", "/effort\n");
+
+    assert!(written.contains("claude-haiku-4-5"), "{written}");
+    assert!(written.contains("takes no rung"), "{written}");
+    assert!(!written.contains("/effort "), "{written}");
 }
 
 #[test]
