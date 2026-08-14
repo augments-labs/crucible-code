@@ -4,6 +4,17 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The screen names the vendor before the model.** The welcome card and the row
+  under the prompt box both read `provider/model` now — the shape `--model`
+  takes back — because a model name says which model and never whose, and a
+  machine holding keys for two vendors could not tell which one a turn was going
+  to. The row is read off the provider the next turn would reach, so `/login`
+  mid-session moves it.
+
 ## [0.1.5] - 2026-08-14
 
 ### Added

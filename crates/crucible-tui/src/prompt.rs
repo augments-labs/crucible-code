@@ -20,11 +20,11 @@
 //! That row now has two ends, and what decides which end a fact goes to is
 //! whether it is about this program or about the next turn. The mode is the
 //! first: it says what a tool call arriving now costs, and it stands where the
-//! eye starts. The model and the rung it is being asked on are the second, and
-//! they stand at the far end. It is also the row those two facts live on at
-//! all — they used to be on the welcome card, which is scrollback by the time
-//! `/model` or `/effort` changes them, and this process draws inline and can
-//! never go back over what it has committed.
+//! eye starts. Whose model it is, which model, and the rung it is being asked
+//! on are the second, and they stand at the far end. It is also the row those
+//! facts live on at all — they used to be on the welcome card, which is
+//! scrollback by the time `/login`, `/model` or `/effort` changes them, and
+//! this process draws inline and can never go back over what it has committed.
 //!
 //! Like [`crate::Welcome`] this returns [`Row`]s and draws nothing, so every
 //! width is asserted with no terminal attached. Unlike it, the rows are live:
@@ -91,6 +91,9 @@ pub struct Prompt<'a> {
     /// away from the mode. Empty where there is none to say, and then nothing
     /// is drawn there.
     pub model: &'a str,
+    /// The vendor that model is asked of, drawn before it. Empty where nothing
+    /// has chosen one, and then nothing is drawn in its place.
+    pub provider: &'a str,
     /// How hard that model is being asked to think, after it. `None` where no
     /// rung is in force — the vendor's own default is not this program's to
     /// name, and a rung drawn here that was never sent is the one thing a
@@ -342,15 +345,28 @@ impl Prompt<'_> {
         row
     }
 
-    /// The model and the rung it is being asked on, as one string.
+    /// Whose model it is, which model, and the rung it is being asked on, as one
+    /// string.
     ///
     /// Joined here rather than by the caller so that the dot comes out of the
-    /// set in force — the same join [`crate::Welcome`] makes, so the fact reads
-    /// the same wherever it is said.
+    /// set in force, and so that a session with nothing chosen says nothing at
+    /// all rather than naming a vendor over an empty name. The vendor is joined
+    /// the way [`crate::Welcome`] joins it and the way `--model` takes it back,
+    /// so the fact reads the same wherever it is said.
     fn asked(&self, glyphs: Glyphs) -> String {
-        match self.effort.filter(|_| !self.model.is_empty()) {
-            Some(effort) => format!("{} {} {effort}", self.model, glyphs.dot()),
-            None => self.model.to_owned(),
+        if self.model.is_empty() {
+            return String::new();
+        }
+
+        let named = if self.provider.is_empty() {
+            self.model.to_owned()
+        } else {
+            format!("{}/{}", self.provider, self.model)
+        };
+
+        match self.effort {
+            Some(effort) => format!("{named} {} {effort}", glyphs.dot()),
+            None => named,
         }
     }
 

@@ -103,17 +103,18 @@ cd ~/code/my-project
 crucible
 ```
 
-It opens with a card naming the release, the model it is asking, and the root it
-is standing on, beside the last few sessions started in this directory. The card
+It opens with a card naming the release, the model it is asking and whose it is,
+and the root it is standing on, beside the last few sessions started in this
+directory. The card
 fits itself to the terminal: two columns at eighty and above, one below that,
 and under forty-six there is no frame at all — just what it is, what it is
 asking, and where. Under the card is the box:
 
 ```
-╭────────────────────────────────────────────────────────────╮
-│ ›                                                          │
-╰────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)      claude-sonnet-5 · high
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ›                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
@@ -122,8 +123,12 @@ write. It stops at about half the window; past that the line scrolls under the
 top edge and what you are writing stays in view.
 
 The row under the box has two ends. On the left is the permission mode and the
-key that steps it; on the right is which model the next turn goes to and how
-hard it is being asked to think. Both ends change while a session runs, and that
+key that steps it; on the right is which model the next turn goes to, whose it
+is, and how hard it is being asked to think — written the way `--model` takes it
+back, so what the row says is what you would type to ask for it again. A vendor
+is named there because a model name says which model and never whose, and a
+machine holding keys for two of them is a machine where that is a real question.
+Both ends change while a session runs, and that
 row is redrawn on every keystroke — which the card above it is not, since what
 crucible has already written belongs to the terminal's scrollback.
 
@@ -167,10 +172,10 @@ Tool calls appear as they run:
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
 
-╭────────────────────────────────────────────────────────────╮
-│ ›                                                          │
-╰────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)      claude-sonnet-5 · high
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ›                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
 ```
 
 A tool's output is summarised to its first line and a count of the rest; `read`

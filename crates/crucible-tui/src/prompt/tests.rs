@@ -16,11 +16,14 @@ const HINT: &str = "(shift+tab to cycle)";
 /// The model the other end of the status row says the next turn goes to.
 const NAMED: &str = "claude-sonnet-5";
 
+/// Whose model it is, said before it.
+const VENDOR: &str = "anthropic";
+
 /// How hard it says that model is being asked to think.
 const RUNG: &str = "high";
 
-/// The two of them as the row joins them.
-const MODEL: &str = "claude-sonnet-5 · high";
+/// The three of them as the row joins them.
+const MODEL: &str = "anthropic/claude-sonnet-5 · high";
 
 /// The three modes as the row under the box spells them, the colour each puts
 /// on the border, and the name of the picture each is checked against.
@@ -62,6 +65,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         // Empty, so that every test written before this row had a right-hand
         // end is still a test about its left-hand one.
         model: "",
+        provider: "",
         effort: None,
         asking: None,
         room: ROOM,
@@ -72,6 +76,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
 fn asking_of(said: &str) -> Prompt<'_> {
     Prompt {
         model: NAMED,
+        provider: VENDOR,
         effort: Some(RUNG),
         ..typed(said)
     }
@@ -429,6 +434,32 @@ fn the_model_being_asked_stands_against_the_right_edge_of_the_status_row() {
     assert!(status.starts_with(MODE), "{status:?}");
     assert!(status.ends_with(MODEL), "{status:?}");
     assert_eq!(width::columns(&status), 80, "{status:?}");
+}
+
+#[test]
+fn the_status_row_says_whose_model_it_is_before_saying_which() {
+    // The row is redrawn every keystroke, so it is the one place this can be
+    // said and stay true: `/login` changes the vendor mid-session, and a name
+    // on its own never said whose it was in the first place.
+    let status = row(&asking_of(""), 3, 80, Glyphs::Unicode);
+
+    assert!(status.contains("anthropic/claude-sonnet-5"), "{status:?}");
+}
+
+#[test]
+fn a_row_with_no_model_says_nothing_about_a_vendor_either() {
+    // A vendor is not a fact about the next turn on its own: nothing is being
+    // asked of it. The row this width has is the row it had before there was
+    // anything on its right at all.
+    let vendorless = Prompt {
+        provider: VENDOR,
+        ..typed("")
+    };
+
+    assert_eq!(
+        row(&vendorless, 3, 80, Glyphs::Unicode),
+        row(&typed(""), 3, 80, Glyphs::Unicode),
+    );
 }
 
 #[test]

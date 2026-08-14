@@ -11,10 +11,10 @@ The row under the prompt box always shows the mode in force, and names the key
 that steps it. At the far end of the same row is what the next turn is asked of:
 
 ```
-╭────────────────────────────────────────────────────────────╮
-│ ›                                                          │
-╰────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)      claude-sonnet-5 · high
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ›                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
 ```
 
 It is there every time rather than said once at the top, because the moment it

@@ -52,6 +52,9 @@ pub struct Welcome<'a> {
     pub version: &'a str,
     /// The model this session will ask.
     pub model: &'a str,
+    /// The vendor it will be asked of, drawn before it. Empty where nothing has
+    /// chosen one, and then nothing is drawn in its place.
+    pub provider: &'a str,
     /// The directory crucible is working in.
     pub root: &'a str,
     /// What happened in that directory before, newest first. More of them than

@@ -203,6 +203,48 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
 }
 
 #[test]
+fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
+    // What a status row is drawn from. `/login` hands over a provider mid
+    // session, so a name remembered beside the provider rather than read off
+    // it would go on naming the vendor the session opened with — and the row
+    // saying that is the row somebody checks before sending anything.
+    let script = Script::new(vec![saying("answered")]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+
+    assert_eq!(scripted.runner.serving(), "script");
+
+    scripted.runner.serve(Box::new(Elsewhere));
+
+    assert_eq!(scripted.runner.serving(), ELSEWHERE);
+}
+
+/// A provider that answers nothing, under a name of its own.
+///
+/// Every other provider here is called the same thing, and one assertion needs
+/// two that can be told apart.
+struct Elsewhere;
+
+/// What it calls itself.
+const ELSEWHERE: &str = "elsewhere";
+
+impl Provider for Elsewhere {
+    fn name(&self) -> &'static str {
+        ELSEWHERE
+    }
+
+    fn stream(
+        &self,
+        _request: Request,
+        _cancel: &Cancel,
+    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
+        Err(ProviderError::Transport {
+            provider: ELSEWHERE,
+            problem: "nothing is there".into(),
+        })
+    }
+}
+
+#[test]
 fn a_rung_asked_for_mid_session_is_on_the_next_request_and_not_the_last_one() {
     // The half `/effort` needs: a session opens on whatever the command line
     // and the files settled, and what is chosen afterwards has to reach the

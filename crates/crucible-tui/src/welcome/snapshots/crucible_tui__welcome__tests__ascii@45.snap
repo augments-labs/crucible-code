@@ -3,5 +3,5 @@ source: crates/crucible-tui/src/welcome/tests.rs
 expression: "dump(&welcome.rows(columns, glyphs), columns)"
 ---
 <Strong>CRUCIBLE</>                                     
-claude-sonnet-5                              
+anthropic/claude-sonnet-5                    
 <Quiet>~/code/crucible-code</>

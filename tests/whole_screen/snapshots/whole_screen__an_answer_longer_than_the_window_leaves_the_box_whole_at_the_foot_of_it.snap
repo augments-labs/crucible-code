@@ -18,4 +18,4 @@ expression: window.picture()
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                                   claude-test-1|
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|

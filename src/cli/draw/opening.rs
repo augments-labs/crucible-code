@@ -29,6 +29,11 @@ const UNCHOSEN: &str = "no model selected";
 pub(crate) struct Opening<'a> {
     /// The model this session will ask, or `None` where nothing chose one.
     pub(crate) model: Option<&'a str>,
+    /// The vendor it will be asked of, or `None` where nothing chose one. Drawn
+    /// beside the model because a name says which model and never whose, and a
+    /// machine holding keys for two vendors has to be able to see which of them
+    /// this session settled on.
+    pub(crate) provider: Option<&'a str>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
@@ -91,6 +96,11 @@ pub(crate) fn opening<T: Terminal>(
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
         model: opening.model.unwrap_or(UNCHOSEN),
+
+        // Only where there is a model to put it before. The row without one
+        // says nothing was chosen, and a vendor drawn against that sentence
+        // would say something was.
+        provider: opening.model.and(opening.provider).unwrap_or_default(),
         root: &root,
         sessions: &recent,
     };
@@ -168,6 +178,7 @@ mod tests {
             terminal,
             &Opening {
                 model: Some("claude-sonnet-5"),
+                provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
@@ -308,6 +319,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
@@ -320,6 +332,41 @@ mod tests {
         assert!(screen.contains("No models available"), "{screen}");
         assert!(screen.contains("/model"), "{screen}");
         assert!(screen.contains(UNCHOSEN), "{screen}");
+    }
+
+    #[test]
+    fn the_opening_says_which_vendor_the_model_it_names_belongs_to() {
+        // The wiring is the only layer that knows: a model name is a string
+        // until something says whose it is, and on a machine holding keys for
+        // two vendors that is the fact the card exists to settle.
+        let screen = opened(80, false);
+
+        assert!(screen.contains("anthropic/claude-sonnet-5"), "{screen}");
+    }
+
+    #[test]
+    fn a_session_with_nothing_chosen_names_no_vendor_over_the_sentence_saying_so() {
+        // The row says nothing was chosen. A vendor drawn against it would say
+        // something was, and the reader would be looking for a model name that
+        // is not there.
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                model: None,
+                provider: Some("anthropic"),
+                unasked: NOTHING_TO_ASK,
+                workspace: &workspace,
+                sessions: &[],
+                trouble: None,
+                update: None,
+                style: Style::plain(),
+            },
+        );
+
+        assert!(screen.contains(UNCHOSEN), "{screen}");
+        assert!(!screen.contains("anthropic"), "{screen}");
     }
 
     #[test]
@@ -355,6 +402,7 @@ mod tests {
             false,
             &Opening {
                 model: None,
+                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],

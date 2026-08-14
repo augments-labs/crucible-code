@@ -4,6 +4,8 @@
 //! assembly — two columns, one column, or none — and never the content, so a
 //! tip added here appears at every width or at none of them.
 
+use std::borrow::Cow;
+
 use crate::color::Slot;
 use crate::row::Row;
 use crate::width;
@@ -67,16 +69,34 @@ pub(super) fn wordmark(columns: usize, glyphs: Glyphs) -> Vec<Row> {
     }
 }
 
-/// Which model is being asked.
+/// Which model is being asked, and whose it is.
 ///
-/// Nothing about the provider, which the model implies. Nothing about the
-/// permission mode or the rung the model is being asked on either, and for one
-/// reason: both change while a session runs, and this card is scrollback the
-/// moment the next thing is drawn. They live on the row under the prompt, which
-/// is redrawn on every keystroke. The model is here because it is what the card
-/// is introducing — and where `/model` changes it, that row is what says so.
+/// Both, because a model name says which model and never whose — and a machine
+/// holding keys for two vendors is a machine where that is a real question. The
+/// shape is the one `--model` takes back, so what the card says is what somebody
+/// would type to ask for it again.
+///
+/// Nothing about the permission mode or the rung the model is being asked on,
+/// and for one reason: both change while a session runs, and this card is
+/// scrollback the moment the next thing is drawn. They live on the row under the
+/// prompt, which is redrawn on every keystroke. The model is here because it is
+/// what the card is introducing — and where `/model` changes it, that row is
+/// what says so.
 pub(super) fn model(welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) -> Row {
-    Row::plain(fit::elide(welcome.model, columns, glyphs))
+    Row::plain(fit::elide(&asked(welcome), columns, glyphs))
+}
+
+/// The vendor and the model as one name, or the model alone where no vendor was
+/// named.
+///
+/// Joined here rather than by the caller so that a session with nothing chosen
+/// cannot leave a separator standing in front of the sentence saying so.
+fn asked<'a>(welcome: &Welcome<'a>) -> Cow<'a, str> {
+    if welcome.provider.is_empty() {
+        return Cow::Borrowed(welcome.model);
+    }
+
+    Cow::Owned(format!("{}/{}", welcome.provider, welcome.model))
 }
 
 /// Where crucible is working.
