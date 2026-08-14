@@ -25,6 +25,7 @@ fn engine(mode: Mode) -> Runner {
             name: "script".into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         Session::nowhere(),
     )

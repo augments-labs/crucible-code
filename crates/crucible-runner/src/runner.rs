@@ -8,8 +8,8 @@
 //! what decides whether the session continues.
 
 use crucible_core::{
-    Ask, Cancel, Delta, DeltaStream, Event, Message, Mode, Permission, Post, Provider, Request,
-    StopReason, ToolCall, Transcript, TurnError, TurnId,
+    Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
+    Request, StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
 use crate::session::Session;
@@ -30,6 +30,8 @@ pub struct Model {
     pub max_tokens: u32,
     /// The system prompt, if the session has one.
     pub system: Option<Box<str>>,
+    /// How hard to think, where somebody said. `None` leaves it to the vendor.
+    pub effort: Option<Effort>,
 }
 
 /// Drives turns to completion.
@@ -458,6 +460,7 @@ impl Runner {
             tools: self.tools.schemas(),
             max_tokens: self.model.max_tokens,
             system: self.model.system.clone(),
+            effort: self.model.effort,
         }
     }
 }

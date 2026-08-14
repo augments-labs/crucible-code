@@ -196,6 +196,7 @@ mod tests {
             tools: Vec::new(),
             max_tokens: 1024,
             system: None,
+            effort: None,
         }
     }
 

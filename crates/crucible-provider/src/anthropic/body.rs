@@ -28,6 +28,18 @@ pub(super) fn build(request: &Request) -> Value {
         body.insert("system".to_owned(), json!(&**system));
     }
 
+    // Only where somebody chose one. Anthropic's own default is what a model
+    // gets otherwise, and it is per-model — the field is served by the models
+    // that reason and refused by the ones that do not, so sending it unasked
+    // would turn "I never touched effort" into a 400 on whichever of them is
+    // not on the list this week.
+    if let Some(effort) = request.effort {
+        body.insert(
+            "output_config".to_owned(),
+            json!({ "effort": effort.as_str() }),
+        );
+    }
+
     if !request.tools.is_empty() {
         let tools = request.tools.iter().map(tool).collect();
         body.insert("tools".to_owned(), Value::Array(tools));
@@ -125,7 +137,7 @@ fn tool(schema: &ToolSchema) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ToolArgs, ToolCall, ToolId, ToolOutput};
+    use crucible_core::{Effort, ToolArgs, ToolCall, ToolId, ToolOutput};
 
     use super::*;
 
@@ -139,6 +151,7 @@ mod tests {
             tools: Vec::new(),
             max_tokens: 1024,
             system: None,
+            effort: None,
         }
     }
 
@@ -183,6 +196,30 @@ mod tests {
         request.system = Some("be brief".into());
 
         assert_eq!(at(&build(&request), "/system"), &json!("be brief"));
+    }
+
+    #[test]
+    fn a_session_nobody_told_how_hard_to_think_says_nothing_about_it() {
+        // The field is per-model here, and a model that does not serve it
+        // refuses the whole request. Leaving it off is what keeps a session
+        // nobody has an opinion about working on every model on the list.
+        let body = build(&request(said("hello")));
+
+        assert!(
+            body.get("output_config").is_none(),
+            "an effort nobody asked for is the vendor's to pick: {body}"
+        );
+    }
+
+    #[test]
+    fn an_effort_somebody_chose_reaches_the_model_as_output_config() {
+        let mut request = request(said("hello"));
+        request.effort = Some(Effort::Xhigh);
+
+        assert_eq!(
+            at(&build(&request), "/output_config/effort"),
+            &json!("xhigh")
+        );
     }
 
     #[test]

@@ -33,7 +33,7 @@ pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Minted, Mode, Permission, Remember, RuleError,
     Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
-pub use provider::{Delta, DeltaStream, Provider, ProviderError, Request, ToolSchema};
+pub use provider::{Delta, DeltaStream, Effort, Provider, ProviderError, Request, ToolSchema};
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, Workspace, WorkspacePath, written};

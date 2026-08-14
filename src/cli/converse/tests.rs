@@ -67,6 +67,7 @@ fn scripted(script: Script, offered: Tools) -> Runner {
             name: "script".into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         Session::nowhere(),
     )
@@ -230,6 +231,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
             name: "script".into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         session,
     );
@@ -263,6 +265,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
             name: "script".into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         session,
     );
@@ -930,6 +933,7 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
             name: String::new().into(),
             max_tokens: 64,
             system: None,
+            effort: None,
         },
         Session::nowhere(),
     );

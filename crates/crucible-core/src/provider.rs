@@ -102,6 +102,57 @@ pub struct Request {
     pub max_tokens: u32,
     /// The system prompt, if the session has one.
     pub system: Option<Box<str>>,
+    /// How hard to think, where somebody said.
+    ///
+    /// `None` is not a rung and does not mean the middle one: it is the field
+    /// left off, which is the vendor's own default. Every vendor here has one
+    /// and each picked it for the models it serves, so a session nobody has
+    /// said anything to about effort is one this program has not overridden.
+    pub effort: Option<Effort>,
+}
+
+/// How hard a model is asked to think before it answers.
+///
+/// crucible's ladder rather than any one vendor's, so a rung means the same
+/// thing after `/model` moves the session to another of them. Where a vendor
+/// serves fewer rungs than these five, the ones it serves are what gets
+/// offered — and a rung named on the command line that its vendor does not
+/// serve comes back as that vendor's own refusal, which is the bargain a model
+/// name is already on.
+///
+/// Two words one vendor serves are deliberately not rungs here: `none` and
+/// `minimal`. What they buy is a model that calls tools without thinking about
+/// them first, and a harness whose whole purpose is calling tools has no use
+/// for that — the same argument that put this crate's OpenAI provider on the
+/// endpoint where reasoning and function tools can be asked for together.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Effort {
+    /// The fewest tokens: short, scoped work where speed is the point.
+    Low,
+    /// Some of the thinking, for a saving on all of it.
+    Medium,
+    /// What a session asks for when somebody opens the panel and takes the
+    /// rung it opens on, and what most of these vendors default to unasked.
+    #[default]
+    High,
+    /// More than high, for work that runs long enough to be worth it.
+    Xhigh,
+    /// Everything the model has, with no ceiling on what it spends getting it.
+    Max,
+}
+
+impl Effort {
+    /// The rung as all three vendors spell it, which is the same word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
 }
 
 /// A tool as advertised to a provider.

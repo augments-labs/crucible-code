@@ -8,8 +8,9 @@
 //! the newer OpenAI protocol. What differs from Anthropic is where the parts of
 //! a turn go: standing instructions are a message rather than a field, a tool
 //! call rides on the assistant message rather than in its content, a result is
-//! a message of its own with a role of its own, and argument text travels as
-//! JSON *text* rather than as an object.
+//! a message of its own with a role of its own, argument text travels as JSON
+//! *text* rather than as an object, and how hard to think is a field beside
+//! `model` rather than an object of its own.
 
 use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
 use serde_json::{Map, Value, json};
@@ -23,6 +24,14 @@ pub(super) fn build(request: &Request) -> Value {
     body.insert("max_tokens".to_owned(), json!(request.max_tokens));
     body.insert("stream".to_owned(), json!(true));
     body.insert("messages".to_owned(), json!(messages(request)));
+
+    // Beside `model` rather than nested, which is where this older wire shape
+    // puts it. Only where somebody chose one: this vendor serves three of the
+    // five rungs, so a request nobody had an opinion about is one that cannot
+    // be refused for naming a rung the model has never heard of.
+    if let Some(effort) = request.effort {
+        body.insert("reasoning_effort".to_owned(), json!(effort.as_str()));
+    }
 
     // Absent rather than empty: an empty array is refused rather than read as
     // a session with no tools.
