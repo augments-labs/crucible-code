@@ -119,8 +119,9 @@ what a machine you do not want a key on the profile of wants:
 { "version": 1, "keys": { "openai": "sk-…" } }
 ```
 
-`/login` inside a session names the providers and the variable each one reads,
-which is the same table as above without leaving the terminal.
+`/login <provider>` inside a session is what writes it, into a box that draws a
+dot per character rather than the key. Editing the file by hand works too —
+crucible only reads what is there.
 
 The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version

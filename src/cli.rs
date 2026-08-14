@@ -377,6 +377,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // here for the same reason everything else in `Terms` is: the session
         // being picked up is one of this directory's, and which directory that
         // is was decided before the first prompt.
+        // The same directory the keys above were read from.
+        logins: Store::in_home(home.path()),
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };
