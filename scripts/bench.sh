@@ -20,8 +20,12 @@
 # measurement so the number and the limit live in the same file and cannot
 # drift apart. The contract a probe must honour:
 #
-#     print one line to stdout:  <value> <unit> <limit>      e.g. `17.4 ms 20`
+#     print one line to stdout:  <value> <unit> <limit> [key=<number> ...]
+#                                e.g. `17.4 ms 20 p95=19.1`
 #     exit 0 within budget, non-zero when over
+#
+# Evidence fields are optional and do not change the first three fields. The
+# wrapper validates and stores them as numbers under `evidence` in the JSON.
 #
 # `println!` is denied workspace-wide, so that line goes out through
 # `writeln!(io::stdout(), ...)` — which also makes the probe handle the write
@@ -42,7 +46,7 @@ readonly BUDGETS=(
     "startup|bench-first-frame|first frame <= 20 ms p95"
     "startup|bench-first-input|first input <= 60 ms p95"
     "mem|bench-session-rss|peak RSS after a 20-turn session <= 35 MB"
-    "grep|bench-grep|grep tool within 1.25x the rg binary"
+    "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|render commits under token burst >= 30/s"
 )
 
@@ -120,12 +124,38 @@ for entry in "${selected[@]}"; do
         failed=1
     fi
 
-    read -r value unit limit _ <<<"$reading" || true
+    fields=()
+    read -r -a fields <<<"$reading" || true
+    value=${fields[0]:-}
+    unit=${fields[1]:-}
+    limit=${fields[2]:-}
+    malformed=0
+    [[ "$reading" == *$'\n'* ]] && malformed=1
 
     # Numeric on both, because they go into the document unquoted. This also
     # catches a probe that printed a sentence instead of a measurement.
-    if [[ ! "${value:-}" =~ $NUMERIC || ! "${limit:-}" =~ $NUMERIC || -z "${unit:-}" ]]; then
-        printf '    FAIL %s: want "<value> <unit> <limit>" on stdout, got %q\n' \
+    if [[ ! "$value" =~ $NUMERIC || ! "$limit" =~ $NUMERIC || -z "$unit" ]]; then
+        malformed=1
+    fi
+
+    evidence=()
+    evidence_keys='|'
+    if ((${#fields[@]} > 3)); then
+        for field in "${fields[@]:3}"; do
+            key=${field%%=*}
+            datum=${field#*=}
+            if [[ "$field" != *=* || ! "$key" =~ ^[a-z][a-z0-9_]*$ || ! "$datum" =~ $NUMERIC ||
+                "$evidence_keys" == *"|$key|"* ]]; then
+                malformed=1
+                break
+            fi
+            evidence+=("$(printf '"%s":%s' "$key" "$datum")")
+            evidence_keys+="$key|"
+        done
+    fi
+
+    if ((malformed)); then
+        printf '    FAIL %s: want "<value> <unit> <limit> [key=<number> ...]" on stdout, got %q\n' \
             "$probe" "$reading" >&2
         results+=("$(printf '{"mode":"%s","probe":"%s","budget":"%s","status":"malformed","output":"%s"}' \
             "$m" "$probe" "$(json_escape "$budget")" "$(json_escape "$reading")")")
@@ -139,8 +169,15 @@ for entry in "${selected[@]}"; do
         printf '         %s %s (limit %s)\n' "$value" "$unit" "$limit" >&2
     fi
 
-    results+=("$(printf '{"mode":"%s","probe":"%s","budget":"%s","value":%s,"unit":"%s","limit":%s,"status":"%s"}' \
-        "$m" "$probe" "$(json_escape "$budget")" "$value" "$(json_escape "$unit")" "$limit" "$status")")
+    evidence_json=
+    if ((${#evidence[@]})); then
+        evidence_json=$(
+            IFS=,
+            printf ',"evidence":{%s}' "${evidence[*]}"
+        )
+    fi
+    results+=("$(printf '{"mode":"%s","probe":"%s","budget":"%s","value":%s,"unit":"%s","limit":%s%s,"status":"%s"}' \
+        "$m" "$probe" "$(json_escape "$budget")" "$value" "$(json_escape "$unit")" "$limit" "$evidence_json" "$status")")
 done
 
 overall=pass
