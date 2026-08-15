@@ -147,12 +147,26 @@ fn finish(parts: &mut Vec<Box<str>>, current: &mut String) -> Option<()> {
 
     // `PATH=/tmp/x cargo test` runs whatever `/tmp/x` holds, so the word
     // `cargo` no longer names what runs.
-    if assigns(program) || wrapper::wraps(program) {
+    if assigns(program) || !literal(program) || wrapper::wraps(program) {
         return None;
     }
 
     parts.push(text.into());
     Some(())
+}
+
+/// Whether the program word reaches the shell without another interpretation.
+///
+/// Quotes, escapes, globs and expansions can all turn text that does not name a
+/// wrapper into one that does. Expansions are rejected by the scanner already;
+/// this closed alphabet makes the first word conservative against the rest.
+fn literal(program: &str) -> bool {
+    !program.is_empty()
+        && program.chars().all(|character| {
+            !character.is_ascii()
+                || character.is_ascii_alphanumeric()
+                || matches!(character, '_' | '-' | '+' | '.' | '/' | '@' | ':' | '=')
+        })
 }
 
 /// Whether this first word is a variable assignment rather than a program.

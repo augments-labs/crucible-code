@@ -27,6 +27,7 @@
 mod command;
 mod environment;
 mod output;
+mod platform;
 mod shell;
 mod wrapper;
 
@@ -146,7 +147,7 @@ impl Bash {
     }
 
     /// Variables every command this tool runs is started with, on top of the
-    /// ones [`environment`] inherits.
+    /// ones the environment boundary inherits.
     ///
     /// Handed to each child rather than set in this process, which is not a
     /// workaround: writing to the environment is `unsafe` in edition 2024 and
@@ -235,25 +236,30 @@ impl Tool for Bash {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // A group of its own, headed by the shell, so that stopping the command
-        // reaches the rest of what the line started rather than the shell alone
-        // — `output::stop` says what that costs when it is left undone. It also
-        // takes the command out of crucible's own group, which is what keeps a
-        // signal sent to this program from ending a command halfway through a
-        // write it was allowed to make.
         #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut spawning, 0);
+        let scope = platform::Scope::new(&mut spawning);
+        #[cfg(windows)]
+        let scope = platform::Scope::new(&mut spawning)
+            .map_err(|source| io("could not prepare command containment", source))?;
 
         let child = spawning
             .spawn()
             .map_err(|source| io("could not start a shell", source))?;
+        #[cfg(windows)]
+        let child = {
+            if let Err(source) = scope.attach(&child) {
+                output::discard(child, &scope);
+                return Err(io("could not contain the command", source));
+            }
+            child
+        };
 
         // `count` already refused anything but a positive number, and the
         // ceiling above bounds it, so the fallback is unreachable arithmetic
         // rather than a decision.
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
 
-        output::collect(child, allowed, &self.cancel)
+        output::collect(child, &scope, allowed, &self.cancel)
     }
 }
 

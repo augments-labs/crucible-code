@@ -8,7 +8,8 @@
 //! every wait in this module is bounded.
 
 use std::collections::VecDeque;
-use std::process::Child;
+use std::io;
+use std::process::{Child, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, ToolError, ToolOutput};
 
-use super::{NAME, TICK, io};
+use super::platform::{Output, ReadState, Scope};
+use super::{NAME, TICK, io as tool_io};
 use crate::bound::OUTPUT;
 
 /// How long the readers get to reach the end of their pipes once the command
@@ -31,12 +33,16 @@ const SETTLE: Duration = Duration::from_millis(200);
 /// afterwards would deadlock the moment a command produced more output than a
 /// pipe buffer holds, which is most commands worth running.
 pub(super) fn collect(
-    mut child: Child,
+    child: Child,
+    scope: &Scope,
     allowed: Duration,
     cancel: &Cancel,
 ) -> Result<ToolOutput, ToolError> {
-    let out = Pipe::drain(child.stdout.take());
-    let err = Pipe::drain(child.stderr.take());
+    // Own the child before the first fallible pipe operation. Any `?` below
+    // therefore stops the process scope and performs only a bounded reap.
+    let mut running = Running::new(child, scope);
+    let mut out = Pipe::drain(running.child.stdout.take(), "stdout")?;
+    let mut err = Pipe::drain(running.child.stderr.take(), "stderr")?;
 
     let deadline = Instant::now() + allowed;
     let mut expired = false;
@@ -44,28 +50,37 @@ pub(super) fn collect(
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
     let status = loop {
-        match child.try_wait() {
+        match running.child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {}
-            Err(source) => return Err(io("could not wait for the command", source)),
+            Err(source) => return Err(tool_io("could not wait for the command", source)),
         }
 
         if cancel.requested() {
-            stop(&mut child);
-            let _ = child.wait();
+            let _ = running.stop()?;
             return Err(ToolError::Cancelled(NAME));
         }
 
         if Instant::now() >= deadline {
-            stop(&mut child);
+            let status = running.stop()?;
             expired = true;
-            break child.wait().ok();
+            break status;
         }
 
         thread::sleep(TICK);
     };
 
+    // A shell can exit successfully while a background descendant continues.
+    // This tool has no handle it could return for such a process, so keeping it
+    // would make both its lifetime and its resources unbounded. The process
+    // group or job survives its leader and is ended here on every exit path.
+    if !expired {
+        running.finish_after_exit()?;
+    }
+
     let ended = settle(&out, &err);
+    out.close()?;
+    err.close()?;
 
     Ok(Finished {
         code: status.and_then(|status| status.code()),
@@ -76,7 +91,17 @@ pub(super) fn collect(
     .report())
 }
 
-/// Ends the command, and the rest of what the command line started.
+/// Stops a child that could not be handed to [`collect`].
+///
+/// Used after Windows job attachment fails. The shell is still suspended, but
+/// waiting for it without first ending it would be just as unbounded as any
+/// other child wait.
+#[cfg(windows)]
+pub(super) fn discard(child: Child, scope: &Scope) {
+    drop(Running::new(child, scope));
+}
+
+/// A child whose scope is stopped and reaped on every return path.
 ///
 /// `Child::kill` signals the shell alone, and a shell is rarely the only
 /// process a line makes: every other member of a pipeline is a child of it,
@@ -86,30 +111,91 @@ pub(super) fn collect(
 ///
 /// So the signal goes to the process group instead, which [`super`] puts the
 /// shell at the head of when it spawns one. Group membership is inherited, and
-/// a non-interactive shell does no job control of its own, so every process the
-/// line started is in it — including the ones the shell had already stopped
-/// waiting for.
+/// a non-interactive shell does no job control of its own, so ordinary
+/// descendants remain in it — including the ones the shell had already stopped
+/// waiting for. A Unix program that deliberately creates a new session can
+/// escape a process group; the `bash` module therefore does not claim that
+/// commands themselves are confined.
 ///
-/// Windows has no process group to signal. Its equivalent is a job object, and
-/// every call that makes one is FFI: `unsafe` is denied across this workspace,
-/// with one module opted in for a session file's permissions, and a second
-/// exception is not something a tool should buy itself. There a killed command
-/// still leaves what it started running, and what the model is told is the note
-/// [`Finished::report`] writes about output that is still arriving.
-fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    // The group id is the child's own process id, because it was spawned as the
-    // leader of a group of its own. Signalling the group before the child is
-    // deliberate: the child is the one process that cannot get away, and it is
-    // what holds the group open while the rest of the line is reached.
-    if let Some(group) = i32::try_from(child.id())
-        .ok()
-        .and_then(rustix::process::Pid::from_raw)
-    {
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+/// Windows uses a kill-on-close job and Unix a process group; both live in the
+/// platform boundary so the wait never has a branch that stops only the shell.
+struct Running<'a> {
+    child: Child,
+    scope: &'a Scope,
+    released: bool,
+}
+
+impl<'a> Running<'a> {
+    fn new(child: Child, scope: &'a Scope) -> Self {
+        Self {
+            child,
+            scope,
+            released: false,
+        }
     }
 
-    let _ = child.kill();
+    /// Stops the scope and gives the shell a bounded interval to become reapable.
+    fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
+        stop_scope(self.scope, &mut self.child)
+            .map_err(|source| tool_io("could not stop the command", source))?;
+        let status = reap(&mut self.child, SETTLE)
+            .map_err(|source| tool_io("could not inspect the stopped command", source))?;
+        let Some(status) = status else {
+            return Err(tool_io(
+                "could not reap the stopped command",
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the command did not exit after it was stopped",
+                ),
+            ));
+        };
+        self.released = true;
+        Ok(Some(status))
+    }
+
+    /// Stops descendants after `try_wait` has already reaped the shell.
+    fn finish_after_exit(&mut self) -> Result<(), ToolError> {
+        stop_scope(self.scope, &mut self.child)
+            .map_err(|source| tool_io("could not stop command descendants", source))?;
+        self.released = true;
+        Ok(())
+    }
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        // Destructors cannot report a second failure over the error already on
+        // its way out. They can still guarantee that cleanup itself is bounded.
+        let _ = stop_scope(self.scope, &mut self.child);
+        let _ = reap(&mut self.child, SETTLE);
+    }
+}
+
+/// Waits only until `allowed`; a failed termination can never become a hang.
+fn reap(child: &mut Child, allowed: Duration) -> io::Result<Option<ExitStatus>> {
+    let deadline = Instant::now() + allowed;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(TICK);
+    }
+}
+
+#[cfg(unix)]
+fn stop_scope(_scope: &Scope, child: &mut Child) -> io::Result<()> {
+    Scope::stop(child)
+}
+
+#[cfg(windows)]
+fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
+    scope.stop(child)
 }
 
 /// What a command left behind.
@@ -205,13 +291,17 @@ impl Kept {
         // exactly the one that must not pay per byte here.
         let stale = rest.len().saturating_sub(OUTPUT);
         let (gone, keep) = rest.split_at(stale);
-        self.dropped += gone.len();
+        self.dropped = self.dropped.saturating_add(gone.len());
 
         // `keep` is at most `OUTPUT`, so the spill is never more than the ring
         // is currently holding.
-        let spill = (self.tail.len() + keep.len()).saturating_sub(OUTPUT);
+        let spill = self
+            .tail
+            .len()
+            .saturating_add(keep.len())
+            .saturating_sub(OUTPUT);
         self.tail.drain(..spill);
-        self.dropped += spill;
+        self.dropped = self.dropped.saturating_add(spill);
         self.tail.extend(keep);
     }
 
@@ -236,91 +326,128 @@ struct Pipe {
     /// a pipe open long after the turn it belonged to is over, and a reader
     /// nobody is waiting for should not still be collecting for it.
     stop: Arc<AtomicBool>,
-    reader: thread::JoinHandle<()>,
+    reader: Option<thread::JoinHandle<io::Result<()>>>,
 }
 
 impl Pipe {
     /// Starts reading `pipe` on a thread.
-    fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Self {
+    fn drain<R: Output>(pipe: Option<R>, stream: &'static str) -> Result<Self, ToolError> {
         let kept = Arc::new(Mutex::new(Kept::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (into, until) = (Arc::clone(&kept), Arc::clone(&stop));
 
-        let reader = thread::spawn(move || {
-            let Some(mut pipe) = pipe else { return };
-            let mut buffer = [0_u8; 8192];
+        let Some(mut pipe) = pipe else {
+            return Ok(Self {
+                kept,
+                stop,
+                reader: None,
+            });
+        };
+        pipe.prepare()
+            .map_err(|source| tool_io("could not prepare a command output pipe", source))?;
 
-            loop {
-                let read = match pipe.read(&mut buffer) {
-                    // The end of the pipe, and the only way out of here that
-                    // [`ended`] is entitled to read as one.
-                    Ok(0) => return,
-                    Ok(read) => read,
-                    // What `read` documents as non-fatal and asks callers to
-                    // retry. Producing one takes a signal handler that returns,
-                    // and this process installs none — catching a signal needs
-                    // `unsafe`, which the workspace denies — so it cannot
-                    // happen today. It is retried rather than reasoned about
-                    // because the fact protecting it lives in another crate:
-                    // the day anything here catches a resize, dropping this
-                    // would end a reader mid-command and send the cut output
-                    // back looking complete.
-                    Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => continue,
-                    // A pipe we own, on a descriptor nothing else closes. What
-                    // is left is the far end being gone, which is the end of it
-                    // under another name.
-                    Err(_) => return,
-                };
+        let reader = thread::Builder::new()
+            .name(format!("crucible-bash-{stream}"))
+            .spawn(move || {
+                let mut buffer = [0_u8; 8192];
 
-                if until.load(Ordering::Relaxed) {
-                    return;
+                loop {
+                    if until.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
+
+                    let read = match pipe.read_ready(&mut buffer) {
+                        // The end of the pipe, and the only way out of here that
+                        // [`ended`] is entitled to read as one.
+                        Ok(ReadState::End) => return Ok(()),
+                        Ok(ReadState::Bytes(read)) => read,
+                        Ok(ReadState::Pending) => {
+                            thread::sleep(TICK);
+                            continue;
+                        }
+                        // What `read` documents as non-fatal and asks callers to
+                        // retry. Producing one takes a signal handler that returns,
+                        // and this process installs none — catching a signal needs
+                        // `unsafe`, which the workspace denies — so it cannot
+                        // happen today. It is retried rather than reasoned about
+                        // because the fact protecting it lives in another crate:
+                        // the day anything here catches a resize, dropping this
+                        // would end a reader mid-command and send the cut output
+                        // back looking complete.
+                        Err(problem) if problem.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(problem) => return Err(problem),
+                    };
+
+                    if until.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
+                    // Neither of these can be the arm that runs. `read` never
+                    // reports more than the buffer it was handed, and the lock is
+                    // poisoned only by a panic inside `push` or `bytes` — neither
+                    // of which indexes, unwraps or does arithmetic that is not
+                    // saturating, in a crate where all three are denied anyway.
+                    let (Some(arrived), Ok(mut kept)) = (buffer.get(..read), into.lock()) else {
+                        return Ok(());
+                    };
+                    kept.push(arrived);
                 }
-                // Neither of these can be the arm that runs. `read` never
-                // reports more than the buffer it was handed, and the lock is
-                // poisoned only by a panic inside `push` or `bytes` — neither
-                // of which indexes, unwraps or does arithmetic that is not
-                // saturating, in a crate where all three are denied anyway.
-                let (Some(arrived), Ok(mut kept)) = (buffer.get(..read), into.lock()) else {
-                    return;
-                };
-                kept.push(arrived);
-            }
-        });
+            })
+            .map_err(|source| tool_io("could not start a command output reader", source))?;
 
-        Self { kept, stop, reader }
+        Ok(Self {
+            kept,
+            stop,
+            reader: Some(reader),
+        })
     }
 
     /// Whether the reader has reached the end of the pipe.
     ///
-    /// Answered by the thread having stopped, which is the same question only
-    /// because every other way out of that loop is one that cannot be taken.
-    /// Anything that makes one of them possible owes an answer here as well: a
-    /// reader that gave up early reports as a command that finished, and what
-    /// it collected goes back to the model looking like all of it.
+    /// Answered by the thread having stopped. An I/O failure can also stop the
+    /// thread, but [`Self::close`] joins it and reports that failure before a
+    /// `ToolOutput` can be returned; `ended` only bounds how long collection
+    /// waits before that definitive result.
     fn ended(&self) -> bool {
-        self.reader.is_finished()
+        self.reader
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
     }
 
     /// What has arrived so far, and how many bytes were let go to keep it
     /// bounded.
     ///
-    /// This never joins the reader. A killed command can leave a grandchild
-    /// holding the pipe open — a background server is the usual one — and
-    /// waiting for the end would then wait for a process nothing will stop.
+    /// This never joins the reader. It takes a bounded snapshot while the
+    /// collection path remains responsible for stopping and joining the
+    /// pollable reader afterwards.
     fn take(&self) -> (Vec<u8>, usize) {
         self.kept
             .lock()
             .map(|kept| (kept.bytes(), kept.dropped))
             .unwrap_or_default()
     }
+
+    /// Stops and joins the reader, reporting spawn-side failures as tool errors.
+    fn close(&mut self) -> Result<(), ToolError> {
+        self.stop.store(true, Ordering::Relaxed);
+        let Some(reader) = self.reader.take() else {
+            return Ok(());
+        };
+        match reader.join() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(source)) => Err(tool_io("could not read command output", source)),
+            Err(_) => Err(tool_io(
+                "a command output reader stopped unexpectedly",
+                io::Error::other("the output reader thread panicked"),
+            )),
+        }
+    }
 }
 
 impl Drop for Pipe {
     fn drop(&mut self) {
-        // The thread is not joined here either, for the reason `take` gives.
-        // What this does is stop it collecting: it returns the next time the
-        // pipe hands it anything, and lets go of its share of the buffer then.
-        self.stop.store(true, Ordering::Relaxed);
+        // Pollable reads make this join bounded even when a descendant still
+        // owns the writer. Error paths therefore release their reader too.
+        let _ = self.close();
     }
 }
 
@@ -358,7 +485,10 @@ fn joined(out: &Pipe, err: &Pipe) -> String {
     let (rest, from_err) = err.take();
     both.extend(rest);
 
-    cut(&String::from_utf8_lossy(&both), from_out + from_err)
+    cut(
+        &String::from_utf8_lossy(&both),
+        from_out.saturating_add(from_err),
+    )
 }
 
 /// The head and the tail, when there is more than anything can use.
@@ -380,7 +510,11 @@ fn cut(text: &str, already: usize) -> String {
     let tail = text
         .get(boundary(text, text.len() - half)..)
         .unwrap_or_default();
-    let dropped = already + text.len() - head.len() - tail.len();
+    let dropped = already.saturating_add(
+        text.len()
+            .saturating_sub(head.len())
+            .saturating_sub(tail.len()),
+    );
 
     format!("{head}\n\n[{dropped} bytes of output cut from the middle]\n\n{tail}")
         .trim_end()

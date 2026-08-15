@@ -119,7 +119,7 @@ unicode-width = "=0.2.2"
 # `process` is the same argument about a second call. Stopping a command means
 # stopping the pipeline it started rather than the shell at the head of it, and
 # that is `kill` on a negated process group id — which `std` has no call for
-# either. Confined to `bash/output.rs`.
+# either. Confined to `bash/platform/unix.rs`.
 rustix = { version = "=1.1.4", features = ["fs"] }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
@@ -129,17 +129,21 @@ rustix = { version = "=1.1.4", features = ["fs"] }
 # last published in 2021, which is not what security-critical code should be
 # resting on. Already in the tree as a transitive dependency of `ureq` and
 # `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. It is confined to the privacy platform boundary and core's final
-# workspace-path handle validation. The WDK file-system surface contributes
-# the one ntdll rename call whose directory-relative contract the Win32 wrapper
-# does not honor consistently.
+# already. It is confined to the privacy platform boundary, core's final
+# workspace-path validation, and tools' file replacement and process boundary.
+# The WDK file-system surface contributes the one ntdll rename call whose
+# directory-relative contract the Win32 wrapper does not honor consistently;
+# JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.
 windows-sys = { version = "=0.61.2", features = [
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
 
@@ -157,7 +161,8 @@ windows-sys = { version = "=0.61.2", features = [
 # into a third-party crate rather than removed it, which is the same unsafe with
 # less review. `deny` keeps every file in this tree an error by default and
 # makes the one exception appear in the diff, spelled out, where it can be
-# argued with. Only the privacy and workspace-validation Windows modules opt in.
+# argued with. Only the privacy, workspace-validation, atomic-file and Windows
+# process-boundary modules opt in.
 unsafe_code = "deny"
 missing_docs = "warn"
 missing_debug_implementations = "warn"

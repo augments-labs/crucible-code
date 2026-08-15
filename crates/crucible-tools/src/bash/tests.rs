@@ -86,12 +86,6 @@ fn a_command_that_runs_too_long_is_stopped() {
     );
 }
 
-// Unix only, because the guarantee is a signal sent to a process group and
-// Windows has no process group to signal. `output::stop` says why crucible does
-// not buy itself the FFI a job object would take, and says that a killed
-// command there still leaves what it started running — which is exactly the
-// case this asserts the absence of.
-#[cfg(unix)]
 #[test]
 fn what_a_stopped_command_left_running_is_stopped_with_it() {
     // A backgrounded process is disowned by the shell and reparented, so it
@@ -126,9 +120,8 @@ fn what_a_stopped_command_left_running_is_stopped_with_it() {
 
 #[test]
 fn a_command_that_leaves_something_running_still_comes_back() {
-    // Starting a server in the background is a thing a model does, and the
-    // thing it starts inherits the pipe. Waiting for the end of the output
-    // would then wait for a process nothing is going to stop.
+    // A background process inherits the pipe. The process scope stops it when
+    // the shell exits, so neither waiting for EOF nor cleaning it up can hang.
     let sample = Sample::new("bash-background");
 
     let started = Instant::now();
@@ -142,24 +135,55 @@ fn a_command_that_leaves_something_running_still_comes_back() {
 }
 
 #[test]
-fn output_that_was_still_arriving_does_not_come_back_looking_complete() {
-    // The read gives up after a bounded wait, so what came back is a prefix of
-    // the output rather than the whole of it. Unmarked, that is the truncation
-    // problem in another place: the model reads a partial result as the
-    // complete one and concludes the command printed nothing more.
+fn a_contained_background_command_leaves_no_missing_output() {
+    // Once the shell exits, its scope ends the background holder and the
+    // pollable readers reach EOF. A note claiming more output is arriving would
+    // now be false, and would hide a reader that failed to join.
     let sample = Sample::new("bash-arriving");
 
     let output = ran(&sample, r#"{"command":"(sleep 30 &) ; echo started"}"#);
 
     assert!(output.text().contains("started"), "{}", output.text());
     assert!(
-        output.text().contains("still arriving"),
+        !output.text().contains("still arriving"),
         "{}",
         output.text()
     );
 }
 
-#[cfg(unix)]
+#[test]
+fn repeated_silent_background_commands_leave_no_readers_or_processes() {
+    let sample = Sample::new("bash-background-repeated");
+    let started = Instant::now();
+
+    for _ in 0..20 {
+        let output = ran(&sample, r#"{"command":"(sleep 30 &) ; true"}"#);
+        assert_eq!(output.text(), "(no output)");
+    }
+
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "blocked output readers accumulated across calls"
+    );
+}
+
+#[test]
+fn a_background_descendant_cannot_act_after_its_shell_returns() {
+    let sample = Sample::new("bash-background-marker");
+
+    let output = ran(
+        &sample,
+        r#"{"command":"(sleep 2; touch outlived) & echo done"}"#,
+    );
+
+    assert_eq!(output.text(), "done");
+    thread::sleep(Duration::from_secs(3));
+    assert!(
+        !sample.root().join("outlived").exists(),
+        "a background descendant escaped the command scope"
+    );
+}
+
 #[test]
 fn a_pipeline_the_command_started_is_stopped_with_it() {
     // `kill` reaches the shell alone. Every other member of a pipeline is a

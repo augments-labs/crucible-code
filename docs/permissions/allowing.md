@@ -29,12 +29,14 @@ and mean anything at all, so a command containing one of these is treated as a
 command whose text does not say what will run: no rule short of a blanket
 covers it, and it is asked about every time.
 
-The programs treated this way: `doas`, `env`, `find`, `nice`, `nohup`, `ssh`,
-`su`, `sudo`, `time`, `timeout`, `watch`, `xargs` — and the shells themselves,
-`bash`, `sh` and `zsh`, since `sh -c '…'` is one word to a pattern and a whole
-second command line to the machine. All three of `sudo`, `su` and `doas`,
-because `su -c '…' root` launders a command exactly the way `sudo` does and a
-list naming only the familiar one would be a rule about spelling.
+This is structural rather than a shortlist of three familiar shells. It covers
+launchers such as `sudo`, `env`, `timeout`, `xargs`, `chroot` and `ssh`; shell
+builtins and grammar that reinterpret what follows; shell names and their
+versioned forms; and interpreter families including Python, Node, PowerShell,
+Perl, Ruby, Lua and their versioned executables. A quoted, escaped, expanded or
+otherwise computed program name is refused too. Changing from `sh` to `dash`,
+or from `python` to `python3.14`, cannot make the same narrow-looking rule begin
+to match.
 
 `allow: ["bash(timeout *)"]` therefore never fires. That is the point: a rule
 whose author could not have known what they authorised is worse than a
@@ -42,9 +44,9 @@ question.
 
 ## Some programs are shells in disguise
 
-The wrapper list is short because it is structural. The longer list cannot be
-enforced, only known about: many ordinary programs will run an arbitrary
-command if asked the right way.
+Those interpreter and launcher shapes are enforceable. A different, open-ended
+class cannot be exhaustively classified: many ordinary programs will run an
+arbitrary command if asked the right way.
 
 - `git` — hooks, aliases, `core.pager`, `-c`
 - `cargo` — `build.rs`, runners and aliases in `.cargo/config.toml`

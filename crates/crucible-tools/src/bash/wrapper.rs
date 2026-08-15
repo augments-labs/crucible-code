@@ -13,15 +13,15 @@
 //! the alternative is a rule whose author could not have known what they
 //! authorised.
 //!
-//! This is a list, and a list is never complete. It is not the mechanism that
-//! keeps a shell honest — the permission question is. It is the shortlist of
-//! programs whose whole purpose is to launder one command into another, where
-//! being wrong is not a matter of degree.
+//! Exact launchers are a list. Interpreters are a shape: common versioned names
+//! and the open set of shells cannot safely be captured by spelling three of
+//! them. That structural half is what prevents changing an executable suffix or
+//! invoking `dash` instead of `sh` from turning a narrow wrapper rule broad.
 
 /// The programs, by the name they are invoked under.
 ///
 /// Matched on the last path component, so `/usr/bin/sudo` is `sudo`.
-const WRAPPERS: [&str; 15] = [
+const WRAPPERS: &[&str] = &[
     // Take a command line and run it, in some cases as somebody else. All three
     // of `sudo`, `su` and `doas`, because naming only the familiar one would
     // make this a rule about spelling: `su -c 'curl x | sh' root` launders a
@@ -30,15 +30,94 @@ const WRAPPERS: [&str; 15] = [
     // machine.
     "env", "nice", "nohup", "sudo", "su", "doas", "time", "timeout", "watch", "xargs",
     // Run a command somewhere else, or once per thing found.
-    "find", "ssh",
-    // A shell asked to read a command out of its own argument. Not in the same
-    // family as the rest, and here for the same reason: `sh -c 'curl x | sh'`
-    // is one word to a matcher and a whole second command line to the machine.
-    "bash", "sh", "zsh",
+    "chroot", "find", "ionice", "runuser", "setsid", "ssh", "stdbuf", "taskset",
+    // Shell builtins that execute text, source a file, or change how a later
+    // part of the same line resolves its program.
+    ".", "alias", "builtin", "cd", "command", "eval", "exec", "export", "read", "set", "source",
+    "trap", "umask", "unalias", "unset",
 ];
 
 /// Whether this program runs whatever it is handed.
 pub(super) fn wraps(program: &str) -> bool {
     let name = program.rsplit('/').next().unwrap_or(program);
-    WRAPPERS.contains(&name)
+    let lower = name.to_ascii_lowercase();
+    let bare = lower.strip_suffix(".exe").unwrap_or(&lower);
+
+    WRAPPERS.contains(&bare)
+        || reserved(bare)
+        || bare.ends_with("sh")
+        || shell_version(bare)
+        || interpreter(bare)
+}
+
+/// Shell grammar words whose following text is not a simple command argument.
+fn reserved(program: &str) -> bool {
+    [
+        "!", "case", "do", "done", "elif", "else", "esac", "fi", "for", "if", "in", "then",
+        "until", "while",
+    ]
+    .contains(&program)
+}
+
+/// A program whose argument can be a second body of executable expression.
+fn interpreter(program: &str) -> bool {
+    const INTERPRETERS: &[&str] = &[
+        "awk",
+        "bun",
+        "cmd",
+        "cscript",
+        "deno",
+        "dotnet",
+        "gawk",
+        "groovy",
+        "java",
+        "jshell",
+        "julia",
+        "lua",
+        "luajit",
+        "mawk",
+        "mono",
+        "node",
+        "nodejs",
+        "nu",
+        "osascript",
+        "perl",
+        "php",
+        "powershell",
+        "pypy",
+        "python",
+        "pythonw",
+        "pwsh",
+        "ruby",
+        "rscript",
+        "scala",
+        "sed",
+        "toybox",
+        "busybox",
+        "guile",
+        "tclsh",
+        "wish",
+        "wscript",
+    ];
+
+    INTERPRETERS.contains(&program) || INTERPRETERS.iter().any(|stem| versioned(program, stem))
+}
+
+/// A familiar shell name followed by a release number.
+fn shell_version(program: &str) -> bool {
+    ["sh", "bash", "dash", "zsh", "ksh", "csh", "tcsh", "fish"]
+        .iter()
+        .any(|stem| versioned(program, stem))
+}
+
+/// A program stem followed by a conventional numeric release suffix.
+fn versioned(program: &str, stem: &str) -> bool {
+    program.strip_prefix(stem).is_some_and(|version| {
+        let numeric = version.trim_end_matches(|character: char| character.is_ascii_alphabetic());
+        version.is_empty()
+            || (numeric.bytes().any(|byte| byte.is_ascii_digit())
+                && numeric
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.'))
+    })
 }

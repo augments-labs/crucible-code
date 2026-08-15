@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Command cleanup is bounded and reaches descendants.** Output readers poll
+  for cancellation, every failure path stops and reaps the command scope, Unix
+  uses process groups, and Windows attaches a suspended child to a kill-on-close
+  job before it can run. Narrow command rules also fail closed on interpreters,
+  launchers, shell grammar and computed program names.
+
 - **Edits are bounded, cancellable and atomic.** `edit` refuses non-regular,
   non-text, source or resulting files above 1 MiB, notices cancellation while
   reading, and commits the complete replacement without a truncated interval.
