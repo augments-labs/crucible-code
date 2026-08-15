@@ -225,22 +225,21 @@ pub enum ConfigError {
         namespace: &'static str,
     },
 
-    /// A permission key that only ever loosens what crucible does unasked,
-    /// written in the layer that travels with a clone.
+    /// A key that only ever loosens what crucible does unasked, written in a
+    /// file inside the workspace.
     ///
     /// Its own variant for the same reason as the one above: the key is real
-    /// and is accepted in the other two files, so "no such setting" would send
+    /// and is accepted in the user file, so "no such setting" would send
     /// the reader hunting a typo. What is wrong is where it was written.
     ///
-    /// The message says which keys a checked-in file *may* state, because the
+    /// The message says which keys a workspace file *may* state, because the
     /// reader was configuring a repository for a team and still has that to do.
     #[error(
-        "{file}: {path} cannot be set here{at} — this file is checked in, so \
-         what it says reaches everyone who clones this repository, and this key \
-         only ever widens what crucible does without asking. A checked-in file \
-         may tighten its own rules — permissions.ask and permissions.deny — and \
-         may not loosen anybody's. Put this one in .crucible/config.local.json, \
-         which git ignores, or in the configuration file in your home directory"
+        "{file}: {path} cannot be set here{at} — this file is inside the workspace \
+         and can arrive with a checkout, and this key only ever widens what \
+         crucible does without asking. A workspace file may tighten its own \
+         rules — permissions.ask and permissions.deny — and may not loosen \
+         anybody's. Put this one in the configuration file in your home directory"
     )]
     Widening {
         /// The file, as the user would name it.

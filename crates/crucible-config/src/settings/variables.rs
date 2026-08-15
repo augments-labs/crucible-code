@@ -155,9 +155,9 @@ mod tests {
 
     #[test]
     fn every_setting_crucible_reads_for_itself_is_in_its_own_namespace() {
-        // The prefix is what a checked-in file is allowed to set, so a name
-        // that fell outside it would be a setting no project could use — and
-        // it would be one `check.rs` refuses in the layer that travels.
+        // The prefix is what either workspace file is allowed to set, so a
+        // name outside it would be a setting no project could use — and one
+        // `check.rs` refuses in both project layers.
         assert!(env::ours(CLEAR_SCREEN));
     }
 

@@ -117,8 +117,8 @@ not what a pattern can say. What bounds a command is a command pattern and the
 
 Rule lists concatenate across the [configuration
 files](../configuration/configuration.md): what `~/.crucible/config.json`
-denies, a project's checked-in file cannot allow. A nearer layer can add to
-what may happen, never subtract from what may not.
+denies, a workspace file cannot allow. A nearer layer can add stricter policy,
+never subtract from what may not happen.
 
 Both workspace filenames may add `ask` and `deny` rules, and neither may add an
 `allow`: a repository can commit either name, whatever its ignore convention

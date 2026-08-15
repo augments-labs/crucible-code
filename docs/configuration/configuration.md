@@ -26,7 +26,7 @@ Three, read in this order. Nearer to the work wins.
 | --- | --- | --- |
 | `~/.crucible/config.json` | what you want everywhere | no, it is yours |
 | `.crucible/config.json` | what this project needs | yes — everyone who clones gets it |
-| `.crucible/config.local.json` | what this project needs *for you* | no, [gitignore it](#the-file-that-travels) |
+| `.crucible/config.local.json` | non-authority overrides for this checkout | by convention only — [gitignore it](#the-workspace-files) |
 
 The two project files are looked for in the directory you started crucible in,
 which is what makes a project's settings a property of the checkout rather than
@@ -54,13 +54,13 @@ This is the only setting that chooses a vendor, and everything under
 picking one. `/model` and `/login` write it, so a machine that holds a key for
 more than one vendor answers the question once.
 
-It is one of the keys [the file that travels](#the-file-that-travels) may not
-set: whoever it names receives the prompt and bills for it, and that is not a
+It is one of the keys [workspace files](#the-workspace-files) may not set:
+whoever it names receives the prompt and bills for it, and that is not a
 repository's choice to make for everyone who clones it.
 
 ### `providers`
 
-Keyed by provider name — `anthropic`, `openai`.
+Keyed by provider name — `anthropic`, `moonshot`, `openai`.
 
 | Key | Means |
 | --- | --- |
@@ -75,16 +75,18 @@ the one serving it says nothing about the one that would refuse it. Left out,
 crucible asks for no rung at all and the vendor's own default for that model
 applies. See [Providers and models](../providers/providers.md).
 
-`apiKeyEnv` takes a **name**, never a key. A key is read from the environment at
-startup and has no path into a document, a session file or a log line. Pointing
-crucible at another variable also points it away from the usual one: with
-`"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at all.
+`apiKeyEnv` takes a **name**, never a key. The credential wiring reads its value
+at startup and does not copy it into a document, diagnostic or session message.
+Pointing crucible at another variable also points it away from the usual one:
+with `"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at
+all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
+read only from the configuration file in your home directory.
 
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
 `https`, or `http` on `localhost` — the key travels in a header on every
 request, so the address decides who receives it, and plain `http` to anywhere
 else is that key on somebody's network in the clear. For the same reason it is
-one of the keys [the file that travels](#the-file-that-travels) may not set.
+one of the keys [workspace files](#the-workspace-files) may not set.
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
@@ -131,9 +133,11 @@ be qualified by an `allow` written next to it. The price is that "deny every
 readable on its own as the list of things that cannot happen.
 
 `extraDirectories` entries are absolute, because a path in a configuration file
-is not relative to anything the file knows. An absolute path names one machine,
-so `.crucible/config.local.json` is where one belongs — `/home/someone/src/lib`
-means nothing to anyone else who clones the repository.
+is not relative to anything the file knows. They belong in
+`~/.crucible/config.json`: either workspace filename can be committed, so
+neither may widen the directories a checkout can reach. A path such as
+`/home/someone/src/lib` is specific to one machine, which is another reason not
+to put it in project configuration.
 
 ### `output`
 
@@ -216,22 +220,24 @@ crucible was started with rather than adding to it.
 A command that needs anything else — a `CARGO_TARGET_DIR`, a token a deploy
 script reads — is told about it here, which is you handing it over on purpose.
 
-## The file that travels
+## The workspace files
 
-`.crucible/config.json` is checked in, so anything in it reaches everyone who
-clones the repository. crucible therefore refuses an arbitrary `env` variable in
-that one file:
+`.crucible/config.json` is checked in, while `.crucible/config.local.json` is
+ignored only by convention. A repository can commit either filename, so
+crucible refuses an arbitrary `env` variable in both:
 
 ```
 crucible: /home/you/api/.crucible/config.json: env cannot set TOKEN at line 3,
-column 5 — this file is checked in, so a value written here travels to everyone
-who clones this repository. Only crucible's own settings, which start with
-CRUCIBLE_CODE_, are read from a checked-in file. Put this one in
-.crucible/config.local.json, which git ignores, or in the configuration file in
-your home directory
+column 5 — crucible cannot tell a file you wrote from one that arrived with the
+checkout, so no file under the working directory sets a variable for commands.
+Only crucible's own settings, which start with CRUCIBLE_CODE_, are read from
+one. Put this in the configuration file in your home directory, or set it in
+the shell you start crucible in
 ```
 
-`.crucible/config.local.json` is the answer, and belongs in your `.gitignore`:
+Keep `.crucible/config.local.json` in your `.gitignore`; the convention keeps
+personal preferences out of commits even though it cannot make that file a
+trusted source of authority:
 
 ```gitignore
 .crucible/config.local.json
@@ -244,11 +250,11 @@ is still not a way to ship somebody's key.
 
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
-`providers.<name>.baseUrl`, and `provider`. The last two are not permissions,
-and they are here for the same reason — who a request goes to is who receives
-the key that goes with it, and nothing on that path stops to ask. Each is read
-from your home file and from `.crucible/config.local.json`, and refused in the
-one file git carries.
+`providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`, and `provider`. The
+last three are not permissions, and they are here for the same reason — they
+choose which credential is read or who receives it, and nothing on that path
+stops to ask. Each is read only from your home file and refused in both files
+under the workspace.
 
 The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is
