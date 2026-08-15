@@ -38,4 +38,4 @@ pub use provider::{
 };
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
-pub use workspace::{PathError, Workspace, WorkspacePath, written};
+pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

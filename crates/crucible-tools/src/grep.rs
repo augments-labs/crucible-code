@@ -291,6 +291,7 @@ impl Grep {
                 // held on the heap, and with no limit the heap is the machine.
                 .heap_limit(Some(MAX_LINE))
                 .build();
+            let mut files = from.walk_files();
             let (hits, partly) = (&hits, &partly);
 
             // `move` takes the searcher this thread just built. The shared
@@ -321,10 +322,10 @@ impl Grep {
                     return WalkState::Continue;
                 }
 
-                let Some(path) = from.walked(entry.path()) else {
+                let Ok(Some((path, file))) = files.open_regular(entry.path()) else {
                     return WalkState::Continue;
                 };
-                let mine = self.lines(&mut searcher, matcher, &path, hits);
+                let mine = self.lines(&mut searcher, matcher, (&path, &file), hits);
                 if let Some(name) = mine.partly
                     && let Ok(mut partly) = partly.lock()
                 {
@@ -369,26 +370,17 @@ impl Grep {
         &self,
         searcher: &mut Searcher,
         matcher: &RegexMatcher,
-        path: &WorkspacePath,
+        opened: (&WorkspacePath, &std::fs::File),
         hits: &Mutex<Top>,
     ) -> Searched {
+        let (path, file) = opened;
         // Spelled by the module that owns the walk, so `glob` cannot name the
         // same file a second way.
         let shown = crate::tree::named(&self.workspace, path.as_path());
 
-        // The walker inspected a directory entry, but that fact has an expiry:
-        // the name can become a link, pipe or device before this point. Open it
-        // through the workspace proof and validate the descriptor itself before
-        // asking the searcher to consume anything.
-        let Ok(file) = path.open_regular() else {
-            return Searched {
-                partly: Some(shown),
-            };
-        };
-
         let halted = Cell::new(false);
         let reader = Stopping {
-            file: &file,
+            file,
             cancel: &self.cancel,
             stopped: &halted,
         };

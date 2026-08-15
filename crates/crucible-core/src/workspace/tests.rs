@@ -466,6 +466,27 @@ fn a_walked_file_is_not_read_after_its_directory_is_redirected() {
     assert!(matches!(problem, PathError::Swapped { .. }), "{problem:?}");
 }
 
+#[cfg(any(unix, windows))]
+#[test]
+fn a_walk_cache_never_opens_a_redirected_sibling() {
+    let f = Fixture::new("walk-cache-leaf");
+    fs::write(f.workspace.root().join("sub/first.txt"), "first").unwrap();
+    fs::write(f.workspace.root().join("sub/second.txt"), "second").unwrap();
+    let from = f.workspace.existing(".").unwrap();
+    let first = f.workspace.root().join("sub/first.txt");
+    let second = f.workspace.root().join("sub/second.txt");
+    let mut files = from.walk_files();
+
+    let opened = files.open_regular(&first).unwrap().unwrap();
+    assert_eq!(std::io::read_to_string(opened.1).unwrap(), "first");
+
+    fs::remove_file(&second).unwrap();
+    symlink(f.outside.join("secret.txt"), &second);
+
+    let problem = files.open_regular(&second).unwrap_err();
+    assert!(matches!(problem, PathError::Swapped { .. }), "{problem:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_fifo_is_refused_before_a_read_or_change_can_wait_for_a_peer() {

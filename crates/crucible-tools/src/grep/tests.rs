@@ -273,7 +273,8 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     let mut searcher = SearcherBuilder::new().line_number(true).build();
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
     let hits = std::sync::Mutex::new(Top::new(1_000));
-    let found = tool.lines(&mut searcher, &matcher, &reached, &hits);
+    let file = reached.open_regular().unwrap();
+    let found = tool.lines(&mut searcher, &matcher, (&reached, &file), &hits);
     let hits = hits.into_inner().unwrap();
 
     assert!(hits.hits.is_empty(), "it read after cancellation");
@@ -617,7 +618,7 @@ fn a_file_redirected_after_the_walk_reached_it_is_not_searched() {
     let workspace = sample.workspace();
     let from = workspace.existing(".").unwrap();
     let named = workspace.root().join("innocent.txt");
-    let reached = from.walked(&named).unwrap();
+    assert!(from.walked(&named).is_some());
 
     // This is the interval the old `search_path` left: the walker has already
     // accepted the regular directory entry, and another writer replaces its
@@ -625,15 +626,10 @@ fn a_file_redirected_after_the_walk_reached_it_is_not_searched() {
     std::fs::remove_file(&named).unwrap();
     crate::sample::symlink(&secret, &named);
 
-    let tool = Grep::new(workspace, Cancel::new());
-    let mut searcher = SearcherBuilder::new().line_number(true).build();
-    let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
-    let hits = std::sync::Mutex::new(Top::new(1_000));
-    let found = tool.lines(&mut searcher, &matcher, &reached, &hits);
-    let hits = hits.into_inner().unwrap();
+    let mut files = from.walk_files();
+    let opened = files.open_regular(&named);
 
-    assert!(hits.hits.is_empty(), "an outside file was searched");
-    assert_eq!(found.partly.as_deref(), Some("innocent.txt"));
+    assert!(opened.is_err(), "an outside file was opened: {opened:?}");
 }
 
 #[test]
