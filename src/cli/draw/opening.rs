@@ -2,8 +2,8 @@
 //!
 //! The one place in the wiring that draws a component rather than a line. Its
 //! job is to hand the component the facts it cannot know — the release, the
-//! model, the directory — and to hand the renderer the terminal's answers about
-//! colour and glyphs, both settled once at startup.
+//! directory and recent sessions — and to hand the renderer the terminal's
+//! answers about colour and glyphs, both settled once at startup.
 
 use std::time::SystemTime;
 
@@ -16,24 +16,15 @@ use crate::cli::style::Style;
 
 use super::when;
 
-/// What stands where the model's name goes when nothing has chosen one.
-///
-/// The row is drawn either way. A welcome that simply left it out would look
-/// like a session with a model, seen at a narrow width.
-const UNCHOSEN: &str = "no model selected";
-
 /// Everything the opening says that it cannot work out for itself.
 ///
 /// A struct rather than six parameters, because four of them are `&str`-shaped
 /// and a call with four of those in a row is one nobody can read.
 pub(crate) struct Opening<'a> {
-    /// The model this session will ask, or `None` where nothing chose one.
+    /// The model this session will ask, or `None` where nothing chose one. Used
+    /// only to decide whether the setup warning belongs under the card; the
+    /// live prompt status owns model display.
     pub(crate) model: Option<&'a str>,
-    /// The vendor it will be asked of, or `None` where nothing chose one. Drawn
-    /// beside the model because a name says which model and never whose, and a
-    /// machine holding keys for two vendors has to be able to see which of them
-    /// this session settled on.
-    pub(crate) provider: Option<&'a str>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
@@ -95,12 +86,6 @@ pub(crate) fn opening<T: Terminal>(
 
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
-        model: opening.model.unwrap_or(UNCHOSEN),
-
-        // Only where there is a model to put it before. The row without one
-        // says nothing was chosen, and a vendor drawn against that sentence
-        // would say something was.
-        provider: opening.model.and(opening.provider).unwrap_or_default(),
         root: &root,
         sessions: &recent,
     };
@@ -178,7 +163,6 @@ mod tests {
             terminal,
             &Opening {
                 model: Some("claude-sonnet-5"),
-                provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
@@ -238,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_opens_by_saying_what_it_is_asking_and_where() {
+    fn a_session_opens_by_saying_what_it_is_and_where() {
         let scratch = Scratch::new("asking");
         let screen = drawn(80, true, &scratch.workspace(), &[]);
 
@@ -246,7 +230,7 @@ mod tests {
             screen.contains(concat!("crucible v", env!("CARGO_PKG_VERSION"))),
             "{screen}"
         );
-        assert!(screen.contains("claude-sonnet-5"), "{screen}");
+        assert!(!screen.contains("claude-sonnet-5"), "{screen}");
 
         // The name of the directory rather than the whole path to it. A path
         // too wide for its column keeps its two ends and gives up the route
@@ -319,7 +303,6 @@ mod tests {
             false,
             &Opening {
                 model: None,
-                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
@@ -331,52 +314,15 @@ mod tests {
 
         assert!(screen.contains("No models available"), "{screen}");
         assert!(screen.contains("/model"), "{screen}");
-        assert!(screen.contains(UNCHOSEN), "{screen}");
     }
 
     #[test]
-    fn the_opening_says_which_vendor_the_model_it_names_belongs_to() {
-        // The wiring is the only layer that knows: a model name is a string
-        // until something says whose it is, and on a machine holding keys for
-        // two vendors that is the fact the card exists to settle.
+    fn the_card_says_nothing_about_the_live_turn_selection() {
+        // All three facts are on the row under the prompt box. `/model` and
+        // `/effort` change them after this card has become terminal scrollback.
         let screen = opened(80, false);
 
-        assert!(screen.contains("anthropic/claude-sonnet-5"), "{screen}");
-    }
-
-    #[test]
-    fn a_session_with_nothing_chosen_names_no_vendor_over_the_sentence_saying_so() {
-        // The row says nothing was chosen. A vendor drawn against it would say
-        // something was, and the reader would be looking for a model name that
-        // is not there.
-        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
-        let screen = shown(
-            80,
-            false,
-            &Opening {
-                model: None,
-                provider: Some("anthropic"),
-                unasked: NOTHING_TO_ASK,
-                workspace: &workspace,
-                sessions: &[],
-                trouble: None,
-                update: None,
-                style: Style::plain(),
-            },
-        );
-
-        assert!(screen.contains(UNCHOSEN), "{screen}");
-        assert!(!screen.contains("anthropic"), "{screen}");
-    }
-
-    #[test]
-    fn the_card_says_nothing_about_how_hard_the_model_is_being_asked_to_think() {
-        // The rung is on the row under the prompt box instead, and this is why:
-        // `/effort` changes it mid-session, and by then this card is scrollback
-        // that no inline renderer can go back over. A rung drawn here would be
-        // right until the first time somebody changed it and wrong afterwards.
-        let screen = opened(80, false);
-
+        assert!(!screen.contains("claude-sonnet-5"), "{screen}");
         assert!(!screen.contains("effort"), "{screen}");
     }
 
@@ -402,7 +348,6 @@ mod tests {
             false,
             &Opening {
                 model: None,
-                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],

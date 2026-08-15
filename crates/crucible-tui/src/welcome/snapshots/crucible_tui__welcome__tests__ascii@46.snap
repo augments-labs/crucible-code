@@ -5,7 +5,6 @@ expression: "dump(&welcome.rows(columns, glyphs), columns)"
 <Accent>+- </><Strong>crucible</> <Quiet>v0.0.8</><Accent> --------------------------+</>
 <Accent>|</>                                            <Accent>|</>
 <Accent>|</> <Strong>CRUCIBLE</>                                   <Accent>|</>
-<Accent>|</> anthropic/claude-sonnet-5                  <Accent>|</>
 <Accent>|</> <Quiet>~/code/crucible-code</>                       <Accent>|</>
 <Accent>|</>                                            <Accent>|</>
 <Accent>|</> <Strong>Recent sessions</>                            <Accent>|</>

@@ -20,6 +20,9 @@ Notable changes to crucible. Format follows
   one bounded run, while embedded newlines submit just as if they were typed.
   A prompt retains at most 1 MiB of text, and what would cross that is refused
   with a note under the box rather than flooding the input path.
+- **The welcome card no longer names a model.** Provider, model and effort stay
+  on the live prompt status, where `/login`, `/model` and `/effort` can update
+  them instead of leaving stale selection details in terminal scrollback.
 
 ### Internal
 

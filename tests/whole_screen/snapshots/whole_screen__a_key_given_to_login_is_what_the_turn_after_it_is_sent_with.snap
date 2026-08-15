@@ -5,9 +5,9 @@ expression: window.picture()
 80x24 cursor 21,4 scrolled 4
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
-|│  no model selected               │                                           │|
-|│                                  │ Tips                                      │|
 |│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|
