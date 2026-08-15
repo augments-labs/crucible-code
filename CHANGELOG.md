@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **File reads have bounded input and output.** A huge line is consumed in
+  fixed-size blocks, answers stay within 30 KiB, and cancellation interrupts
+  scans through large offsets.
+
 - **Workspace paths stay confined while the tree changes.** Unix operations
   descend through held descriptors, Windows validates the final opened handle,
   missing-parent proofs retain their intended leaf, and non-directory roots are

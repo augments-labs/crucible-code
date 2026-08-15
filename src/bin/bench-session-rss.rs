@@ -254,7 +254,7 @@ fn measure() -> Result<f64, ProbeError> {
     let cancel = Cancel::new();
 
     let mut tools = Tools::new();
-    tools.add(Box::new(Read::new(workspace.clone())));
+    tools.add(Box::new(Read::new(workspace.clone(), cancel.clone())));
 
     let mut runner = Runner::new(
         Box::new(Anthropic::at(
