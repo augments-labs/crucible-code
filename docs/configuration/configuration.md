@@ -35,6 +35,10 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
+When `/model`, `/effort` or `/login` changes the user file, crucible prepares an
+owner-only sibling and replaces the complete document atomically. A failed
+write before that commit leaves the previous file whole.
+
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
 into settings that mysteriously stopped applying. Each file is limited to 1

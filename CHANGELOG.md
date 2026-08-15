@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **User configuration replacement is private and atomic.** Changes prepare an
+  owner-only, exclusively created sibling and commit the complete document, so
+  a planted temporary link cannot redirect a write or expose partial contents.
+
 - **Configuration documents have a 1 MiB input limit.** An oversized user or
   workspace file now fails before JSON parsing instead of choosing an unbounded
   startup allocation.

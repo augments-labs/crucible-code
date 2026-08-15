@@ -8,8 +8,9 @@
 //! it looking like. This opens it, and puts the answer back.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_config::ConfigError;
 use crucible_core::Effort;
@@ -105,28 +106,14 @@ fn answering(
 fn put(file: &Path, text: &str) -> io::Result<()> {
     let directory = file.parent().unwrap_or_else(|| Path::new(""));
 
-    // Made rather than required: a project nobody has configured has no
-    // `.crucible` at all, and this is the first thing to go in it.
+    // Made rather than required: a user nobody has configured has no crucible
+    // directory yet, and this is the first thing to go in it.
     if !directory.as_os_str().is_empty() {
-        fs::create_dir_all(directory)?;
+        crucible_privacy::directory(directory).map_err(crucible_privacy::PrivacyError::into_io)?;
     }
 
-    // What the file is held at now, before it is replaced. A rename puts a new
-    // file where the old one was rather than new bytes inside it, so whatever
-    // the user narrowed this to would be widened back to what the account
-    // creates a file as — and this is the file that says what may run without
-    // being asked about, so widening who can write to it is the last thing
-    // replacing one choice should do. `None` where there is nothing there yet,
-    // which is the case the account's own default is right for.
-    let held = fs::metadata(file).map(|found| found.permissions()).ok();
-
-    let beside = Beside::new(directory);
+    let mut beside = Beside::new(directory)?;
     beside.write(text)?;
-
-    if let Some(held) = held {
-        beside.hold(held)?;
-    }
-
     beside.over(file)
 }
 
@@ -135,42 +122,67 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
 /// Written beside the file and renamed over it, because a write that stops
 /// part-way through leaves half a document, and half a document is a file
 /// crucible refuses to start from — so the failure would cost the user their
-/// whole configuration rather than one rule.
+/// whole configuration rather than one setting.
 ///
 /// The rename is what makes the replacement whole, so every step before it is
 /// work that can fail with this file already on disk, holding the entire
-/// permission document under a name nothing will ever look at again: the next
+/// configuration document under a name nothing will ever look at again: the next
 /// crucible reuses this process id only by coincidence. Removing it falls to a
 /// guard rather than to an arm on each failure, because the steps between the
 /// write and the rename are the kind that get added to, and a guard covers the
 /// next one without being told it is there.
+#[derive(Debug)]
 struct Beside {
     path: PathBuf,
+    file: Option<fs::File>,
     landed: bool,
 }
 
 impl Beside {
-    /// A name beside the file to be replaced. The process id in it is what
-    /// keeps two crucibles in one checkout off each other's half-written file.
-    fn new(directory: &Path) -> Self {
-        Self {
-            path: directory.join(format!(".writing.{}", std::process::id())),
-            landed: false,
+    /// An exclusively-created name beside the file to be replaced.
+    fn new(directory: &Path) -> io::Result<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        for _ in 0..32 {
+            let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = directory.join(format!(".writing.{}.{sequence}", std::process::id()));
+            match Self::at(path) {
+                Ok(beside) => return Ok(beside),
+                Err(problem) if problem.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(problem) => return Err(problem),
+            }
         }
+
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find a free sibling name for the configuration replacement",
+        ))
     }
 
-    fn write(&self, text: &str) -> io::Result<()> {
-        fs::write(&self.path, text)
+    fn at(path: PathBuf) -> io::Result<Self> {
+        let file = crucible_privacy::create_write(&path)
+            .map_err(crucible_privacy::PrivacyError::into_io)?;
+        Ok(Self {
+            path,
+            file: Some(file),
+            landed: false,
+        })
     }
 
-    /// Held at what the file being replaced was held at.
-    fn hold(&self, permissions: fs::Permissions) -> io::Result<()> {
-        fs::set_permissions(&self.path, permissions)
+    fn write(&mut self, text: &str) -> io::Result<()> {
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("configuration temporary is already closed"))?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
     }
 
     /// Over the real file, which is the step that makes this the real file.
     fn over(mut self, file: &Path) -> io::Result<()> {
-        fs::rename(&self.path, file)?;
+        drop(self.file.take());
+        crucible_privacy::replace(&self.path, file)
+            .map_err(crucible_privacy::PrivacyError::into_io)?;
         self.landed = true;
 
         Ok(())
@@ -184,7 +196,7 @@ impl Drop for Beside {
         }
 
         // Whatever went wrong is already on its way to the user, and it is the
-        // part they need: the choice was not written. A tidy-up that failed
+        // part they need: the setting was not remembered. A tidy-up that failed
         // has nowhere to go that would not be in front of that, so it goes
         // nowhere. The same silence covers the write that never made a file.
         let _ = fs::remove_file(&self.path);
