@@ -60,6 +60,16 @@ Notable changes to crucible. Format follows
   in-flight provider. The cached release answer is read under a 128-byte
   ceiling and replaced atomically through an exclusively-created sibling.
 
+### Documentation
+
+- **The docs and rules files caught up with account login and the wider
+  `/model` panel.** `/login`'s ChatGPT and Kimi Code routes were still
+  described as listed but not connected, `/model` as offering only the in-force
+  provider's models, and `/effort` as always offering all five rungs; the
+  panel itself said the choice was written down for this workspace when it goes
+  to the user configuration and holds for every run. Each now reads the way the
+  shipped commands behave.
+
 ## [0.1.8] - 2026-08-15
 
 ### Changed

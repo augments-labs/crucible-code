@@ -252,25 +252,29 @@ session.
 | `/clear` | Forgets what has been said, keeping the session |
 | `/exit` | Ends the session |
 
-`/model` on its own stands a panel where the prompt box was, holding a few of
-the models your provider serves with the one being asked now named above them.
-Escape leaves it and changes nothing. `/model <name>` skips the panel, and is
-also how to ask for a model the panel does not carry: the list is a shortcut past
-the vendor's documentation, not the limit of what the vendor serves.
+`/model` on its own stands a panel where the prompt box was, holding every
+provider this build serves beside a few of the models each offers, with the one
+being asked now named above them. Taking a row off another provider's half moves
+the session to that provider. Escape leaves it and changes nothing. `/model
+<name>` skips the panel, and is also how to ask for a model the panel does not
+carry: the list is a shortcut past the vendor's documentation, not the limit of
+what the vendor serves.
 
 Either way the name is written to `~/.crucible/config.json` under the provider
-this run is set up for, so the next crucible started anywhere begins with it.
-See [Providers and models](../providers/providers.md).
+this run is set up for, and the provider beside it, so the next crucible
+started anywhere begins with both. See [Providers and
+models](../providers/providers.md).
 
-`/effort` asks the same question over the five rungs — `low`, `medium`, `high`,
-`xhigh`, `max` — and is written to the same file beside the model. It draws a
-ladder rather than a panel: one track with the rungs under it, `Faster` at one
-end and `Smarter` at the other, walked with the left and right arrows. The mark
-opens on `high` where nothing has chosen yet, which is a place to start walking
-from rather than a rung being asked for: leaving it leaves the session asking for
-none, and what applies then is the vendor's own default for that model. All five
-are offered wherever you are, because which of them a model serves is the
-vendor's answer and differs between models of one vendor. A session with no model
+`/effort` asks the same question over the rungs the model in force serves, and
+the answer is written to the same file beside the model. It draws a ladder
+rather than a panel: one track with the rungs under it, `Faster` at one end and
+`Smarter` at the other, walked with the left and right arrows. The mark opens on
+`high` where nothing has chosen yet, which is a place to start walking from
+rather than a rung being asked for: leaving it leaves the session asking for
+none, and what applies then is the vendor's own default for that model. The
+ladder holds what the model serves rather than all five — the Kimi models serve
+`low`, `high` and `max`, and a model whose vendor serves none is told so instead
+of being offered a ladder that cannot be answered. A session with no model
 chosen is sent to `/model` first, since a rung is asked of a model.
 
 `/login <provider>` opens a box for the key — never the command line, which
@@ -282,20 +286,23 @@ different question from which vendor: somebody paying for a ChatGPT plan and
 somebody holding an OpenAI console key are two people, and only one of them has a
 key to type. So the panel offers three ways — OpenAI's ChatGPT Plus, Pro,
 Business and Enterprise plans; MoonshotAI's Kimi Code; and a console account
-billed by API usage. **The two plans are listed but not connected yet**; choosing
-one says so rather than opening a box you have nothing to type into. The console
-account is what works today, and choosing it asks whose console before opening
-the box.
+billed by API usage. The two plans connect: ChatGPT opens a browser
+authorization, or a device code from a terminal with no browser to reach, and
+Kimi Code a device code — either writes a renewable credential to the same
+protected store a key goes to. The console account asks whose console before
+opening the box, and is the route an Anthropic key takes, Anthropic having no
+account route.
 
 A run with no keyboard to walk that panel — and a window with no room to stand
 one in — gets the provider names as rows instead, with the variable each reads
 from.
 
 A key that is written lands on the session that took it: the provider is set up
-there and then, and the model and rung your configuration names for it come with
-it wherever nothing has chosen one yet. A run started with no key for anything is
-one command away from a turn, and the line under the box says which model it will
-be asking — or sends you to `/model` where the files name none.
+there and then, from the next turn on. Logging in chooses neither a model nor a
+rung — `/model` is the explicit next step where nothing has chosen one. A run
+started with no key for anything is one command away from a turn, and the line
+under the box says which model it will be asking — or sends you to `/model`
+where the files name none.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one

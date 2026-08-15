@@ -95,14 +95,15 @@ turn on and writes it to `~/.crucible/config.json` under the provider this run
 is set up for, so the next run starts with it. It writes `provider` beside it, so
 the next run asks the same vendor rather than settling that question again from
 whichever keys the shell is carrying. `/model` on its own stands a panel
-of a few of that provider's models to take one off, under the name of the one
-being asked now; down a pipe, where nobody can walk a panel, it writes that same
-list out as the line that asks for each.
+of every provider this build serves beside a few of the models each offers,
+under the name of the one being asked now; down a pipe, where nobody can walk a
+panel, it writes that same list out as the line that asks for each.
 
-Only that provider's are offered, because a name is asked of whichever vendor the
-key belongs to. A model the list does not carry is still named — what is offered
-is a shortcut past the vendor's documentation, and the vendor remains the
-authority on what it serves.
+Taking a row off another provider's half of the panel moves the session there
+first — a model belongs to the vendor that serves it, and the two change
+together. A model the list does not carry is still named — what is offered is a
+shortcut past the vendor's documentation, and the vendor remains the authority
+on what it serves.
 
 A model belongs to the provider serving it. crucible never writes a name under
 one provider and sends it to another — the pairing is settled once, by

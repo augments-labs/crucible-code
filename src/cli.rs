@@ -340,10 +340,11 @@ edits and runs things in the current directory, and asks before anything that \
 changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
-claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever of \
-ANTHROPIC_API_KEY, MOONSHOT_API_KEY and OPENAI_API_KEY holds a key — a \
-variable exported empty holds none, so it does not compete — and where more \
-than one does, qualify the name or set providers.<name>.model for one of them. \
+claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever holds a \
+usable credential — a key in one of ANTHROPIC_API_KEY, MOONSHOT_API_KEY and \
+OPENAI_API_KEY (a variable exported empty holds none, so it does not compete), \
+or one stored by /login, whether an API key or an account login. Where more \
+than one is usable, qualify the name or set provider for one of them. \
 The key is read from that provider's variable, or from whichever one its \
 apiKeyEnv names.
 
