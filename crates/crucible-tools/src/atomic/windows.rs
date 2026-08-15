@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{PathError, WorkspacePath};
 use windows_sys::Wdk::Storage::FileSystem::{
-    FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FileRenameInformation, NtSetInformationFile,
+    FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FILE_RENAME_REPLACE_IF_EXISTS,
+    FileRenameInformation, FileRenameInformationEx, NtSetInformationFile,
 };
 use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, RtlNtStatusToDosError};
 use windows_sys::Win32::Storage::FileSystem::{
@@ -241,9 +242,16 @@ impl Temporary {
         // the fixed prefix plus every UTF-16 unit copied below. The parent and
         // source handles remain live through NtSetInformationFile.
         unsafe {
-            std::ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFORMATION_0 {
-                ReplaceIfExists: replace,
-            });
+            let action = if replace {
+                FILE_RENAME_INFORMATION_0 {
+                    Flags: FILE_RENAME_REPLACE_IF_EXISTS,
+                }
+            } else {
+                FILE_RENAME_INFORMATION_0 {
+                    ReplaceIfExists: false,
+                }
+            };
+            std::ptr::addr_of_mut!((*info).Anonymous).write(action);
             std::ptr::addr_of_mut!((*info).RootDirectory).write(parent.as_raw_handle() as HANDLE);
             std::ptr::addr_of_mut!((*info).FileNameLength).write(
                 u32::try_from(name_bytes)
@@ -261,13 +269,18 @@ impl Temporary {
         // SAFETY: `info` describes the initialized buffer above, `status` is
         // writable, and the source handle has DELETE access. The ntdll boundary
         // honors the held RootDirectory; the Win32 wrapper rejects it.
+        let class = if replace {
+            FileRenameInformationEx
+        } else {
+            FileRenameInformation
+        };
         let renamed = unsafe {
             NtSetInformationFile(
                 self.file.as_raw_handle() as HANDLE,
                 &raw mut status,
                 info.cast(),
                 size,
-                FileRenameInformation,
+                class,
             )
         };
         if renamed < 0 {

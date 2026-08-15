@@ -33,6 +33,7 @@ fn an_existing_file_is_replaced_rather_than_appended_to() {
 
     let output = write(&sample, r#"{"path":"one.txt","content":"new\n"}"#);
 
+    assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(read(&sample, "one.txt"), "new\n");
     assert_eq!(output.text(), "replaced one.txt, 1 lines");
 }
