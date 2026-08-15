@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Account login has one provider-neutral boundary.** Login methods expose
+  bounded, cancellable updates without making the TUI or credential store know
+  which authorization protocol a provider uses.
+
 - **The protected credential store is provider-neutral.** Its versioned,
   bounded document can retain API keys and renewable account credentials
   without exposing either secret kind through parsing or diagnostics.
