@@ -5,27 +5,18 @@
 //! `rg` binary", and the only way to hold it on a real tree is to skip what `rg`
 //! skips and read what it reads.
 //!
-//! What holds this inside the workspace is the walk, and it holds by not
-//! following links: an entry whose own type is not a file is skipped before
-//! anything opens it, so a link planted in the tree is not a way out of it.
-//! That is a property rather than a default — a test pins it, because the
-//! setting behind it could be turned on one day for a reason that has nothing
-//! to do with what a search is allowed to read.
-//!
-//! What it does not hold is the instant between the two. The walk decides an
-//! entry is a file and the search then opens it by name, so something else
-//! writing into the workspace could put a link there in between and be read.
-//! The file tools have no such gap — they walk down to a proven path against
-//! descriptors they already hold, and `crucible_core::workspace` says how — but
-//! that walk is this crate's to do only if it stops using `rg`'s, which is the
-//! thing the budget above is paid for. It is written down here rather than
-//! closed, and it is the same residue a rename leaves there.
+//! The walker does not follow links, and its entries are opened through the
+//! workspace rather than handed back to `File::open` by name. Unix repeats the
+//! descent against directory descriptors with no-follow at every step; Windows
+//! validates the final path of the opened handle before a byte is read. A link
+//! or directory swap between the walk and the open is therefore skipped rather
+//! than becoming contents from outside the workspace. The ripgrep walker and
+//! searcher remain intact around that boundary, which preserves the budget.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_core::{
     Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
@@ -48,9 +39,9 @@ const MATCHES: usize = 200;
 ///
 /// [`MATCHES`] is a default and a caller may raise it; this it cannot. The
 /// number arrives from the model like every other argument, and `"limit":
-/// 100000` is a thing a model writes — where what it costs is not the answer,
-/// which [`crate::bound`] cuts, but the walk that builds one: every hit is held
-/// until the sort, at up to [`WIDTH`] characters each.
+/// 100000` is a thing a model writes. The walk retains only the lowest `limit`
+/// hits, but each may still carry up to [`WIDTH`] characters and the final
+/// answer is smaller than an arbitrarily large requested set.
 ///
 /// A thousand is where the two bounds meet. Even a match reported as
 /// `src/a.rs:1:x` runs to some twenty bytes, so a thousand of them is already
@@ -64,6 +55,12 @@ const WIDTH: usize = 400;
 
 /// How many files the answer names before it starts counting them instead.
 const NAMED: usize = 5;
+
+/// Matches one worker gathers before taking the shared top-set lock.
+///
+/// This keeps lock traffic out of the per-match path while retaining only a
+/// fixed amount beside the global result, regardless of the file's size.
+const BATCH: usize = 32;
 
 /// The most heap one searcher may hold a line in.
 ///
@@ -138,11 +135,53 @@ struct Query {
 }
 
 /// One matching line.
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct Hit {
     /// Relative to the workspace root, so the model can pass it back to `read`.
     path: String,
     line: u64,
     text: String,
+}
+
+/// The lowest matching lines and the total seen, both globally bounded.
+///
+/// Workers add directly here instead of building one `limit`-sized vector per
+/// thread. Keeping the lowest ordered set while a complete walk searches every
+/// file makes that result independent of worker scheduling without retaining
+/// the tree. A cancelled walk reports only what it reached.
+struct Top {
+    hits: BTreeSet<Hit>,
+    total: usize,
+    limit: usize,
+}
+
+impl Top {
+    fn new(limit: usize) -> Self {
+        Self {
+            hits: BTreeSet::new(),
+            total: 0,
+            limit,
+        }
+    }
+
+    fn add(&mut self, hit: Hit) {
+        self.total = self.total.saturating_add(1);
+        self.hits.insert(hit);
+        if self.hits.len() > self.limit {
+            self.hits.pop_last();
+        }
+    }
+}
+
+/// Moves one worker's fixed batch into the global ordered result.
+fn retain(batch: &mut Vec<Hit>, top: &Mutex<Top>) {
+    if let Ok(mut top) = top.lock() {
+        for hit in batch.drain(..) {
+            top.add(hit);
+        }
+    } else {
+        batch.clear();
+    }
 }
 
 /// What one search came back with.
@@ -157,17 +196,55 @@ struct Found {
     /// The files the search did not get to the end of, named so the model can
     /// go and look for itself. Sorted, because the walk is parallel and the
     /// same search has to answer the same way twice.
-    partly: Vec<String>,
+    partly: Partial,
     /// Whether the user stopped the turn while the walk was running, which
-    /// makes everything above a prefix of what the tree holds.
+    /// makes everything above only what the completed portion of the walk held.
     stopped: bool,
+}
+
+/// A fixed-size account of files a search did not finish.
+///
+/// The total is separate from the names because an unreadable tree is input,
+/// not permission to retain one allocation per file. Only the first names in
+/// sorted order are useful in the answer; the rest are represented by the
+/// count the answer already reports.
+#[derive(Default)]
+struct Partial {
+    names: BTreeSet<String>,
+    total: usize,
+}
+
+impl Partial {
+    fn add(&mut self, name: String) {
+        self.total = self.total.saturating_add(1);
+        self.names.insert(name);
+        if self.names.len() > NAMED {
+            self.names.pop_last();
+        }
+    }
 }
 
 /// What one file gave up: its matching lines, and its name if the search
 /// stopped before the end of it.
 struct Searched {
-    hits: Vec<Hit>,
     partly: Option<String>,
+}
+
+/// A file reader that turns cancellation into a clean, marked end of input.
+struct Stopping<'a> {
+    file: &'a std::fs::File,
+    cancel: &'a Cancel,
+    stopped: &'a Cell<bool>,
+}
+
+impl io::Read for Stopping<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.cancel.requested() {
+            self.stopped.set(true);
+            return Ok(0);
+        }
+        io::Read::read(&mut self.file, buffer)
+    }
 }
 
 impl Grep {
@@ -178,12 +255,12 @@ impl Grep {
         Self { workspace, cancel }
     }
 
-    /// Walks `from` and searches every file the ignore rules keep and no rule
-    /// refuses.
+    /// Walks `from` and, until cancellation, searches every file the ignore
+    /// rules keep and no rule refuses.
     ///
     /// The walk is parallel because the budget is measured against a tool that
-    /// walks in parallel. Order therefore means nothing until the hits are
-    /// sorted, which is what makes the same search answer the same way twice.
+    /// walks in parallel. Workers retain the globally lowest ordered hits, so
+    /// scheduling does not choose which matches a full answer contains.
     fn hunt(&self, from: &WorkspacePath, query: Query, approved: &Approved) -> Found {
         let mut walk = crate::tree::walk(from.as_path());
         if let Some(only) = query.only {
@@ -191,9 +268,8 @@ impl Grep {
         }
 
         let (matcher, limit) = (&query.matcher, query.limit);
-        let hits = Mutex::new(Vec::new());
-        let partly = Mutex::new(BTreeSet::new());
-        let so_far = AtomicUsize::new(0);
+        let hits = Mutex::new(Top::new(limit));
+        let partly = Mutex::new(Partial::default());
 
         walk.build_parallel().run(|| {
             let mut searcher = SearcherBuilder::new()
@@ -215,7 +291,8 @@ impl Grep {
                 // held on the heap, and with no limit the heap is the machine.
                 .heap_limit(Some(MAX_LINE))
                 .build();
-            let (hits, partly, so_far) = (&hits, &partly, &so_far);
+            let mut files = from.walk_files();
+            let (hits, partly) = (&hits, &partly);
 
             // `move` takes the searcher this thread just built. The shared
             // values are rebound above so it takes references to them rather
@@ -228,13 +305,6 @@ impl Grep {
                 // is real and is reported, so stopping costs the turn nothing
                 // it had already paid for.
                 if self.cancel.requested() {
-                    return WalkState::Quit;
-                }
-
-                // One past the limit, so what comes back can say whether it was
-                // cut. Quitting *at* the limit leaves files unvisited and no way
-                // to tell a complete answer from a truncated one.
-                if so_far.load(Ordering::Relaxed) > limit {
                     return WalkState::Quit;
                 }
 
@@ -252,35 +322,23 @@ impl Grep {
                     return WalkState::Continue;
                 }
 
-                let mine = self.lines(&mut searcher, matcher, entry.path(), limit);
+                let Ok(Some((path, file))) = files.open_regular(entry.path()) else {
+                    return WalkState::Continue;
+                };
+                let mine = self.lines(&mut searcher, matcher, (&path, &file), hits);
                 if let Some(name) = mine.partly
                     && let Ok(mut partly) = partly.lock()
                 {
-                    partly.insert(name);
+                    partly.add(name);
                 }
-                if !mine.hits.is_empty() {
-                    so_far.fetch_add(mine.hits.len(), Ordering::Relaxed);
-                    if let Ok(mut hits) = hits.lock() {
-                        hits.extend(mine.hits);
-                    }
-                }
-
                 WalkState::Continue
             })
         });
 
-        let mut hits = hits.into_inner().unwrap_or_default();
-        hits.sort_unstable_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-
-        // Counted here, while the extra hit that proves there was more is still
-        // in hand.
-        let more = hits.len() > limit;
-        hits.truncate(limit);
-        let partly = partly
-            .into_inner()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let hits = hits.into_inner().unwrap_or_else(|_| Top::new(limit));
+        let more = hits.total > limit;
+        let hits = hits.hits.into_iter().collect();
+        let partly = partly.into_inner().unwrap_or_default();
         Found {
             hits,
             more,
@@ -312,39 +370,44 @@ impl Grep {
         &self,
         searcher: &mut Searcher,
         matcher: &RegexMatcher,
-        path: &Path,
-        limit: usize,
+        opened: (&WorkspacePath, &std::fs::File),
+        hits: &Mutex<Top>,
     ) -> Searched {
+        let (path, file) = opened;
         // Spelled by the module that owns the walk, so `glob` cannot name the
         // same file a second way.
-        let shown = crate::tree::named(&self.workspace, path);
+        let shown = crate::tree::named(&self.workspace, path.as_path());
 
-        let mut hits = Vec::new();
-        let mut halted = false;
-        let found = searcher.search_path(
+        let halted = Cell::new(false);
+        let reader = Stopping {
+            file,
+            cancel: &self.cancel,
+            stopped: &halted,
+        };
+        let mut batch = Vec::with_capacity(BATCH);
+        let found = searcher.search_reader(
             matcher,
-            path,
+            reader,
             UTF8(|line, text| {
-                hits.push(Hit {
+                if self.cancel.requested() {
+                    halted.set(true);
+                    return Ok(false);
+                }
+                batch.push(Hit {
                     path: shown.clone(),
                     line,
                     text: cut(text.trim_end()),
                 });
-                if self.cancel.requested() {
-                    halted = true;
-                    return Ok(false);
+                if batch.len() == BATCH {
+                    retain(&mut batch, hits);
                 }
-                // One past the limit for the same reason the walk goes one file
-                // past it: the answer has to be able to say it was cut, and a
-                // file stopped exactly at the limit cannot tell anyone whether
-                // the next line matched.
-                Ok(hits.len() <= limit)
+                Ok(true)
             }),
         );
+        retain(&mut batch, hits);
 
         Searched {
-            partly: (found.is_err() || halted).then_some(shown),
-            hits,
+            partly: (found.is_err() || halted.get()).then_some(shown),
         }
     }
 
@@ -444,7 +507,7 @@ fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
             crate::bound::OUTPUT
         )
     } else if found.more {
-        format!("\n[stopped at {limit} matches: narrow the pattern or raise limit]")
+        format!("\n[showing first {limit} matches: narrow the pattern or raise limit]")
     } else {
         String::new()
     };
@@ -472,18 +535,18 @@ fn halted(stopped: bool) -> &'static str {
 /// read the whole thing, so the difference has to be in the text. Bounded like
 /// every other part of the output: a tree of files the searcher cannot decode
 /// would otherwise put a line in the answer for each of them.
-fn unread(partly: &[String]) -> String {
-    if partly.is_empty() {
+fn unread(partly: &Partial) -> String {
+    if partly.total == 0 {
         return String::new();
     }
 
     let named = partly
+        .names
         .iter()
-        .take(NAMED)
         .map(String::as_str)
         .collect::<Vec<_>>()
         .join(", ");
-    let rest = partly.len().saturating_sub(NAMED);
+    let rest = partly.total.saturating_sub(partly.names.len());
     let more = if rest == 0 {
         String::new()
     } else {

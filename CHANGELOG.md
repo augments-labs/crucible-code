@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Grep is globally bounded and cancellable inside every file.** Parallel
+  workers share one ordered match bound, partial-file names are capped, and a
+  no-match file now notices cancellation before reaching its end.
+
 - **File reads have bounded input and output.** A huge line is consumed in
   fixed-size blocks, answers stay within 30 KiB, and cancellation interrupts
   scans through large offsets.
