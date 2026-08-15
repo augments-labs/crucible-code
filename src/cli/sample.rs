@@ -57,15 +57,19 @@ impl Sample {
         self.written("config.json", document)
     }
 
-    /// The same, from `.crucible/config.local.json` instead.
-    ///
-    /// The file git ignores, which is where the keys that could loosen what
-    /// crucible does unasked are allowed to be written. A test about one of
-    /// those cannot use the file above: the parser refuses it there, which is
-    /// the property, and a test that met the refusal would be testing it twice
-    /// rather than testing what the setting does.
-    pub(super) fn local(&self, document: &str) -> Settings {
-        self.written("config.local.json", document)
+    /// The same, from the user-owned configuration file outside the workspace.
+    pub(super) fn user(&self, document: &str) -> Settings {
+        let file = self.user_file();
+        fs::create_dir_all(file.parent().expect("a configuration directory"))
+            .expect("a temporary directory");
+        fs::write(file, document).expect("a temporary directory");
+
+        self.read()
+    }
+
+    /// The user-owned configuration file in this disposable tree.
+    pub(super) fn user_file(&self) -> PathBuf {
+        self.base.join("home/config.json")
     }
 
     /// The store this tree holds, having been told `provider`'s key.
@@ -93,14 +97,18 @@ impl Sample {
         fs::create_dir_all(&project).expect("a temporary directory");
         fs::write(project.join(file), document).expect("a temporary directory");
 
-        // Pointed at a directory that does not exist, so the user layer is
-        // absent rather than whatever the machine running this test has at home.
+        self.read()
+    }
+
+    fn read(&self) -> Settings {
+        // Pointed at this disposable tree rather than whatever the machine
+        // running the test has configured.
         let home = Home::find(&|name: &str| {
             (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
         })
         .expect("an absolute path was given");
 
-        Settings::read(&home, &self.base.join("work")).expect("a document this test wrote")
+        Settings::read(&home, &self.root()).expect("a document this test wrote")
     }
 
     /// What the permission engine makes of one call, with this tree's files

@@ -277,7 +277,7 @@ fn a_machine_holding_every_key_asks_the_provider_it_was_told_to() {
     // The one setting that chooses a vendor, and the whole of what settles a
     // machine set up for two.
     let sample = Sample::new("provider-decides");
-    let settings = sample.local(r#"{"provider": "openai"}"#);
+    let settings = sample.user(r#"{"provider": "openai"}"#);
     let every = PROVIDERS.map(|one| one.key);
 
     let found = lands(&settings, &holding(&every)).expect("the file chose");
@@ -293,7 +293,7 @@ fn the_provider_a_file_names_is_asked_where_another_holds_the_only_key() {
     // here does — so this run is set up for anthropic, and its missing key is
     // met as a missing key rather than papered over with somebody else's.
     let sample = Sample::new("named-over-keyed");
-    let settings = sample.local(r#"{"provider": "anthropic"}"#);
+    let settings = sample.user(r#"{"provider": "anthropic"}"#);
 
     let found = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect("the file chose");
 
@@ -322,7 +322,7 @@ fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
     // one. Either way it is the same sentence the flag gets, naming what this
     // build has — and not a silent fall through to whichever key is exported.
     let sample = Sample::new("named-nobody");
-    let settings = sample.local(r#"{"provider": "gemini"}"#);
+    let settings = sample.user(r#"{"provider": "gemini"}"#);
 
     let problem = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect_err("no such provider");
 
@@ -380,8 +380,7 @@ fn the_variable_a_key_is_looked_for_in_is_the_one_the_configuration_names() {
     // the vendor's usual name would miss it and leave the machine looking as
     // though nothing were set up.
     let sample = Sample::new("keyed-variable");
-    let settings =
-        sample.settings(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
+    let settings = sample.user(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
 
     let found = lands(&settings, &holding(&["WORK_OPENAI_KEY"])).expect("one key");
 

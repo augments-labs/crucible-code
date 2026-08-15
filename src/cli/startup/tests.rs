@@ -126,7 +126,7 @@ fn a_provider_reads_the_variable_its_configuration_names() {
     // one of them can be the vendor's usual name.
     let sample = Sample::new("key-variable");
     let settings =
-        sample.settings(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
 
     let read = RefCell::new(Vec::new());
     built(Some(serving("anthropic")), &settings, &|name: &str| {
@@ -148,7 +148,7 @@ fn a_provider_is_built_at_the_address_its_configuration_names() {
     // refused on the way past.
     let sample = Sample::new("base-url");
     let settings =
-        sample.local(r#"{"providers": {"anthropic": {"baseUrl": "https://gateway.example/v1"}}}"#);
+        sample.user(r#"{"providers": {"anthropic": {"baseUrl": "https://gateway.example/v1"}}}"#);
 
     let made = built(Some(serving("anthropic")), &settings, &|_| {
         Some("a-key".to_owned())
@@ -165,7 +165,7 @@ fn an_address_that_would_put_the_key_on_the_wire_stops_the_run() {
     // send the key somewhere they did not ask for.
     let sample = Sample::new("base-url-insecure");
     let settings =
-        sample.local(r#"{"providers": {"anthropic": {"baseUrl": "http://gateway.example"}}}"#);
+        sample.user(r#"{"providers": {"anthropic": {"baseUrl": "http://gateway.example"}}}"#);
 
     let problem = built(Some(serving("anthropic")), &settings, &|_| {
         Some("a-key".to_owned())
