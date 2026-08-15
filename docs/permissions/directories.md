@@ -42,7 +42,8 @@ system call inside a directory the step before it already reached, so there is
 no gap left between deciding a name is safe and using it. A new file is created
 at the end of the same walk, with the flag that makes the operating system
 refuse a symbolic link at the last component. `edit` reads and rewrites through
-a single open file rather than naming it twice.
+a validated regular-file handle, then prepares the replacement privately under
+the proven parent instead of truncating that handle.
 
 `write` does not truncate an existing file. It prepares a private file beside
 the destination, preserves the existing mode, flushes the complete contents,
@@ -52,6 +53,9 @@ previous file whole; a failure of the final directory flush is reported after
 the replacement is already visible. Crucible also checks the destination's
 file identity immediately before commit and refuses a concurrent change. That
 check and rename are separate system calls, not a compare-and-swap primitive.
+`edit` uses the same commit path after reading at most 1 MiB through the opened
+file. Its result has the same 1 MiB ceiling, and cancellation is checked between
+fixed-size reads and again before the replacement is prepared.
 
 A link you meant is untouched by any of that. A checkout reached through one
 works, because the working directory is resolved when crucible starts and the

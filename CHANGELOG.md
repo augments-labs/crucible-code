@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Edits are bounded, cancellable and atomic.** `edit` refuses non-regular,
+  non-text, source or resulting files above 1 MiB, notices cancellation while
+  reading, and commits the complete replacement without a truncated interval.
+
 - **Whole-file writes commit atomically.** `write` prepares and flushes a
   private sibling before replacing the destination, preserves an existing
   mode, and refuses a destination whose file identity changed before commit.
