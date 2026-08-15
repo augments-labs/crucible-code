@@ -67,7 +67,10 @@ insta = "=1.48.0"
 # stays confined to one file behind the `Terminal` trait and swapping it out is
 # a day, not a rewrite. A full-screen renderer would also want its raw mode,
 # which is the other reason it is this crate rather than a bare `ioctl` binding.
-crossterm = "=0.29.0"
+# Bracketed paste is deliberately not enabled: its reader retains an entire
+# unterminated paste before this process can apply its input bound. Paste thus
+# arrives as ordinary bounded key events. `derive-more` is not used either.
+crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows"] }
 
 # HTTP. Blocking by design: this workspace runs threads rather than an async
 # runtime, and the alternative client would pull `tokio` in to serve one socket
@@ -221,6 +224,7 @@ must_use_candidate = "allow"
 [package]
 name = "crucible-code"
 description = "The harness where agents are forged."
+publish = false
 readme = "README.md"
 keywords = ["agent", "cli", "tui", "llm", "coding-assistant"]
 categories = ["command-line-utilities", "development-tools"]

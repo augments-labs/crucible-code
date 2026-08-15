@@ -6,7 +6,24 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Releases ship an installer and an uninstaller.** `scripts/install.sh`
+  verifies the published checksum before replacing an existing binary, and
+  `scripts/uninstall.sh` preserves configuration and sessions unless
+  explicitly asked to purge them.
+
 ### Changed
+
+- **Terminal paste input is bounded before parsing.** Bracketed-paste reporting
+  is disabled; immediately ready plain characters are inserted and redrawn as
+  one bounded run, while embedded newlines submit just as if they were typed.
+  A prompt retains at most 1 MiB of text, and what would cross that is refused
+  with a note under the box rather than flooding the input path.
+
+- **The welcome card no longer names a model.** Provider, model and effort stay
+  on the live prompt status, where `/login`, `/model` and `/effort` can update
+  them instead of leaving stale selection details in terminal scrollback.
 
 - **`/model` offers every provider's models, under their product names.** The
   panel and the piped listing hold all three providers rather than only the one
@@ -16,6 +33,15 @@ Notable changes to crucible. Format follows
   low, high and max — the only rungs `/effort` offers for them.
 
 ### Internal
+
+- **The smoke gate verifies checksums exactly and enforces the glibc floor.**
+  `--offline` is renamed to `--no-provider`, a local tarball can be checked
+  against `--checksum HEX`, a published artifact must match exactly one
+  SHA256SUMS line, and requiring more than glibc 2.34 fails the release.
+
+- **Every crate in the workspace is marked unpublished.** `publish = false` in
+  each manifest turns an accidental `cargo publish` into an error; releases
+  ship as tag-pushed GitHub Releases and nowhere else.
 
 - **The OpenAI provider names its subscription endpoint.** The fixed address a
   `ChatGPT` subscription credential is served at sits beside the API-key one;

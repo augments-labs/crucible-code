@@ -4,8 +4,8 @@
 //! identity and what is beside it stand in two columns; from forty-six to
 //! seventy-nine they stack, because a thirty-two column identity cannot get
 //! narrower without the wordmark breaking; below forty-six the frame costs more
-//! columns than it earns and goes, leaving the three lines that say what this
-//! is, what it is asking, and where.
+//! columns than it earns and goes, leaving the two lines that say what this is
+//! and where.
 //!
 //! It returns [`Row`]s rather than writing anything. That is what lets every
 //! width be asserted with no terminal attached — and it is why a renderer that
@@ -50,11 +50,6 @@ pub struct Recent<'a> {
 pub struct Welcome<'a> {
     /// The release, as it is drawn beside the name.
     pub version: &'a str,
-    /// The model this session will ask.
-    pub model: &'a str,
-    /// The vendor it will be asked of, drawn before it. Empty where nothing has
-    /// chosen one, and then nothing is drawn in its place.
-    pub provider: &'a str,
     /// The directory crucible is working in.
     pub root: &'a str,
     /// What happened in that directory before, newest first. More of them than
@@ -98,8 +93,6 @@ impl Welcome<'_> {
         let mut left = vec![Row::new()];
         left.extend(parts::wordmark(inset, glyphs));
         left.push(Row::new());
-        left.push(parts::model(self, inset, glyphs));
-        left.push(Row::new());
         left.push(parts::root(self, inset, glyphs));
 
         let right = parts::aside(self, aside, glyphs);
@@ -132,7 +125,6 @@ impl Welcome<'_> {
         let inner = columns - card::STACKED;
 
         let mut body = vec![Row::new(), parts::name(inner, glyphs)];
-        body.push(parts::model(self, inner, glyphs));
         body.push(parts::root(self, inner, glyphs));
         body.push(Row::new());
         body.extend(parts::aside(self, inner, glyphs));
@@ -144,7 +136,7 @@ impl Welcome<'_> {
         rows
     }
 
-    /// No frame: what this is, what it is asking, and where.
+    /// No frame: what this is and where.
     ///
     /// A terminal this narrow has no columns to spend on a border, and none to
     /// spare for a tip that would elide to nothing. What is left is the part
@@ -152,7 +144,6 @@ impl Welcome<'_> {
     fn bare(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         vec![
             parts::name(columns, glyphs),
-            parts::model(self, columns, glyphs),
             parts::root(self, columns, glyphs),
         ]
     }

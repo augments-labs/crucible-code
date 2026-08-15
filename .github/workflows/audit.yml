@@ -37,17 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Built from source rather than pulled in as an action. Every action in
-      # this repository is pinned to a commit precisely so that no third party
-      # can change what runs here, and a security scanner is a poor place to
-      # make the first exception. `--locked` builds it from its own committed
-      # lockfile, so this step resolves nothing.
-      #
-      # Deliberately unversioned — the only unpinned thing in the repository.
-      # The scanner and the database it reads are the one dependency you want
-      # newer than your source, because the entire point is to hear about
-      # something published after you pinned.
-      - run: cargo install cargo-deny --locked
+      # The executable is pinned just like an action; `cargo deny check` still
+      # refreshes the advisory database, whose answer is the part meant to move
+      # between runs.
+      - run: cargo install cargo-deny --version '=0.20.2' --locked
 
       # Reads Cargo.lock; builds nothing. Policy is in `deny.toml`.
       - run: cargo deny check
