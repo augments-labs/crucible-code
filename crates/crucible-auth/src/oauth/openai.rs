@@ -63,6 +63,16 @@ impl OpenAiOAuth {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn testing(flow: Flow) -> Self {
+        Self {
+            shared: Arc::new(Shared {
+                flow,
+                worker: LoginSlot::new(),
+            }),
+        }
+    }
+
     fn start_method(&self, method: LoginMethod, store: Store) -> Result<LoginAttempt, OAuthError> {
         if !matches!(method, Self::BROWSER | Self::DEVICE) {
             return Err(OAuthError::Method);
@@ -212,6 +222,24 @@ impl Flow {
             token: format!("{ISSUER}/oauth/token").into(),
             minimum_interval: Duration::from_secs(1),
             login_lifetime: LOGIN_LIFETIME,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn testing(base: &str) -> Self {
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .build();
+        Self {
+            agent: ureq::Agent::new_with_config(config),
+            issuer: base.into(),
+            device_code: format!("{base}/api/accounts/deviceauth/usercode").into(),
+            device_token: format!("{base}/api/accounts/deviceauth/token").into(),
+            token: format!("{base}/oauth/token").into(),
+            minimum_interval: Duration::from_millis(1),
+            login_lifetime: Duration::from_secs(2),
         }
     }
 
