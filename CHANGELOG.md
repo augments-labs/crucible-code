@@ -6,6 +6,12 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The welcome card no longer names a model.** Provider, model and effort stay
+  on the live prompt status, where `/login`, `/model` and `/effort` can update
+  them instead of leaving stale selection details in terminal scrollback.
+
 ### Internal
 
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
