@@ -20,6 +20,9 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **HTTP failures no longer repeat configured request URLs.** Diagnostics keep
+  the failure kind without exposing a query or path that may carry a secret.
+
 - **Provider refusals cannot echo credentials.** Applied secrets are removed
   from transport and HTTP failure diagnostics, and cancelling interrupts a
   refusal body that is still arriving.
