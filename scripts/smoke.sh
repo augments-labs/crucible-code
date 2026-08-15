@@ -5,7 +5,8 @@
 #     scripts/smoke.sh                     the tag matching the current version
 #     scripts/smoke.sh v0.0.1              a published tag
 #     scripts/smoke.sh ./crucible.tar.gz   a tarball already on disk
-#     scripts/smoke.sh --offline v0.0.1    skip the gate that needs the network
+#     scripts/smoke.sh --no-provider v0.0.1  skip the live provider gate
+#     scripts/smoke.sh --checksum HEX FILE   verify a local tarball first
 #
 # `scripts/check.sh` proves the source is correct and `scripts/bench.sh` proves
 # it is fast. Both build from this tree, with this machine's toolchain, in this
@@ -21,6 +22,10 @@
 # harder half: that nothing *else* on the build machine was holding it up.
 set -euo pipefail
 
+command -v dirname >/dev/null || {
+    echo 'smoke: dirname is not installed' >&2
+    exit 1
+}
 cd "$(dirname "$0")/.."
 
 readonly REPO=augments-labs/crucible-code
@@ -29,20 +34,52 @@ readonly REPO=augments-labs/crucible-code
 # glibc floor below are all Linux, so this is the one it can run against — the
 # other six are proved by the release build and by CI, not from here.
 readonly PLATFORM=linux-x86_64
+readonly MAX_GLIBC=2.34
 
-offline=0
+no_provider=0
+checksum=
 target=
 
-for argument in "$@"; do
-    case "$argument" in
-    --offline) offline=1 ;;
-    -*)
-        echo "smoke: unknown option $argument" >&2
+while (($#)); do
+    case "$1" in
+    --no-provider) no_provider=1 ;;
+    --checksum)
+        shift
+        if (($# == 0)); then
+            echo 'smoke: --checksum needs a SHA-256 digest' >&2
+            exit 2
+        fi
+        checksum=$1
+        ;;
+    --offline)
+        echo 'smoke: --offline was ambiguous; use --no-provider with a local file for a network-free run' >&2
         exit 2
         ;;
-    *) target=$argument ;;
+    -*)
+        echo "smoke: unknown option $1" >&2
+        exit 2
+        ;;
+    *)
+        if [[ -n $target ]]; then
+            echo 'smoke: expected one tag or tarball' >&2
+            exit 2
+        fi
+        target=$1
+        ;;
     esac
+    shift
 done
+readonly no_provider checksum
+
+failed=0
+echo "==> tools"
+for tool in awk basename bwrap grep head ldd mkdir mktemp objdump realpath rm sed sha256sum sort tail tar; do
+    command -v "$tool" >/dev/null || {
+        printf '    FAIL %s is not installed\n' "$tool"
+        failed=1
+    }
+done
+((failed == 0)) || exit 1
 
 # The version is declared in one place, so the default target is derivable
 # rather than something to keep in step by hand.
@@ -50,33 +87,13 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 readonly version
 [[ -n $target ]] || target=v$version
 
-failed=0
 work=$(mktemp -d)
 readonly work
 trap 'rm -rf "$work"' EXIT
 
-echo "==> tools"
-for tool in bwrap tar sha256sum; do
-    command -v "$tool" >/dev/null || {
-        printf '    FAIL %s is not installed\n' "$tool"
-        failed=1
-    }
-done
-# bubblewrap is useless without the namespaces it asks the kernel for, and the
-# failure reads as a permission error several steps later. Ask now. The host
-# root is bound read-only for this one probe so that the thing being tested is
-# the kernel's answer and not whether `true` happens to be reachable.
-if command -v bwrap >/dev/null &&
-    ! bwrap --unshare-all --ro-bind / / /bin/true 2>/dev/null; then
-    echo '    FAIL bwrap cannot unshare — unprivileged user namespaces look disabled'
-    failed=1
-fi
-((failed == 0)) || exit 1
-
 echo "==> artifact"
 if [[ -f $target ]]; then
     tarball=$(realpath "$target")
-    echo "    a local file, so its checksum is not the published one"
     published=0
 
     # A file names no version, so what this tree holds is the only expectation
@@ -84,6 +101,10 @@ if [[ -f $target ]]; then
     # just packaged.
     expected=$version
 else
+    if [[ -n $checksum ]]; then
+        echo 'smoke: --checksum is for a local tarball; a published tag uses its SHA256SUMS' >&2
+        exit 2
+    fi
     # An artifact is named for the version it holds, not for the tag it was cut
     # from — the `v` belongs to git.
     name=crucible-${target#v}-$PLATFORM.tar.gz
@@ -110,11 +131,36 @@ printf '    %s\n' "$tarball"
 
 echo "==> checksum"
 if ((published)); then
-    # One file for the whole release rather than one beside each artifact, so
-    # every line in it names something this gate did not download.
-    (cd "$(dirname "$tarball")" && sha256sum --ignore-missing -c SHA256SUMS)
+    # Select the one downloaded artifact exactly. `--ignore-missing` would also
+    # ignore a misspelled name, which is the checksum failure this gate owes.
+    mapfile -t matching < <(
+        awk -v file="$(basename "$tarball")" '$2 == file { print $1 }' \
+            "$(dirname "$tarball")/SHA256SUMS"
+    )
+    if ((${#matching[@]} != 1)); then
+        printf '    FAIL SHA256SUMS has %d lines for %s, expected exactly one\n' \
+            "${#matching[@]}" "$(basename "$tarball")"
+        exit 1
+    fi
+    expected_checksum=${matching[0]}
+elif [[ -n $checksum ]]; then
+    expected_checksum=$checksum
 else
-    echo "    SKIP no published checksum for a local file"
+    expected_checksum=
+    echo '    SKIP local file has no independent checksum; pass --checksum HEX to verify one'
+fi
+
+if [[ -n $expected_checksum ]]; then
+    if [[ ! $expected_checksum =~ ^[[:xdigit:]]{64}$ ]]; then
+        printf '    FAIL expected checksum is not a SHA-256 digest: %q\n' "$expected_checksum"
+        exit 1
+    fi
+    read -r actual_checksum _ < <(sha256sum "$tarball")
+    if [[ ${actual_checksum,,} != "${expected_checksum,,}" ]]; then
+        printf '    FAIL checksum was %s, expected %s\n' "$actual_checksum" "$expected_checksum"
+        exit 1
+    fi
+    printf '    %s  %s\n' "$actual_checksum" "$(basename "$tarball")"
 fi
 
 echo "==> unpack"
@@ -132,16 +178,44 @@ echo "==> library surface"
 # Every absolute path the loader resolves, which is exactly what the sandbox
 # will carry. A binary that grows a dependency on something the target machine
 # may not have shows up here as a new line, in the diff, before a user finds it.
-mapfile -t libraries < <(ldd "$binary" | grep -o '/[^ ]*' | sort -u)
+if ! linked=$(ldd "$binary"); then
+    echo '    FAIL ldd could not read the artifact'
+    exit 1
+fi
+mapfile -t libraries < <(printf '%s\n' "$linked" | grep -o '/[^ ]*' | sort -u)
 printf '    %s\n' "${libraries[@]}"
 
 # The oldest glibc that can load this binary. Weak symbols are excluded on
 # purpose: the loader tolerates their absence, so a weak reference to a very new
 # symbol is not a floor and reporting it as one would retire distributions that
 # run this fine.
-floor=$(objdump -T "$binary" | grep UND | grep -v ' w ' |
-    grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+if ! symbols=$(objdump -T "$binary"); then
+    echo '    FAIL objdump could not read the artifact'
+    exit 1
+fi
+floor=$(printf '%s\n' "$symbols" | grep UND | grep -v ' w ' |
+    grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1) || true
 printf '    requires %s or newer\n' "${floor:-no versioned glibc symbols}"
+if [[ -n $floor ]]; then
+    floor_version=${floor#GLIBC_}
+    newest=$(printf '%s\n%s\n' "$MAX_GLIBC" "$floor_version" | sort -uV | tail -1)
+    if [[ $newest != "$MAX_GLIBC" ]]; then
+        printf '    FAIL promised glibc floor is %s, artifact requires %s\n' \
+            "$MAX_GLIBC" "$floor_version"
+        failed=1
+    fi
+fi
+((failed == 0)) || exit 1
+
+# bubblewrap is useless without the namespaces it asks the kernel for, and the
+# failure otherwise reads as a permission error after the artifact checks. Ask
+# immediately before the first sandbox. The host root is read-only so this
+# measures the kernel's answer rather than whether `true` can be reached.
+if ! bwrap --unshare-all --ro-bind / / /bin/true 2>/dev/null; then
+    echo '    FAIL bwrap cannot unshare — unprivileged user namespaces look disabled'
+    failed=1
+fi
+((failed == 0)) || exit 1
 
 binds=()
 for library in "${libraries[@]}"; do
@@ -228,8 +302,8 @@ echo "==> a session, end to end"
 # under `set -e` a non-zero one would take the script down where it stands,
 # before the line that says what that was.
 model=claude-sonnet-5
-if ((offline)); then
-    echo '    SKIP --offline'
+if ((no_provider)); then
+    echo '    SKIP --no-provider'
 elif [[ -n ${CRUCIBLE_SMOKE_KEY:-} ]]; then
     # A real turn against a real model, which is the only thing that exercises
     # streaming and the transcript. Its own variable rather than
