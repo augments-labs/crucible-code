@@ -16,8 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{PathError, WorkspacePath};
 use windows_sys::Wdk::Storage::FileSystem::{
-    FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FILE_RENAME_REPLACE_IF_EXISTS,
-    FileRenameInformation, FileRenameInformationEx, NtSetInformationFile,
+    FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FILE_RENAME_POSIX_SEMANTICS,
+    FILE_RENAME_REPLACE_IF_EXISTS, FileRenameInformation, FileRenameInformationEx,
+    NtSetInformationFile,
 };
 use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, RtlNtStatusToDosError};
 use windows_sys::Win32::Storage::FileSystem::{
@@ -244,7 +245,12 @@ impl Temporary {
         unsafe {
             let action = if replace {
                 FILE_RENAME_INFORMATION_0 {
-                    Flags: FILE_RENAME_REPLACE_IF_EXISTS,
+                    // The identity handle deliberately remains open across
+                    // commit. POSIX replacement leaves that handle on the old
+                    // file while subsequent opens of the name reach the new
+                    // one, even when another Windows opener omitted delete
+                    // sharing.
+                    Flags: FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS,
                 }
             } else {
                 FILE_RENAME_INFORMATION_0 {
