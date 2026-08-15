@@ -1,31 +1,62 @@
-//! Timing the real binary from `exec` to something on screen.
+//! Timing the real binary from `exec` through a real terminal.
 //!
-//! Shared by the two startup probes, which differ only in what they wait for
-//! and what they will tolerate. Measuring in-process would leave out everything
-//! that actually costs a startup — the exec, the dynamic loader, the first page
-//! faults, the size of the binary itself — so this spawns `crucible` the way a
-//! shell does and reads its output.
+//! Shared by the two startup probes. Measuring in-process would leave out
+//! everything that actually costs a startup — the exec, dynamic loader, first
+//! page faults and binary size — so this spawns `crucible` the way a person does
+//! and reads what a terminal receives.
 //!
-//! Two things about what the reading covers, both stated rather than hidden.
-//! The child's output is a pipe, not a terminal, so the renderer takes its
-//! plain path and the escape sequences are not assembled — that much is left
-//! out. And the clock starts before `spawn`, which forks as well as execs, so
-//! the probe's own fork is inside the reading rather than outside it: the
-//! number is a little worse than the binary deserves, never better, which is
-//! the direction an error in a budget should run.
+//! The child gets the far side of a pseudo terminal as its controlling terminal,
+//! in raw mode and at a fixed size. The terminal path therefore includes raw
+//! input, window-size discovery, escape assembly and every flush hidden by a
+//! redirected-output probe. The clock starts before `spawn`, so the small cost
+//! of `setsid` and the probe's own fork is charged too; that makes the reading a
+//! little worse than a shell launch, which is the safe direction for a budget.
 
+use std::collections::HashSet;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Read as _};
+#[cfg(target_os = "linux")]
+use std::fs::{File, OpenOptions};
+use std::io;
+#[cfg(target_os = "linux")]
+use std::io::{Read as _, Write as _};
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+#[cfg(target_os = "linux")]
+use std::process::{Child, Command, Stdio};
+#[cfg(target_os = "linux")]
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+#[cfg(target_os = "linux")]
+use std::thread::JoinHandle;
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
+
+#[cfg(target_os = "linux")]
+use rustix::pty::{self, OpenptFlags};
+#[cfg(target_os = "linux")]
+use rustix::termios::{self, OptionalActions, Winsize};
 
 /// Runs per reading. Enough that the 95th percentile means something, few
 /// enough that the probe stays well under a second.
 const RUNS: usize = 20;
 
+/// A stuck launch is a failed measurement rather than a benchmark that hangs.
+#[cfg(target_os = "linux")]
+const CEILING: Duration = Duration::from_secs(5);
+
+/// A normal terminal-sized window, fixed so layout work is the same everywhere.
+#[cfg(target_os = "linux")]
+const COLUMNS: u16 = 80;
+#[cfg(target_os = "linux")]
+const ROWS: u16 = 24;
+
 /// A placeholder, so the binary gets past the credential check and as far as
 /// drawing. Nothing is ever sent: standard input is closed, so no turn starts.
+#[cfg(target_os = "linux")]
 const KEY: &str = "bench-not-a-key";
 
 /// A user-level configuration file, so the reading includes parsing one.
@@ -36,6 +67,7 @@ const KEY: &str = "bench-not-a-key";
 /// represented, because they are resolved by walking the document and a block
 /// nobody writes down is a block nobody measures.
 const CONFIG: &str = r#"{
+  "updates": {"check": "never"},
   "providers": {
     "anthropic": {"model": "claude-sonnet-5", "apiKeyEnv": "ANTHROPIC_API_KEY"},
     "openai": {"model": "gpt-5.6-terra"}
@@ -44,6 +76,32 @@ const CONFIG: &str = r#"{
   "output": {"color": "auto", "toolDetail": "compact"}
 }"#;
 
+/// What proves that the timed startup operation happened.
+///
+/// This source is compiled separately into two probes, so each resulting
+/// binary deliberately constructs one of the two variants and not the other.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Measure {
+    /// The first visible bytes of the opening frame reached a terminal.
+    Frame { needle: &'static str },
+    /// Once ready, one character was sent and its application-rendered copy
+    /// reached the terminal. Raw mode has disabled the kernel's own echo.
+    Input {
+        ready: &'static str,
+        probe: &'static str,
+    },
+}
+
+impl Measure {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Frame { needle } => needle,
+            Self::Input { probe, .. } => probe,
+        }
+    }
+}
+
 /// Why a reading could not be taken.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StartupError {
@@ -51,13 +109,36 @@ pub(crate) enum StartupError {
     #[error("{0}")]
     Io(#[from] io::Error),
 
+    /// The benchmark workspace could not be resolved.
+    #[error("{0}")]
+    Workspace(#[from] crucible_core::PathError),
+
+    /// A production-shaped benchmark session could not be started.
+    #[error("{0}")]
+    Session(#[from] crucible_runner::SessionError),
+
+    /// A production-shaped benchmark session could not be finished.
+    #[error("session log: {0}")]
+    Record(Box<str>),
+
     /// The binary under test has not been built.
     #[error("no binary at {0}: run `cargo build --release --bin crucible`")]
     Unbuilt(PathBuf),
 
     /// The child exited without ever printing what was being waited for.
+    #[cfg(target_os = "linux")]
     #[error("crucible exited without printing {0:?}")]
     Silent(&'static str),
+
+    /// The deadline elapsed while the child still held the terminal.
+    #[cfg(target_os = "linux")]
+    #[error("crucible did not reach {0:?} within five seconds")]
+    Timeout(&'static str),
+
+    /// The probe has no safe PTY implementation on this platform.
+    #[cfg(not(target_os = "linux"))]
+    #[error("startup PTY measurements require Linux")]
+    Unsupported,
 
     /// No readings at all, so there is no percentile to take.
     #[error("no readings")]
@@ -66,16 +147,16 @@ pub(crate) enum StartupError {
 
 /// Takes [`RUNS`] readings and returns the 95th percentile.
 ///
-/// `needle` is the first output that proves the thing being timed has happened.
 /// Nearest-rank percentile: with twenty readings that is the second worst, so
 /// one scheduler hiccup does not decide the answer and two do.
-pub(crate) fn percentile(needle: &'static str) -> Result<Duration, StartupError> {
+pub(crate) fn percentile(measure: Measure) -> Result<Duration, StartupError> {
     let binary = beside("crucible")?;
-    let home = Scratch::new(needle)?;
+    let home = Scratch::new(measure.label())?;
 
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
-        readings.push(once(&binary, home.path(), needle)?);
+        home.restore_fixture()?;
+        readings.push(once(&binary, home.path(), measure)?);
     }
     readings.sort_unstable();
 
@@ -83,54 +164,169 @@ pub(crate) fn percentile(needle: &'static str) -> Result<Duration, StartupError>
     readings.get(rank).copied().ok_or(StartupError::Nothing)
 }
 
-/// One run: spawn, and stop the clock when `needle` arrives.
-fn once(binary: &Path, home: &Path, needle: &'static str) -> Result<Duration, StartupError> {
-    let started = Instant::now();
+/// One run: start against a controlling terminal and wait for its proof.
+#[cfg(target_os = "linux")]
+fn once(binary: &Path, home: &Path, measure: Measure) -> Result<Duration, StartupError> {
+    let (terminal, inside) = pair()?;
+    let reading = terminal.try_clone()?;
+    let (sender, bytes) = mpsc::channel();
+    let reader = std::thread::Builder::new()
+        .name("crucible-startup-terminal".into())
+        .spawn(move || read(reading, &sender))?;
 
-    let mut child = Command::new(binary)
-        // Closed rather than a pipe left open: reaching the end of input is
-        // what makes the child leave on its own once it has drawn.
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        // Crucible's own home, so twenty runs write their sessions somewhere
-        // this probe deletes rather than into the home directory of whoever is
-        // benchmarking.
+    let second = inside.try_clone()?;
+    let third = inside.try_clone()?;
+    let started = Instant::now();
+    let child = Command::new("setsid")
+        .arg("--ctty")
+        .arg(binary)
+        .current_dir(std::env::current_dir()?)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", home)
+        .env("TERM", "xterm-256color")
+        .env("NO_COLOR", "1")
         .env(crucible_config::HOME, home)
         .env("ANTHROPIC_API_KEY", KEY)
+        .stdin(Stdio::from(inside))
+        .stdout(Stdio::from(second))
+        .stderr(Stdio::from(third))
         .spawn()?;
 
-    let mut out = child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("no pipe on the child's stdout"))?;
-
-    let mut seen: Vec<u8> = Vec::with_capacity(1024);
-    let mut buffer = [0_u8; 4096];
-
-    let reading = loop {
-        let read = out.read(&mut buffer)?;
-        if read == 0 {
-            break None;
-        }
-        seen.extend_from_slice(buffer.get(..read).unwrap_or_default());
-
-        // Bytes rather than text: a read can land mid-character, and a lossy
-        // conversion would replace the very bytes being looked for.
-        if seen
-            .windows(needle.len())
-            .any(|window| window == needle.as_bytes())
-        {
-            break Some(started.elapsed());
-        }
+    let mut running = Running {
+        terminal,
+        child,
+        bytes,
+        reader: Some(reader),
     };
+    running.until(measure, started)
+}
 
-    // Drained and reaped either way, so a slow machine does not leave twenty
-    // children behind holding a pipe open.
-    let _ = out.read_to_end(&mut Vec::new());
-    let _ = child.wait();
+#[cfg(not(target_os = "linux"))]
+fn once(_binary: &Path, _home: &Path, _measure: Measure) -> Result<Duration, StartupError> {
+    Err(StartupError::Unsupported)
+}
 
-    reading.ok_or(StartupError::Silent(needle))
+/// The process and both ends of reading its terminal, reaped on every exit.
+#[cfg(target_os = "linux")]
+struct Running {
+    terminal: File,
+    child: Child,
+    bytes: Receiver<Vec<u8>>,
+    reader: Option<JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Running {
+    fn until(&mut self, measure: Measure, started: Instant) -> Result<Duration, StartupError> {
+        let deadline = Instant::now() + CEILING;
+        let mut seen = Vec::with_capacity(4096);
+        let mut sent = false;
+
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(StartupError::Timeout(measure.label()));
+            }
+
+            match self
+                .bytes
+                .recv_timeout(deadline.saturating_duration_since(now))
+            {
+                Ok(bytes) => seen.extend_from_slice(&bytes),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(StartupError::Timeout(measure.label()));
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(StartupError::Silent(measure.label()));
+                }
+            }
+
+            match measure {
+                Measure::Frame { needle } if contains(&seen, needle) => {
+                    return Ok(started.elapsed());
+                }
+                Measure::Input { ready, probe } if !sent && contains(&seen, ready) => {
+                    // Raw mode disables terminal echo, so these bytes can only
+                    // come back after crucible accepted and rendered the key.
+                    seen.clear();
+                    self.terminal.write_all(probe.as_bytes())?;
+                    self.terminal.flush()?;
+                    sent = true;
+                }
+                Measure::Input { probe, .. } if sent && contains(&seen, probe) => {
+                    return Ok(started.elapsed());
+                }
+                Measure::Frame { .. } | Measure::Input { .. } => {}
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn contains(bytes: &[u8], text: &str) -> bool {
+    bytes
+        .windows(text.len())
+        .any(|window| window == text.as_bytes())
+}
+
+/// Opens a terminal pair, fixes its size and disables the kernel's own echo.
+#[cfg(target_os = "linux")]
+fn pair() -> Result<(File, File), StartupError> {
+    let terminal = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
+        .map_err(io::Error::from)?;
+    pty::grantpt(&terminal).map_err(io::Error::from)?;
+    pty::unlockpt(&terminal).map_err(io::Error::from)?;
+
+    let named = pty::ptsname(&terminal, Vec::new()).map_err(io::Error::from)?;
+    let inside = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(OsStr::from_bytes(named.as_bytes()))?;
+
+    let mut mode = termios::tcgetattr(&inside).map_err(io::Error::from)?;
+    mode.make_raw();
+    termios::tcsetattr(&inside, OptionalActions::Now, &mode).map_err(io::Error::from)?;
+    termios::tcsetwinsize(
+        &terminal,
+        Winsize {
+            ws_row: ROWS,
+            ws_col: COLUMNS,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        },
+    )
+    .map_err(io::Error::from)?;
+
+    Ok((File::from(terminal), inside))
+}
+
+/// Reads until the child closes the far side of the terminal.
+#[cfg(target_os = "linux")]
+fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
+    let mut buffer = [0_u8; 8192];
+    while let Ok(read) = terminal.read(&mut buffer) {
+        if read == 0 {
+            break;
+        }
+        if sender
+            .send(buffer.get(..read).unwrap_or_default().to_vec())
+            .is_err()
+        {
+            break;
+        }
+    }
 }
 
 /// How many session logs the bench home is given.
@@ -139,14 +335,17 @@ fn once(binary: &Path, home: &Path, needle: &'static str) -> Result<Duration, St
 /// nothing about the read that happens before the first frame, and would keep
 /// saying nothing as it filled up — the same reason the configuration file
 /// above is written rather than left out.
-const LOGS: u64 = 100;
+const LOGS: usize = 100;
 
 /// Where among them the ones this run could use sit, counting from the oldest.
 ///
 /// Deep enough that everything above is opened and refused before anything is
 /// found: what the reading then covers is the bound the scan is written to,
 /// rather than the four newest files in a directory that happens to be tidy.
-const USABLE: std::ops::Range<u64> = 44..48;
+const USABLE: std::ops::Range<usize> = 44..48;
+
+/// What every usable planted session was first asked.
+const TITLE: &str = "what the last person to sit here asked";
 
 /// The session logs, planted.
 ///
@@ -155,42 +354,40 @@ const USABLE: std::ops::Range<u64> = 44..48;
 /// directory the child is not started in, so they are read and put down again;
 /// the ones inside it name the directory it is, so their titles are read too.
 ///
-/// The format number is written out rather than asked for — it is not public,
-/// and a build that moves on from it refuses these logs after opening and
-/// reading them, which costs the same reading this is here to take.
-///
-/// Written by hand rather than through a JSON library, because this package
-/// does not depend on one and a bench probe is not a reason to. The two
-/// characters that would break the document are the two escaped below; a
-/// Windows path is full of the first.
-fn worked_in(sessions: &Path) -> Result<(), StartupError> {
-    fs::create_dir_all(sessions)?;
+/// Written through the production session API, so a file-format change cannot
+/// quietly turn the title path into a scan of foreign logs. Fixture creation is
+/// outside the timed region.
+fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
+    let elsewhere = sessions
+        .parent()
+        .ok_or_else(|| io::Error::other("the session fixture has no parent"))?
+        .join("elsewhere");
+    fs::create_dir_all(&elsewhere)?;
 
-    let here = quoted(&std::env::current_dir()?.display().to_string());
+    let here = crucible_core::Workspace::open(std::env::current_dir()?)?;
+    let away = crucible_core::Workspace::open(elsewhere)?;
 
+    let mut planted = HashSet::with_capacity(LOGS);
+
+    // A log's name is its start time with a random tiebreak inside one
+    // millisecond, so the pause keeps the loop's order and the directory's
+    // order the same: the four matching sessions then sit after the fifty-two
+    // newest candidates from the other workspace, inside the production scan's
+    // sixty-four-log bound. The pause is outside the timed region.
     for nth in 0..LOGS {
-        // Session names sort by start time as text, so the index is the order.
-        let id = format!("{:013}-{nth:06x}", 1_700_000_000_000_u64 + nth);
-        let root = if USABLE.contains(&nth) {
-            here.clone()
-        } else {
-            format!("/nowhere/{nth}")
-        };
-
-        let log = format!(
-            "{{\"format\":1,\"session\":\"{id}\",\"workspace\":\"{root}\"}}\n\
-             {{\"user\":\"what the last person to sit here asked\"}}\n"
-        );
-
-        fs::write(sessions.join(format!("{id}.jsonl")), log)?;
+        let workspace = if USABLE.contains(&nth) { &here } else { &away };
+        let session = crucible_runner::Session::start(sessions, workspace)?;
+        if let Some(id) = session.id() {
+            planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
+        }
+        session.append(&crucible_core::Message::User(TITLE.into()));
+        if let Some(trouble) = session.finish() {
+            return Err(StartupError::Record(trouble));
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 
-    Ok(())
-}
-
-/// A path as it goes inside a JSON string.
-fn quoted(path: &str) -> String {
-    path.replace('\\', r"\\").replace('"', "\\\"")
+    Ok(planted)
 }
 
 /// The probe's sibling in `target/release/`.
@@ -214,7 +411,13 @@ fn beside(name: &str) -> Result<PathBuf, StartupError> {
 /// so twenty runs neither read nor write anything belonging to whoever is
 /// benchmarking.
 #[derive(Debug)]
-pub(crate) struct Scratch(PathBuf);
+pub(crate) struct Scratch {
+    path: PathBuf,
+    /// The fixture's log names. Every measured child records a session of its
+    /// own into the same directory, and without this set the next run would
+    /// scan one log more than the last.
+    fixture: HashSet<OsString>,
+}
 
 impl Scratch {
     fn new(name: &str) -> Result<Self, StartupError> {
@@ -225,17 +428,52 @@ impl Scratch {
         ));
         fs::create_dir_all(&base)?;
         fs::write(base.join("config.json"), CONFIG)?;
-        worked_in(&base.join("sessions"))?;
-        Ok(Self(base))
+        let fixture = worked_in(&base.join("sessions"))?;
+
+        Ok(Self {
+            path: base,
+            fixture,
+        })
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        &self.path
+    }
+
+    /// Removes what a measured child added, so every run scans the same
+    /// hundred planted logs.
+    fn restore_fixture(&self) -> Result<(), io::Error> {
+        for entry in fs::read_dir(self.path.join("sessions"))? {
+            let entry = entry?;
+            if !self.fixture.contains(&entry.file_name()) {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
     }
 }
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Scratch, TITLE, USABLE};
+
+    #[test]
+    fn the_fixture_exercises_four_current_format_titles() {
+        let home = Scratch::new("current-format").expect("a benchmark home");
+        let workspace =
+            crucible_core::Workspace::open(std::env::current_dir().expect("the current directory"))
+                .expect("a workspace");
+
+        let recent =
+            crucible_runner::recent(&home.path().join("sessions"), &workspace, USABLE.len());
+
+        assert_eq!(recent.len(), USABLE.len());
+        assert!(recent.iter().all(|session| session.asked() == TITLE));
     }
 }

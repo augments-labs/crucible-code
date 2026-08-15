@@ -50,6 +50,14 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The benchmark probes measure the shipped binary through a real terminal.**
+  The startup probes spawn `crucible` behind a controlling pseudo terminal,
+  the RSS budget runs a twenty-turn session against a loopback provider, and
+  the render burst drains a bounded kernel pipe — so the budgets now cover
+  escape assembly, raw input and process memory rather than in-process
+  stand-ins. The stream budget also requires the sustained rate to hold at
+  least half the opening rate.
+
 - **Subscription logins are registered at the wiring boundary.** The binary's
   one closed list pairs each account login with the fixed audience its tokens
   are issued for, and a stored subscription now resolves to that address when
