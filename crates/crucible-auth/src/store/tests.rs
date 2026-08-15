@@ -276,7 +276,55 @@ fn the_file_and_the_directory_it_makes_are_readable_only_by_their_owner() {
     store.keep("openai", SECRET).expect("a writable home");
 
     assert_eq!(mode_of(&home.join(FILE)), 0o600);
+    assert_eq!(mode_of(&home.join(LOCK)), 0o600);
     assert_eq!(mode_of(&home), 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_open_auth_directory_is_tightened_before_files_are_created() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("open-directory");
+    fs::set_permissions(scratch.home(), fs::Permissions::from_mode(0o755)).unwrap();
+    let store = Store::in_home(scratch.home());
+
+    store.keep("openai", SECRET).expect("a writable home");
+
+    assert_eq!(mode_of(scratch.home()), 0o700);
+    assert_eq!(mode_of(&scratch.home().join(FILE)), 0o600);
+    assert_eq!(mode_of(&scratch.home().join(LOCK)), 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_symlink_is_refused_without_touching_its_target() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let scratch = Scratch::new("store-link");
+    let target = scratch.home().join("elsewhere.json");
+    let text = format!(r#"{{"version":1,"keys":{{"openai":"{SECRET}"}}}}"#);
+    fs::write(&target, &text).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+    symlink(&target, scratch.home().join(FILE)).unwrap();
+    let store = Store::in_home(scratch.home());
+
+    assert_eq!(store.read().providers().count(), 0);
+    assert!(store.keep("openai", "replacement").is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), text);
+    assert_eq!(mode_of(&target), 0o644);
+}
+
+#[cfg(windows)]
+#[test]
+fn auth_artifacts_stay_reachable_after_their_protected_lists_are_written() {
+    let scratch = Scratch::new("windows-private");
+    let store = Store::in_home(scratch.home());
+    store.keep("openai", SECRET).expect("a writable home");
+
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+    assert!(scratch.home().join(LOCK).is_file());
+    assert!(fs::read_dir(scratch.home()).unwrap().count() >= 2);
 }
 
 #[cfg(unix)]

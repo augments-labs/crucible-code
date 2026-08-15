@@ -17,6 +17,11 @@
 //! [`Keys::trouble`], and the launch continues. That is why [`Store::read`] has
 //! no `Result` to propagate.
 //!
+//! `crucible-privacy` owns the platform mechanism that makes the directory,
+//! store, partial and lock owner-only. Auth owns which files exist and what
+//! they mean; it does not carry a second implementation of Unix modes or
+//! Windows access control lists.
+//!
 //! Where the file lives is not decided here. [`Store::in_home`] is handed the
 //! directory, because `crucible_config::Home` is the one place that answers
 //! where anything is.

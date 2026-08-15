@@ -224,10 +224,11 @@ anything crucible prints. If you see one, that is a bug worth
 
 ### A key written down instead of exported
 
-The other place crucible looks is `~/.crucible/auth.json`, a file it creates
-readable by nobody else and tightens to that if it finds it otherwise. A key
-kept there is set up once and needs nothing from your shell afterwards, which is
-what a machine you do not want a key on the profile of wants:
+The other place crucible looks is `~/.crucible/auth.json`. The auth directory,
+store, partial write and lock are created owner-only on Unix and with a
+protected user access-control list on Windows; existing permissions are
+tightened before a credential is read. A key kept there is set up once and
+needs nothing from your shell afterwards:
 
 ```json
 { "version": 1, "keys": { "openai": "sk-…" } }

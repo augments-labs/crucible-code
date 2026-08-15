@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Private credential files on every supported platform.** The auth directory,
+  store, partial write and lock are owner-only on Unix and Windows; existing
+  permissions are tightened before a credential is read.
+
 - **Credential-store input bounds.** A malformed key now refuses the complete
   store instead of silently disappearing, and stores above 64 KiB fail closed
   before they can choose startup memory.

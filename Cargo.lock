@@ -229,6 +229,7 @@ name = "crucible-auth"
 version = "0.1.6"
 dependencies = [
  "crucible-core",
+ "crucible-privacy",
  "serde_json",
  "thiserror",
 ]
