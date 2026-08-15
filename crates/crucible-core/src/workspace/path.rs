@@ -1,10 +1,11 @@
 //! The proof that a path is one the workspace reaches.
 
 use std::fmt;
+use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use super::written;
+use super::{PathError, open, written};
 
 /// A path proven to be inside the workspace.
 ///
@@ -25,6 +26,19 @@ pub struct WorkspacePath {
 
     /// The resolved, absolute path.
     resolved: PathBuf,
+}
+
+/// Files opened from the directories reached by one non-following tree walk.
+///
+/// A walker normally yields sibling files together. On Unix this keeps the
+/// last sibling directory open, so every file after the first is one `openat`
+/// instead of another descent from the workspace root. The directory remains
+/// the one containment reached even if its name is replaced in the meantime.
+#[derive(Debug)]
+pub struct WalkFiles {
+    pub(super) from: WorkspacePath,
+    #[cfg(unix)]
+    pub(super) parent: Option<(PathBuf, File)>,
 }
 
 impl WorkspacePath {
@@ -60,6 +74,20 @@ impl WorkspacePath {
         })
     }
 
+    /// Opens regular files yielded by a non-following walk below this path.
+    ///
+    /// The returned value keeps at most one directory descriptor. Make one per
+    /// walk worker rather than sharing it: workers commonly visit different
+    /// directories, and a shared cache would serialize the search.
+    #[must_use]
+    pub fn walk_files(&self) -> WalkFiles {
+        WalkFiles {
+            from: self.clone(),
+            #[cfg(unix)]
+            parent: None,
+        }
+    }
+
     /// The resolved, absolute path.
     #[must_use]
     pub fn as_path(&self) -> &Path {
@@ -88,6 +116,27 @@ impl WorkspacePath {
         self.resolved
             .strip_prefix(&self.root)
             .unwrap_or(Path::new(""))
+    }
+}
+
+impl WalkFiles {
+    /// Proves and opens one regular file the walk yielded.
+    ///
+    /// `None` means the name is not made only of ordinary components below the
+    /// walk root. Filesystem changes and refusals remain typed path errors.
+    ///
+    /// # Errors
+    ///
+    /// The same path errors as [`WorkspacePath::open_regular`].
+    pub fn open_regular(
+        &mut self,
+        reached: &Path,
+    ) -> Result<Option<(WorkspacePath, File)>, PathError> {
+        let Some(path) = self.from.walked(reached) else {
+            return Ok(None);
+        };
+        let file = open::walked_regular(self, &path)?;
+        Ok(Some((path, file)))
     }
 }
 

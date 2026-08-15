@@ -38,7 +38,7 @@ use std::fs::File;
 use std::fs::Permissions;
 use std::io::Error;
 
-use super::{PathError, WorkspacePath, written};
+use super::{PathError, WalkFiles, WorkspacePath, written};
 
 #[cfg(unix)]
 mod descent;
@@ -49,6 +49,21 @@ use descent::{created, created_directory, opened};
 mod name;
 #[cfg(not(unix))]
 use name::{created, created_directory, opened};
+
+/// Opens one file through the directory cache held by a tree-walk worker.
+pub(super) fn walked_regular(
+    files: &mut WalkFiles,
+    path: &WorkspacePath,
+) -> Result<File, PathError> {
+    #[cfg(unix)]
+    return descent::walked_regular(files, path);
+
+    #[cfg(not(unix))]
+    {
+        let _ = files;
+        opened(path, Access::ReadFile)
+    }
+}
 
 /// What the caller means to do with the file it asked for.
 ///
