@@ -75,6 +75,16 @@ fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
 }
 
 #[test]
+fn a_remembered_provider_without_its_credential_still_opens_the_session() {
+    // `/model` persists all three names, but the credential may belong only to
+    // the shell that selected them. Once that variable is unset, the remembered
+    // names become dormant setup rather than an error before the prompt exists.
+    let window = Window::unavailable("remembered-without-key", 80, 24);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width() {
     // Half the width, where the welcome drops to one column and the wordmark
     // has to go. Two widths rather than one because a row that fits at eighty

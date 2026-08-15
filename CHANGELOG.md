@@ -8,6 +8,37 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **A run with several usable credentials opens with nothing selected.**
+  Exported keys, stored API keys and account logins all count, and where
+  nothing chose between them crucible used to refuse to start; it now opens
+  with no provider, model or effort preselected and says `Warning: No provider
+  selected. Use /model to select a provider and model.` What it costs: a
+  machine that was previously stopped by the error is now one `/model` away
+  from a turn, and a fresh machine opens asking what to use rather than
+  guessing. A remembered provider whose credential is gone opens dormant
+  instead of falling through to another vendor's key.
+
+- **The welcome card no longer names a model.** Provider, model and effort
+  live on the prompt status row, where `/login`, `/model` and `/effort` can
+  update them, instead of going stale in terminal scrollback. A quiet row
+  under the card names the active non-secret authentication source, so an
+  inherited environment key never reads as a stored login `/logout` could
+  remove.
+
+- **A stored subscription counts as an available credential at startup.** A
+  machine whose only authentication is a ChatGPT or Kimi Code account login
+  opens on that provider rather than being told nothing is set up.
+
+- **Startup makes crucible's home owner-only before reading it.** The
+  configuration's permission bits are tightened where they are wider; its
+  contents are never written at startup.
+
+- **Typed-ahead prompts and redirected input are bounded.** Up to 64 finished
+  prompts and 1 MiB of their text wait behind a running turn; past either
+  bound, Enter leaves the line in the box and the row beneath it says why. A
+  redirected line past 1 MiB is refused with an error instead of being
+  retained.
+
 - **`/login` now authorizes subscription accounts as well as API keys.**
   ChatGPT offers browser PKCE with a paste-back fallback and device-code
   login; Kimi Code offers device-code login. Both write renewable credentials
@@ -23,6 +54,13 @@ Notable changes to crucible. Format follows
   configured.
 
 ### Internal
+
+- **Turn events and the release cache are bounded.** The channel a turn
+  reports on holds two events and adjacent deltas already waiting are drawn as
+  one batch, so a provider that outruns a slow terminal meets backpressure
+  instead of growing process memory; a terminal failure now also cancels the
+  in-flight provider. The cached release answer is read under a 128-byte
+  ceiling and replaced atomically through an exclusively-created sibling.
 
 - **Subscription logins are registered at the wiring boundary.** The binary's
   one closed list pairs each account login with the fixed audience its tokens

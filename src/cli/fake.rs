@@ -4,8 +4,9 @@
 //! thread, the two channels and the drain are exercised together — but they
 //! must not need a network or a machine to run things on.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crucible_core::{
     Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
@@ -113,6 +114,66 @@ struct Reading(std::vec::IntoIter<Delta>);
 impl DeltaStream for Reading {
     fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
         self.0.next().map(Ok)
+    }
+}
+
+/// A provider stream that stays quiet until cancellation reaches it.
+#[derive(Debug)]
+pub(crate) struct Stalling {
+    escaped: Arc<AtomicBool>,
+}
+
+impl Stalling {
+    /// Makes the provider and a mark raised only by the test escape deadline.
+    pub(crate) fn new() -> (Self, Arc<AtomicBool>) {
+        let escaped = Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                escaped: Arc::clone(&escaped),
+            },
+            escaped,
+        )
+    }
+}
+
+impl Provider for Stalling {
+    fn name(&self) -> &'static str {
+        "stalling"
+    }
+
+    fn stream(
+        &self,
+        _request: Request<'_>,
+        cancel: &Cancel,
+    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
+        Ok(Box::new(Quiet {
+            cancel: cancel.clone(),
+            escaped: Arc::clone(&self.escaped),
+        }))
+    }
+}
+
+/// The live body of [`Stalling`].
+struct Quiet {
+    cancel: Cancel,
+    escaped: Arc<AtomicBool>,
+}
+
+impl DeltaStream for Quiet {
+    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
+        let escape = Instant::now() + Duration::from_millis(250);
+        while !self.cancel.requested() {
+            if Instant::now() >= escape {
+                self.escaped.store(true, Ordering::Release);
+                return Some(Err(ProviderError::Transport {
+                    provider: "stalling",
+                    problem: "test escape deadline elapsed".into(),
+                }));
+            }
+            std::thread::park_timeout(Duration::from_millis(1));
+        }
+
+        Some(Err(ProviderError::Cancelled("stalling")))
     }
 }
 

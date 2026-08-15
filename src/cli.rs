@@ -277,6 +277,16 @@ pub(crate) const fn unasked(provider: Option<&str>) -> &'static str {
     }
 }
 
+/// The startup warning after credential discovery has distinguished zero from
+/// several available providers.
+const fn opening_unasked(provider: Option<Served>, any_credential: bool) -> &'static str {
+    match (provider, any_credential) {
+        (Some(_), _) => NO_MODEL_CHOSEN,
+        (None, true) => NO_PROVIDER_CHOSEN,
+        (None, false) => NOTHING_TO_ASK,
+    }
+}
+
 /// The provider names, for the sentence a name outside them gets back.
 fn names() -> String {
     PROVIDERS.map(|one| one.name).join(", ")
@@ -402,6 +412,15 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Raw(#[from] RawError),
 
+    /// Sensitive local state could not be made owner-only.
+    #[error("{file} could not be protected: {source}")]
+    Private {
+        /// The directory or file whose boundary could not be established.
+        file: Box<str>,
+        /// What the platform refused.
+        source: crucible_privacy::PrivacyError,
+    },
+
     /// The command line named a provider this is not built with.
     #[error("no provider called {named}; this build has {}", names())]
     Provider {
@@ -443,17 +462,6 @@ pub(crate) enum Fatal {
     #[error("--model needs a provider before the slash, as in --model openai/gpt-5.6-terra")]
     Providerless,
 
-    /// More than one provider has a key, and nothing said which of them to ask.
-    #[error(
-        "more than one provider holds a key ({held}), so which to ask is not decided; \
-         qualify the name as --model provider/model, or set provider to one of them"
-    )]
-    Ambiguous {
-        /// The variables that hold one, named so the answer is a shell command
-        /// away rather than a search through the documentation.
-        held: Box<str>,
-    },
-
     /// A prompt arrived that could not be answered, on a run with no terminal
     /// to fix it from.
     ///
@@ -468,6 +476,14 @@ pub(crate) enum Fatal {
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
     Input(io::Error),
+
+    /// A redirected input line would exceed the retained prompt ceiling.
+    #[error("what you typed is longer than 1 MiB; no prompt was accepted")]
+    InputTooLong,
+
+    /// The operating system could not create the thread that takes a turn.
+    #[error("the turn could not start: {0}")]
+    Worker(io::Error),
 
     /// The thread running the turn ended without returning it.
     #[error("the turn ended unexpectedly")]
@@ -495,6 +511,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // handed down as a path — no crate below this one asks where anything is.
     // Then the files themselves, once, before anything that could want them.
     let home = Home::find(&|name| std::env::var_os(name))?;
+    protect_user_config(&home)?;
     let settings = Settings::read(&home, workspace.root())?;
 
     // What was logged in with, read once and from the same directory. A store
@@ -511,26 +528,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // to reach. Once, here, and never again — nothing in a turn may widen it.
     let workspace = workspace.reaching(settings.extra_directories())?;
 
-    // Only the flag names a provider outright. Everything else is evidence
-    // rather than an instruction — which key this machine holds, which provider
-    // a file already chose a model for — and it is read here, before anything is
-    // drawn, so a run that cannot start does not first announce that it has.
-    //
-    // Both halves may come back missing, and neither is filled in with a guess.
-    // A provider chosen without a key is one whose refusal arrives after the
-    // first prompt; a model chosen without being asked for is one vendor's name
-    // sent to whichever vendor the key belongs to.
-    let choice = match cli.model.as_deref() {
-        Some(named) => Choice::parse(named).ok_or(Fatal::Providerless)?,
-        None => Choice::default(),
-    };
-
-    let serving = match &choice.provider {
-        Some(named) => Some(served(named)?),
-        None => chosen(&settings, &from, &keys)?,
-    };
-    let model = wanted(&choice, &settings, serving);
-    let effort = thinking(cli.effort, &settings, serving);
+    // Flags, configuration and the usable credential set are read into one
+    // answer before anything is drawn. Neither provider nor model is guessed:
+    // a provider chosen without a credential is one whose refusal arrives after
+    // the first prompt, and a model chosen without being asked for is one
+    // vendor's name sent to whichever vendor the credential belongs to.
+    let launch = launch(cli, &settings, &from, &keys, &subscriptions)?;
 
     // Set before the session is started, because a session writes a file and
     // this does not: a failure here leaves the disk as it found it. The guard
@@ -583,7 +586,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // not the place to work it out again; the first is the one thing here a
         // command can change, because `/login` is what fills it in on a machine
         // that started with nothing.
-        provider: Cell::new(serving.map(|one| one.name)),
+        provider: Cell::new(launch.serving.map(|one| one.name)),
         choosing: crucible_config::user(&home),
 
         // What `/login` sets a session up with, answered the way this launch
@@ -630,9 +633,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     draw::opening(
         &mut renderer,
         &Opening {
-            model: model.as_deref(),
+            credential: launch.credential.as_ref(),
+            model: launch.model.as_deref(),
             provider: terms.provider.get(),
-            unasked: unasked(terms.provider.get()),
+            unasked: launch.unasked,
             trouble: keys.trouble(),
             workspace: &workspace,
             sessions: &sessions,
@@ -646,9 +650,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     }
 
     let runner = assemble(&Startup {
-        provider: serving,
-        model: model.as_deref(),
-        effort,
+        provider: launch.serving,
+        unasked: launch.unasked,
+        model: launch.model.as_deref(),
+        effort: launch.effort,
         resuming: cli.r#continue,
         mode,
         settings: &settings,
@@ -663,6 +668,68 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     drop(held);
     outcome
+}
+
+/// Protects the user configuration before any value can be read from it.
+///
+/// Tightens the permission bits of crucible's home directory and the
+/// configuration file in it to owner-only; the file's *contents* are never
+/// written here. A missing file is the ordinary case — nothing has been
+/// configured yet — and anything else the platform refuses ends the run before
+/// a secret a wider audience could read is treated as private.
+fn protect_user_config(home: &Home) -> Result<(), Fatal> {
+    let private = |file: &std::path::Path, source| Fatal::Private {
+        file: file.display().to_string().into(),
+        source,
+    };
+    crucible_privacy::directory(home.path()).map_err(|source| private(home.path(), source))?;
+
+    let config = crucible_config::user(home);
+    match crucible_privacy::tighten(&config) {
+        Ok(_) => Ok(()),
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(private(&config, source)),
+    }
+}
+
+/// What the launch resolved, before anything was drawn.
+struct Launch {
+    serving: Option<Served>,
+    model: Option<Box<str>>,
+    effort: Option<Effort>,
+    credential: Option<CredentialSource>,
+    unasked: &'static str,
+}
+
+/// Reads the flags, the files and the usable credential set into one answer.
+fn launch(
+    cli: &Cli,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+    credentials: &StoredCredentials,
+    subscriptions: &Subscriptions,
+) -> Result<Launch, Fatal> {
+    let choice = match cli.model.as_deref() {
+        Some(named) => Choice::parse(named).ok_or(Fatal::Providerless)?,
+        None => Choice::default(),
+    };
+    let serving = match &choice.provider {
+        Some(named) => Some(served(named)?),
+        None => chosen(settings, from, credentials, subscriptions)?,
+    };
+    Ok(Launch {
+        model: wanted(&choice, settings, serving),
+        effort: thinking(cli.effort, settings, serving),
+        credential: serving
+            .and_then(|named| credential_source(named, settings, from, credentials, subscriptions)),
+        unasked: opening_unasked(
+            serving,
+            available(settings, from, credentials, subscriptions)
+                .next()
+                .is_some(),
+        ),
+        serving,
+    })
 }
 
 /// The `Serving` `/login` and `/logout` re-resolve a provider through.
@@ -684,13 +751,19 @@ fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
             provider: named.name.into(),
         })?;
 
+        // A provider resolved here is one a credential was just found for, so
+        // the sentence the `None` arm refuses with is never reached; it is
+        // spelled the way the launch would spell it for this provider anyway.
         Ok(Resolved {
             provider: startup::provider(
                 Some(named),
-                &settings,
-                &|name| std::env::var(name).ok(),
-                stored,
-                &subscriptions,
+                unasked(Some(named.name)),
+                startup::ProviderAuth {
+                    settings: &settings,
+                    from: &|name| std::env::var(name).ok(),
+                    stored,
+                    subscriptions: &subscriptions,
+                },
             )?,
             source,
         })
@@ -700,94 +773,67 @@ fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
 /// Which provider to ask when the flag named none, or `None` where this machine
 /// has nothing set up to ask.
 ///
-/// A key says a provider can be *reached*. Only a statement about providers
-/// chooses one, and `provider` in the configuration is the only statement there
-/// is — everything under `providers.<name>` is a subordinate clause about a
-/// provider already being asked. So the top rung here is that key, and it is
-/// read before any variable: which key a shell happens to carry is a fact about
-/// that shell, and a turn sent to the wrong vendor costs money there and leaves
-/// the prompt behind.
+/// A credential says a provider can be *reached*. Only a statement about
+/// providers chooses one, and `provider` in the configuration is the only
+/// statement there is — everything under `providers.<name>` is a subordinate
+/// clause about a provider already being asked. The remembered statement is
+/// active only while that provider remains reachable. Otherwise the session
+/// opens with no provider so `/login` can repair it; falling through to a
+/// different credential would send a turn to a vendor nobody chose.
 ///
-/// Below it, exactly one provider holding a key is that provider. That is not a
-/// choice between competitors — it is the absence of anything to choose, which
-/// is what lets a first run work with one exported key and no configuration at
-/// all. Where the file says `apiKeyEnv`, that is the variable looked for: a key
-/// is configured by the name of the variable holding it, and this reads the name
-/// rather than the value, so nothing here learns what any key is. A variable
-/// exported empty holds no key, so `ANTHROPIC_API_KEY=` turns that provider off
-/// rather than competing.
+/// Below it, exactly one provider holding a credential is that provider. That
+/// is not a choice between competitors — it is the absence of anything to
+/// choose, which is what lets a first run work with one credential and no
+/// configuration at all. A stored account login counts beside an exported
+/// variable and a written-down key: it is read through [`credential_source`],
+/// the same answer construction would act on, so discovery and construction
+/// cannot disagree about what this machine holds.
 ///
-/// Several keys and nothing choosing between them is [`Fatal::Ambiguous`]. No
-/// key outranks another and no order between vendors is written down anywhere,
-/// so there is nothing here to break the tie with; picking one would send a turn
-/// to a vendor over a coin toss.
+/// Several credentials and nothing choosing between them leaves the provider
+/// open rather than failing the launch. `/model` settles both halves
+/// explicitly; picking one here would send a turn to a vendor over the
+/// declaration order, and refusing to start would strand a machine that is one
+/// command away from a choice.
 fn chosen(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    keys: &StoredCredentials,
+    credentials: &StoredCredentials,
+    subscriptions: &Subscriptions,
 ) -> Result<Option<Served>, Fatal> {
     // Refused here where a name this build has nothing for is a sentence naming
     // the ones it has, rather than carried as "nobody chose" into a session that
-    // would then look set up by a key nobody named.
+    // would then look set up by a credential nobody named.
     if let Some(named) = settings.provider() {
-        return served(named).map(Some);
+        let one = served(named)?;
+        return Ok(
+            credential_source(one, settings, from, credentials, subscriptions)
+                .is_some()
+                .then_some(one),
+        );
     }
 
-    let mut holding = keyed(settings, from, keys);
+    let mut holding = available(settings, from, credentials, subscriptions);
     let (Some(first), second) = (holding.next(), holding.next()) else {
         return Ok(None);
     };
-    if second.is_none() {
-        return Ok(Some(first));
-    }
-
-    Err(Fatal::Ambiguous {
-        held: keyed(settings, from, keys)
-            .map(|one| held(one, settings, from))
-            .collect::<Vec<_>>()
-            .join(", ")
-            .into(),
-    })
+    Ok(second.is_none().then_some(first))
 }
 
-/// Every provider crucible holds a key for, in the order they are declared.
+/// Every provider crucible holds a usable credential for, in declaration order.
 ///
-/// Two places to look and one entry either way. A provider whose key is both
-/// exported and written down is one provider: listed twice it would be two to
-/// the question above, and somebody who exported the key they had already
+/// Two places to look and one entry either way. A provider whose credential is
+/// both exported and written down is one provider: listed twice it would be two
+/// to the question above, and somebody who exported the key they had already
 /// logged in with would be asked to choose between a provider and itself.
-fn keyed<'a>(
+fn available<'a>(
     settings: &'a Settings,
     from: &'a dyn Fn(&str) -> Option<String>,
-    keys: &'a StoredCredentials,
+    stored: &'a StoredCredentials,
+    subscriptions: &'a Subscriptions,
 ) -> impl Iterator<Item = Served> + 'a {
     PROVIDERS
         .into_iter()
-        .filter(move |one| exported(*one, settings, from) || keys.get(one.name).is_some())
-}
-
-/// Whether this provider's variable holds a key.
-///
-/// Blank is not one. `ANTHROPIC_API_KEY=` is how a shell turns a provider off,
-/// and a variable that is set and empty used to count as one held.
-fn exported(one: Served, settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> bool {
-    from(settings.api_key_env(one.name).unwrap_or(one.key))
-        .is_some_and(|value| !value.trim().is_empty())
-}
-
-/// How a provider holding a key is named back, in the sentence that asks which
-/// of them to ask.
-///
-/// The variable, where that is where the key is: unsetting it is what the
-/// reader would go and do about it. The provider's own name where the key was
-/// written down instead — there is no variable to unset, and naming one that
-/// was never set sends them to look at the wrong thing.
-fn held(one: Served, settings: &Settings, from: &dyn Fn(&str) -> Option<String>) -> String {
-    if exported(one, settings, from) {
-        return settings.api_key_env(one.name).unwrap_or(one.key).to_owned();
-    }
-
-    one.name.to_owned()
+        .filter(move |one| credential_source(*one, settings, from, stored, subscriptions).is_some())
 }
 
 /// The source provider construction will select, without reading a secret out.

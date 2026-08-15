@@ -1,10 +1,10 @@
 //! Reading a prompt as it is typed, inside the box it is typed into.
 //!
-//! The other way to read one is [`std::io::BufRead::read_line`], which the loop
-//! still uses wherever there is no terminal. What this adds is everything that
-//! needs a keystroke rather than a line: the box around what is being written,
-//! the mode under it, and a window that follows the cursor along a line longer
-//! than the screen.
+//! The other way to read one is the loop's bounded buffered-line reader,
+//! wherever there is no terminal. What this adds is everything that needs a
+//! keystroke rather than a line: the box around what is being written, the mode
+//! under it, and a window that follows the cursor along a line longer than the
+//! screen.
 //!
 //! Raw mode is not entered here. The loop above holds it for the whole session,
 //! because the box takes typing while a turn runs and a keyboard handed back
@@ -15,11 +15,11 @@
 //! leave, and mid turn [`during`] asks the turn to stop.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
-//! is why the engine is a parameter here. The mode is a fact about the session
-//! and lives in the engine; this reads it to draw the row under the box and
+//! is why the runner is a parameter here. The mode is a fact about the session
+//! and lives in the runner; this reads it to draw the row under the box and
 //! steps it when the key that steps it arrives. Both of those happen between
 //! turns, on the thread that draws, so there is one copy of it and no lock over
-//! it: while a turn is away with the engine, [`during`] draws the mode it was
+//! it: while a turn is away with the runner, [`during`] draws the mode it was
 //! handed and steps nothing.
 
 use std::borrow::Cow;
@@ -37,6 +37,7 @@ use crate::cli::style::Style;
 
 use super::command;
 use super::mode::tone;
+use super::{Prompts, Retained};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -54,10 +55,14 @@ const CYCLE: &str = "(shift+tab to cycle)";
 /// say would be that the offer had already gone.
 const LEAVING: &str = "press ctrl-c again to leave";
 
+/// What the row under the box says when finished prompts already fill their
+/// retained-memory bound.
+const QUEUED_LIMITED: &str = "typed-ahead prompts are limited to 64 lines and 1 MiB";
+
 /// What the row under the box says while a turn is running.
 ///
 /// Two keys, both of which do something at that moment. The one that steps the
-/// mode is left off, because the engine holding the mode is away with the turn.
+/// mode is left off, because the runner holding the mode is away with the turn.
 const WORKING: &str = "(enter queues it · ctrl-c stops the turn)";
 
 /// How long the second press has to arrive in.
@@ -230,6 +235,7 @@ fn together(offered: Option<Instant>, now: Instant) -> bool {
 /// The box is redrawn on every keystroke and this is the same row until a key
 /// changes the mode, so formatting it per frame would be work done to produce
 /// the bytes that were already there.
+#[derive(Clone)]
 pub(super) struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
     mode: Cow<'static, str>,
@@ -286,26 +292,31 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// Reads whatever the keyboard already has, and redraws the box if it moved.
 ///
 /// Called between looks at the channel the turn reports on, so it never waits:
-/// a key that has not arrived yet is one the next time round will find. What it
-/// returns is a line somebody finished while the answer was still arriving,
-/// which the loop above runs as the next prompt.
+/// a key that has not arrived yet is one the next time round will find. A line
+/// finished while the answer was still arriving moves into the queue the loop
+/// above takes the next prompts from, unless the queue's bound is already met —
+/// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
 /// finishes a line, Ctrl-C asks the turn to stop — in raw mode the terminal
 /// sends it rather than raising a signal, so this is the only thing that could
 /// — and the rest edit the line. Stepping the mode is not among them: the
-/// engine that holds it is on the worker thread for the length of the turn, and
+/// runner that holds it is on the worker thread for the length of the turn, and
 /// a key that moved the row on screen and nothing else would be a lie about
 /// what the next tool call costs.
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
-    editor: &mut Editor,
-    says: &Says,
-    style: Style,
-    cancel: &Cancel,
-) -> Result<Option<String>, Fatal> {
+    during: During<'_>,
+) -> Result<(), Fatal> {
+    let During {
+        editor,
+        queued,
+        says,
+        style,
+        cancel,
+    } = during;
     let mut moved = false;
-    let mut finished = None;
+    let mut notice = None;
 
     while waiting(Duration::ZERO)? {
         match pressed()? {
@@ -319,7 +330,10 @@ pub(super) fn during<T: Terminal>(
 
             Pressed::Key(Key::Enter) => {
                 if !editor.is_empty() {
-                    finished = Some(editor.take());
+                    match queued.accept(editor) {
+                        Retained::Accepted => notice = None,
+                        Retained::Refused => notice = Some(QUEUED_LIMITED),
+                    }
                     moved = true;
                 }
             }
@@ -332,7 +346,12 @@ pub(super) fn during<T: Terminal>(
                 moved = true;
             }
 
-            Pressed::Key(key) => moved |= editor.press(key) == Typed::Changed,
+            Pressed::Key(key) => {
+                if editor.press(key) == Typed::Changed {
+                    moved = true;
+                    notice = None;
+                }
+            }
 
             // A click, an arrow through a list there is none of, a mode step.
             // None of them has anything to act on while a turn is running.
@@ -346,10 +365,25 @@ pub(super) fn during<T: Terminal>(
     }
 
     if moved {
-        stand(renderer, editor, says, style)?;
+        if let Some(notice) = notice {
+            let mut says = says.clone();
+            says.asking = Some(notice);
+            stand(renderer, editor, &says, style)?;
+        } else {
+            stand(renderer, editor, says, style)?;
+        }
     }
 
-    Ok(finished)
+    Ok(())
+}
+
+/// What can change while one turn is running.
+pub(super) struct During<'a> {
+    pub(super) editor: &'a mut Editor,
+    pub(super) queued: &'a mut Prompts,
+    pub(super) says: &'a Says,
+    pub(super) style: Style,
+    pub(super) cancel: &'a Cancel,
 }
 
 /// Puts the box under the turn, with the cursor in it.

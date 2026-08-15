@@ -5,9 +5,9 @@ expression: window.picture()
 52x20 cursor 15,47 scrolled 4
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
 |│                                  │ ───────────────|
-|│  no model selected               │                |
-|│                                  │ Tips           |
 |│  /…/workspace                    │                |
+|│                                  │ Tips           |
+|│                                  │                |
 |│                                  │ · /          op|
 |│                                  │ · shift+tab  st|
 |│                                  │ · ctrl-c     cl|

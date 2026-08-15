@@ -1,12 +1,50 @@
 //! What the command line and the files together decide.
 
 use clap::CommandFactory;
+#[cfg(unix)]
+use std::ffi::OsString;
 
 use super::*;
+
+#[test]
+fn startup_distinguishes_no_credential_from_an_unselected_provider() {
+    assert_eq!(opening_unasked(None, false), NOTHING_TO_ASK);
+    assert_eq!(opening_unasked(None, true), NO_PROVIDER_CHOSEN);
+    assert_eq!(opening_unasked(Some(PROVIDERS[0]), true), NO_MODEL_CHOSEN);
+}
+
 use crate::cli::sample::Sample;
 
 fn choice(flag: &str) -> Choice {
     Choice::parse(flag).expect("a provider")
+}
+
+#[cfg(unix)]
+#[test]
+fn existing_user_configuration_is_private_before_settings_can_read_it() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("protect-user-config");
+    let directory = sample.root();
+    let config = directory.join("config.json");
+    fs::write(&config, r#"{"env":{"DEPLOY_TOKEN":"secret"}}"#).expect("a user configuration");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).expect("directory mode");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o644)).expect("file mode");
+    let home =
+        Home::find(&|name| (name == crucible_config::HOME).then(|| OsString::from(&directory)))
+            .expect("an absolute user home");
+
+    protect_user_config(&home).expect("the private boundary");
+
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 /// The entry `run` resolves before it asks for a model.
@@ -48,7 +86,7 @@ fn landing(
     from: &dyn Fn(&str) -> Option<String>,
     keys: &StoredCredentials,
 ) -> Result<Option<Served>, Fatal> {
-    chosen(settings, from, keys)
+    chosen(settings, from, keys, &Subscriptions::production())
 }
 
 #[test]
@@ -61,6 +99,44 @@ fn a_key_written_down_sets_a_provider_up_with_no_variable_exported() {
     let found = landing(&Settings::default(), &holding(&[]), &keys).expect("one key, written down");
 
     assert_eq!(found.map(|found| found.name), Some("openai"));
+}
+
+#[test]
+fn a_subscription_written_down_sets_up_its_provider_too() {
+    // A stored account login is a credential the same way an exported key is:
+    // a machine whose only authentication is a subscription still opens on its
+    // provider rather than being told nothing is set up.
+    let sample = Sample::new("subscription-only");
+    let keys = sample.subscribed("openai");
+
+    let found = landing(&Settings::default(), &holding(&[]), &keys)
+        .expect("one subscription, no ambiguity");
+
+    assert_eq!(found.map(|found| found.name), Some("openai"));
+}
+
+#[test]
+fn a_subscription_is_available_only_to_a_registered_account_route() {
+    let sample = Sample::new("unsupported-subscription");
+    let stored = sample.subscribed("anthropic");
+
+    let found = landing(&Settings::default(), &holding(&[]), &stored)
+        .expect("an unsupported stored shape is not a credential");
+
+    assert!(found.is_none());
+}
+
+#[test]
+fn a_subscription_does_not_authenticate_a_custom_api_key_audience() {
+    let sample = Sample::new("subscription-custom-audience");
+    let stored = sample.subscribed("openai");
+    let settings =
+        sample.user(r#"{"providers":{"openai":{"baseUrl":"https://gateway.example/v1"}}}"#);
+
+    let found = landing(&settings, &holding(&[]), &stored)
+        .expect("an account token is not sent to a custom address");
+
+    assert!(found.is_none());
 }
 
 #[test]
@@ -79,25 +155,18 @@ fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
 }
 
 #[test]
-fn a_machine_asked_which_provider_names_the_store_by_the_provider_it_holds() {
-    // The sentence exists to be acted on, and what the reader does about a key
-    // is unset the variable holding it. There is no variable behind a key that
-    // was written down, so naming the vendor's usual one would send them to
-    // look at something that was never set.
+fn a_stored_key_and_an_exported_key_leave_the_provider_for_model_to_choose() {
     let sample = Sample::new("stored-ambiguous");
     let keys = sample.stored("openai");
 
-    let problem = landing(
+    let found = landing(
         &Settings::default(),
         &holding(&["ANTHROPIC_API_KEY"]),
         &keys,
     )
-    .expect_err("two providers, no choice");
+    .expect("several credentials are not a startup failure");
 
-    let said = problem.to_string();
-    assert!(said.contains("ANTHROPIC_API_KEY"), "{said}");
-    assert!(said.contains("openai"), "{said}");
-    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+    assert!(found.is_none());
 }
 
 #[test]
@@ -314,18 +383,15 @@ fn a_machine_holding_no_key_at_all_has_no_provider() {
 }
 
 #[test]
-fn a_machine_holding_every_key_and_choosing_none_is_asked_which() {
-    // Two providers set up and nothing choosing between them. Picking one would
-    // send the turn to a vendor over a coin toss, and the sentence back names
-    // both variables so the answer is a flag away.
+fn a_machine_holding_every_key_starts_with_the_provider_open() {
+    // Authentication makes every row reachable; it does not pick one by
+    // declaration order. `/model` is the interactive place that chooses both
+    // halves, and a launch that refuses to start would strand a machine one
+    // command away from that choice.
     let every = PROVIDERS.map(|one| one.key);
+    let found = lands(&Settings::default(), &holding(&every)).expect("several keys are usable");
 
-    let problem = lands(&Settings::default(), &holding(&every)).expect_err("two keys, no choice");
-
-    let said = problem.to_string();
-    for one in PROVIDERS {
-        assert!(said.contains(one.key), "{said}");
-    }
+    assert!(found.is_none());
 }
 
 #[test]
@@ -342,18 +408,39 @@ fn a_machine_holding_every_key_asks_the_provider_it_was_told_to() {
 }
 
 #[test]
-fn the_provider_a_file_names_is_asked_where_another_holds_the_only_key() {
-    // A key answers whether a provider can be reached and never which to ask.
-    // Reaching past what was written down because a *different* variable is
-    // exported is the shell choosing the vendor, which is the thing no rung
-    // here does — so this run is set up for anthropic, and its missing key is
-    // met as a missing key rather than papered over with somebody else's.
+fn an_unavailable_configured_provider_does_not_replace_itself_with_another() {
+    // A remembered choice cannot authenticate itself. Falling through to the
+    // other key would send a turn to a provider nobody chose; retaining the
+    // unavailable choice would make a normal launch fail before `/login` can
+    // repair it. The run therefore opens with no provider selected.
     let sample = Sample::new("named-over-keyed");
     let settings = sample.user(r#"{"provider": "anthropic"}"#);
 
     let found = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect("the file chose");
 
-    assert_eq!(found.map(|found| found.name), Some("anthropic"));
+    assert!(found.is_none());
+}
+
+#[test]
+fn a_remembered_provider_without_any_credential_does_not_stop_startup() {
+    let sample = Sample::new("named-without-key");
+    let settings = sample.user(
+        r#"{"provider":"openai","providers":{"openai":{"model":"gpt-5.6-sol","effort":"high"}}}"#,
+    );
+
+    let launch = launch(
+        &Cli::try_parse_from(["crucible"]).unwrap(),
+        &settings,
+        &|_| None,
+        &sample.store().read(),
+        &Subscriptions::production(),
+    )
+    .expect("an unavailable remembered provider is an interactive setup state");
+
+    assert!(launch.serving.is_none());
+    assert!(launch.model.is_none());
+    assert!(launch.effort.is_none());
+    assert_eq!(launch.unasked, NOTHING_TO_ASK);
 }
 
 #[test]
@@ -367,7 +454,7 @@ fn a_model_written_under_a_provider_never_chooses_that_provider() {
     let every = PROVIDERS.map(|one| one.key);
 
     assert!(
-        lands(&settings, &holding(&every)).is_err(),
+        lands(&settings, &holding(&every)).unwrap().is_none(),
         "a model is what to ask a provider for, not which provider to ask"
     );
 }

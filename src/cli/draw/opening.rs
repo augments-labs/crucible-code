@@ -2,37 +2,36 @@
 //!
 //! The one place in the wiring that draws a component rather than a line. Its
 //! job is to hand the component the facts it cannot know — the release, the
-//! model, the directory — and to hand the renderer the terminal's answers about
-//! colour and glyphs, both settled once at startup.
+//! directory and recent sessions — and to hand the renderer the terminal's
+//! answers about colour and glyphs, both settled once at startup.
 
 use std::time::SystemTime;
 
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
-use crucible_tui::{Notice, Recent, Renderer, Terminal, TerminalError, Welcome};
+use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, clip};
 
+use crate::cli::CredentialSource;
 use crate::cli::release::Newer;
 use crate::cli::style::Style;
 
 use super::when;
-
-/// What stands where the model's name goes when nothing has chosen one.
-///
-/// The row is drawn either way. A welcome that simply left it out would look
-/// like a session with a model, seen at a narrow width.
-const UNCHOSEN: &str = "no model selected";
 
 /// Everything the opening says that it cannot work out for itself.
 ///
 /// A struct rather than six parameters, because four of them are `&str`-shaped
 /// and a call with four of those in a row is one nobody can read.
 pub(crate) struct Opening<'a> {
-    /// The model this session will ask, or `None` where nothing chose one.
+    /// The non-secret source authenticating this session. Drawn once so an
+    /// inherited environment key can never look like a stored account that
+    /// `/logout` could remove.
+    pub(crate) credential: Option<&'a CredentialSource>,
+    /// The model this session will ask, or `None` where nothing chose one. Used
+    /// only to decide whether the setup warning belongs under the card; the
+    /// row under the prompt box owns model display.
     pub(crate) model: Option<&'a str>,
-    /// The vendor it will be asked of, or `None` where nothing chose one. Drawn
-    /// beside the model because a name says which model and never whose, and a
-    /// machine holding keys for two vendors has to be able to see which of them
-    /// this session settled on.
+    /// The vendor it will be asked of, or `None` where nothing chose one. Used
+    /// to name the active authentication source under the card.
     pub(crate) provider: Option<&'a str>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
@@ -95,12 +94,6 @@ pub(crate) fn opening<T: Terminal>(
 
     let welcome = Welcome {
         version: concat!("v", env!("CARGO_PKG_VERSION")),
-        model: opening.model.unwrap_or(UNCHOSEN),
-
-        // Only where there is a model to put it before. The row without one
-        // says nothing was chosen, and a vendor drawn against that sentence
-        // would say something was.
-        provider: opening.model.and(opening.provider).unwrap_or_default(),
         root: &root,
         sessions: &recent,
     };
@@ -108,6 +101,13 @@ pub(crate) fn opening<T: Terminal>(
     let columns = renderer.columns();
     renderer.present(&welcome.rows(columns, style.glyphs()), style.palette())?;
     renderer.commit("")?;
+
+    if let (Some(provider), Some(credential)) = (opening.provider, opening.credential) {
+        let said = format!("authentication: {provider} · {credential}");
+        let row = Row::new().then(Slot::Quiet, clip(&said, columns));
+        renderer.present(&[row], style.palette())?;
+        renderer.commit("")?;
+    }
 
     if let Some(newer) = opening.update {
         let said = format!(
@@ -177,6 +177,7 @@ mod tests {
             columns,
             terminal,
             &Opening {
+                credential: Some(&CredentialSource::StoredKey),
                 model: Some("claude-sonnet-5"),
                 provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
@@ -238,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_opens_by_saying_what_it_is_asking_and_where() {
+    fn a_session_opens_by_saying_what_it_is_and_where() {
         let scratch = Scratch::new("asking");
         let screen = drawn(80, true, &scratch.workspace(), &[]);
 
@@ -246,7 +247,7 @@ mod tests {
             screen.contains(concat!("crucible v", env!("CARGO_PKG_VERSION"))),
             "{screen}"
         );
-        assert!(screen.contains("claude-sonnet-5"), "{screen}");
+        assert!(!screen.contains("claude-sonnet-5"), "{screen}");
 
         // The name of the directory rather than the whole path to it. A path
         // too wide for its column keeps its two ends and gives up the route
@@ -287,11 +288,11 @@ mod tests {
     #[test]
     fn the_opening_leaves_a_row_between_itself_and_the_first_turn() {
         // Without it the first thing the model says starts on the row under the
-        // frame. Asserted on the redirected path, where a row ending is the
-        // only thing written between one row and the next.
+        // last line of the opening. Asserted on the redirected path, where a row
+        // ending is the only thing written between one row and the next.
         let screen = opened(80, false);
 
-        assert!(screen.ends_with("╯\n\n"), "{screen}");
+        assert!(screen.ends_with("\n\n"), "{screen}");
     }
 
     #[test]
@@ -318,6 +319,7 @@ mod tests {
             80,
             false,
             &Opening {
+                credential: None,
                 model: None,
                 provider: None,
                 unasked: NOTHING_TO_ASK,
@@ -331,29 +333,42 @@ mod tests {
 
         assert!(screen.contains("No models available"), "{screen}");
         assert!(screen.contains("/model"), "{screen}");
-        assert!(screen.contains(UNCHOSEN), "{screen}");
     }
 
     #[test]
-    fn the_opening_says_which_vendor_the_model_it_names_belongs_to() {
-        // The wiring is the only layer that knows: a model name is a string
-        // until something says whose it is, and on a machine holding keys for
-        // two vendors that is the fact the card exists to settle.
-        let screen = opened(80, false);
+    fn the_opening_names_an_environment_credential_without_a_secret() {
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let source = CredentialSource::Environment("OPENAI_API_KEY".into());
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                credential: Some(&source),
+                model: Some("gpt-5.6-sol"),
+                provider: Some("openai"),
+                unasked: NOTHING_TO_ASK,
+                workspace: &workspace,
+                sessions: &[],
+                trouble: None,
+                update: None,
+                style: Style::plain(),
+            },
+        );
 
-        assert!(screen.contains("anthropic/claude-sonnet-5"), "{screen}");
+        assert!(
+            screen.contains("authentication: openai · environment variable OPENAI_API_KEY"),
+            "{screen}"
+        );
     }
 
     #[test]
-    fn a_session_with_nothing_chosen_names_no_vendor_over_the_sentence_saying_so() {
-        // The row says nothing was chosen. A vendor drawn against it would say
-        // something was, and the reader would be looking for a model name that
-        // is not there.
+    fn authentication_is_not_drawn_without_a_credential_source() {
         let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
         let screen = shown(
             80,
             false,
             &Opening {
+                credential: None,
                 model: None,
                 provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
@@ -365,18 +380,17 @@ mod tests {
             },
         );
 
-        assert!(screen.contains(UNCHOSEN), "{screen}");
         assert!(!screen.contains("anthropic"), "{screen}");
     }
 
     #[test]
-    fn the_card_says_nothing_about_how_hard_the_model_is_being_asked_to_think() {
-        // The rung is on the row under the prompt box instead, and this is why:
-        // `/effort` changes it mid-session, and by then this card is scrollback
-        // that no inline renderer can go back over. A rung drawn here would be
-        // right until the first time somebody changed it and wrong afterwards.
+    fn the_card_says_nothing_about_the_live_turn_selection() {
+        // All three facts are on the row under the prompt box. `/model` and
+        // `/effort` change them after this card has become terminal scrollback.
+        // The provider may still be named by the separate authentication row.
         let screen = opened(80, false);
 
+        assert!(!screen.contains("claude-sonnet-5"), "{screen}");
         assert!(!screen.contains("effort"), "{screen}");
     }
 
@@ -401,6 +415,7 @@ mod tests {
             80,
             false,
             &Opening {
+                credential: None,
                 model: None,
                 provider: None,
                 unasked: NOTHING_TO_ASK,

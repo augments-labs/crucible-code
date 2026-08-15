@@ -2,20 +2,22 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 17,4 scrolled 0
+80x24 cursor 19,4 scrolled 0
 |╭─ crucible v0.1.6 ────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
-|│  anthropic/claude-test-1         │                                           │|
-|│                                  │ Tips                                      │|
 |│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
 |                                                                                |
 |› what is 2+2                                                                   |
 |Two plus two is four.                                                           |
@@ -23,7 +25,5 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |

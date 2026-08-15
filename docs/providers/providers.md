@@ -18,28 +18,29 @@ provider for `meta/llama-4`.
 **No provider is written into the build**, and none of these rungs is a guess:
 
 1. `--model provider/model`, where it names one outright.
-2. `provider` in your [configuration](../configuration/configuration.md). This
-   is the only setting that chooses a vendor.
-3. Exactly one of the variables in [Keys](#keys) holding a key. That is not a
-   choice between providers so much as the absence of one to make, and it is
-   what lets a first run work with one key exported and nothing configured.
+2. `provider` in your [configuration](../configuration/configuration.md), when
+   that provider still has a usable credential. This is the only setting that
+   remembers a vendor choice.
+3. Exactly one provider having a usable credential: a stored account login, a
+   stored API key, or a key in one of the variables in [Keys](#keys). That is
+   the absence of a choice to make, and it lets a first run work with one
+   credential and nothing configured.
 
-A key says a provider **can be reached**, and never which to ask. Which variable
-your shell happens to carry is a fact about that shell, and a turn sent to the
-wrong vendor is billed there and leaves your prompt behind — so no key outranks
-another key, and no order between vendors is written down anywhere in crucible.
+A credential says a provider **can be reached**, and never which to ask. Which
+variable your shell happens to carry is a fact about that shell, and a turn sent
+to the wrong vendor is billed there and leaves your prompt behind — so no
+credential outranks another, and no order between vendors is written down
+anywhere in crucible.
 
 A variable exported empty holds no key, so it does not compete: a shell carrying
 `ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. A provider
 pointed at another variable by `apiKeyEnv` is looked for under that name.
 
-Two keys and nothing choosing between them is a question rather than a coin
-toss:
+Several authenticated providers and nothing choosing between them is a question
+rather than a coin toss. crucible starts without selecting one and says:
 
 ```
-crucible: more than one provider holds a key (ANTHROPIC_API_KEY, OPENAI_API_KEY),
-so which to ask is not decided; qualify the name as --model provider/model, or
-set provider to one of them
+Warning: No provider selected. Use /model to select a provider and model.
 ```
 
 A model written under a provider does not answer it. `providers.openai.model`
@@ -51,12 +52,17 @@ A name this build has nothing for is refused the same way there as on the flag,
 so a file written by a later crucible is a sentence rather than a silent fall
 back to whichever key is exported.
 
-Whichever rung settled it, the answer is on screen: the welcome card and the row
-under the prompt box both name the vendor before the model, in the
-`provider/model` shape `--model` takes back. The card says what this run opened
-with; the row is redrawn on every keystroke, so it is the one that keeps up when
-`/login` hands the session to another vendor mid-way. Where nothing has chosen a
-model at all, neither says a vendor either — there is nothing being asked of it.
+A remembered provider, model and effort become dormant when their credential
+is removed or its environment variable is unset. crucible still opens with no
+active provider, model or effort so `/login` and `/model` remain available; it
+does not silently fall through to a different provider whose credential happens
+to be present.
+
+Whichever rung settled it, the answer is on the live row under the prompt box,
+which names the vendor before the model in the `provider/model` shape `--model`
+takes back. It is redrawn on every keystroke, so it keeps up when `/login` hands
+the session to another vendor mid-way. The welcome card deliberately carries no
+provider, model or effort because it becomes terminal scrollback immediately.
 
 ## Which model
 

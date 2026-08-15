@@ -111,12 +111,16 @@ cd ~/code/my-project
 crucible
 ```
 
-It opens with a card naming the release, the model it is asking and whose it is,
-and the root it is standing on, beside the last few sessions started in this
-directory. The card
-fits itself to the terminal: two columns at eighty and above, one below that,
-and under forty-six there is no frame at all — just what it is, what it is
-asking, and where. Under the card is the box:
+It opens with a card naming the release and the root it is standing on, beside
+the last few sessions started in this directory. The live row under the prompt
+names the selected provider, model and effort when there is one. A separate row
+under the card names the active non-secret
+authentication source, such as a stored account or `OPENAI_API_KEY`. The card
+still opens when a remembered provider has lost that credential; its provider,
+model and effort remain inactive until `/login` or `/model` makes them usable.
+The card fits itself to the terminal: two columns at eighty and above, one below
+that, and under forty-six there is no frame at all — just what it is and where.
+Under the card is the box:
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
@@ -166,8 +170,11 @@ happens to be working.
 
 You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
 queues what you wrote as the next prompt, and it is run the moment the turn
-ends. <kbd>Ctrl-C</kbd> asks the turn to stop. The key that steps the mode is
-not offered there, because the mode is away with the turn until it finishes.
+ends. Up to 64 finished prompts and 1 MiB of their text can wait; when either
+bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
+it says why. <kbd>Ctrl-C</kbd> asks the turn to stop. The key that steps the
+mode is not offered there, because the mode is away with the turn until it
+finishes.
 
 Tool calls appear as they run:
 

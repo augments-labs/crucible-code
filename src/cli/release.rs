@@ -12,8 +12,10 @@
 //! was not asked to reach is the kind of thing that has to be refusable in one
 //! line of a file.
 
-use std::io::Read as _;
-use std::path::Path;
+use std::fs::{File, OpenOptions};
+use std::io::{Read as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -30,6 +32,9 @@ const FROM: &str = "https://github.com/augments-labs/crucible-code/releases";
 
 /// What the answer is kept in, under crucible's own directory.
 const REMEMBERED: &str = "release";
+
+/// The most a cached version name may occupy, including its newline.
+const CACHE_CEILING: u64 = 128;
 
 /// How long an answer stands before it is worth asking again.
 ///
@@ -61,7 +66,7 @@ pub(crate) struct Newer {
 /// there, cannot be read, or names something no newer is all the same answer:
 /// nothing to say.
 pub(crate) fn newer(home: &Path, running: &str) -> Option<Newer> {
-    let said = std::fs::read_to_string(home.join(REMEMBERED)).ok()?;
+    let said = cached(&home.join(REMEMBERED))?;
     let version = said.lines().next()?.trim();
 
     beyond(version, running).then(|| Newer {
@@ -99,7 +104,7 @@ pub(crate) fn refresh(home: &Path) {
 
 /// The release already written down, or this one where nothing is.
 fn known(at: &Path) -> Box<str> {
-    let said = std::fs::read_to_string(at).unwrap_or_default();
+    let said = cached(at).unwrap_or_default();
     let version = said.lines().next().unwrap_or_default().trim();
 
     if version.is_empty() {
@@ -142,7 +147,14 @@ fn asked() -> Option<Box<str>> {
     }
 
     let mut body = String::new();
-    response.body.take(CEILING).read_to_string(&mut body).ok()?;
+    response
+        .body
+        .take(CEILING + 1)
+        .read_to_string(&mut body)
+        .ok()?;
+    if body.len() > usize::try_from(CEILING).ok()? {
+        return None;
+    }
 
     let said: serde_json::Value = serde_json::from_str(&body).ok()?;
     let tag = said.get("tag_name")?.as_str()?;
@@ -152,17 +164,55 @@ fn asked() -> Option<Box<str>> {
 
 /// Writes the answer down, whole or not at all.
 ///
-/// Through a file beside it and a rename, because this runs on a thread the
-/// process may end under: a half-written name read back next time would be a
-/// version that was never released.
+/// Through a file beside it and an atomic replace, because this runs on a
+/// thread the process may end under: a half-written name read back next time
+/// would be a version that was never released. The sibling is created
+/// exclusively, so a link planted at its name redirects nothing.
 fn remember(into: &Path, version: &str) {
-    let beside = into.with_extension("writing");
-
-    if std::fs::write(&beside, format!("{version}\n")).is_ok()
-        && std::fs::rename(&beside, into).is_err()
-    {
-        let _ = std::fs::remove_file(&beside);
+    let Some((beside, mut file)) = temporary(into) else {
+        return;
+    };
+    let written = writeln!(file, "{version}")
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            crucible_privacy::replace(&beside, into)
+                .map_err(crucible_privacy::PrivacyError::into_io)
+        });
+    if written.is_err() {
+        let _ = std::fs::remove_file(beside);
     }
+}
+
+/// Reads the one bounded line a cache is allowed to hold.
+fn cached(at: &Path) -> Option<String> {
+    let mut said = String::new();
+    File::open(at)
+        .ok()?
+        .take(CACHE_CEILING + 1)
+        .read_to_string(&mut said)
+        .ok()?;
+    (said.len() <= usize::try_from(CACHE_CEILING).ok()?).then_some(said)
+}
+
+/// Exclusively creates a sibling which no planted link can redirect.
+fn temporary(into: &Path) -> Option<(PathBuf, File)> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let directory = into.parent().unwrap_or_else(|| Path::new(""));
+
+    for _ in 0..32 {
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!(
+            ".release-writing.{}.{sequence}",
+            std::process::id()
+        ));
+        match OpenOptions::new().create_new(true).write(true).open(&path) {
+            Ok(file) => return Some((path, file)),
+            Err(problem) if problem.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return None,
+        }
+    }
+
+    None
 }
 
 /// Whether `offered` is a later release than `running`.
@@ -252,6 +302,22 @@ mod tests {
         let scratch = Scratch::new("silent");
 
         assert!(newer(&scratch.0, "0.0.9").is_none());
+    }
+
+    #[test]
+    fn an_oversized_cache_is_not_retained_on_the_startup_path() {
+        let scratch = Scratch::new("oversized");
+        std::fs::write(
+            scratch.0.join(REMEMBERED),
+            "9".repeat(usize::try_from(CACHE_CEILING).unwrap() + 1),
+        )
+        .unwrap();
+
+        assert!(newer(&scratch.0, "0.0.9").is_none());
+        assert_eq!(
+            &*known(&scratch.0.join(REMEMBERED)),
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]

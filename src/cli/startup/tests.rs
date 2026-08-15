@@ -6,6 +6,7 @@ use crucible_core::Outgoing;
 
 use super::*;
 use crate::cli::sample::{Sample, WRITTEN};
+use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 
 /// The entry the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
@@ -20,13 +21,17 @@ fn built(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
+    let stored = StoredCredentials::default();
     let subscriptions = Subscriptions::production();
     provider(
         serving,
-        settings,
-        from,
-        &StoredCredentials::default(),
-        &subscriptions,
+        NOTHING_TO_ASK,
+        ProviderAuth {
+            settings,
+            from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        },
     )
 }
 
@@ -181,9 +186,12 @@ fn an_openai_subscription_uses_its_fixed_audience() {
             vendor: OpenAi::VENDOR,
         },
         None,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("a stored subscription");
 
@@ -206,9 +214,12 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
             vendor: OpenAi::VENDOR,
         },
         None,
-        &|_| Some("inherited-key".to_owned()),
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| Some("inherited-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("the explicitly stored account login");
 
@@ -228,9 +239,12 @@ fn a_kimi_subscription_uses_the_managed_coding_audience() {
             vendor: Moonshot::CODING,
         },
         None,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("a stored Kimi account");
 
@@ -254,9 +268,12 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
             vendor: OpenAi::VENDOR,
         },
         sending_to(&settings, "openai").expect("an address the check accepted"),
-        &|_| Some("an-exported-key".to_owned()),
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| Some("an-exported-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("the explicit API key for this run");
 
@@ -277,10 +294,13 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
 
     let problem = provider(
         Some(serving("openai")),
-        &settings,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect_err("a subscription sent to an API-key gateway");
 
@@ -395,6 +415,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
         provider: Some(serving("openai")),
+        unasked: NO_MODEL_CHOSEN,
         model: Some("gpt-5.6-terra"),
         effort: None,
         resuming: false,
@@ -426,6 +447,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 
     let runner = assemble(&Startup {
         provider: None,
+        unasked: NOTHING_TO_ASK,
         model: None,
         effort: None,
         resuming: false,

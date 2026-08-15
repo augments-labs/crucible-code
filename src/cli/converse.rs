@@ -23,9 +23,9 @@
 
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::io::BufRead;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel, sync_channel};
 use std::thread;
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ use crucible_runner::Runner;
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
 
 use super::draw;
-use super::seen::{Answer, Asking, Relay, Seen};
+use super::seen::{Answer, Asking, CAPACITY, Inbox, Relay, Seen};
 use super::style::Style;
 use super::subscription::Subscriptions;
 use super::unasked;
@@ -59,6 +59,16 @@ const MARK: &str = "› ";
 /// what a hand notices — and long enough that a turn producing nothing costs
 /// sixty wake-ups a second and no work in any of them.
 const TICK: Duration = Duration::from_millis(16);
+
+/// How many finished prompts may wait behind a running turn.
+const QUEUED_LINES: usize = 64;
+
+/// How many prompt bytes may wait behind a running turn.
+///
+/// The same ceiling a redirected input line is read under: one prompt is
+/// bounded wherever it is taken, so a queue of them is bounded twice over —
+/// once here in bytes, once above in lines.
+const QUEUED_BYTES: usize = 1024 * 1024;
 
 /// What every turn in a conversation is taken under.
 ///
@@ -140,7 +150,7 @@ pub(crate) fn converse<T: Terminal>(
     // Lines finished while a turn was still running. They are the next prompts,
     // in the order they were typed, and each is taken without asking for
     // another.
-    let mut queued: VecDeque<String> = VecDeque::new();
+    let mut queued = Prompts::default();
 
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
@@ -157,7 +167,7 @@ pub(crate) fn converse<T: Terminal>(
         // asked. It is committed here rather than where it was typed: at that
         // moment the answer above it was still arriving, and a line written
         // into the middle of one is a line in the wrong place.
-        if let Some(said) = queued.pop_front() {
+        if let Some(said) = queued.pop() {
             draw::queued(renderer, &said, style)?;
 
             runner = take(
@@ -302,8 +312,9 @@ fn take<T: Terminal>(
 ) -> Result<Runner, Fatal> {
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
-    let (post, seen) = channel();
+    let (post, seen) = sync_channel(CAPACITY);
     let (reply, hear) = channel();
+    let mut seen = Inbox::new(seen);
 
     let mut asking = Asking::new(post.clone(), hear);
     let relay = Relay::new(post);
@@ -344,30 +355,41 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
-    let working = thread::spawn(move || {
-        // The runner reports what happened and returns why it stopped; nothing
-        // else has posted the failure, so this is where it becomes visible.
-        if let Err(problem) = runner.turn(prompt.trim(), &mut asking, &relay, &running) {
-            relay.post(Event::Failed { error: problem });
-        }
+    let working = thread::Builder::new()
+        .name("turn".to_owned())
+        .spawn(move || {
+            // The runner reports what happened and returns why it stopped;
+            // nothing else has posted the failure, so this is where it becomes
+            // visible.
+            if let Err(problem) = runner.turn(prompt.trim(), &mut asking, &relay, &running) {
+                relay.post(Event::Failed { error: problem });
+            }
 
-        runner
-    });
+            runner
+        })
+        .map_err(Fatal::Worker)?;
 
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
-    let mut held = typing::stand(renderer, taking.editor, &says, terms.style);
+    let mut held = stop_if_failed(
+        typing::stand(renderer, taking.editor, &says, terms.style),
+        &terms.cancel,
+    );
 
     // Ends when the worker drops both senders, which happens when the turn is
     // over. The wait is bounded rather than blocking so that the keyboard is
-    // looked at between deltas; nothing is skipped either way, because every
-    // event is still taken from the same channel in the order it was sent.
+    // looked at between deltas. The queue itself is bounded too: adjacent
+    // deltas already waiting are drawn together, and a provider that outruns a
+    // slow terminal meets backpressure instead of growing process memory.
     loop {
         match seen.recv_timeout(TICK) {
             Ok(one) => {
                 if held.is_ok() {
-                    held = shown(one, renderer, terms, &mut taking.answers, &reply);
+                    held = stop_if_failed(
+                        shown(one, renderer, terms, &mut taking.answers, &reply),
+                        &terms.cancel,
+                    );
                 } else if matches!(one, Seen::Question { .. }) {
                     // Nothing is drawn and nothing is read once the terminal or
                     // the input has failed, but a question still has to be
@@ -386,11 +408,20 @@ fn take<T: Terminal>(
         // screen before the box is drawn back underneath it. A line finished
         // here is kept for the loop above: running it now would start a second
         // turn inside this one.
-        if held.is_ok() && taking.answers.keys {
-            match typing::during(renderer, taking.editor, &says, terms.style, &terms.cancel) {
-                Ok(said) => queue(taking.queued, said),
-                Err(problem) => held = Err(problem),
-            }
+        if held.is_ok()
+            && taking.answers.keys
+            && let Err(problem) = typing::during(
+                renderer,
+                typing::During {
+                    editor: taking.editor,
+                    queued: taking.queued,
+                    says: &says,
+                    style: terms.style,
+                    cancel: &terms.cancel,
+                },
+            )
+        {
+            held = stop_if_failed(Err(problem), &terms.cancel);
         }
     }
 
@@ -407,18 +438,62 @@ fn take<T: Terminal>(
     held.map(|()| runner)
 }
 
-/// Adds a line finished mid turn behind whatever is already waiting.
+/// Raises cancellation the first time the drawing side can no longer proceed.
 ///
-/// Kept in order, and every one of them kept. The other two answers were both
+/// The caller still drains the event channel and joins the worker, preserving
+/// the original failure while letting a quiet provider observe that nobody can
+/// use its answer any more.
+fn stop_if_failed<T>(result: Result<T, Fatal>, cancel: &Cancel) -> Result<T, Fatal> {
+    if result.is_err() {
+        cancel.request();
+    }
+    result
+}
+
+/// Prompts finished while a turn is still running.
+///
+/// Kept in order, and every one of them kept — the other two answers were both
 /// wrong for the same reason: keeping one line and dropping the rest loses
 /// something the user typed, watched the box take, and never sees again, and
-/// joining them into one prompt puts a message in the transcript nobody wrote —
-/// two lines typed a minute apart are two things asked, and the second is often
-/// what to do about the answer to the first. A queue costs a turn each and
-/// loses none of it.
-fn queue(waiting: &mut VecDeque<String>, said: Option<String>) {
-    if let Some(said) = said {
-        waiting.push_back(said);
+/// joining them into one prompt puts a message in the transcript nobody wrote.
+///
+/// Lines and bytes are both bounded: one-byte prompts cannot choose an
+/// unbounded number of allocations, and full-sized prompts cannot choose an
+/// unbounded retained buffer. Refusal leaves the editor untouched, so a prompt
+/// is never silently dropped after the box appeared to accept it.
+#[derive(Debug, Default)]
+struct Prompts {
+    lines: VecDeque<String>,
+    bytes: usize,
+}
+
+/// Whether a finished line moved from the editor into [`Prompts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Retained {
+    /// The line is waiting for its turn.
+    Accepted,
+    /// A line or byte ceiling left it in the editor.
+    Refused,
+}
+
+impl Prompts {
+    /// Takes the editor whole where both ceilings have room.
+    fn accept(&mut self, editor: &mut Editor) -> Retained {
+        let bytes = editor.text().len();
+        if self.lines.len() >= QUEUED_LINES || bytes > QUEUED_BYTES.saturating_sub(self.bytes) {
+            return Retained::Refused;
+        }
+
+        self.bytes += bytes;
+        self.lines.push_back(editor.take());
+        Retained::Accepted
+    }
+
+    /// Takes the oldest waiting prompt and releases its byte reservation.
+    fn pop(&mut self) -> Option<String> {
+        let prompt = self.lines.pop_front()?;
+        self.bytes = self.bytes.saturating_sub(prompt.len());
+        Some(prompt)
     }
 }
 
@@ -434,7 +509,7 @@ struct Taking<'a> {
     editor: &'a mut Editor,
     /// The prompts waiting behind this turn, which this one adds to as lines
     /// are finished in the box under it. The loop above takes them.
-    queued: &'a mut VecDeque<String>,
+    queued: &'a mut Prompts,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
 }
@@ -547,12 +622,24 @@ fn shown<T: Terminal>(
     match one {
         Seen::Turn(event) => draw::event(renderer, event, style)?,
         Seen::Question { call, sensitivity } => {
-            // Either project configuration filename can arrive with a
-            // checkout. Until durable policy has a store outside it, offer
-            // only lifetimes this process can honour without trusting the
-            // repository.
-            draw::question(renderer, &call, &sensitivity, style)?;
-            let answer = answered(renderer, answers)?;
+            // A durable rule cannot live in either project configuration file:
+            // both names can arrive with a checkout, whatever an ignore rule
+            // says. Until policy has a per-workspace store outside the checkout,
+            // the prompt offers only answers this process can honour.
+            let answer = draw::question(renderer, &call, &sensitivity, style)
+                .map_err(Fatal::from)
+                .and_then(|()| answered(renderer, answers));
+            let answer = match answer {
+                Ok(answer) => answer,
+                Err(problem) => {
+                    // This question has already left the channel, so the drain
+                    // cannot encounter and refuse it again. Silence must still
+                    // be a refusal or the worker waits forever beside the
+                    // terminal failure this returns.
+                    let _ = reply.send(verdict(None));
+                    return Err(problem);
+                }
+            };
 
             // A worker that stopped waiting has already denied itself.
             let _ = reply.send(answer);
@@ -562,15 +649,40 @@ fn shown<T: Terminal>(
     Ok(())
 }
 
-/// Reads one line, or `None` at end of input.
+/// Reads one bounded line, or `None` at end of input.
+///
+/// `fill_buf` exposes each source block before any of it is copied, so a pipe
+/// with no newline can cross the prompt bound without making this process
+/// retain the rest first.
 fn read(input: &mut dyn BufRead) -> Result<Option<String>, Fatal> {
-    let mut line = String::new();
+    let mut line = Vec::new();
 
-    match input.read_line(&mut line) {
-        Ok(0) => Ok(None),
-        Ok(_) => Ok(Some(line)),
-        Err(problem) => Err(Fatal::Input(problem)),
+    loop {
+        let available = input.fill_buf().map_err(Fatal::Input)?;
+        if available.is_empty() {
+            break;
+        }
+
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(available.len(), |at| at + 1);
+        if take > QUEUED_BYTES.saturating_sub(line.len()) {
+            return Err(Fatal::InputTooLong);
+        }
+
+        line.extend_from_slice(available.get(..take).unwrap_or_default());
+        input.consume(take);
+        if newline.is_some() {
+            break;
+        }
     }
+
+    if line.is_empty() {
+        return Ok(None);
+    }
+
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|problem| Fatal::Input(io::Error::new(io::ErrorKind::InvalidData, problem)))
 }
 
 /// What an answer to a permission question means.

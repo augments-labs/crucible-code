@@ -136,9 +136,25 @@ impl Window {
         Self::started(case, columns, rows, Some(vendor), false)
     }
 
+    /// A provider, model and effort remembered after their credential left.
+    pub(crate) fn unavailable(case: &str, columns: u16, rows: u16) -> Self {
+        let document = concat!(
+            "{\n",
+            "  \"updates\": {\"check\": \"never\"},\n",
+            "  \"provider\": \"openai\",\n",
+            "  \"providers\": {\"openai\": {\"model\": \"gpt-5.6-sol\", \"effort\": \"high\"}}\n",
+            "}\n"
+        );
+        Self::configured(case, columns, rows, document, false)
+    }
+
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
+        Self::configured(case, columns, rows, &document(vendor), keyed)
+    }
+
+    fn configured(case: &str, columns: u16, rows: u16, document: &str, keyed: bool) -> Self {
         // One flat directory per case, so the last thing a case does can take
         // the whole of what it made with it.
         let scratch = std::env::temp_dir().join(format!(
@@ -155,7 +171,7 @@ impl Window {
             .join("workspace");
         fs::create_dir_all(&home).expect("a scratch home directory");
         fs::create_dir_all(&workspace).expect("a scratch working directory");
-        fs::write(home.join("config.json"), document(vendor)).expect("a configuration file");
+        fs::write(home.join("config.json"), document).expect("a configuration file");
 
         let (terminal, inside) = pair(columns, rows);
         let child = start(&scratch, &home, &workspace, keyed, inside);
@@ -333,6 +349,10 @@ fn start(scratch: &Path, home: &Path, workspace: &Path, keyed: bool, inside: Fil
     Command::new("setsid")
         .arg("--ctty")
         .arg(env!("CARGO_BIN_EXE_crucible"))
+        // Answering fixtures opt into their model exactly as a person does on
+        // the command line. A configured credential makes a provider
+        // reachable; it must not silently choose what answers.
+        .args(keyed.then_some(["--model", "anthropic/claude-test-1"]).into_iter().flatten())
         .current_dir(workspace)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
