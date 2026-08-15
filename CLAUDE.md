@@ -38,6 +38,7 @@ src/            the binary — wiring only, the sole place concrete types meet
   bin/          auxiliary binaries: bench probes, not shipped
 crates/
   crucible-core/       domain types + traits. Depends on nothing.
+  crucible-privacy/    owner-only local file primitives. Depends on nothing.
   crucible-config/     configuration documents -> settings.     -> core
   crucible-provider/   wire protocols (Anthropic, OpenAI).      -> core
   crucible-tools/      read write edit bash grep glob.          -> core

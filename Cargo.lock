@@ -270,6 +270,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-privacy"
+version = "0.1.6"
+dependencies = [
+ "rustix",
+ "thiserror",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crucible-provider"
 version = "0.1.6"
 dependencies = [
