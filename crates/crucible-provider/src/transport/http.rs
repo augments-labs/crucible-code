@@ -56,6 +56,11 @@ impl Https {
         let config = ureq::Agent::config_builder()
             .timeout_connect(Some(TIMEOUT_CONNECT))
             .timeout_recv_response(Some(TIMEOUT_HEAD))
+            // Every model request carries a credential. A redirect is a new
+            // recipient, and non-standard credential headers such as
+            // `x-api-key` are not covered by a client's cross-host stripping.
+            // Hand the 3xx back to the provider as a refusal instead.
+            .max_redirects(0)
             // A 4xx is an answer, not a failure to get one. Left as an error it
             // would arrive as a bare status with the body discarded, and the
             // body is the sentence naming the model that does not exist.
@@ -196,7 +201,9 @@ fn reader(body: ureq::Body) -> Box<dyn Read + Send> {
 mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
     use std::thread;
+    use std::time::Instant;
 
     use super::*;
 
@@ -242,6 +249,37 @@ mod tests {
         });
 
         format!("http://{address}/v1/messages")
+    }
+
+    /// Serves a redirect and reports whether the client contacted its target.
+    fn redirecting() -> (String, mpsc::Receiver<bool>) {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let target_address = target.local_addr().unwrap();
+        let (reported, reached) = mpsc::channel();
+
+        thread::spawn(move || {
+            let until = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < until {
+                match target.accept() {
+                    Ok((stream, _)) => {
+                        heard(&stream);
+                        let _ = reported.send(true);
+                        return;
+                    }
+                    Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => {
+                        thread::yield_now();
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = reported.send(false);
+        });
+
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nlocation: http://{target_address}/stolen\r\ncontent-length: 0\r\n\r\n"
+        );
+        (once(response), reached)
     }
 
     /// Reads the whole request off `stream`, headers and body both.
@@ -297,6 +335,20 @@ mod tests {
 
         assert_eq!(response.status, 404);
         assert_eq!(body, said);
+    }
+
+    #[test]
+    fn a_redirect_cannot_choose_a_new_recipient_for_a_credential() {
+        let (url, reached) = redirecting();
+        let headers = [(Box::from("x-api-key"), Box::from("canary-secret"))];
+
+        let response = Https::new().post(&url, &headers, "{}").unwrap();
+
+        assert_eq!(response.status, 302, "the redirect was followed");
+        assert!(
+            !reached.recv().unwrap(),
+            "the redirect target was contacted"
+        );
     }
 
     #[test]
