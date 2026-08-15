@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Concurrent user-setting changes no longer overwrite one another.** A
+  private lock now spans the bounded reread and atomic commit; a busy file is
+  reported after five seconds instead of silently losing another process's
+  update.
+
 - **User configuration replacement is private and atomic.** Changes prepare an
   owner-only, exclusively created sibling and commit the complete document, so
   a planted temporary link cannot redirect a write or expose partial contents.

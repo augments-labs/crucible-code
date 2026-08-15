@@ -7,10 +7,11 @@
 //! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
 
-use std::fs;
-use std::io::{self, Write as _};
+use std::fs::{self, File, TryLockError};
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crucible_config::ConfigError;
 use crucible_core::Effort;
@@ -23,6 +24,9 @@ use crucible_core::Minted;
 pub(crate) enum RememberError {
     #[error("{file} could not be written: {source}")]
     Unwritable { file: Box<str>, source: io::Error },
+
+    #[error("{file} is being changed by another crucible; try again")]
+    Busy { file: Box<str> },
 
     #[error(transparent)]
     Unusable(#[from] ConfigError),
@@ -89,13 +93,46 @@ fn answering(
         source,
     };
 
-    let text = match fs::read_to_string(file) {
-        Ok(text) => text,
+    let directory = file.parent().unwrap_or_else(|| Path::new(""));
+    if !directory.as_os_str().is_empty() {
+        crucible_privacy::directory(directory)
+            .map_err(crucible_privacy::PrivacyError::into_io)
+            .map_err(&unwritable)?;
+    }
+    let _held = Held::take(file).map_err(|problem| match problem {
+        TakeError::Io(source) => unwritable(source),
+        TakeError::Busy => RememberError::Busy {
+            file: named.clone().into(),
+        },
+    })?;
+
+    match crucible_privacy::tighten(file) {
+        Ok(_) => {}
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+        Err(problem) => return Err(unwritable(problem.into_io())),
+    }
+
+    let opened = match File::open(file) {
+        Ok(opened) => Some(opened),
         // Nothing there yet, which is what most projects look like. The empty
         // text is what the crate below reads as "write a whole file".
-        Err(source) if source.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
         Err(source) => return Err(unwritable(source)),
     };
+    let mut text = String::new();
+    if let Some(opened) = opened {
+        opened
+            .take((crucible_config::MAX_DOCUMENT_BYTES + 1) as u64)
+            .read_to_string(&mut text)
+            .map_err(unwritable)?;
+        if text.len() > crucible_config::MAX_DOCUMENT_BYTES {
+            return Err(ConfigError::TooLarge {
+                file: named.clone().into(),
+                maximum: crucible_config::MAX_DOCUMENT_BYTES,
+            }
+            .into());
+        }
+    }
 
     let written = splice(&text, &named)?;
 
@@ -115,6 +152,44 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
     let mut beside = Beside::new(directory)?;
     beside.write(text)?;
     beside.over(file)
+}
+
+/// The file all configuration replacements contend for.
+struct Held {
+    _file: File,
+}
+
+/// Why a lock could not be taken.
+enum TakeError {
+    Io(io::Error),
+    Busy,
+}
+
+impl Held {
+    fn take(file: &Path) -> Result<Self, TakeError> {
+        let lock = lock_name(file);
+        let held = crucible_privacy::lock(&lock)
+            .map_err(crucible_privacy::PrivacyError::into_io)
+            .map_err(TakeError::Io)?;
+
+        for _ in 0..250 {
+            match held.try_lock() {
+                Ok(()) => return Ok(Self { _file: held }),
+                Err(TryLockError::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(TryLockError::Error(problem)) => return Err(TakeError::Io(problem)),
+            }
+        }
+
+        Err(TakeError::Busy)
+    }
+}
+
+fn lock_name(file: &Path) -> PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
 }
 
 /// The document, written where it does not belong yet.

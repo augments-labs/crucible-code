@@ -37,7 +37,9 @@ openai/gpt-5.6-terra` wins over anything a file says.
 
 When `/model`, `/effort` or `/login` changes the user file, crucible prepares an
 owner-only sibling and replaces the complete document atomically. A failed
-write before that commit leaves the previous file whole.
+write before that commit leaves the previous file whole. An owner-only lock
+spans the bounded reread through the commit, so simultaneous crucible processes
+cannot silently lose one another's settings.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
