@@ -9,6 +9,17 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Account login, token exchange and renewal. Blocking matches the rest of the
+# binary's thread-per-operation design; this crate never runs it on startup.
+ureq.workspace = true
+# Decodes only the bounded JWT claim segment needed for ChatGPT account
+# selection. Token bytes stay inside the credential type.
+base64.workspace = true
+# Cryptographic state, PKCE verifiers and stable installation identifiers come
+# from the operating system rather than a process-local pseudo-random generator.
+getrandom.workspace = true
+# Computes the RFC 7636 S256 challenge for callback-based account logins.
+sha2.workspace = true
 # `ApiKey`, which is what a stored key becomes on the way out. The secret is
 # handed back as the type that can only be applied to a request, never as the
 # string it was written down as.

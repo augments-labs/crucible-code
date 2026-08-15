@@ -77,6 +77,22 @@ crossterm = "=0.29.0"
 # as it arrives, and compressing one buys nothing for the `flate2` it costs.
 ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
 
+# JWT claims are base64url without padding. OpenAI subscription login needs the
+# selected ChatGPT account id from that bounded claim set; this decoder is
+# already present through rustls and avoids growing a second, partial codec at
+# the credential boundary.
+base64 = "=0.22.1"
+
+# OAuth PKCE and stable installation identifiers need bytes from the operating
+# system's cryptographic random source. This is the small cross-platform
+# boundary for that call; no pseudo-random generator or global state ships.
+getrandom = "=0.4.3"
+
+# Browser OAuth uses RFC 7636 S256. Keeping SHA-256 in the auth crate avoids a
+# partial handwritten digest at the boundary where a mismatch becomes a failed
+# login, and the crate has no runtime or platform dependencies.
+sha2 = { version = "=0.11.0", default-features = false }
+
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
 # to do what rg does rather than to re-derive it: `ignore` reads .gitignore the
