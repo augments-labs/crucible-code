@@ -82,8 +82,9 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
    not: its code, its prompts, its help pages, its art. Learn from it, never
    copy it.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
-   RSS ≤35 MB after a 20-turn session, grep within 1.25× of `rg`, ≥30 render
-   commits/s under burst. No blocking I/O on the startup path or the render
+   RSS ≤35 MB after a 20-turn session, grep's worst paired median ≤1.25× `rg`
+   with p95 and dispersion as evidence, and ≥30 render commits/s under burst.
+   No blocking I/O on the startup path or the render
    path. The transcript is held whole and is what that RSS figure bounds;
    nothing *else* may grow with it, and a `.clone()` of a transcript-sized
    value needs a comment saying why.

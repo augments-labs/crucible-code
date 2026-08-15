@@ -34,8 +34,11 @@ and the release procedure blocks on them:
 | Time to first frame | ≤ 20 ms p95 |
 | Time to first input | ≤ 60 ms p95 |
 | Peak RSS after a 20-turn session | ≤ 35 MB |
-| `grep` tool vs the `rg` binary | ≤ 1.25× |
+| Worst paired median, `grep` tool / `rg` binary | ≤ 1.25× |
 | Render commits under token burst | ≥ 30/s |
+
+The grep probe pairs each tool run with `rg` over representative workloads. Its
+worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
 
 Rendering costs nothing as a transcript grows, because it is inline: scrollback
 belongs to the terminal, not to this process. The transcript itself is held in
