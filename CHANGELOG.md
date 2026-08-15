@@ -6,6 +6,22 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`/login` now authorizes subscription accounts as well as API keys.**
+  ChatGPT offers browser PKCE with a paste-back fallback and device-code
+  login; Kimi Code offers device-code login. Both write renewable credentials
+  to the protected store, and a stored account login outranks an environment
+  key inherited from the shell. Logging in no longer chooses a model for the
+  session — `/model` remains the explicit choice. Anthropic stays
+  API-key-only.
+
+- **`/logout` removes stored credentials without claiming the environment.**
+  It names an inherited variable as what keeps a provider authenticated and
+  says the shell is where that one is unset; removing the active provider's
+  last stored credential signs the session out instead of leaving it looking
+  configured.
+
 ### Internal
 
 - **Subscription logins are registered at the wiring boundary.** The binary's

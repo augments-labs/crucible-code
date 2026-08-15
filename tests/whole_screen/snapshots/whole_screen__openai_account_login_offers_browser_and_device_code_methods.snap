@@ -2,28 +2,28 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 17,4 scrolled 12
+80x24 cursor 20,0 scrolled 12
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
-|› /login anthropic                                                              |
+|› /login                                                                        |
 |                                                                                |
-|logged in to anthropic; choose a model with /model                              |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
-|› /model claude-test-1                                                          |
+|OpenAI                                                                          |
 |                                                                                |
-|anthropic/claude-test-1                                                         |
+|Choose where to finish account authorization.                                   |
 |                                                                                |
-|› what is 2+2                                                                   |
-|Two plus two is four.                                                           |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ ›                                                                            │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|› Continue in browser                                                           |
+|  sign in to ChatGPT on this device                                             |
 |                                                                                |
+|  Use a device code                                                             |
+|  sign in to ChatGPT from another device                                        |
+|                                                                                |
+|esc to cancel                                                                   |
 |                                                                                |
 |                                                                                |
 |                                                                                |

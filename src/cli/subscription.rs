@@ -3,12 +3,15 @@
 //! The auth crate owns the open [`SubscriptionLogin`] interface and each
 //! implementation owns its authorization and renewal protocol. This registry
 //! is the sole closed list in the shipped binary: one provider implementation
-//! is paired with the fixed audience its tokens are issued for. Adding a
-//! provider does not add a branch to the store or TUI.
+//! is paired with its fixed credential audience and one or more visible login
+//! routes. Adding a provider does not add a branch to the store or TUI.
 
 use std::sync::Arc;
 
-use crucible_auth::{KimiOAuth, OpenAiOAuth, StoredCredentials, SubscriptionLogin};
+use crucible_auth::{
+    KimiOAuth, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Store, StoredCredentials,
+    SubscriptionLogin,
+};
 use crucible_core::Credential;
 use crucible_provider::{Endpoint, Moonshot, OpenAi};
 
@@ -16,11 +19,35 @@ use crucible_provider::{Endpoint, Moonshot, OpenAi};
 #[derive(Clone)]
 pub(crate) struct Subscriptions {
     providers: Arc<[Registered]>,
+    accounts: Arc<[Account]>,
+    routes: Arc<[Route]>,
 }
 
 struct Registered {
     login: Arc<dyn SubscriptionLogin>,
     endpoint: Endpoint,
+}
+
+/// One row the account picker can start.
+#[derive(Clone, Copy)]
+pub(crate) struct Account {
+    provider: &'static str,
+    /// The provider name at the left of the picker.
+    pub(crate) shown: &'static str,
+    /// The account product at the right.
+    pub(crate) says: &'static str,
+}
+
+/// One authorization method inside a provider account.
+#[derive(Clone, Copy)]
+pub(crate) struct Route {
+    provider: &'static str,
+    method: LoginMethod,
+    title: &'static str,
+    /// The short name at the left of the picker.
+    pub(crate) shown: &'static str,
+    /// The billing source and interaction at the right.
+    pub(crate) says: &'static str,
 }
 
 /// A resolved subscription and the only address allowed to receive it.
@@ -48,7 +75,75 @@ impl Subscriptions {
                     endpoint: Moonshot::CODING,
                 },
             ]),
+            accounts: Arc::new([
+                Account {
+                    provider: "openai",
+                    shown: "OpenAI",
+                    says: "ChatGPT plan — authorize an account",
+                },
+                Account {
+                    provider: "moonshot",
+                    shown: "MoonshotAI",
+                    says: "Kimi Code plan — authorize an account",
+                },
+            ]),
+            routes: Arc::new([
+                Route {
+                    provider: "openai",
+                    method: OpenAiOAuth::BROWSER,
+                    title: "Log in to ChatGPT",
+                    shown: "Continue in browser",
+                    says: "sign in to ChatGPT on this device",
+                },
+                Route {
+                    provider: "openai",
+                    method: OpenAiOAuth::DEVICE,
+                    title: "Log in to ChatGPT",
+                    shown: "Use a device code",
+                    says: "sign in to ChatGPT from another device",
+                },
+                Route {
+                    provider: "moonshot",
+                    method: KimiOAuth::DEVICE,
+                    title: "Log in to Kimi Code",
+                    shown: "Use a device code",
+                    says: "authorize the Kimi Code plan in a browser",
+                },
+            ]),
         }
+    }
+
+    /// Provider accounts in their stable display order.
+    #[must_use]
+    pub(crate) fn accounts(&self) -> &[Account] {
+        &self.accounts
+    }
+
+    /// The login methods registered for one provider.
+    pub(crate) fn routes(&self, provider: &str) -> Vec<Route> {
+        self.routes
+            .iter()
+            .copied()
+            .filter(move |route| route.provider == provider)
+            .collect()
+    }
+
+    /// Whether this build can sign in to `provider` with a subscription.
+    #[must_use]
+    pub(crate) fn supports(&self, provider: &str) -> bool {
+        self.find(provider).is_some()
+    }
+
+    /// Starts one route from this registry.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError`] from the selected implementation.
+    pub(crate) fn start(&self, route: Route, store: Store) -> Result<LoginAttempt, OAuthError> {
+        self.find(route.provider)
+            .ok_or(OAuthError::Method)?
+            .login
+            .start(route.method, store)
     }
 
     /// Resolves a stored subscription without exposing its token.
@@ -69,6 +164,28 @@ impl Subscriptions {
         self.providers
             .iter()
             .find(|registered| registered.login.provider() == provider)
+    }
+}
+
+impl Route {
+    /// The provider selected after this route completes.
+    #[must_use]
+    pub(crate) const fn provider(self) -> &'static str {
+        self.provider
+    }
+
+    /// The account product named above a running login.
+    #[must_use]
+    pub(crate) const fn title(self) -> &'static str {
+        self.title
+    }
+}
+
+impl Account {
+    /// The provider selected by this account row.
+    #[must_use]
+    pub(crate) const fn provider(self) -> &'static str {
+        self.provider
     }
 }
 

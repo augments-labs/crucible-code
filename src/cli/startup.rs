@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use crucible_auth::Keys;
+use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
     ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Mode, Provider, Workspace,
@@ -63,7 +63,7 @@ pub(super) struct Startup<'a> {
     pub(super) from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
-    pub(super) stored: &'a Keys,
+    pub(super) stored: &'a StoredCredentials,
     /// The subscription logins compiled into this binary, which is what pairs
     /// a stored account credential with the one address its tokens are issued
     /// for.
@@ -163,7 +163,7 @@ pub(super) fn provider(
     serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    stored: &Keys,
+    stored: &StoredCredentials,
     subscriptions: &Subscriptions,
 ) -> Result<Box<dyn Provider>, Fatal> {
     let Some(serving) = serving else {
@@ -251,18 +251,25 @@ struct ApiAudience<'a> {
 /// separately would let a later endpoint choice send it somewhere it was never
 /// meant to go.
 ///
-/// The order is the one [`key`] keeps for every provider: the variable first,
-/// then the key `/login` wrote down. A stored subscription answers last, and
-/// only at the vendor's own address — `baseUrl` is set by somebody with a
-/// reason not to reach the vendor, and a plan's token is the vendor's, so one
-/// configured to go elsewhere is no credential at all.
+/// A stored subscription answers first, and only at the vendor's own address:
+/// an account authorized through `/login` is a deliberate choice, made after
+/// any variable the shell happened to inherit, and `baseUrl` is set by somebody
+/// with a reason not to reach the vendor — a plan's token is the vendor's, so
+/// one configured to go elsewhere is no credential at all. Below it the order
+/// is the one [`key`] keeps for every provider: the variable first, then the
+/// key `/login` wrote down.
 fn credential(
     audience: ApiAudience<'_>,
     sending: Option<Endpoint>,
     from: &dyn Fn(&str) -> Option<String>,
-    stored: &Keys,
+    stored: &StoredCredentials,
     subscriptions: &Subscriptions,
 ) -> Result<(Endpoint, Box<dyn Credential>), Fatal> {
+    if sending.is_none()
+        && let Some(subscribed) = subscriptions.credential(audience.provider, stored)
+    {
+        return Ok((subscribed.endpoint, subscribed.credential));
+    }
     match ApiKey::from_lookup(audience.variable, from) {
         Ok(exported) => Ok((
             sending.unwrap_or(audience.vendor),
@@ -275,10 +282,15 @@ fn credential(
                     Box::new(HeaderKey::new(written, Header::bearer())),
                 ));
             }
-            if sending.is_none()
-                && let Some(subscribed) = subscriptions.credential(audience.provider, stored)
+            if subscriptions
+                .credential(audience.provider, stored)
+                .is_some()
             {
-                return Ok((subscribed.endpoint, subscribed.credential));
+                // Reachable only with `sending` set: without an address
+                // configured, the first arm above has already answered.
+                return Err(Fatal::SubscriptionAddress {
+                    provider: audience.provider.into(),
+                });
             }
             Err(absent.into())
         }

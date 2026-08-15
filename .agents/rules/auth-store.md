@@ -12,7 +12,7 @@ module inside the wiring.
 
 ## A key leaves as an `ApiKey` or it does not leave
 
-`Keys::get` hands back `crucible_core::ApiKey`, which can be applied to a
+`StoredCredentials::get` hands back `crucible_core::ApiKey`, which can be applied to a
 request and cannot be read. Nothing here may add an accessor that returns the
 string, and nothing may implement `Display` — the type exists so a key cannot
 reach a log line by accident, and one function returning `&str` is all it takes
@@ -21,11 +21,11 @@ a test greps every `Debug` output in the crate for a sentinel.
 
 ## Reading never fails, writing always may
 
-`Store::read` returns `Keys`, not `Result<Keys>`. Absent, truncated, or written
+`Store::read` returns `StoredCredentials`, not `Result<StoredCredentials>`. Absent, truncated, or written
 by a version that does not exist yet all mean *nobody is logged in*, and most
 launches need no stored key at all — so a damaged file may not be the reason
 somebody cannot start crucible. What could not be done comes out of
-`Keys::trouble` as one sentence for the user, and reading never rewrites what it
+`StoredCredentials::trouble` as one sentence for the user, and reading never rewrites what it
 could not understand.
 
 Writing is the opposite and owes a `Result`. In particular it refuses to write

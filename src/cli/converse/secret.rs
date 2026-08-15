@@ -14,7 +14,9 @@
 //!
 //! What is typed lives in a `String` for as long as it takes to reach the store
 //! and is never drawn, committed or put in an error. The dots are counted from
-//! it and are the only thing about it that reaches the terminal.
+//! it and are the only thing about it that reaches the terminal. At sixteen KiB
+//! the box refuses another character and says why beneath itself; no supported
+//! credential is close to that boundary.
 
 use crucible_tui::{Key, Pressed, Prompt, Renderer, Slot, Terminal, pressed};
 
@@ -27,6 +29,13 @@ const DOT: &str = "•";
 /// The row under the box, which says the one key that is not Enter.
 const CANCEL: &str = "esc to cancel";
 
+/// What a key box says after refusing input it cannot retain.
+const LIMITED: &str = "key is limited to 16 KiB";
+
+/// More than any supported credential needs, and small enough that a pasted
+/// file cannot become secret-shaped process memory.
+const MAX_BYTES: usize = 16 * 1024;
+
 /// What one key does to a secret being typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Typing {
@@ -34,6 +43,8 @@ enum Typing {
     Redraw,
     /// Nothing changed, so nothing is drawn.
     Still,
+    /// The edit would retain more secret input than the box accepts.
+    Refused,
     /// The line is finished.
     Done,
     /// The box was left with nothing given.
@@ -57,10 +68,11 @@ pub(super) fn ask<T: Terminal>(
 ) -> Result<Option<String>, Fatal> {
     let mut held = String::new();
     let mut changed = true;
+    let mut limited = false;
 
     loop {
         if changed {
-            standing(renderer, style, asking, held.chars().count())?;
+            standing(renderer, style, asking, held.chars().count(), limited)?;
         }
 
         let arrived = pressed()?;
@@ -73,8 +85,15 @@ pub(super) fn ask<T: Terminal>(
         }
 
         match typing(arrived, &mut held) {
-            Typing::Redraw => changed = true,
+            Typing::Redraw => {
+                changed = true;
+                limited = false;
+            }
             Typing::Still => changed = false,
+            Typing::Refused => {
+                changed = true;
+                limited = true;
+            }
             Typing::Done => {
                 renderer.settle()?;
                 return Ok(taken(&held));
@@ -93,6 +112,7 @@ fn standing<T: Terminal>(
     style: Style,
     asking: &str,
     dots: usize,
+    limited: bool,
 ) -> Result<(), Fatal> {
     let said = DOT.repeat(dots);
     let prompt = Prompt {
@@ -114,7 +134,7 @@ fn standing<T: Terminal>(
         model: "",
         provider: "",
         effort: None,
-        asking: None,
+        asking: limited.then_some(LIMITED),
         room: Prompt::room(renderer.rows()),
     };
 
@@ -126,9 +146,9 @@ fn standing<T: Terminal>(
 
 /// What a finished line comes to.
 ///
-/// Trimmed, because a key arrives by paste and a paste carries whatever the
-/// clipboard had around it — a trailing newline most often, which every vendor
-/// would then refuse with a sentence about the key being wrong.
+/// Trimmed, because a copied key commonly carries spaces around it, which every
+/// provider would otherwise refuse with a sentence about the key being wrong.
+/// A pasted newline arrives as Enter and submits before this function is called.
 fn taken(held: &str) -> Option<String> {
     let trimmed = held.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
@@ -141,6 +161,9 @@ fn taken(held: &str) -> Option<String> {
 fn typing(arrived: Pressed, held: &mut String) -> Typing {
     match arrived {
         Pressed::Key(Key::Char(typed)) => {
+            if typed.len_utf8() > MAX_BYTES.saturating_sub(held.len()) {
+                return Typing::Refused;
+            }
             held.push(typed);
             Typing::Redraw
         }

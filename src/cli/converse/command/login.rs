@@ -1,15 +1,13 @@
-//! `/login`: how crucible is paid for, taken off a panel, and a key given to a
-//! box that does not echo it.
+//! `/login`: a subscription or console credential, selected without exposing
+//! a secret on the command line.
 //!
-//! Two panels, because they are two questions. The first is how you already pay
-//! a vendor — a subscription plan, or a console account billed by API usage —
-//! and only the console account reaches the second, which asks whose. A plan is
-//! drawn without being connected to yet, and says so when it is chosen: a panel
-//! listing only what works would let somebody holding a plan conclude their plan
-//! is unsupported, when what is true is that it is unbuilt.
+//! With no argument, the first panel asks how the account is billed. A real
+//! subscription implementation starts its own bounded worker and reports the
+//! page the user must visit; the terminal thread continues serving resize and
+//! cancellation. Console credentials reach the provider panel and a key box.
+//! A vendor named directly keeps the existing API-key shortcut.
 //!
-//! The vendor is named on the line or chosen from the second panel, and the key
-//! is neither. A key typed after a command is a key in the shell's history file,
+//! A key typed after a command is a key in the shell's history file,
 //! in the process listing while the command runs, and in the scrollback
 //! afterwards — three places it was never meant to be, none of which this
 //! program could clear. So the two halves are asked for separately: who the key
@@ -32,85 +30,46 @@
 //! crucible knows and which variable each of them signs a request from, written
 //! into the scrollback where it can be scrolled. Every one of those halves comes
 //! off [`PROVIDERS`], so a vendor this build serves and cannot be logged in to
-//! is not a state that exists — which is a claim about console keys, since a
-//! plan cannot be logged in to at all yet.
+//! is not a state that exists.
 
+use std::borrow::Cow;
+use std::time::Duration;
+
+use crucible_auth::{LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
-use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{
+    Caret, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, clip, pressed, waiting,
+};
 
 use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret;
+use crate::cli::subscription::{Account, Route};
 use crate::cli::{Fatal, PROVIDERS, Served, remember};
 
 use super::{Terms, say};
 
-/// One way of giving crucible something to sign its requests with.
-///
-/// Two are subscription plans and one is a console key billed by usage. What a
-/// reader is choosing between here is how they already pay a vendor, which is
-/// not the same question as which vendor — somebody paying for a plan and
-/// somebody holding that same vendor's console key are two people, and only one
-/// of them has a key to type.
+/// One way Crucible can receive a credential.
 #[derive(Clone, Copy)]
 struct Way {
-    /// What it is called on the panel.
     shown: &'static str,
-
-    /// What it buys. The part being chosen between, so it names the plans in
-    /// the vendor's own words rather than describing them.
     says: &'static str,
-
-    /// Whether choosing it reaches a key today.
-    ///
-    /// A plan crucible cannot use yet is still drawn. A panel listing only what
-    /// works would let somebody holding one conclude their plan is unsupported,
-    /// when what is true is that it is unbuilt — and the two are answered by
-    /// different people on different days.
-    reaches: bool,
+    reaches: Reaches,
 }
 
-/// What the panel offers, in the order it lists them.
-///
-/// Plans first and the console account last. A reader holding a plan is the one
-/// who most needs telling that crucible cannot sign with it yet, and a row under
-/// the one that works is a row they would have walked past.
-const WAYS: [Way; 3] = [
-    Way {
-        shown: "OpenAI",
-        says: "ChatGPT Plus, Pro, Business and Enterprise plans — not connected yet",
-        reaches: false,
-    },
-    Way {
-        shown: "MoonshotAI",
-        says: "Kimi Code — not connected yet",
-        reaches: false,
-    },
-    Way {
-        shown: "Console account",
-        says: "API usage billing",
-        reaches: true,
-    },
-];
+/// What selecting a way does.
+#[derive(Clone, Copy)]
+enum Reaches {
+    Account(Account),
+    Console,
+}
 
-/// The sentence under the title of the panel that asks how.
+/// The sentence under the account-kind panel.
 const HOW: &str = "Choose how crucible signs its requests.";
 
-/// What a plan that is drawn but not connected answers with.
-///
-/// It says where the reader is rather than only that they cannot go on: the row
-/// they chose is still on the panel a moment later, and a refusal that did not
-/// name the way that does work would send them back to walk the same list.
-const UNBUILT: &str = "plans are not connected yet; a console key is the way in today";
-
-/// The sentence under the title of the second panel, which only a console
-/// account reaches: whose console, and what happens to the key.
-///
-/// It names the console outright. Standing where it does, under a row the
-/// reader chose a moment ago, a sentence about "a provider" and "a key" would
-/// read as the whole of `/login` rather than as the half of it below the plans.
+/// The sentence under the provider panel.
 const SAID: &str = concat!(
-    "Choose the vendor whose console the key comes from. It is typed into a ",
-    "box that does not echo it, and signs requests from the next turn on."
+    "Choose the provider whose API key you have. The key is typed into a box ",
+    "that does not echo it, and signs requests from the next turn on."
 );
 
 /// The one key worth naming on either panel: the arrows and Enter are what a
@@ -119,6 +78,10 @@ const CANCEL: &str = "esc to cancel";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
+
+/// Manual callback input is transient credential material. It has the same
+/// bound as the key box and is never committed or echoed.
+const MAX_MANUAL: usize = 16 * 1024;
 
 /// Runs it: a key taken for the one named, one chosen off the panel, or where
 /// each of them reads a key from.
@@ -141,9 +104,7 @@ pub(super) fn run<T: Terminal>(
             return given(named, renderer, runner, terms);
         }
 
-        // Nobody named and a keyboard to walk a list with: the panels, which
-        // ask how first and which vendor second. A name typed on the line
-        // answered both at once, which is why it never sees either.
+        // Nobody named and a keyboard to walk the account and provider lists.
         if said.is_empty() && walked(renderer, runner, terms)? {
             return Ok(());
         }
@@ -170,12 +131,7 @@ pub(super) fn run<T: Terminal>(
     Ok(renderer.present(&rows, terms.style.palette())?)
 }
 
-/// Asks how crucible should sign its requests, and takes the answer to an end.
-///
-/// Two panels rather than one, because the two questions have different answers
-/// for the same person: how you pay a vendor, and then — where that is a console
-/// key — which vendor's. A plan does not reach the second, since there is
-/// nothing to type for one yet.
+/// Walks the account route, then only the provider question that route needs.
 ///
 /// `false` is a window with no room to stand a panel in, and only that: the
 /// caller draws the rows instead, which is the one answer a short window can be
@@ -187,7 +143,8 @@ fn walked<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<bool, Fatal> {
-    let way = match asked(renderer, terms)?.of(&WAYS) {
+    let ways = ways(terms);
+    let way = match asked(renderer, terms, &ways)?.of(&ways) {
         Taken::Took(way) => way,
         Taken::Left => {
             say(renderer, terms, LEFT)?;
@@ -196,10 +153,24 @@ fn walked<T: Terminal>(
         Taken::Cramped => return Ok(false),
     };
 
-    if !way.reaches {
-        say(renderer, terms, &format!("{} {UNBUILT}", way.shown))?;
-
-        return Ok(true);
+    match way.reaches {
+        Reaches::Account(account) => {
+            let routes = terms.subscriptions.routes(account.provider());
+            let route = match routes.as_slice() {
+                [only] => *only,
+                _ => match method(renderer, terms, account, &routes)?.of(&routes) {
+                    Taken::Took(route) => route,
+                    Taken::Left => {
+                        say(renderer, terms, LEFT)?;
+                        return Ok(true);
+                    }
+                    Taken::Cramped => return Ok(false),
+                },
+            };
+            subscribed(route, renderer, runner, terms)?;
+            return Ok(true);
+        }
+        Reaches::Console => {}
     }
 
     let named = match chosen(renderer, terms)?.of(&PROVIDERS) {
@@ -216,28 +187,79 @@ fn walked<T: Terminal>(
     Ok(true)
 }
 
-/// Stands the panel that asks how, and says how it ended.
-fn asked<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
-    let shown: Vec<Offered<'_>> = WAYS
+fn ways(terms: &Terms) -> Vec<Way> {
+    let mut ways: Vec<_> = terms
+        .subscriptions
+        .accounts()
+        .iter()
+        .map(|account| Way {
+            shown: account.shown,
+            says: account.says,
+            reaches: Reaches::Account(*account),
+        })
+        .collect();
+    ways.push(Way {
+        shown: "Console account",
+        says: "API usage billing — enter a provider API key",
+        reaches: Reaches::Console,
+    });
+    ways
+}
+
+/// Stands the account-kind panel.
+fn asked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    ways: &[Way],
+) -> Result<Picked, Fatal> {
+    let shown: Vec<_> = ways
         .iter()
         .map(|way| Offered {
             name: way.shown,
             says: way.says,
         })
         .collect();
-
-    let panel = Panel {
-        title: "Log in",
-        said: Some(HOW),
-        shown: &shown,
-        chosen: 0,
-        footer: CANCEL,
-    };
-
-    picking::pick(renderer, terms.style, panel)
+    picking::pick(
+        renderer,
+        terms.style,
+        Panel {
+            title: "Log in",
+            said: Some(HOW),
+            shown: &shown,
+            chosen: 0,
+            footer: CANCEL,
+        },
+    )
 }
 
-/// Stands the panel that asks whose console, and says how it ended.
+/// Asks how a provider with more than one authorization method should open.
+fn method<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    account: Account,
+    routes: &[Route],
+) -> Result<Picked, Fatal> {
+    let shown: Vec<_> = routes
+        .iter()
+        .map(|route| Offered {
+            name: route.shown,
+            says: route.says,
+        })
+        .collect();
+    picking::pick(
+        renderer,
+        terms.style,
+        Panel {
+            title: account.shown,
+            said: Some("Choose where to finish account authorization."),
+            shown: &shown,
+            chosen: 0,
+            footer: CANCEL,
+        },
+    )
+}
+
+/// Stands the provider panel and says how it ended.
 fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
     // Where else the same key can come from — and the one thing that differs
     // between rows that would otherwise read identically.
@@ -266,6 +288,210 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
     picking::pick(renderer, terms.style, panel)
 }
 
+/// Runs a registered subscription flow and switches this session on success.
+fn subscribed<T: Terminal>(
+    route: Route,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let provider = route.provider();
+    if !terms.subscriptions.supports(provider) {
+        return say(
+            renderer,
+            terms,
+            &format!("! no subscription login for {provider}"),
+        );
+    }
+    let attempt = match terms.subscriptions.start(route, terms.logins.clone()) {
+        Ok(attempt) => attempt,
+        Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+    };
+
+    let mut view = LoginView::new();
+    view.show(renderer, terms, route.title())?;
+    loop {
+        match attempt.wait(Duration::from_millis(50)) {
+            Ok(Some(update)) => {
+                if view.apply(update) {
+                    let Some(named) = PROVIDERS.into_iter().find(|one| one.name == provider) else {
+                        return say(renderer, terms, "! the signed-in provider is unavailable");
+                    };
+                    return taken(named, renderer, runner, terms);
+                }
+                view.show(renderer, terms, route.title())?;
+            }
+            Ok(None) => {}
+            Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+        }
+
+        let Some(arrived) = LoginView::key()? else {
+            continue;
+        };
+        match arrived {
+            Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
+                attempt.cancel();
+                return say(renderer, terms, LEFT);
+            }
+            Pressed::Resized => renderer.resized()?,
+            pressed => {
+                if !view.press(pressed, &attempt) {
+                    continue;
+                }
+            }
+        }
+        view.show(renderer, terms, route.title())?;
+    }
+}
+
+struct LoginView {
+    page: Option<(Box<str>, Option<Box<str>>)>,
+    status: Cow<'static, str>,
+    browser_failed: bool,
+    accepts_manual: bool,
+    manual: String,
+    limited: bool,
+}
+
+impl LoginView {
+    fn new() -> Self {
+        Self {
+            page: None,
+            status: Cow::Borrowed("waiting — esc to cancel"),
+            browser_failed: false,
+            accepts_manual: false,
+            manual: String::new(),
+            limited: false,
+        }
+    }
+
+    fn apply(&mut self, update: LoginUpdate) -> bool {
+        match update {
+            LoginUpdate::Authorize {
+                browser_uri,
+                shown_uri,
+                user_code,
+                manual,
+            } => {
+                self.browser_failed = crate::cli::browser::open(&browser_uri).is_err();
+                self.page = Some((shown_uri, user_code));
+                self.accepts_manual = manual;
+                self.status = Cow::Borrowed("a browser should open; waiting for authorization…");
+                false
+            }
+            LoginUpdate::Progress { message } => {
+                self.accepts_manual = false;
+                self.manual.clear();
+                self.status = Cow::Borrowed(message);
+                false
+            }
+            LoginUpdate::Complete => true,
+        }
+    }
+
+    fn key() -> Result<Option<Pressed>, Fatal> {
+        Ok(waiting(Duration::ZERO)?.then(pressed).transpose()?)
+    }
+
+    fn press(&mut self, pressed: Pressed, attempt: &LoginAttempt) -> bool {
+        match pressed {
+            Pressed::Key(Key::Char(typed)) if self.accepts_manual => {
+                // One character at a time, bounded the way the key box is:
+                // past the ceiling the box keeps what it has and says why.
+                if typed.is_control() {
+                    return false;
+                }
+                if typed.len_utf8() > MAX_MANUAL.saturating_sub(self.manual.len()) {
+                    self.limited = true;
+                    return true;
+                }
+                self.manual.push(typed);
+                self.limited = false;
+                true
+            }
+            Pressed::Key(Key::Backspace) if self.accepts_manual => {
+                self.limited = false;
+                self.manual.pop().is_some()
+            }
+            Pressed::Key(Key::Enter) if self.accepts_manual && !self.manual.trim().is_empty() => {
+                match attempt.submit(&self.manual) {
+                    Ok(()) => {
+                        self.manual.clear();
+                        self.accepts_manual = false;
+                        self.status = Cow::Borrowed("checking pasted authorization…");
+                    }
+                    Err(problem) => self.status = Cow::Owned(format!("! {problem}")),
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn show<T: Terminal>(
+        &self,
+        renderer: &mut Renderer<T>,
+        terms: &Terms,
+        title: &str,
+    ) -> Result<(), Fatal> {
+        let (rows, caret) = self.frame(renderer.columns(), title);
+        renderer.live(&rows, caret, terms.style.palette())?;
+        Ok(())
+    }
+
+    fn frame(&self, columns: usize, title: &str) -> (Vec<Row>, Caret) {
+        let mut rows = Vec::with_capacity(7);
+        rows.push(Row::new().then(Slot::Strong, clip(title, columns)));
+        if let Some((url, code)) = &self.page {
+            rows.push(Row::new().then(Slot::Plain, clip(&format!("Open {url}"), columns)));
+            if let Some(code) = code {
+                rows.push(
+                    Row::new().then(Slot::Strong, clip(&format!("Enter code {code}"), columns)),
+                );
+            }
+            if self.browser_failed {
+                rows.push(Row::new().then(
+                    Slot::Quiet,
+                    clip("browser did not open; use the page above", columns),
+                ));
+            }
+        } else {
+            rows.push(Row::new().then(Slot::Quiet, clip("starting sign-in…", columns)));
+        }
+        if !self.accepts_manual {
+            rows.push(Row::new().then(Slot::Quiet, clip(&self.status, columns)));
+            let caret = Caret {
+                row: rows.len().saturating_sub(1),
+                column: 0,
+            };
+            return (rows, caret);
+        }
+
+        rows.push(Row::new().then(
+            Slot::Quiet,
+            clip("Paste the callback URL or code, then press Enter.", columns),
+        ));
+        let room = columns.saturating_sub(2);
+        let dots = "•".repeat(self.manual.chars().count().min(room));
+        rows.push(
+            Row::new()
+                .then(Slot::Accent, clip("> ", columns))
+                .then(Slot::Plain, &dots),
+        );
+        let hint = if self.limited {
+            "authorization input is limited to 16 KiB"
+        } else {
+            &self.status
+        };
+        rows.push(Row::new().then(Slot::Quiet, clip(hint, columns)));
+        let caret = Caret {
+            row: rows.len().saturating_sub(2),
+            column: (2 + dots.chars().count()).min(columns.saturating_sub(1)),
+        };
+        (rows, caret)
+    }
+}
+
 /// Asks for a key, writes it down, and sets this session up with it.
 fn given<T: Terminal>(
     named: Served,
@@ -287,20 +513,18 @@ fn given<T: Terminal>(
     }
 }
 
-/// Hands this session the provider the key that was just written down buys.
+/// Hands this session the provider whose credential was just written down.
 ///
-/// The key is on disk, so this run is now the run the next launch would be, and
-/// reading it back through the same resolution is what makes that true here
-/// instead of only at the next start. What it costs is a second read of a file
-/// written a line ago; what it buys is that somebody who has just logged in can
-/// type at the session in front of them.
+/// The credential is on disk, so this run is now the run the next launch would
+/// be, and reading it back through the same resolution is what makes that true
+/// here instead of only at the next start. What it costs is a second read of a
+/// file written a line ago; what it buys is that somebody who has just stored a
+/// credential can type at the session in front of them.
 ///
-/// A model and a rung come with it, and only where nothing has answered yet: a
-/// flag or a command that named one is somebody's own answer, and a file that
-/// said nothing about this run while there was no key does not get to overrule
-/// it now that there is. Where nothing names a model either, the line says so —
-/// `/model` is the other half of a first minute, and a session that stopped at
-/// "logged in" would leave the reader to find that out from the next refusal.
+/// Authentication never chooses a model or effort. Where nothing names a model,
+/// the line says so — `/model` is the other half of a first minute, and a
+/// session that stopped at "credential stored" would leave the reader to find
+/// that out from the next refusal.
 fn taken<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
@@ -311,33 +535,30 @@ fn taken<T: Terminal>(
         Ok(set) => set,
 
         // Written and unusable, which is exactly what the next run would meet.
-        // Said now rather than left for it: a session that looked logged in and
+        // Said now rather than left for it: a session that looked configured and
         // refused every turn is the state this whole command exists to end.
         Err(problem) => return say(renderer, terms, &format!("! {problem}")),
     };
 
+    let changed = terms.provider.get() != Some(named.name);
     runner.serve(set.provider);
     terms.provider.set(Some(named.name));
 
     // Written down as well as switched to, so the next run here opens on the
-    // vendor just logged in to instead of asking again — a key says a provider
-    // can be reached and never which to ask, and this command is somebody
-    // saying which. A failure loses the half that outlives the process and not
-    // the session in front of the reader, which is the bargain `/model` is on.
+    // provider whose credential was stored instead of asking again — a
+    // credential says a provider can be reached and never which to ask, and
+    // this command is somebody saying which. A failure loses the half that
+    // outlives the process and not the session in front of the reader, which is
+    // the bargain `/model` is on.
     if let Err(problem) = remember::asking(&terms.choosing, named.name) {
         say(renderer, terms, &format!("! {problem}"))?;
     }
 
-    if runner.model().is_empty()
-        && let Some(model) = set.model
-    {
-        runner.ask(&model);
-    }
-
-    if runner.effort().is_none()
-        && let Some(effort) = set.effort
-    {
-        runner.think(effort);
+    // A model belongs to the vendor serving it, so a switch of provider retires
+    // the one in force: sending the old vendor's name to the new one is the
+    // mismatch the refusal would otherwise arrive with.
+    if changed {
+        runner.ask("");
     }
 
     let said = if runner.model().is_empty() {
@@ -347,4 +568,49 @@ fn taken<T: Terminal>(
     };
 
     say(renderer, terms, &said)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_login_shows_the_short_page_and_masks_manual_input() {
+        let mut view = LoginView::new();
+        view.page = Some(("http://localhost:1455/launch".into(), None));
+        view.status = Cow::Borrowed("a browser should open; waiting for authorization…");
+        view.accepts_manual = true;
+        view.manual = "secret-callback".to_owned();
+        let (rows, caret) = view.frame(80, "Log in to ChatGPT");
+        let text: Vec<_> = rows.iter().map(Row::text).collect();
+
+        assert_eq!(text.first().map(String::as_str), Some("Log in to ChatGPT"));
+        assert!(text.iter().any(|row| row.contains("localhost:1455/launch")));
+        let input = text.iter().find(|row| row.starts_with("> ")).unwrap();
+        assert_eq!(input.chars().skip(2).count(), "secret-callback".len());
+        assert!(input.chars().skip(2).all(|character| character == '•'));
+        assert!(!text.iter().any(|row| row.contains("secret-callback")));
+        assert!(!text.iter().any(|row| row.contains("oauth/authorize")));
+        assert_eq!(caret.row, rows.len() - 2);
+    }
+
+    #[test]
+    fn every_login_row_and_its_caret_fit_a_narrow_terminal() {
+        let mut view = LoginView::new();
+        view.page = Some((
+            "http://localhost:1455/launch".into(),
+            Some("ABCD-EFGH".into()),
+        ));
+        view.status = Cow::Borrowed("waiting");
+        view.browser_failed = true;
+        view.accepts_manual = true;
+        view.manual = "pasted-code".to_owned();
+        view.limited = true;
+        for columns in 0..=32 {
+            let (rows, caret) = view.frame(columns, "Log in to ChatGPT");
+            assert!(rows.iter().all(|row| row.columns() <= columns));
+            assert!(caret.column <= columns.saturating_sub(1));
+            assert!(caret.row < rows.len());
+        }
+    }
 }

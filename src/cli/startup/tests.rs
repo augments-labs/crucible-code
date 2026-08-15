@@ -21,7 +21,13 @@ fn built(
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
     let subscriptions = Subscriptions::production();
-    provider(serving, settings, from, &Keys::default(), &subscriptions)
+    provider(
+        serving,
+        settings,
+        from,
+        &StoredCredentials::default(),
+        &subscriptions,
+    )
 }
 
 /// What a credential writes into the header it signs with.
@@ -185,6 +191,31 @@ fn an_openai_subscription_uses_its_fixed_audience() {
 }
 
 #[test]
+fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
+    // A variable is inherited from whichever shell launched this run; an
+    // account authorized through `/login` was chosen on purpose, after the
+    // shell was what it was. The deliberate credential signs the request.
+    let sample = Sample::new("subscription-over-environment");
+    let keys = sample.subscribed("openai");
+    let subscriptions = Subscriptions::production();
+
+    let (endpoint, _) = credential(
+        ApiAudience {
+            provider: "openai",
+            variable: "OPENAI_API_KEY",
+            vendor: OpenAi::VENDOR,
+        },
+        None,
+        &|_| Some("inherited-key".to_owned()),
+        &keys,
+        &subscriptions,
+    )
+    .expect("the explicitly stored account login");
+
+    assert_eq!(endpoint, OpenAi::SUBSCRIPTION);
+}
+
+#[test]
 fn a_kimi_subscription_uses_the_managed_coding_audience() {
     let sample = Sample::new("kimi-subscription-endpoint");
     let keys = sample.subscribed("moonshot");
@@ -235,8 +266,9 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
 #[test]
 fn a_subscription_token_never_follows_a_configured_api_key_address() {
     // `baseUrl` is somebody's reason not to reach the vendor, and a plan's
-    // token is the vendor's: with nothing else to sign with, the run gets the
-    // missing-key sentence rather than a subscription sent to a gateway.
+    // token is the vendor's: with nothing else to sign with, the run is told
+    // the two settings cannot stand together rather than sending the token to
+    // a gateway.
     let sample = Sample::new("subscription-custom-endpoint");
     let keys = sample.subscribed("openai");
     let settings =
@@ -252,7 +284,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     )
     .expect_err("a subscription sent to an API-key gateway");
 
-    assert!(matches!(problem, Fatal::Credential(_)), "{problem:?}");
+    assert!(matches!(problem, Fatal::SubscriptionAddress { .. }));
 }
 
 #[test]
@@ -372,7 +404,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
-        stored: &Keys::default(),
+        stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
     }) else {
         panic!("a startup with no key was accepted");
@@ -403,7 +435,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
-        stored: &Keys::default(),
+        stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
     })
     .expect("a session with nothing set up still starts");

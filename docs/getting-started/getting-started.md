@@ -64,22 +64,30 @@ cargo build --release
 ./target/release/crucible --version
 ```
 
-## Give it a key
+## Sign in or give it a key
 
-crucible reads a key from the environment, or from a file you can write it into
-instead. Which variable is read depends on the provider serving the model you
-ask for — `/login` inside a session says which, and
-[Providers and models](../providers/providers.md) has the rest.
+`/login` inside a session can authorize a ChatGPT or Kimi Code account, or keep
+a provider API key in crucible's protected store. An API key can instead come
+from the environment. [Providers and models](../providers/providers.md) has the
+exact routes and precedence.
 
 ```bash
 export ANTHROPIC_API_KEY=...
 ```
 
-Or type `/login anthropic` inside a session and let crucible keep the key
-instead of your shell profile. The box that opens draws a dot per character and
-never the key, and what it takes goes to `~/.crucible/auth.json`, a file only
-you can read. The session asks that provider from the next turn on — there is
-nothing to restart. An exported variable still wins over it.
+Type `/login` to choose an account or console-key route. ChatGPT offers a local
+browser callback and a device code for remote terminals; Kimi Code offers a
+device code. The live panel opens the authorization page, shows only the safe
+page and one-time code, stays cancellable with Escape, and takes a masked
+paste-back fallback for ChatGPT browser login. Anthropic has no account route;
+choose Console account and enter an Anthropic API key.
+
+`/login anthropic` is the direct API-key shortcut. The box draws a dot per
+character and never the key. Account tokens and API keys go to
+`~/.crucible/auth.json`, a file only you can read. The session asks that
+provider from the next turn on — there is nothing to restart. Authentication
+never chooses a model or effort; `/model` and `/effort` stay separate,
+explicit choices.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:

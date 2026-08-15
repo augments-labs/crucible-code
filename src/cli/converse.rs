@@ -37,6 +37,7 @@ use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
 use super::draw;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
+use super::subscription::Subscriptions;
 use super::unasked;
 use super::{Fatal, Serving, standing};
 use command::Ran;
@@ -96,6 +97,8 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
+    /// Subscription implementations compiled into this binary.
+    pub(crate) subscriptions: Subscriptions,
     /// Sets a provider up the way the launch set this run's up.
     ///
     /// `/login` is what calls it, handing back the keys it just wrote — so what

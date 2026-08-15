@@ -11,6 +11,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod browser;
 mod choice;
 mod converse;
 mod draw;
@@ -27,11 +28,12 @@ mod style;
 mod subscription;
 
 use std::cell::Cell;
+use std::fmt;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::Parser;
-use crucible_auth::{Keys, Store};
+use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
 use crucible_provider::EndpointError;
@@ -197,29 +199,48 @@ pub(crate) struct Served {
     pub(crate) models: &'static [Model],
 }
 
-/// What one provider is set up with, once there is a key for it.
+/// What one provider is set up with, once it has a credential.
 ///
-/// The three answers a launch reaches before the first prompt, in one value so
-/// that `/login` can reach them again from the prompt. A key is what all three
-/// waited on: a file that chose a model for a provider this machine could not
-/// reach was a file saying nothing about this run, and the moment a key arrives
-/// it is saying something.
+/// The two answers a launch reaches before the first prompt, in one value so
+/// that `/login` can reach them again from the prompt. A usable credential is
+/// what both waited on: a file that chose a model for a provider this machine
+/// could not reach was a file saying nothing about this run, and the moment a
+/// credential arrives it is saying something.
 pub(crate) struct Resolved {
     /// What a request is written to.
     pub(crate) provider: Box<dyn Provider>,
-    /// The model the files name for it, where they name one.
-    pub(crate) model: Option<Box<str>>,
-    /// The rung they name for it, where they name one.
-    pub(crate) effort: Option<Effort>,
+    /// Which non-secret source supplied its credential.
+    pub(crate) source: CredentialSource,
 }
 
-/// Sets one provider up from the keys in hand, the way the launch set this run's
-/// up.
+/// Where the active credential came from, without any credential bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CredentialSource {
+    /// An environment variable, named but never read back through this value.
+    Environment(Box<str>),
+    /// An API key written by `/login`.
+    StoredKey,
+    /// A renewable account login written by `/login`.
+    Subscription,
+}
+
+impl fmt::Display for CredentialSource {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Environment(name) => write!(out, "environment variable {name}"),
+            Self::StoredKey => out.write_str("a stored API key"),
+            Self::Subscription => out.write_str("a stored account login"),
+        }
+    }
+}
+
+/// Sets one provider up from the credentials in hand, the way the launch set
+/// this run's up.
 ///
 /// Boxed rather than borrowed because what it closes over are borrows of the
 /// launch, and a lifetime here would follow the value that holds it into the
 /// signature of everything a command is handed.
-pub(crate) type Serving = Box<dyn Fn(Served, &Keys) -> Result<Resolved, Fatal>>;
+pub(crate) type Serving = Box<dyn Fn(Served, &StoredCredentials) -> Result<Resolved, Fatal>>;
 
 /// What crucible says when nothing on this machine is set up to answer.
 ///
@@ -235,6 +256,15 @@ pub(crate) const NOTHING_TO_ASK: &str = "Warning: No models available. Use /logi
 /// sends the reader to check something that was never wrong.
 pub(crate) const NO_MODEL_CHOSEN: &str =
     "Warning: No model selected. Use /model to select the model to ask.";
+
+/// What it says when several providers are authenticated and none was chosen.
+///
+/// Authentication made models reachable; it did not choose which vendor may
+/// receive the next prompt. `/model` is the explicit joint provider/model
+/// choice, so telling somebody to log in again would name the wrong missing
+/// thing.
+pub(crate) const NO_PROVIDER_CHOSEN: &str =
+    "Warning: No provider selected. Use /model to select a provider and model.";
 
 /// Which of the two a session with no model has to say.
 ///
@@ -392,6 +422,23 @@ pub(crate) enum Fatal {
         source: EndpointError,
     },
 
+    /// A renewable token was paired with an API-key endpoint setting.
+    #[error(
+        "providers.{provider}.baseUrl cannot be used with a subscription login; \
+         export an API key to use that address"
+    )]
+    SubscriptionAddress {
+        /// The provider whose fixed subscription audience was selected.
+        provider: Box<str>,
+    },
+
+    /// Provider construction and source resolution disagreed.
+    #[error("no credential is available for {provider}; use /login or set its API key variable")]
+    Authentication {
+        /// The provider that could not be authenticated.
+        provider: Box<str>,
+    },
+
     /// The command line put nothing before the slash.
     #[error("--model needs a provider before the slash, as in --model openai/gpt-5.6-terra")]
     Providerless,
@@ -540,38 +587,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         choosing: crucible_config::user(&home),
 
         // What `/login` sets a session up with, answered the way this launch
-        // answered it for itself — so a key given at the prompt leaves the
-        // session asking what the next run here would ask, rather than what a
-        // second reading of the same files happened to say.
-        //
-        // The settings are cloned because this outlives every borrow in this
-        // function, and a lifetime on `Terms` would follow it into the
-        // signature of everything a command is handed. They are the files this
-        // run already read: nothing in them grows with the transcript.
-        serving: {
-            let settings = settings.clone();
-            let subscriptions = subscriptions.clone();
-
-            Box::new(move |named: Served, stored: &Keys| {
-                Ok(Resolved {
-                    provider: startup::provider(
-                        Some(named),
-                        &settings,
-                        &|name| std::env::var(name).ok(),
-                        stored,
-                        &subscriptions,
-                    )?,
-
-                    // No flag on either, and that is the whole of the
-                    // difference from the launch: what `--model` and `--effort`
-                    // said has already been applied, and re-applying it over
-                    // what the session has since been told would be this
-                    // answering a question somebody else already answered.
-                    model: wanted(&Choice::default(), &settings, Some(named)),
-                    effort: thinking(None, &settings, Some(named)),
-                })
-            })
-        },
+        // answered it for itself — so a credential given at the prompt leaves
+        // the session asking what the next run here would ask, rather than what
+        // a second reading of the same files happened to say.
+        serving: re_serving(settings.clone(), subscriptions.clone()),
 
         // The two `/resume` reads a directory of logs with. Both are settled
         // here for the same reason everything else in `Terms` is: the session
@@ -579,6 +598,9 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // is was decided before the first prompt.
         // The same directory the keys above were read from.
         logins: Store::in_home(home.path()),
+        // The account logins `/login` can start, the same registry the launch
+        // resolved stored subscriptions through.
+        subscriptions: subscriptions.clone(),
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };
@@ -643,6 +665,38 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     outcome
 }
 
+/// The `Serving` `/login` and `/logout` re-resolve a provider through.
+///
+/// The settings are cloned because the closure outlives every borrow in `run`,
+/// and a lifetime on `Terms` would follow it into the signature of everything
+/// a command is handed. They are the files this run already read: nothing in
+/// them grows with the transcript.
+fn re_serving(settings: Settings, subscriptions: Subscriptions) -> Serving {
+    Box::new(move |named: Served, stored: &StoredCredentials| {
+        let source = credential_source(
+            named,
+            &settings,
+            &|name| std::env::var(name).ok(),
+            stored,
+            &subscriptions,
+        )
+        .ok_or_else(|| Fatal::Authentication {
+            provider: named.name.into(),
+        })?;
+
+        Ok(Resolved {
+            provider: startup::provider(
+                Some(named),
+                &settings,
+                &|name| std::env::var(name).ok(),
+                stored,
+                &subscriptions,
+            )?,
+            source,
+        })
+    })
+}
+
 /// Which provider to ask when the flag named none, or `None` where this machine
 /// has nothing set up to ask.
 ///
@@ -670,7 +724,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 fn chosen(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    keys: &Keys,
+    keys: &StoredCredentials,
 ) -> Result<Option<Served>, Fatal> {
     // Refused here where a name this build has nothing for is a sentence naming
     // the ones it has, rather than carried as "nobody chose" into a session that
@@ -705,7 +759,7 @@ fn chosen(
 fn keyed<'a>(
     settings: &'a Settings,
     from: &'a dyn Fn(&str) -> Option<String>,
-    keys: &'a Keys,
+    keys: &'a StoredCredentials,
 ) -> impl Iterator<Item = Served> + 'a {
     PROVIDERS
         .into_iter()
@@ -734,6 +788,35 @@ fn held(one: Served, settings: &Settings, from: &dyn Fn(&str) -> Option<String>)
     }
 
     one.name.to_owned()
+}
+
+/// The source provider construction will select, without reading a secret out.
+///
+/// The order is the one [`startup::provider`] resolves in, and the two must
+/// agree: `/logout` names what remains after a stored credential is removed,
+/// and a source this computes that construction would not select is a sentence
+/// that lies.
+fn credential_source(
+    one: Served,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+    stored: &StoredCredentials,
+    subscriptions: &Subscriptions,
+) -> Option<CredentialSource> {
+    if settings.base_url(one.name).is_none()
+        && subscriptions.supports(one.name)
+        && stored.has_subscription(one.name)
+    {
+        return Some(CredentialSource::Subscription);
+    }
+    let variable = settings.api_key_env(one.name).unwrap_or(one.key);
+    if from(variable).is_some_and(|value| !value.trim().is_empty()) {
+        return Some(CredentialSource::Environment(variable.into()));
+    }
+    if stored.has_key(one.name) {
+        return Some(CredentialSource::StoredKey);
+    }
+    None
 }
 
 /// Which model to ask for, once the command line and the files have both spoken.

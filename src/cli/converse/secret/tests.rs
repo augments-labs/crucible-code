@@ -80,10 +80,28 @@ fn a_window_that_changed_size_is_answered_by_drawing_again() {
 }
 
 #[test]
-fn a_key_pasted_with_whatever_the_clipboard_had_round_it_is_trimmed() {
-    // A key arrives by paste far more often than it is typed, and a paste
-    // carries the newline the copy took with it. Sent as it stands, every
-    // vendor refuses it with a sentence about the key being wrong.
+fn a_secret_past_the_box_ceiling_is_refused_and_said_so_beneath_it() {
+    // The bound exists so a pasted file cannot become secret-shaped process
+    // memory: what does not fit is not retained, and the refusal is the one
+    // thing drawn about it.
+    let mut held = "x".repeat(MAX_BYTES);
+
+    assert_eq!(
+        typing(character('x'), &mut held),
+        Typing::Refused,
+        "one past the ceiling"
+    );
+    assert_eq!(held.len(), MAX_BYTES, "the refusal retains nothing more");
+
+    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+    standing(&mut renderer, Style::plain(), "paste key", 0, true).expect("the refusal to be drawn");
+    assert!(renderer.terminal().written().contains(LIMITED));
+}
+
+#[test]
+fn a_key_with_surrounding_whitespace_is_trimmed() {
+    // A copied key often carries spaces around it. Sent as it stands, every
+    // provider refuses it with a sentence about the key being wrong.
     assert_eq!(taken("  sk-a-key\n").as_deref(), Some("sk-a-key"));
 
     // Nothing left after that is the same answer as leaving, because it is the

@@ -39,14 +39,14 @@ fn lands(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Option<Served>, Fatal> {
-    landing(settings, from, &Keys::default())
+    landing(settings, from, &StoredCredentials::default())
 }
 
 /// The same, on a machine that has.
 fn landing(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    keys: &Keys,
+    keys: &StoredCredentials,
 ) -> Result<Option<Served>, Fatal> {
     chosen(settings, from, keys)
 }
@@ -98,6 +98,62 @@ fn a_machine_asked_which_provider_names_the_store_by_the_provider_it_holds() {
     assert!(said.contains("ANTHROPIC_API_KEY"), "{said}");
     assert!(said.contains("openai"), "{said}");
     assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+}
+
+#[test]
+fn the_source_a_credential_came_from_is_the_one_construction_would_use() {
+    // `/logout` names what remains after a removal from this answer, so it has
+    // to be the same order `startup::provider` resolves in: a deliberate
+    // account login, then the inherited variable, then the stored key.
+    let subscriptions = Subscriptions::production();
+
+    let sample = Sample::new("source-subscription");
+    let stored = sample.subscribed("openai");
+    let source = credential_source(
+        serving("openai"),
+        &Settings::default(),
+        &holding(&["OPENAI_API_KEY"]),
+        &stored,
+        &subscriptions,
+    );
+    assert_eq!(source, Some(CredentialSource::Subscription));
+
+    let source = credential_source(
+        serving("anthropic"),
+        &Settings::default(),
+        &holding(&["ANTHROPIC_API_KEY"]),
+        &StoredCredentials::default(),
+        &subscriptions,
+    );
+    assert_eq!(
+        source,
+        Some(CredentialSource::Environment("ANTHROPIC_API_KEY".into()))
+    );
+
+    let sample = Sample::new("source-stored");
+    let stored = sample.stored("openai");
+    let source = credential_source(
+        serving("openai"),
+        &Settings::default(),
+        &holding(&[]),
+        &stored,
+        &subscriptions,
+    );
+    assert_eq!(source, Some(CredentialSource::StoredKey));
+
+    // A plan's token is the vendor's: pointed at a configured gateway, the
+    // subscription is no source at all.
+    let settings =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    let stored = sample.subscribed("openai");
+    let source = credential_source(
+        serving("openai"),
+        &settings,
+        &holding(&[]),
+        &stored,
+        &subscriptions,
+    );
+    assert_eq!(source, None);
 }
 
 #[test]
