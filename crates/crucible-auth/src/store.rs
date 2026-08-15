@@ -15,9 +15,11 @@
 //! the other's provider; the rename is what stops a full disk leaving half a
 //! file where a whole one was.
 
+mod document;
+
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use crucible_core::ApiKey;
@@ -26,6 +28,13 @@ use crate::error::AuthError;
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
+
+/// The greatest store this process will hold while parsing.
+///
+/// An auth store is a small map of provider names to keys. Sixty-four KiB is
+/// hundreds of ordinary credentials and keeps a planted file from choosing
+/// the launch's allocation.
+const MAX_STORE: usize = 64 * 1024;
 
 /// The lock beside it, and the temporary the write renames from.
 ///
@@ -50,13 +59,6 @@ const PARTIAL: &str = "auth.json.new";
 /// telling them to try again rather than something that looks like a hang.
 const ATTEMPTS: u32 = 250;
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
-
-/// What this version of crucible writes, and the highest it can read.
-///
-/// A number rather than a guess at the shape, so a file from a version that
-/// does not exist yet is a case this one can recognise and decline instead of
-/// a parse failure it would report as damage.
-const VERSION: u64 = 1;
 
 /// Where the keys crucible was given are written down.
 #[derive(Debug, Clone)]
@@ -89,24 +91,18 @@ impl Store {
     /// be done comes back in [`Keys::trouble`] for the user to be told once.
     #[must_use]
     pub fn read(&self) -> Keys {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(trouble) if trouble.kind() == std::io::ErrorKind::NotFound => {
-                return Keys::default();
-            }
-            // Anything else — a directory in the way, a permission denied — is
-            // reported rather than passed off as "never logged in".
-            Err(trouble) => {
-                return Keys::nothing(&format!("{FILE} could not be opened: {trouble}"));
-            }
+        let text = match self.read_text() {
+            Ok(Some(text)) => text,
+            Ok(None) => return Keys::default(),
+            Err(trouble) => return Keys::nothing(&trouble.to_string()),
         };
 
-        let mut keys = match parse(&text) {
+        let mut keys = match document::parse(&text) {
             Ok(keys) => Keys {
                 keys,
                 trouble: None,
             },
-            Err(said) => Keys::nothing(&said),
+            Err(said) => Keys::nothing(&said.to_string()),
         };
 
         if let Some(said) = tighten(&self.path) {
@@ -156,12 +152,11 @@ impl Store {
         self.directory()?;
         let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
 
-        let mut keys = match fs::read_to_string(&self.path) {
-            Ok(text) => parse(&text).map_err(|_| AuthError::Unreadable {
+        let mut keys = match self.read_text()? {
+            Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
                 path: self.path.clone(),
             })?,
-            Err(trouble) if trouble.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(trouble) => return Err(AuthError::at(&self.path)(trouble)),
+            None => BTreeMap::new(),
         };
 
         if !change(&mut keys) {
@@ -169,7 +164,7 @@ impl Store {
         }
 
         let partial = self.home.join(PARTIAL);
-        write_private(&partial, &render(&keys))?;
+        write_private(&partial, &document::render(&keys))?;
         fs::rename(&partial, &self.path).map_err(AuthError::at(&self.path))
     }
 
@@ -187,6 +182,28 @@ impl Store {
         }
 
         Ok(())
+    }
+
+    /// Reads no more than one bounded store from disk.
+    fn read_text(&self) -> Result<Option<String>, AuthError> {
+        let file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(problem) => return Err(AuthError::at(&self.path)(problem)),
+        };
+
+        let mut text = String::new();
+        file.take((MAX_STORE + 1) as u64)
+            .read_to_string(&mut text)
+            .map_err(AuthError::at(&self.path))?;
+        if text.len() > MAX_STORE {
+            return Err(AuthError::TooLarge {
+                path: self.path.clone(),
+                maximum: MAX_STORE,
+            });
+        }
+
+        Ok(Some(text))
     }
 }
 
@@ -243,49 +260,6 @@ impl std::fmt::Debug for Keys {
             .field("trouble", &self.trouble)
             .finish()
     }
-}
-
-/// The stored map, or a sentence saying why there is none.
-///
-/// Walked rather than derived onto a mirror struct, the way every other
-/// boundary in this workspace reads JSON — and here it also means a key is
-/// never handed to a derive that could put it in a `Debug`.
-fn parse(text: &str) -> Result<BTreeMap<String, String>, String> {
-    let document: serde_json::Value =
-        serde_json::from_str(text).map_err(|why| format!("{FILE} could not be read: {why}"))?;
-
-    match document.get("version").and_then(serde_json::Value::as_u64) {
-        Some(VERSION) => {}
-        Some(later) => {
-            return Err(format!(
-                "{FILE} was written by a later version of crucible (version {later}), so nobody is logged in here"
-            ));
-        }
-        None => return Err(format!("{FILE} does not say which version wrote it")),
-    }
-
-    let Some(keys) = document.get("keys").and_then(serde_json::Value::as_object) else {
-        return Err(format!("{FILE} holds no keys"));
-    };
-
-    Ok(keys
-        .iter()
-        .filter_map(|(provider, key)| Some((provider.clone(), key.as_str()?.to_owned())))
-        .collect())
-}
-
-/// The file's whole text.
-fn render(keys: &BTreeMap<String, String>) -> String {
-    let keys: serde_json::Map<_, _> = keys
-        .iter()
-        .map(|(provider, key)| (provider.clone(), serde_json::Value::from(key.as_str())))
-        .collect();
-
-    serde_json::Value::from(serde_json::Map::from_iter([
-        ("version".to_owned(), serde_json::Value::from(VERSION)),
-        ("keys".to_owned(), serde_json::Value::from(keys)),
-    ]))
-    .to_string()
 }
 
 /// Writes `text` to `path`, readable by nobody else, and does not return until

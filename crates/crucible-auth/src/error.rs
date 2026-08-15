@@ -45,6 +45,15 @@ pub enum AuthError {
         /// The store.
         path: PathBuf,
     },
+
+    /// The store exceeded the boundary this process will hold while parsing.
+    #[error("{path} is larger than the {maximum}-byte auth store limit")]
+    TooLarge {
+        /// The store.
+        path: PathBuf,
+        /// The greatest accepted byte length.
+        maximum: usize,
+    },
 }
 
 impl AuthError {

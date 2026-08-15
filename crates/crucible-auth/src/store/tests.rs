@@ -108,6 +108,53 @@ fn a_store_nobody_can_parse_reports_it_and_still_starts() {
 }
 
 #[test]
+fn one_non_text_key_refuses_the_whole_store_and_is_never_rewritten() {
+    let scratch = Scratch::new("non-text-key");
+    let written = format!(r#"{{"version":1,"keys":{{"openai":"{SECRET}","moonshot":17}}}}"#);
+    let store = scratch.holding(&written);
+
+    let keys = store.read();
+    assert_eq!(keys.providers().count(), 0, "a partial store was accepted");
+    assert!(
+        keys.trouble().is_some(),
+        "the malformed key was not reported"
+    );
+    assert!(matches!(
+        store.keep("anthropic", SECRET),
+        Err(AuthError::Unreadable { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(scratch.home().join(FILE)).unwrap(),
+        written
+    );
+}
+
+#[test]
+fn a_store_over_the_byte_bound_is_refused_before_it_can_choose_an_allocation() {
+    let scratch = Scratch::new("too-large");
+    let written = "x".repeat(MAX_STORE + 1);
+    let store = scratch.holding(&written);
+
+    let keys = store.read();
+    assert_eq!(keys.providers().count(), 0);
+    assert!(
+        keys.trouble()
+            .is_some_and(|said| said.contains(&MAX_STORE.to_string()))
+    );
+    assert!(matches!(
+        store.keep("openai", SECRET),
+        Err(AuthError::TooLarge {
+            maximum: MAX_STORE,
+            ..
+        })
+    ));
+    assert_eq!(
+        fs::read_to_string(scratch.home().join(FILE)).unwrap(),
+        written
+    );
+}
+
+#[test]
 fn a_store_from_a_later_version_is_left_alone_rather_than_guessed_at() {
     let scratch = Scratch::new("newer");
     let written = format!(r#"{{"version":99,"keys":{{"openai":"{SECRET}"}}}}"#);
