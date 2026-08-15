@@ -50,7 +50,7 @@ pub enum ToolError {
 }
 
 /// The model asking to run a tool.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ToolCall {
     /// The provider's identifier, used to match the result back to the call.
     pub id: ToolId,
@@ -58,6 +58,16 @@ pub struct ToolCall {
     pub name: Box<str>,
     /// The arguments, still as the model wrote them.
     pub args: ToolArgs,
+}
+
+impl fmt::Debug for ToolCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolCall")
+            .field("id", &"[redacted]")
+            .field("name", &"[redacted]")
+            .field("args", &"[redacted]")
+            .finish()
+    }
 }
 
 /// Tool arguments as JSON text.
@@ -82,19 +92,25 @@ impl ToolArgs {
 }
 
 impl fmt::Debug for ToolArgs {
-    /// Shown in full. Arguments are the agent's reasoning made visible and are
-    /// what a user is deciding about at the permission prompt; a redacted one
-    /// would make that decision impossible.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ToolArgs({})", self.0)
+        f.write_str("ToolArgs([redacted])")
     }
 }
 
 /// What a tool produced, on its way back to the model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
+}
+
+impl fmt::Debug for ToolOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolOutput")
+            .field("text", &"[redacted]")
+            .field("failed", &self.failed)
+            .finish()
+    }
 }
 
 impl ToolOutput {
@@ -186,11 +202,32 @@ mod tests {
     }
 
     #[test]
-    fn argument_debug_shows_the_arguments() {
-        // The permission prompt shows these. Redacting them would ask the user
-        // to approve something they cannot see.
-        let args = ToolArgs::new(r#"{"command":"rm -rf /"}"#);
-        assert!(format!("{args:?}").contains("rm -rf /"));
+    fn argument_debug_never_shows_the_arguments() {
+        let args = ToolArgs::new(r#"{"token":"debug-canary"}"#);
+        let shown = format!("{args:?}");
+        assert!(!shown.contains("debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn call_debug_never_shows_provider_output() {
+        let call = ToolCall {
+            id: ToolId::new("id-debug-canary"),
+            name: "name-debug-canary".into(),
+            args: ToolArgs::new(r#"{"token":"args-debug-canary"}"#),
+        };
+        let shown = format!("{call:?}");
+        for canary in ["id-debug-canary", "name-debug-canary", "args-debug-canary"] {
+            assert!(!shown.contains(canary), "{shown}");
+        }
+    }
+
+    #[test]
+    fn output_debug_never_shows_workspace_content() {
+        let output = ToolOutput::ok("output-debug-canary");
+        let shown = format!("{output:?}");
+        assert!(!shown.contains("output-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"));
     }
 
     #[test]

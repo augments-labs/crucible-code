@@ -198,8 +198,12 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
     // transcript is sent to, not something a transcript belongs to.
     let sent = after.lock().unwrap();
     let carried = sent.first().expect("the request it was just handed");
-    let said = format!("{:?}", carried.transcript);
-    assert!(said.contains("from the first"), "{said}");
+    assert!(
+        carried.transcript.messages().iter().any(
+            |message| matches!(message, Message::Agent { text, .. } if &**text == "from the first")
+        ),
+        "the first provider's answer was not carried"
+    );
 }
 
 #[test]
