@@ -1,0 +1,29 @@
+[package]
+name = "crucible-privacy"
+description = "Private directories and files for crucible's sensitive local state."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `PrivacyError` preserves the I/O source while keeping this crate's public
+# fallible boundary typed like every other crucible crate.
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# No-follow opens make the same lookup both reject a symbolic-link leaf and
+# return the handle whose permissions are tightened; std exposes no O_NOFOLLOW.
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Windows expresses owner-only access with a protected DACL, and an identity
+# claim uses a one-byte range lock outside private-file content. Kept here so
+# those unsafe platform calls have one audited home shared by sessions and auth.
+windows-sys.workspace = true
+
+[lints]
+workspace = true
