@@ -17,7 +17,7 @@
 
 mod document;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -25,6 +25,9 @@ use std::path::{Path, PathBuf};
 use crucible_core::ApiKey;
 
 use crate::error::AuthError;
+use crate::renewable::Tokens;
+
+use self::document::Document;
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
@@ -60,6 +63,13 @@ const PARTIAL: &str = "auth.json.new";
 const ATTEMPTS: u32 = 250;
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// What this version of crucible writes, and the highest it can read.
+///
+/// A number rather than a guess at the shape, so a file from a version that
+/// does not exist yet is a case this one can recognise and decline instead of
+/// a parse failure it would report as damage.
+const VERSION: u64 = 2;
+
 /// Where the keys crucible was given are written down.
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -86,31 +96,28 @@ impl Store {
     /// Every key the store holds.
     ///
     /// Infallible on purpose. Absent, unreadable, or written by a version that
-    /// does not exist yet all mean the same thing to a launch — nobody is
-    /// logged in — and most launches need no stored key at all. What could not
-    /// be done comes back in [`Keys::trouble`] for the user to be told once.
+    /// does not exist yet all mean the same thing to a launch — no stored
+    /// credential is available — and a usable environment key can still serve
+    /// it. What could not be done comes back in
+    /// [`StoredCredentials::trouble`] for the user to be told once.
     #[must_use]
-    pub fn read(&self) -> Keys {
+    pub fn read(&self) -> StoredCredentials {
         let secured = match self.secure_existing() {
             Ok(Some(secured)) => secured,
-            Ok(None) => return Keys::default(),
-            Err(problem) => return Keys::nothing(&problem.to_string()),
+            Ok(None) => return StoredCredentials::default(),
+            Err(problem) => return StoredCredentials::nothing(&problem.to_string()),
         };
 
         let text = match self.read_text() {
             Ok(Some(text)) => text,
-            Ok(None) => return Keys::default(),
-            Err(trouble) => return Keys::nothing(&trouble.to_string()),
+            Ok(None) => return StoredCredentials::default(),
+            Err(problem) => return StoredCredentials::nothing(&problem.to_string()),
         };
 
         let mut keys = match document::parse(&text) {
-            Ok(keys) => Keys {
-                keys,
-                trouble: None,
-            },
-            Err(said) => Keys::nothing(&said.to_string()),
+            Ok(document) => StoredCredentials::from_document(document),
+            Err(problem) => StoredCredentials::nothing(&problem.to_string()),
         };
-
         if let Some(said) = secured.warning {
             keys.also(&said);
         }
@@ -125,8 +132,26 @@ impl Store {
     /// [`AuthError`] when the store cannot be read back, when another crucible
     /// holds the lock, or when the file cannot be written.
     pub fn keep(&self, provider: &str, key: &str) -> Result<(), AuthError> {
-        self.change(|keys| {
-            keys.insert(provider.to_owned(), key.to_owned());
+        self.change(|document| {
+            let removed_subscription = document.subscriptions.remove(provider).is_some();
+            let changed =
+                document.keys.get(provider).is_none_or(|held| held != key) || removed_subscription;
+            document.keys.insert(provider.to_owned(), key.to_owned());
+            changed
+        })
+    }
+
+    /// Writes a completed subscription login and removes an API key previously
+    /// selected for the same provider.
+    #[cfg(test)]
+    pub(crate) fn keep_subscription(
+        &self,
+        provider: &str,
+        tokens: Tokens,
+    ) -> Result<(), AuthError> {
+        self.change(|document| {
+            document.keys.remove(provider);
+            document.subscriptions.insert(provider.to_owned(), tokens);
             true
         })
     }
@@ -138,8 +163,9 @@ impl Store {
     /// [`AuthError`] as [`Store::keep`].
     pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
         let mut had = false;
-        self.change(|keys| {
-            had = keys.remove(provider).is_some();
+        self.change(|document| {
+            had = document.keys.remove(provider).is_some()
+                | document.subscriptions.remove(provider).is_some();
             had
         })?;
 
@@ -151,32 +177,39 @@ impl Store {
     /// `change` says whether anything moved: forgetting a provider that was
     /// never there rewrites nothing, which keeps the file's modification time
     /// honest about when somebody last logged in or out.
-    fn change(
-        &self,
-        change: impl FnOnce(&mut BTreeMap<String, String>) -> bool,
-    ) -> Result<(), AuthError> {
+    fn change(&self, change: impl FnOnce(&mut Document) -> bool) -> Result<(), AuthError> {
         self.directory()?;
         let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
         let _secured = self.secure_existing()?;
 
-        let mut keys = match self.read_text()? {
+        let mut document = match self.read_text()? {
             Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
                 path: self.path.clone(),
             })?,
-            None => BTreeMap::new(),
+            None => Document::default(),
         };
 
-        if !change(&mut keys) {
+        if !change(&mut document) {
             return Ok(());
         }
 
+        self.write(&document)
+    }
+
+    /// Replaces the complete protected document after its caller took the
+    /// store lock.
+    fn write(&self, document: &Document) -> Result<(), AuthError> {
         let partial = self.home.join(PARTIAL);
-        write_private(&partial, &document::render(&keys))?;
+        write_private(&partial, &document::render(document))?;
         crucible_privacy::replace(&partial, &self.path)
             .map_err(|problem| AuthError::at(&self.path)(problem.into_io()))
     }
 
     /// The directory, created or tightened so only this user can enter it.
+    ///
+    /// The directory also holds configuration and sessions, all private user
+    /// state. Tightening an older directory before creating the partial is what
+    /// makes the file private from its first observable moment on Windows.
     fn directory(&self) -> Result<(), AuthError> {
         crucible_privacy::directory(&self.home)
             .map_err(|problem| AuthError::at(&self.home)(problem.into_io()))
@@ -238,19 +271,39 @@ struct Secured {
 
 /// The keys the store held, and anything that has to be said about reading it.
 #[derive(Default)]
-pub struct Keys {
+pub struct StoredCredentials {
     /// Provider name to the key written down for it.
     keys: BTreeMap<String, String>,
+    /// Provider name to its renewable subscription credential.
+    subscriptions: BTreeMap<String, Tokens>,
+    /// The union, retained once so listing never duplicates a malformed name.
+    providers: BTreeSet<String>,
     /// What reading could not do, in a sentence for the user.
     trouble: Option<Box<str>>,
 }
 
-impl Keys {
+impl StoredCredentials {
+    /// A complete parsed document.
+    fn from_document(document: Document) -> Self {
+        let providers = document
+            .keys
+            .keys()
+            .chain(document.subscriptions.keys())
+            .cloned()
+            .collect();
+        Self {
+            keys: document.keys,
+            subscriptions: document.subscriptions,
+            providers,
+            trouble: None,
+        }
+    }
+
     /// No keys, and a reason.
     fn nothing(said: &str) -> Self {
         Self {
-            keys: BTreeMap::new(),
             trouble: Some(said.into()),
+            ..Self::default()
         }
     }
 
@@ -269,9 +322,28 @@ impl Keys {
         self.keys.get(provider).map(ApiKey::new)
     }
 
-    /// Every provider with a key here, in name order.
+    /// Whether either supported credential kind is selected for `provider`.
+    #[must_use]
+    pub fn has(&self, provider: &str) -> bool {
+        self.providers.contains(provider)
+    }
+
+    /// Whether `provider` has an API key in the protected store.
+    #[must_use]
+    pub fn has_key(&self, provider: &str) -> bool {
+        self.keys.contains_key(provider)
+    }
+
+    /// Whether `provider` has a renewable account credential in the protected
+    /// store.
+    #[must_use]
+    pub fn has_subscription(&self, provider: &str) -> bool {
+        self.subscriptions.contains_key(provider)
+    }
+
+    /// Every provider with either stored credential kind, in name order.
     pub fn providers(&self) -> impl Iterator<Item = &str> {
-        self.keys.keys().map(String::as_str)
+        self.providers.iter().map(String::as_str)
     }
 
     /// What reading the store could not do, once, for the user to be told.
@@ -282,12 +354,12 @@ impl Keys {
 }
 
 /// Written by hand: the derived one would print every key it holds.
-impl std::fmt::Debug for Keys {
+impl std::fmt::Debug for StoredCredentials {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("Keys")
-            .field("providers", &self.keys.keys())
+        out.debug_struct("StoredCredentials")
+            .field("providers", &self.providers)
             .field("trouble", &self.trouble)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
