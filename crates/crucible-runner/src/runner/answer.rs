@@ -25,6 +25,9 @@ pub(crate) struct Answer {
     stop: Option<StopReason>,
     argument_bytes: usize,
     metadata_bytes: usize,
+    retained_bytes: usize,
+    turn_held: usize,
+    turn_maximum: usize,
 }
 
 /// One tool call, still arriving.
@@ -41,6 +44,7 @@ impl fmt::Debug for Answer {
             .field("text", &"[redacted]")
             .field("calls", &self.calls.len())
             .field("stop", &self.stop)
+            .field("retained_bytes", &self.retained_bytes)
             .finish_non_exhaustive()
     }
 }
@@ -57,7 +61,13 @@ impl fmt::Debug for Building {
 
 impl Answer {
     /// Nothing said yet.
+    #[cfg(test)]
     pub(crate) fn new(provider: &'static str) -> Self {
+        Self::within(provider, 0, usize::MAX)
+    }
+
+    /// Nothing said yet, with the room this response has left in its turn.
+    pub(crate) fn within(provider: &'static str, turn_held: usize, turn_maximum: usize) -> Self {
         Self {
             provider,
             text: String::new(),
@@ -65,6 +75,9 @@ impl Answer {
             stop: None,
             argument_bytes: 0,
             metadata_bytes: 0,
+            retained_bytes: 0,
+            turn_held,
+            turn_maximum,
         }
     }
 
@@ -77,7 +90,9 @@ impl Answer {
             MAX_RESPONSE_TEXT,
             ProviderLimit::Text,
         )?;
+        self.turn_room(text.len())?;
         self.text.push_str(text);
+        self.retained_bytes += text.len();
         Ok(())
     }
 
@@ -110,12 +125,14 @@ impl Answer {
             MAX_TOOL_CALLS,
             ProviderLimit::ToolCalls,
         )?;
+        self.turn_room(incoming)?;
         self.calls.push(Building {
             id,
             name,
             args: String::new(),
         });
         self.metadata_bytes += incoming;
+        self.retained_bytes += incoming;
         Ok(())
     }
 
@@ -135,6 +152,7 @@ impl Answer {
             MAX_TOOL_ARGUMENTS,
             ProviderLimit::ToolArguments,
         )?;
+        self.turn_room(fragment.len())?;
         let Some(building) = self.calls.last_mut() else {
             return Err(ProviderError::Protocol {
                 provider: self.provider,
@@ -144,6 +162,7 @@ impl Answer {
 
         building.args.push_str(fragment);
         self.argument_bytes += fragment.len();
+        self.retained_bytes += fragment.len();
         Ok(())
     }
 
@@ -179,6 +198,20 @@ impl Answer {
             });
         }
         Ok(())
+    }
+
+    fn turn_room(&self, incoming: usize) -> Result<(), ProviderError> {
+        self.room(
+            self.turn_held.saturating_add(self.retained_bytes),
+            incoming,
+            self.turn_maximum,
+            ProviderLimit::TurnResponseBytes,
+        )
+    }
+
+    /// Provider-controlled bytes this response retained.
+    pub(crate) const fn retained(&self) -> usize {
+        self.retained_bytes
     }
 
     /// Why the model stopped, or `None` if it never said.
@@ -358,6 +391,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn response_bytes_are_bounded_across_the_turn_before_append() {
+        let mut answer = Answer::within("test", 8, 10);
+        answer.say("xx").unwrap();
+
+        let problem = answer.say("x").unwrap_err();
+
+        assert!(matches!(
+            problem,
+            ProviderError::Limit {
+                limit: ProviderLimit::TurnResponseBytes,
+                maximum: 10,
+                ..
+            }
+        ));
+        assert_eq!(answer.retained(), 2, "the refused byte was not retained");
     }
 
     #[test]

@@ -9,7 +9,7 @@
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
-    Request, StopReason, ToolCall, Transcript, TurnError, TurnId,
+    ProviderError, ProviderLimit, Request, StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
 use crate::session::Session;
@@ -20,6 +20,48 @@ mod work;
 
 use answer::Answer;
 use work::{Went, Work};
+
+const MAX_PROVIDER_RESPONSES_PER_TURN: usize = 32;
+const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TOOL_CALLS_PER_TURN: usize = 128;
+
+/// Provider-controlled work retained during one turn.
+#[derive(Default)]
+struct TurnBounds {
+    responses: usize,
+    retained: usize,
+    calls: usize,
+}
+
+impl TurnBounds {
+    fn before_response(&self, provider: &'static str) -> Result<(), ProviderError> {
+        if self.responses == MAX_PROVIDER_RESPONSES_PER_TURN {
+            return Err(ProviderError::Limit {
+                provider,
+                limit: ProviderLimit::ProviderResponses,
+                maximum: MAX_PROVIDER_RESPONSES_PER_TURN,
+            });
+        }
+        Ok(())
+    }
+
+    fn heard(&mut self, answer: &Answer) {
+        self.responses += 1;
+        self.retained = self.retained.saturating_add(answer.retained());
+    }
+
+    fn accept_calls(&mut self, provider: &'static str, calls: usize) -> Result<(), ProviderError> {
+        if calls > MAX_TOOL_CALLS_PER_TURN.saturating_sub(self.calls) {
+            return Err(ProviderError::Limit {
+                provider,
+                limit: ProviderLimit::TurnToolCalls,
+                maximum: MAX_TOOL_CALLS_PER_TURN,
+            });
+        }
+        self.calls += calls;
+        Ok(())
+    }
+}
 
 /// Which model to ask, and how.
 #[derive(Debug, Clone)]
@@ -366,8 +408,12 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<StopReason, TurnError> {
+        let mut bounds = TurnBounds::default();
         loop {
-            let (answer, said) = self.listen(events, cancel)?;
+            bounds.before_response(self.provider.name())?;
+            let (answer, said) =
+                self.listen(events, cancel, bounds.retained, MAX_TURN_RESPONSE_BYTES)?;
+            bounds.heard(&answer);
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Self::over(said, &calls) {
@@ -386,6 +432,8 @@ impl Runner {
                 });
                 return Ok(stop);
             }
+
+            bounds.accept_calls(self.provider.name(), calls.len())?;
 
             for call in &calls {
                 events.post(Event::ToolRequested { call: call.clone() });
@@ -463,9 +511,11 @@ impl Runner {
         &mut self,
         events: &dyn Post,
         cancel: &Cancel,
+        held: usize,
+        maximum: usize,
     ) -> Result<(Answer, StopReason), TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
-        let mut answer = Answer::new(self.provider.name());
+        let mut answer = Answer::within(self.provider.name(), held, maximum);
 
         let heard = Self::hear(stream.as_mut(), &mut answer, events)
             .and_then(|()| answer.reached().map_err(TurnError::from));

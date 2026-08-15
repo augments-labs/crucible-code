@@ -51,3 +51,7 @@ One provider response is bounded before appending: 8 MiB of visible text,
 1 MiB of tool arguments, 128 tool calls, and explicit per-field and cumulative
 metadata ceilings. Stop is terminal; accepting anything after it would let a
 malformed stream keep growing a response the model already ended.
+
+Across a turn, at most 32 provider responses, 128 tool calls, and 16 MiB of
+provider-controlled response data may be retained. Each bound is checked before
+the incoming data is appended or a tool is run.
