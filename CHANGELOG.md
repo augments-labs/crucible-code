@@ -8,6 +8,9 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Providers share one process-wide connection pool.** Replacing a provider
+  keeps established HTTP connections instead of constructing another pool.
+
 - **Provider transports own one serialized request.** Headers and body can move
   into cancellable setup without cloning transcript-sized data.
 

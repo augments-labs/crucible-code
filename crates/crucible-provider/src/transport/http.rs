@@ -9,6 +9,7 @@
 //! would be a scheduler brought in to serve one socket.
 
 use std::io::{self, Read};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crucible_core::{Cancel, Outgoing};
@@ -44,15 +45,23 @@ const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 /// An HTTPS transport.
 #[derive(Debug)]
 pub struct Https {
+    shared: Arc<Shared>,
+}
+
+/// Process-lifetime connection state shared by every provider.
+#[derive(Debug)]
+struct Shared {
     agent: ureq::Agent,
 }
 
+static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
+
 impl Https {
-    /// A transport with one pooled agent.
+    /// A transport over the process's pooled agent.
     ///
     /// The agent is what keeps the TLS handshake off every turn after the
     /// first, which is the difference between a turn starting in milliseconds
-    /// and starting in a round trip.
+    /// and starting a network request.
     #[must_use]
     pub fn new() -> Self {
         let config = ureq::Agent::config_builder()
@@ -70,7 +79,11 @@ impl Https {
             .build();
 
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            shared: Arc::clone(SHARED.get_or_init(|| {
+                Arc::new(Shared {
+                    agent: ureq::Agent::new_with_config(config),
+                })
+            })),
         }
     }
 }
@@ -89,7 +102,7 @@ impl Https {
     /// [`TransportError`] if the request could not be sent. A response with a
     /// status the caller dislikes is not an error.
     pub fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, TransportError> {
-        let mut request = self.agent.get(url);
+        let mut request = self.shared.agent.get(url);
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -128,6 +141,7 @@ impl Transport for Https {
         // nobody waiting on it — is better off blocking, and keeps the deadline
         // it has.
         let mut request = self
+            .shared
             .agent
             .post(url)
             .config()
@@ -462,6 +476,14 @@ mod tests {
         // a key. Nothing here holds one, and nothing here may start to.
         let shown = format!("{:?}", Https::new());
         assert!(shown.starts_with("Https"), "unexpected debug: {shown}");
+    }
+
+    #[test]
+    fn every_transport_reuses_the_process_connection_pool() {
+        let first = Https::new();
+        let replacement = Https::new();
+
+        assert!(Arc::ptr_eq(&first.shared, &replacement.shared));
     }
 
     #[test]
