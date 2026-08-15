@@ -13,6 +13,16 @@ Notable changes to crucible. Format follows
   `scripts/uninstall.sh` preserves configuration and sessions unless
   explicitly asked to purge them.
 
+### Changed
+
+- **Release builds are pinned, smoked and attested before publication.** Linux
+  artifacts now build in a digest-pinned CentOS Stream 9 image, making the
+  documented glibc 2.34 floor a build input — the published 0.1.6 artifacts
+  still need 2.39 and cannot be replaced in place. rustup is bootstrapped from
+  a versioned, checksummed installer, the built archive passes the smoke gate
+  pre-publish, and the release attests its binaries and ships `install.sh`,
+  `uninstall.sh` and `budgets.json` as assets.
+
 ### Internal
 
 - **The smoke gate verifies checksums exactly and enforces the glibc floor.**
