@@ -1,10 +1,13 @@
 //! Reading a file.
 
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 
-use crucible_core::{Approved, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace};
+use crucible_core::{
+    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+};
 
 use crate::args::Args;
+use crate::bound::OUTPUT;
 use crate::target;
 
 /// The name the model calls.
@@ -27,6 +30,12 @@ const CEILING: usize = 10_000;
 /// fill the whole answer with text nobody — model or user — can read.
 const WIDTH: usize = 2_000;
 
+/// The size of each input read while looking for the end of one line.
+const BLOCK: usize = 8 * 1_024;
+
+/// Room kept for the pagination note while output lines are added.
+const NOTICE: usize = 128;
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments. The provider moves it out before sending the rest as the schema.
 const SCHEMA: &str = r#"{
@@ -45,7 +54,7 @@ const SCHEMA: &str = r#"{
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many lines to return. Defaults to 2000, and never more than 10000 however large a number is sent."
+      "description": "How many lines to return. Defaults to 2000, and never more than 10000 however large a number is sent. The answer is also cut at 30000 bytes, whichever comes first."
     }
   },
   "required": ["path"]
@@ -55,13 +64,14 @@ const SCHEMA: &str = r#"{
 #[derive(Debug)]
 pub struct Read {
     workspace: Workspace,
+    cancel: Cancel,
 }
 
 impl Read {
     /// Reads inside `workspace`, and nowhere else.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
+        Self { workspace, cancel }
     }
 
     /// Numbers the lines the call asked for.
@@ -71,18 +81,22 @@ impl Read {
     /// would mean reading a gigabyte to answer a question about its first
     /// page.
     fn numbered(
-        lines: impl BufRead,
+        &self,
+        mut lines: impl BufRead,
         requested: &str,
         from: usize,
         limit: usize,
     ) -> Result<ToolOutput, ToolError> {
         let mut out = String::new();
         let mut shown = 0;
-        let mut more = false;
+        let mut number = 0;
+        let mut more = None;
 
-        for (index, line) in lines.lines().enumerate().skip(from - 1) {
-            let line = match line {
-                Ok(line) => line,
+        loop {
+            let line = match bounded_line(&mut lines, &self.cancel) {
+                Ok(NextLine::Line(line)) => line,
+                Ok(NextLine::End) => break,
+                Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME)),
                 // Not text. That is an answer the model should have, not a
                 // breakdown of the mechanism.
                 Err(problem) if problem.kind() == ErrorKind::InvalidData => {
@@ -98,13 +112,24 @@ impl Read {
                     });
                 }
             };
+            number += 1;
+
+            if number < from {
+                continue;
+            }
 
             if shown == limit {
-                more = true;
+                more = Some(number);
                 break;
             }
 
-            out.push_str(&numbered_line(index + 1, &line));
+            let rendered = numbered_line(number, &line);
+            if out.len() + rendered.len() + NOTICE > OUTPUT {
+                more = Some(number);
+                break;
+            }
+
+            out.push_str(&rendered);
             shown += 1;
         }
 
@@ -112,12 +137,9 @@ impl Read {
             return Ok(ToolOutput::ok(format!("{requested} has no line {from}")));
         }
 
-        let tail = if more {
-            let next = from + limit;
+        let tail = more.map_or_else(String::new, |next| {
             format!("\n[more follows: call {NAME} again with offset {next}]")
-        } else {
-            String::new()
-        };
+        });
 
         Ok(ToolOutput::ok(out + &tail))
     }
@@ -159,25 +181,129 @@ impl Tool for Read {
         // replaced with a symbolic link since the check above is refused rather
         // than read out of the tree and into the transcript, where the answer
         // to a question about a file in the project would be a file elsewhere.
-        let file = match path.open() {
+        let file = match path.open_regular() {
             Ok(file) => file,
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        Self::numbered(BufReader::new(file), requested, from, limit)
+        self.numbered(BufReader::new(file), requested, from, limit)
     }
 }
 
 /// One line, numbered the way `cat -n` numbers them, and cut if it is longer
 /// than anything worth sending.
-fn numbered_line(number: usize, line: &str) -> String {
-    match line.char_indices().nth(WIDTH) {
-        Some((at, _)) => {
-            let kept = line.get(..at).unwrap_or(line);
-            format!("{number:>6}\t{kept}[line cut at {WIDTH} characters]\n")
-        }
-        None => format!("{number:>6}\t{line}\n"),
+fn numbered_line(number: usize, line: &Line) -> String {
+    if line.cut {
+        format!(
+            "{number:>6}\t{}[line cut at {WIDTH} characters]\n",
+            line.text
+        )
+    } else {
+        format!("{number:>6}\t{}\n", line.text)
     }
+}
+
+/// One line whose storage is bounded however far away its newline is.
+struct Line {
+    text: String,
+    cut: bool,
+}
+
+/// One bounded step through the input, including cancellation as data rather
+/// than an I/O error manufactured to cross the helper boundary.
+enum NextLine {
+    Line(Line),
+    End,
+    Cancelled,
+}
+
+/// Reads one line in fixed-size pieces, validating even the part not retained.
+fn bounded_line(lines: &mut impl BufRead, cancel: &Cancel) -> io::Result<NextLine> {
+    let mut text = String::new();
+    let mut carry = Vec::with_capacity(BLOCK + 3);
+    let mut block = Vec::with_capacity(BLOCK);
+    let mut seen = 0;
+    let mut last = None;
+    let mut any = false;
+
+    loop {
+        if cancel.requested() {
+            return Ok(NextLine::Cancelled);
+        }
+        block.clear();
+        let read = lines
+            .by_ref()
+            .take(BLOCK as u64)
+            .read_until(b'\n', &mut block)?;
+        if read == 0 {
+            if !any {
+                return Ok(NextLine::End);
+            }
+            finish_utf8(&mut carry, &mut text, &mut seen, &mut last)?;
+            break;
+        }
+
+        if cancel.requested() {
+            return Ok(NextLine::Cancelled);
+        }
+
+        any = true;
+        let ended = block.last() == Some(&b'\n');
+        if ended {
+            block.pop();
+        }
+        carry.extend_from_slice(&block);
+        finish_utf8(&mut carry, &mut text, &mut seen, &mut last)?;
+
+        if ended {
+            break;
+        }
+    }
+
+    if !carry.is_empty() {
+        return Err(ErrorKind::InvalidData.into());
+    }
+
+    let carriage = last == Some('\r');
+    if carriage && seen <= WIDTH && text.ends_with('\r') {
+        text.pop();
+    }
+    let characters = seen.saturating_sub(usize::from(carriage));
+    Ok(NextLine::Line(Line {
+        text,
+        cut: characters > WIDTH,
+    }))
+}
+
+/// Moves every complete character from `bytes` into one bounded line prefix.
+fn finish_utf8(
+    bytes: &mut Vec<u8>,
+    text: &mut String,
+    seen: &mut usize,
+    last: &mut Option<char>,
+) -> io::Result<()> {
+    let valid = match std::str::from_utf8(bytes) {
+        Ok(valid) => valid.len(),
+        Err(problem) if problem.error_len().is_none() => problem.valid_up_to(),
+        Err(_) => return Err(ErrorKind::InvalidData.into()),
+    };
+
+    let decoded = std::str::from_utf8(bytes.get(..valid).unwrap_or_default())
+        .map_err(|_| ErrorKind::InvalidData)?;
+    for character in decoded.chars() {
+        *last = Some(character);
+        if *seen < WIDTH {
+            text.push(character);
+        }
+        // Keep one extra state beyond "over width": a trailing carriage
+        // return is not part of the line, so `WIDTH + 1` characters followed
+        // by `\r` must remain distinguishable from exactly `WIDTH` plus `\r`.
+        *seen = seen.saturating_add(1).min(WIDTH + 2);
+    }
+
+    bytes.copy_within(valid.., 0);
+    bytes.truncate(bytes.len() - valid);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -186,7 +312,7 @@ mod tests {
     use crate::sample::{Sample, allowed};
 
     fn read(sample: &Sample, args: &str) -> ToolOutput {
-        let tool = Read::new(sample.workspace());
+        let tool = Read::new(sample.workspace(), Cancel::new());
         tool.run(allowed(&tool, args)).unwrap()
     }
 
@@ -227,24 +353,21 @@ mod tests {
     }
 
     #[test]
-    fn a_limit_larger_than_the_ceiling_is_the_ceiling() {
-        // The default is a default and the caller may raise it; this it may not.
-        // A model told a file was truncated would otherwise ask for the rest by
-        // naming a number, and a vendored bundle would come back whole.
+    fn the_shared_byte_ceiling_stops_before_a_larger_line_limit() {
         let sample = Sample::new("read-ceiling");
         sample.write("many.txt", &"x\n".repeat(CEILING + 5));
 
         let output = read(&sample, r#"{"path":"many.txt","limit":1000000}"#);
 
-        assert_eq!(
-            output.text().lines().filter(|l| l.contains('\t')).count(),
-            CEILING
-        );
+        let shown = output
+            .text()
+            .lines()
+            .filter(|line| line.contains('\t'))
+            .count();
+        assert!(shown < CEILING, "{shown}");
+        assert!(output.text().len() <= OUTPUT, "{}", output.text().len());
         assert!(
-            output.text().ends_with(&format!(
-                "[more follows: call read again with offset {}]",
-                CEILING + 1
-            )),
+            output.text().contains("[more follows:"),
             "{}",
             output.text()
         );
@@ -333,6 +456,77 @@ mod tests {
     }
 
     #[test]
+    fn a_huge_line_with_no_newline_never_becomes_a_huge_answer() {
+        let sample = Sample::new("read-huge-line");
+        sample.write("huge.txt", &"x".repeat(OUTPUT * 100));
+
+        let output = read(&sample, r#"{"path":"huge.txt"}"#);
+
+        assert!(output.text().len() < WIDTH + 200, "{}", output.text().len());
+        assert!(output.text().contains("[line cut"), "{}", output.text());
+    }
+
+    #[test]
+    fn a_huge_offset_stops_scanning_at_the_next_bounded_read() {
+        struct Stops {
+            cancel: Cancel,
+        }
+
+        impl std::io::Read for Stops {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let Some(place) = buffer.get_mut(..2) else {
+                    return Err(io::Error::other("the test reader buffer is too small"));
+                };
+                place.copy_from_slice(b"x\n");
+                self.cancel.request();
+                Ok(place.len())
+            }
+        }
+
+        let sample = Sample::new("read-cancel-offset");
+        let cancel = Cancel::new();
+        let input = BufReader::new(Stops {
+            cancel: cancel.clone(),
+        });
+        let tool = Read::new(sample.workspace(), cancel);
+
+        let problem = tool
+            .numbered(input, "huge.txt", usize::MAX, CEILING)
+            .unwrap_err();
+
+        assert!(matches!(problem, ToolError::Cancelled(NAME)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_waiting_for_a_writer() {
+        let sample = Sample::new("read-fifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg(sample.root().join("waiting"))
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let output = read(&sample, r#"{"path":"waiting"}"#);
+
+        assert!(output.is_failed());
+        assert!(output.text().contains("is not a regular file"));
+    }
+
+    #[test]
+    fn a_bad_byte_past_the_kept_prefix_still_makes_the_file_non_text() {
+        let sample = Sample::new("read-wide-binary");
+        let mut bytes = vec![b'x'; WIDTH + BLOCK];
+        bytes.push(0xff);
+        sample.write_bytes("wide.bin", &bytes);
+
+        let output = read(&sample, r#"{"path":"wide.bin"}"#);
+
+        assert!(output.is_failed());
+        assert_eq!(output.text(), "wide.bin is not a text file");
+    }
+
+    #[test]
     fn a_cut_lands_on_a_character_and_not_inside_one() {
         // Cutting by bytes would split a multi-byte character in half and send
         // the model text that is no longer valid.
@@ -345,10 +539,20 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_carriage_return_does_not_hide_that_a_line_was_cut() {
+        let sample = Sample::new("read-wide-crlf");
+        sample.write("wide.txt", &format!("{}\r\n", "x".repeat(WIDTH + 1)));
+
+        let output = read(&sample, r#"{"path":"wide.txt"}"#);
+
+        assert!(output.text().contains("[line cut"), "{}", output.text());
+    }
+
+    #[test]
     fn a_call_with_no_path_says_what_is_missing() {
         let sample = Sample::new("read-nopath");
 
-        let tool = Read::new(sample.workspace());
+        let tool = Read::new(sample.workspace(), Cancel::new());
         let problem = tool.run(allowed(&tool, "{}")).unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
@@ -360,7 +564,7 @@ mod tests {
         // it, and a rule is about a path.
         let sample = Sample::new("read-sensitivity");
         sample.write("one.txt", "alpha\n");
-        let tool = Read::new(sample.workspace());
+        let tool = Read::new(sample.workspace(), Cancel::new());
 
         let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
 
