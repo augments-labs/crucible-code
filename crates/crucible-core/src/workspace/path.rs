@@ -43,6 +43,12 @@ impl WorkspacePath {
     /// descriptor walk on Unix and final-handle validation on Windows.
     #[must_use]
     pub fn walked(&self, reached: &Path) -> Option<Self> {
+        if reached
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+        {
+            return None;
+        }
         let below = reached.strip_prefix(&self.resolved).ok()?;
         if !below
             .components()

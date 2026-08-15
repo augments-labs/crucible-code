@@ -7,7 +7,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::mem::{offset_of, size_of};
+use std::mem::size_of;
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::AsRawHandle as _;
@@ -174,12 +174,12 @@ fn rename(file: &File, parent: &File, leaf: &OsStr) -> io::Result<()> {
         .saturating_sub(1)
         .checked_mul(size_of::<u16>())
         .ok_or_else(|| io::Error::other("the destination name is too long"))?;
-    let bytes = offset_of!(FILE_RENAME_INFO, FileName)
-        .checked_add(
-            name.len()
-                .checked_mul(size_of::<u16>())
-                .ok_or_else(|| io::Error::other("the rename request is too large"))?,
-        )
+    // Windows validates this buffer against the padded C structure size, not
+    // merely the offset of its trailing array. Add the bytes beyond the one
+    // UTF-16 unit already represented by `FILE_RENAME_INFO`; using the smaller
+    // offset-based size is rejected with `ERROR_INVALID_PARAMETER` on Win32.
+    let bytes = size_of::<FILE_RENAME_INFO>()
+        .checked_add(name_bytes)
         .ok_or_else(|| io::Error::other("the rename request is too large"))?;
     let mut storage = vec![0_usize; bytes.div_ceil(size_of::<usize>())];
     let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();

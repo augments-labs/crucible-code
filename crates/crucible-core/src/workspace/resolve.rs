@@ -29,6 +29,13 @@ impl Workspace {
     /// the ordinary names below it are appended. A `..` among the missing
     /// components therefore resolves nothing rather than being guessed at.
     pub(crate) fn intended(&self, requested: &str) -> Option<PathBuf> {
+        if Path::new(requested)
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+        {
+            return None;
+        }
+
         let mut ancestor = self.join(requested);
         let mut missing = Vec::new();
 
