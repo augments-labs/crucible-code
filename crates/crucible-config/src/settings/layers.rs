@@ -9,10 +9,11 @@
 //! a different thing and says so: silently skipping it would turn a permissions
 //! mistake into settings that mysteriously stopped applying.
 
-use std::fs;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
+use crate::MAX_DOCUMENT_BYTES;
 use crate::document::{Document, Origin};
 use crate::error::ConfigError;
 use crate::home::Home;
@@ -49,11 +50,25 @@ impl Settings {
             // out which file the message is about.
             let file: Box<str> = path.display().to_string().into();
 
-            let text = match fs::read_to_string(&path) {
-                Ok(text) => text,
+            let opened = match File::open(&path) {
+                Ok(opened) => opened,
                 Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
                 Err(source) => return Err(ConfigError::Unreadable { file, source }),
             };
+            let mut text = String::new();
+            opened
+                .take((MAX_DOCUMENT_BYTES + 1) as u64)
+                .read_to_string(&mut text)
+                .map_err(|source| ConfigError::Unreadable {
+                    file: file.clone(),
+                    source,
+                })?;
+            if text.len() > MAX_DOCUMENT_BYTES {
+                return Err(ConfigError::TooLarge {
+                    file,
+                    maximum: MAX_DOCUMENT_BYTES,
+                });
+            }
 
             documents.push(Document::parse(&text, &file, origin)?);
         }
@@ -62,11 +77,11 @@ impl Settings {
     }
 }
 
-/// Where a project keeps the settings git does not carry.
+/// Where a project conventionally keeps its nearer non-authority settings.
 ///
-/// The one layer crucible itself writes to, so it is named here beside the
-/// layers it is read from rather than wherever the writing happens: a second
-/// answer to which file that is would be a rule written to a file nobody reads.
+/// Named here beside the layers it is read from so there is one answer to which
+/// filename has that precedence. An ignore rule is a convention, not trust:
+/// repositories can commit this file, so it cannot carry authority.
 #[must_use]
 pub fn local(workspace: &Path) -> PathBuf {
     workspace.join(PROJECT).join(LOCAL)
@@ -98,6 +113,7 @@ fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
 
     use super::*;
     use crate::sample::Scratch;
@@ -192,5 +208,21 @@ mod tests {
         let err = Settings::read(&home(&scratch), scratch.root()).unwrap_err();
 
         assert!(matches!(err, ConfigError::Unreadable { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_configuration_file_over_the_byte_bound_is_refused_before_parsing() {
+        let scratch = Scratch::new("layers-too-large");
+        scratch.write(".crucible/config.json", &" ".repeat(MAX_DOCUMENT_BYTES + 1));
+
+        let err = Settings::read(&home(&scratch), scratch.root()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConfigError::TooLarge {
+                maximum: MAX_DOCUMENT_BYTES,
+                ..
+            }
+        ));
     }
 }

@@ -103,6 +103,15 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
+    /// The file is larger than the startup boundary will hold.
+    #[error("{file} is larger than the {maximum}-byte configuration file limit")]
+    TooLarge {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The greatest accepted byte length.
+        maximum: usize,
+    },
+
     /// The file is not JSON.
     #[error("{file} is not valid JSON at line {line}, column {column}: {problem}")]
     Malformed {

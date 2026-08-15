@@ -10,6 +10,9 @@ This crate reads configuration files into settings. It decides what a document
 may say, what a refusal reads like, and which layer wins — and it never applies
 any of it. Applying is the wiring's job, in `src/`.
 
+Each layer has an explicit byte ceiling before JSON parsing. A project file is
+input from the checkout, so it may not choose an unbounded startup allocation.
+
 ## Adding a setting is one edit
 
 A key is declared in `shape.rs` and nowhere else. The parser walks values

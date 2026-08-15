@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Configuration documents have a 1 MiB input limit.** An oversized user or
+  workspace file now fails before JSON parsing instead of choosing an unbounded
+  startup allocation.
+
 - **Both workspace configuration filenames are non-authority layers.** They may
   narrow policy, but settings that allow calls, widen filesystem reach, select
   credentials or redirect requests are read only from the user configuration
