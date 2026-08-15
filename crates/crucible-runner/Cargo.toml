@@ -1,6 +1,7 @@
 [package]
 name = "crucible-runner"
 description = "Drives turns to completion: streams from a provider, dispatches tool calls."
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
