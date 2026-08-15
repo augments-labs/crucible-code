@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
-use startup::StartupError;
+use startup::{Measure, StartupError};
 
 /// The budget, in milliseconds.
 const LIMIT: f64 = 20.0;
@@ -45,7 +45,7 @@ fn explain(problem: &StartupError) -> Result<(), io::Error> {
 }
 
 fn main() -> ExitCode {
-    let elapsed = match startup::percentile(NEEDLE) {
+    let elapsed = match startup::percentile(Measure::Frame { needle: NEEDLE }) {
         Ok(elapsed) => elapsed.as_secs_f64() * 1000.0,
         Err(problem) => {
             let _ = explain(&problem);

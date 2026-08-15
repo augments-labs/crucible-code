@@ -23,12 +23,27 @@ fn nth(nth: u64) -> String {
 
 /// What the scan offers for this sample's workspace.
 fn offered(sample: &Sample, wanted: usize) -> Vec<Recorded> {
+    super::index::ensure(&sample.logs()).expect("the legacy sessions to be indexed");
     recent(&sample.logs(), &sample.workspace(), wanted)
 }
 
 /// What the newest of them was asked.
 fn first(offered: &[Recorded]) -> &str {
     offered.first().expect("at least one session").asked()
+}
+
+#[test]
+fn first_frame_does_not_enumerate_an_unindexed_legacy_directory() {
+    let sample = Sample::new("recent-unindexed");
+    planted(&sample, &nth(1), &["visible after migration"]);
+
+    assert!(recent(&sample.logs(), &sample.workspace(), 4).is_empty());
+
+    super::index::ensure(&sample.logs()).expect("migration after the first frame");
+    assert_eq!(
+        first(&recent(&sample.logs(), &sample.workspace(), 4)),
+        "visible after migration"
+    );
 }
 
 #[test]

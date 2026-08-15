@@ -89,6 +89,21 @@ pub(super) fn claim(log: &Path) -> Result<Claimed, io::Error> {
     })
 }
 
+/// Waits until this process exclusively holds `log`'s mark.
+///
+/// The recent-session index needs serialization rather than a non-blocking
+/// claim: its replacement is brief, and carrying on without the lock would
+/// let two starts lose one another.
+///
+/// # Errors
+///
+/// When the mark beside the log cannot be made or the lock cannot be taken.
+pub(super) fn exclusive(log: &Path) -> Result<Claim, io::Error> {
+    let held = privacy::mark(&beside(log))?;
+    held.lock()?;
+    Ok(Claim { held })
+}
+
 /// Where the mark for `log` lives.
 ///
 /// Beside the log rather than on it, because continuing a session opens the log

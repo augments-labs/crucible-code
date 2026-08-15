@@ -7,8 +7,10 @@
 //! which a keystroke stops feeling like it was waiting for the program and
 //! starts feeling like the program was waiting for it.
 //!
-//! The clock stops when the prompt mark arrives, which is the last thing
-//! written before the first read from standard input.
+//! The prompt mark is readiness, not the reading. Once it arrives the probe
+//! sends one section-sign key through the terminal and stops only when that
+//! character comes back in a frame. The terminal is in raw mode with echo off,
+//! so seeing it proves crucible accepted and rendered the key.
 
 mod startup;
 
@@ -16,14 +18,16 @@ use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
-use startup::StartupError;
+use startup::{Measure, StartupError};
 
 /// The budget, in milliseconds.
 const LIMIT: f64 = 60.0;
 
-/// The prompt mark. Written and flushed immediately before the first read, so
-/// its arrival is the moment input is accepted.
-const NEEDLE: &str = "\u{203a} ";
+/// Written and flushed immediately before the first read.
+const READY: &str = "\u{203a} ";
+
+/// One uncommon key, absent from startup output and visible in the input box.
+const PROBE: &str = "\u{00a7}";
 
 fn report(elapsed: f64) -> Result<(), io::Error> {
     // `println!` is denied workspace-wide, so the reading goes out through a
@@ -46,7 +50,10 @@ fn explain(problem: &StartupError) -> Result<(), io::Error> {
 }
 
 fn main() -> ExitCode {
-    let elapsed = match startup::percentile(NEEDLE) {
+    let elapsed = match startup::percentile(Measure::Input {
+        ready: READY,
+        probe: PROBE,
+    }) {
         Ok(elapsed) => elapsed.as_secs_f64() * 1000.0,
         Err(problem) => {
             let _ = explain(&problem);

@@ -12,6 +12,10 @@ authors.workspace = true
 [dependencies]
 # Domain messages, identifiers and workspaces.
 crucible-core.workspace = true
+# The recent-session index is replaced whole: an exclusively-created sibling,
+# synced, then renamed over it. That durable replacement is the privacy
+# crate's, already reviewed for the configuration and auth stores.
+crucible-privacy.workspace = true
 # A session log is JSON, one object per line, read back by a build that may
 # not be the one that wrote it. Hand-rolling that parser would be a second
 # place for a malformed line to become a panic.

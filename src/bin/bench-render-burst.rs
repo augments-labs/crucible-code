@@ -9,10 +9,11 @@
 //! `stream` call, and the renderer's other job -- writing a finished line to
 //! scrollback -- is a different operation that no part of this burst performs.
 //!
-//! Measured against a real file descriptor rather than an in-memory buffer, so
-//! the write and the flush are the syscalls they will be in production. The
-//! terminal is reported as a terminal, so the escape sequences are built and
-//! written too -- benchmarking the redirected path would measure the cheap one.
+//! Measured against a bounded kernel pipe rather than an in-memory buffer or
+//! `/dev/null`. A drain thread consumes the pipe in fixed-size reads, so writes
+//! and flushes are real syscalls and a producer that outruns its consumer meets
+//! kernel backpressure instead of growing a heap buffer. The sink reports itself
+//! as a terminal, so escape assembly is measured too.
 //!
 //! Thirty a second is a floor with a great deal of headroom, which on its own
 //! would make this a benchmark that cannot fail. So the rate is measured twice:
@@ -24,21 +25,33 @@
 //! long and the opening frames are not the ones a user is waiting on.
 
 use std::fmt::Write as _;
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::io::Read as _;
+use std::io::{self, Write as _};
 use std::process::ExitCode;
+#[cfg(target_os = "linux")]
+use std::thread::JoinHandle;
+#[cfg(target_os = "linux")]
 use std::time::Instant;
 
-use crucible_tui::{Renderer, Size, Terminal, TerminalError};
+use crucible_tui::TerminalError;
+#[cfg(target_os = "linux")]
+use crucible_tui::{Renderer, Size, Terminal};
+#[cfg(target_os = "linux")]
+use rustix::pipe::{PipeFlags, pipe_with};
 
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
 
 /// Frames to measure. Large enough that a scheduler hiccup does not decide the
 /// answer, small enough that the probe stays under a second on a slow machine.
+#[cfg(target_os = "linux")]
 const FRAMES: usize = 20_000;
 
 /// Frames in each of the two timed windows, at the start and the end.
+#[cfg(target_os = "linux")]
 const WINDOW: usize = FRAMES / 10;
 
 /// How far the sustained rate may fall behind the opening rate.
@@ -52,10 +65,13 @@ const SUSTAINED_FRACTION: f64 = 0.5;
 
 /// Frames to run and throw away, so the measurement is not paying for the first
 /// allocation of every reused buffer.
+#[cfg(target_os = "linux")]
 const WARMUP: usize = 2_000;
 
 /// A terminal-sized window, so wrapping and the bounded tail both engage.
+#[cfg(target_os = "linux")]
 const COLUMNS: usize = 80;
+#[cfg(target_os = "linux")]
 const ROWS: usize = 24;
 
 /// What can go wrong in the probe itself.
@@ -68,28 +84,76 @@ enum ProbeError {
     /// The renderer failed mid-burst.
     #[error("bench-render-burst: {0}")]
     Terminal(#[from] TerminalError),
+
+    /// This probe's bounded descriptor implementation is platform-specific.
+    #[cfg(not(target_os = "linux"))]
+    #[error("bench-render-burst: bounded pipe measurements require Linux")]
+    Unsupported,
+
+    /// The fixed-size drain could not finish after the renderer closed.
+    #[cfg(target_os = "linux")]
+    #[error("bench-render-burst: pipe drain panicked")]
+    DrainPanicked,
 }
 
-/// Standard output's discard file, pretending to be a terminal.
+/// The write end of a bounded kernel pipe, pretending to be a terminal.
 ///
 /// The renderer asks whether it is talking to a terminal in order to decide
 /// whether to emit cursor movement at all, and the escape sequences are part of
 /// what is being measured.
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
-struct Discard {
+struct PipeSink {
     out: File,
 }
 
-impl Discard {
-    fn open() -> Result<Self, io::Error> {
-        let path = if cfg!(windows) { "NUL" } else { "/dev/null" };
-        Ok(Self {
-            out: OpenOptions::new().write(true).open(path)?,
-        })
+/// The fixed-memory consumer for [`PipeSink`].
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Drain {
+    thread: JoinHandle<Result<(), io::Error>>,
+}
+
+#[cfg(target_os = "linux")]
+impl PipeSink {
+    fn open() -> Result<(Self, Drain), io::Error> {
+        let (read, write) = pipe_with(PipeFlags::CLOEXEC).map_err(io::Error::from)?;
+        let thread = std::thread::Builder::new()
+            .name("crucible-render-drain".into())
+            .spawn(move || drain(File::from(read)))?;
+        Ok((
+            Self {
+                out: File::from(write),
+            },
+            Drain { thread },
+        ))
     }
 }
 
-impl Terminal for Discard {
+#[cfg(target_os = "linux")]
+impl Drain {
+    fn finish(self) -> Result<(), ProbeError> {
+        self.thread
+            .join()
+            .map_err(|_| ProbeError::DrainPanicked)??;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn drain(mut input: File) -> Result<(), io::Error> {
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        std::hint::black_box(buffer.get(..read));
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Terminal for PipeSink {
     fn size(&self) -> Result<Size, TerminalError> {
         Ok(Size {
             columns: COLUMNS,
@@ -115,6 +179,7 @@ impl Terminal for Discard {
 /// Deltas shaped like the ones a provider actually sends: a few characters at a
 /// time, mostly mid-word, with a line ending every so often. Built once, so the
 /// measured loop is not timing a formatter.
+#[cfg(target_os = "linux")]
 fn burst() -> Vec<String> {
     let words = [
         "The ",
@@ -158,11 +223,19 @@ struct Burst {
     sustained: f64,
 }
 
+impl Burst {
+    fn ratio(self) -> f64 {
+        self.sustained / self.opening
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {
     let deltas = burst();
-    let mut render = Renderer::new(Discard::open()?);
+    let (sink, drain) = PipeSink::open()?;
+    let mut render = Renderer::new(sink);
 
-    let stream = |render: &mut Renderer<Discard>, index: usize| -> Result<(), ProbeError> {
+    let stream = |render: &mut Renderer<PipeSink>, index: usize| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);
         render.stream(delta)?;
         Ok(())
@@ -189,6 +262,10 @@ fn measure() -> Result<Burst, ProbeError> {
     let closing = late.elapsed();
 
     render.settle()?;
+    // Closing the writer is what tells the fixed-size consumer it has seen the
+    // complete burst. Join it so a read error cannot be mistaken for a rate.
+    drop(render);
+    drain.finish()?;
 
     // A window this size takes milliseconds, not nanoseconds, so the precision
     // lost converting the count is far below the noise in the measurement.
@@ -201,11 +278,23 @@ fn measure() -> Result<Burst, ProbeError> {
     })
 }
 
+#[cfg(not(target_os = "linux"))]
+fn measure() -> Result<Burst, ProbeError> {
+    Err(ProbeError::Unsupported)
+}
+
 fn report(burst: Burst) -> Result<(), ProbeError> {
     // `println!` is denied workspace-wide, so the reading goes out through a
     // write whose failure is handled rather than panicked on inside a probe.
     let mut line = String::new();
-    let _ = write!(line, "{:.1} frames/s {LIMIT:.0}", burst.sustained);
+    let _ = write!(
+        line,
+        "{:.1} frames/s {LIMIT:.0} opening={:.1} sustained={:.1} ratio={:.3}",
+        burst.sustained,
+        burst.opening,
+        burst.sustained,
+        burst.ratio(),
+    );
     line.push('\n');
 
     io::stdout().write_all(line.as_bytes())?;
@@ -237,10 +326,24 @@ fn slowing(burst: Burst) -> Result<(), ProbeError> {
          ({:.0}% of it, floor {:.0}%)",
         burst.opening,
         burst.sustained,
-        burst.sustained / burst.opening * 100.0,
+        burst.ratio() * 100.0,
         SUSTAINED_FRACTION * 100.0,
     );
 
+    io::stderr().write_all(line.as_bytes())?;
+    Ok(())
+}
+
+/// Human-readable evidence for every run, including a passing one.
+fn evidence(burst: Burst) -> Result<(), ProbeError> {
+    let mut line = String::new();
+    let _ = writeln!(
+        line,
+        "         render opening {:.0}/s, sustained {:.0}/s, ratio {:.1}%",
+        burst.opening,
+        burst.sustained,
+        burst.ratio() * 100.0,
+    );
     io::stderr().write_all(line.as_bytes())?;
     Ok(())
 }
@@ -255,6 +358,9 @@ fn main() -> ExitCode {
     };
 
     if report(burst).is_err() {
+        return ExitCode::FAILURE;
+    }
+    if evidence(burst).is_err() {
         return ExitCode::FAILURE;
     }
 
