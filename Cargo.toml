@@ -221,6 +221,7 @@ must_use_candidate = "allow"
 [package]
 name = "crucible-code"
 description = "The harness where agents are forged."
+publish = false
 readme = "README.md"
 keywords = ["agent", "cli", "tui", "llm", "coding-assistant"]
 categories = ["command-line-utilities", "development-tools"]
