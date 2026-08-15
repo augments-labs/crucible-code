@@ -14,10 +14,9 @@
 //! { "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12" } }
 //! ```
 //!
-//! The division earns its keep in the layer that travels. `.crucible/config.json`
-//! is checked in, so a value written there reaches everyone who clones the
-//! repository — which is why an arbitrary variable is refused in it. A variable
-//! in this namespace is not arbitrary: it is a knob crucible declares and whose
+//! The division earns its keep in workspace files. Either project filename can
+//! be committed, so an arbitrary variable is refused in both. A variable in
+//! this namespace is not arbitrary: it is a knob crucible declares and whose
 //! meaning crucible fixes, so a project can set one for everybody who clones it
 //! and that is still not a way to ship somebody's key. The prefix is what makes
 //! "this is a crucible setting" checkable rather than a matter of trust.

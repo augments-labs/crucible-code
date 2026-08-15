@@ -89,14 +89,15 @@ a rule is one line among the lines every layer contributed, and a refusal could
 no longer name the file or the position — which is the one thing an error in
 this crate owes its reader.
 
-## The layer that travels
+## The workspace layers
 
-`.crucible/config.json` is checked in. It may set crucible's own variables —
-the `CRUCIBLE_CODE_` namespace, whose meanings this program fixes — and no
-others. That refusal is structural, in `check.rs`, rather than a warning, so a
-key cannot reach everyone who clones a repository by being committed in a file
-nobody read. Do not add a way around it, including a "trusted project" setting:
-the property holds only because there is no such path.
+Either project filename can be committed, whatever its ignore convention says.
+Both may set crucible's own variables — the `CRUCIBLE_CODE_` namespace, whose
+meanings this program fixes — and no others. Neither may allow calls, widen
+filesystem reach, select a credential source, or redirect a request. Those
+refusals are structural, in `check.rs`, rather than warnings. Do not add a way
+around them, including a "trusted project" setting: the property holds only
+because there is no such path.
 
 An error message may name a variable. It may never quote the value beside it.
 

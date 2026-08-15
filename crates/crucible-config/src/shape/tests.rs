@@ -84,7 +84,7 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
             // and the rule read alike, and which of those applies is exactly
             // what the person pasting it does not have to know.
             let text = written(&path, &field.shape, example);
-            let read = Document::parse(&text, "config.json", Origin::ProjectLocal);
+            let read = Document::parse(&text, "~/.crucible/config.json", Origin::User);
 
             if read.is_ok() {
                 accepted += 1;

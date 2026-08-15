@@ -85,7 +85,7 @@
           "type": "string"
         },
         "allow": {
-          "description": "Rules for calls that run without being put to you. Not read from .crucible/config.json, which everyone who clones gets",
+          "description": "Rules for calls that run without being put to you. Read only from the configuration file in your home directory",
           "items": {
             "examples": [
               "read(src/**)",
@@ -121,7 +121,7 @@
           "uniqueItems": true
         },
         "extraDirectories": {
-          "description": "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, and this is not read from .crucible/config.json, so it belongs in .crucible/config.local.json",
+          "description": "Absolute paths to directories outside the working directory that tools may reach. Read only from the configuration file in your home directory",
           "items": {
             "examples": [
               "/home/you/src/shared-library",
@@ -133,7 +133,7 @@
           "uniqueItems": true
         },
         "mode": {
-          "description": "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Not read from .crucible/config.json, which everyone who clones gets",
+          "description": "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Read only from the configuration file in your home directory",
           "enum": [
             "ask",
             "allowEdits",
@@ -145,7 +145,7 @@
       "type": "object"
     },
     "provider": {
-      "description": "Which provider to ask, by the name --model qualifies a model with. Not read from .crucible/config.json, which everyone who clones gets",
+      "description": "Which provider to ask, by the name --model qualifies a model with. Read only from the configuration file in your home directory",
       "type": "string"
     },
     "providers": {

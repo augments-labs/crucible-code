@@ -25,7 +25,7 @@ const FILE: &str = "config.json";
 /// The directory a project keeps crucible's files in.
 const PROJECT: &str = ".crucible";
 
-/// The project file git ignores, so it can hold what the other one may not.
+/// The nearer project file for ordinary non-authority overrides.
 const LOCAL: &str = "config.local.json";
 
 impl Settings {
@@ -148,23 +148,16 @@ mod tests {
     }
 
     #[test]
-    fn the_file_crucible_writes_to_is_the_layer_git_ignores_and_not_the_one_that_travels() {
-        // `.crucible/config.json` is checked in, so a rule somebody answered
-        // `always` to on their own machine would reach everyone who clones.
-        // Watched through a document only the other layer accepts: an `allow`
-        // is refused in the file that travels, so reading this back at all is
-        // where it landed — and an `allow` is what answering `always` writes.
+    fn the_local_file_still_holds_overrides_that_carry_no_authority() {
+        // The local filename remains a nearer layer for ordinary preferences;
+        // only settings that widen authority or select secrets are refused.
         let scratch = Scratch::new("layers-local");
         let path = local(scratch.root());
 
         fs::create_dir_all(path.parent().expect("a directory to write into"))
             .expect("a writable temporary directory");
-        fs::write(
-            &path,
-            r#"{"permissions": {"allow": ["bash(cargo test)"]},
-                "providers": {"a": {"model": "local"}}}"#,
-        )
-        .expect("a writable temporary directory");
+        fs::write(&path, r#"{"providers": {"a": {"model": "local"}}}"#)
+            .expect("a writable temporary directory");
 
         let settings = Settings::read(&home(&scratch), scratch.root()).expect("a layer it reads");
 

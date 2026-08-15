@@ -18,7 +18,7 @@ use check::{Reader, Spot};
 ///
 /// Carried by the document rather than decided by the reader, because two rules
 /// depend on it: what a file under the working directory may put in `env`, and
-/// what the file that travels with a clone may say about permission.
+/// what either workspace file may say about authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
     /// The configuration file in the user's home directory.
@@ -28,8 +28,8 @@ pub(crate) enum Origin {
     User,
     /// `.crucible/config.json` — checked in, and read by everyone who clones.
     Project,
-    /// `.crucible/config.local.json` — the file crucible writes an answer to,
-    /// and the one a `.gitignore` is expected to keep out of the repository.
+    /// `.crucible/config.local.json` — local non-authority overrides, which an
+    /// ignore rule conventionally keeps out but a repository can still commit.
     ProjectLocal,
 }
 

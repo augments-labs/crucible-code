@@ -8,7 +8,7 @@
 //! Four layers decide a setting. Nearest wins:
 //!
 //! 1. the command line
-//! 2. `.crucible/config.local.json` — git ignores it
+//! 2. `.crucible/config.local.json` — conventionally ignored
 //! 3. `.crucible/config.json` — checked in, read by everyone who clones
 //! 4. the configuration file in the user's home directory
 //!
@@ -28,11 +28,11 @@
 //! - **A key is a key exactly once.** `shape::DOCUMENT` declares the document,
 //!   the parser walks values against it, and the schema is generated from it.
 //!   There is no second list of key names to fall out of step.
-//! - **The layer that travels cannot carry a secret.** `.crucible/config.json`
-//!   is checked in, so the only variables it may set are crucible's own — the
-//!   `CRUCIBLE_CODE_` namespace, whose meanings crucible fixes. Any other name
-//!   is refused there outright rather than warned about, so an arbitrary value
-//!   has no path into the one file that reaches everyone who clones.
+//! - **A workspace layer cannot carry authority or choose a secret.** Either
+//!   project filename can be committed, whatever its conventional ignore rule
+//!   says. The only variables either may set are crucible's own, and keys that
+//!   loosen permissions or select a credential source are read only from the
+//!   user's file outside the checkout.
 //!
 //! `0.x` is unstable: every key here may be renamed or removed in any `0.x`
 //! release with no deprecation period.

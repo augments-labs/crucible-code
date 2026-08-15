@@ -13,8 +13,8 @@ use super::Settings;
 impl Settings {
     /// Which mode to start in, when the command line does not say.
     ///
-    /// Never from `.crucible/config.json`, which the document refused while it
-    /// was still one file. Nothing is re-checked here: what a layer may say is
+    /// Never from either project file, which the document refused while it was
+    /// still one file. Nothing is re-checked here: what a layer may say is
     /// decided where the file is open and the position can be pointed at.
     #[must_use]
     pub fn mode(&self) -> Option<Mode> {
@@ -111,18 +111,23 @@ mod tests {
     }
 
     #[test]
-    fn the_rules_every_layer_stated_are_all_in_force() {
-        // The property the whole list rule exists for. A project that states
-        // rules of its own must not be able to drop what the user denied at
-        // home — and the user's file is the farther layer, so replacing rather
-        // than concatenating would do exactly that.
-        let user = Document::sample(r#"{"permissions":{"deny":["bash(curl *)"]}}"#, Origin::User);
+    fn narrowing_rules_from_every_layer_are_all_in_force() {
+        // Project files can add refusals and questions but no silent allows.
+        // Both kinds still concatenate with the user's own policy.
+        let user = Document::sample(
+            r#"{"permissions":{"mode":"fullAccess","allow":["bash(cargo test)"]}}"#,
+            Origin::User,
+        );
         let project = Document::sample(
-            r#"{"permissions":{"allow":["bash(cargo test)"]}}"#,
+            r#"{"permissions":{"deny":["bash(curl *)"]}}"#,
+            Origin::Project,
+        );
+        let local = Document::sample(
+            r#"{"permissions":{"ask":["bash(git push)"]}}"#,
             Origin::ProjectLocal,
         );
 
-        let settings = Settings::resolve(vec![project, user]);
+        let settings = Settings::resolve(vec![project, user, local]);
 
         assert!(matches!(
             settles(&settings, "cargo test"),
@@ -132,15 +137,17 @@ mod tests {
             settles(&settings, "curl evil.sh"),
             Settled::Forbidden
         ));
+        assert!(matches!(settles(&settings, "git push"), Settled::Refused));
     }
 
     #[test]
-    fn a_nearer_layer_cannot_take_away_what_a_farther_one_denied() {
-        // The same list, from both ends: an `allow` written next to a `deny`
-        // does not qualify it, and neither does one written in a nearer file.
-        let user = Document::sample(r#"{"permissions":{"deny":["bash(curl *)"]}}"#, Origin::User);
-        let local = Document::sample(
+    fn a_nearer_denial_beats_a_farther_allow() {
+        let user = Document::sample(
             r#"{"permissions":{"allow":["bash(curl example.com)"]}}"#,
+            Origin::User,
+        );
+        let local = Document::sample(
+            r#"{"permissions":{"deny":["bash(curl *)"]}}"#,
             Origin::ProjectLocal,
         );
 
@@ -153,15 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_is_the_nearest_layer_that_named_one() {
+    fn the_mode_is_read_from_the_user_layer() {
         let user = Document::sample(r#"{"permissions":{"mode":"fullAccess"}}"#, Origin::User);
-        let local = Document::sample(r#"{"permissions":{"mode":"ask"}}"#, Origin::ProjectLocal);
 
-        assert_eq!(
-            Settings::resolve(vec![user.clone()]).mode(),
-            Some(Mode::FullAccess)
-        );
-        assert_eq!(Settings::resolve(vec![user, local]).mode(), Some(Mode::Ask));
+        assert_eq!(Settings::resolve(vec![user]).mode(), Some(Mode::FullAccess));
     }
 
     #[test]
@@ -170,26 +172,21 @@ mod tests {
     }
 
     #[test]
-    fn every_layers_directories_are_reachable_together() {
+    fn every_user_named_directory_is_reachable() {
         // Absolute, because the document refuses anything else — and spelled
         // for this platform, because that is what absolute means.
         let shared = rooted("opt/shared");
         let vendor = rooted("srv/vendor");
 
         let user = Document::sample(
-            &json!({ "permissions": { "extraDirectories": [&shared] } }).to_string(),
+            &json!({ "permissions": { "extraDirectories": [&shared, &vendor] } }).to_string(),
             Origin::User,
         );
-        let local = Document::sample(
-            &json!({ "permissions": { "extraDirectories": [&vendor] } }).to_string(),
-            Origin::ProjectLocal,
-        );
 
-        let settings = Settings::resolve(vec![user, local]);
+        let settings = Settings::resolve(vec![user]);
 
-        // Furthest first, which is the order they merged in. Order carries no
-        // meaning — containment is a question each directory answers alone —
-        // so this is pinning the concatenation rather than a precedence.
+        // Order carries no meaning — containment is a question each directory
+        // answers alone — so this pins the list read rather than precedence.
         assert_eq!(
             settings.extra_directories().collect::<Vec<_>>(),
             [shared, vendor]

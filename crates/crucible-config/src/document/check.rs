@@ -111,27 +111,14 @@ impl Reader<'_> {
 
     /// An object whose keys crucible chose. An unrecognised one stops the read.
     ///
-    /// And a key the shape marks as widening, in the layer that travels with a
-    /// clone. That is the same structural refusal `env` has had, moved onto the
-    /// thing it was always about: `.crucible/config.json` reaches everyone who
-    /// clones the repository, so a key in it that only ever loosens what
-    /// crucible does unasked would be authority granted by a file nobody read.
+    /// And a key the shape marks as widening, in either layer inside the
+    /// workspace. That is the same structural refusal `env` has had, moved onto
+    /// the thing it was always about: either project filename can be committed,
+    /// so a key in one that only ever loosens what crucible does unasked would
+    /// be authority granted by a file nobody read.
     /// `permissions.mode` set to `fullAccess` there is every call in every
     /// session approved before the user has typed anything.
     ///
-    /// Only the layer that is checked in, not both project files, and the
-    /// reason is that crucible writes an `allow` the user answered `always` to
-    /// into `.crucible/config.local.json`. Refusing one there would be crucible
-    /// writing a file it then refuses to open.
-    ///
-    /// So a repository that commits a `config.local.json` of its own can still
-    /// state an `allow` and a `mode`, and this refusal does not reach it. That
-    /// is left standing on purpose rather than overlooked: refusing `mode`
-    /// there and not `allow` would cost somebody a per-project mode and stop
-    /// nobody, since `allow` states the same authority a rule at a time. What
-    /// closes it is a `.gitignore`, and what makes that bearable is the
-    /// refusal in `variables` below — an `allow` is rules the user can read,
-    /// while a `PATH` is every command silently becoming a different program.
     fn fields(
         &self,
         value: &Value,
@@ -159,7 +146,7 @@ impl Reader<'_> {
             // Before the value is walked, so the refusal names the key rather
             // than something written under it. What is wrong here is where the
             // key is, and that is true whatever it was set to.
-            if declared.widens && self.origin == Origin::Project {
+            if declared.widens && self.origin.in_the_workspace() {
                 return Err(ConfigError::Widening {
                     file: self.file.into(),
                     path: path.as_str().into(),

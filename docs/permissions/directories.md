@@ -19,10 +19,11 @@ exception: a shell reaches whatever you can, which is why what bounds it is
 Entries are absolute paths, resolved once at startup the way the working
 directory already is. A relative entry is refused with an error naming the
 file and the position, because a path in a configuration file is not relative
-to anything the file knows. An absolute path also names one machine, which is
-why the entry belongs in `.crucible/config.local.json`, the layer that is not
-checked in: `/home/you/src/shared-lib` means nothing to anyone else who
-clones. Like the rule lists, the lists from every layer concatenate.
+to anything the file knows. An absolute path also names one machine, so the
+entry belongs in `~/.crucible/config.json`. Both workspace filenames can be
+committed, whatever their ignore convention says, and neither may widen the
+directories a checkout can reach. `/home/you/src/shared-lib` means nothing to
+anyone else who clones. Lists from the layers that may set them concatenate.
 
 The working directory stays the anchor: a relative path in a tool call still
 means what it means from there, and `bash` still runs there. An extra

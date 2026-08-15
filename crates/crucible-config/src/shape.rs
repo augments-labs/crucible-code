@@ -69,12 +69,12 @@ pub(crate) struct Field {
     /// Declared here, beside the key, rather than as a list of paths somewhere
     /// that checks documents — a list like that is a second declaration of the
     /// same keys, and the one that goes stale is the one nothing reads. The
-    /// walk refuses a `true` in the layer that travels with a clone, and the
+    /// walk refuses a `true` in either workspace layer, and the
     /// reasoning for that sits where the refusal is.
     ///
     /// It reaches no schema. One schema is served to all three layers, and a
-    /// key refused in one of them is still a key everywhere else — an editor
-    /// that struck it out would be wrong in two files out of three.
+    /// key refused in two of them is still a key in the user file — an editor
+    /// that struck it out would still be wrong there.
     pub(crate) widens: bool,
 }
 
@@ -99,17 +99,19 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     // The *name*. A key never appears in a configuration file: this workspace
     // resolves one from the environment by the name given here, and the value
-    // has no path into a document, a session file or a log line.
+    // has no path into a document, a session file or a log line. Choosing that
+    // name still chooses which inherited value is sent away as a credential,
+    // so a file from the workspace may not make the choice.
     Field {
         name: "apiKeyEnv",
         about: "Name of the environment variable holding this provider's API key — the name, never the key",
         shape: Shape::Text,
         examples: &[],
-        widens: false,
+        widens: true,
     },
     // The one key here that decides *who* the request goes to, which is who
     // receives the API key with it. `widens` is what keeps that out of the
-    // layer a clone brings: a repository able to set this would be a repository
+    // layers a clone can bring: a repository able to set this would be a repository
     // that reads the key of everyone who opens it.
     Field {
         name: "baseUrl",
@@ -228,20 +230,20 @@ const DIRECTORY: Shape = Shape::Text;
 /// on its own is the property that buys.
 ///
 /// Three of these five widen and two tighten, and that is the whole of what the
-/// layer travelling with a clone is allowed to say: `ask` and `deny` only ever
+/// either workspace layer is allowed to say: `ask` and `deny` only ever
 /// put more in front of the user, so a repository that wants its own `.git`
 /// left alone can still say so in a file everyone gets.
 const PERMISSIONS: &[Field] = &[
     Field {
         name: "mode",
-        about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Not read from .crucible/config.json, which everyone who clones gets",
+        about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Read only from the configuration file in your home directory",
         shape: Shape::Choice(MODE),
         examples: &[],
         widens: true,
     },
     Field {
         name: "allow",
-        about: "Rules for calls that run without being put to you. Not read from .crucible/config.json, which everyone who clones gets",
+        about: "Rules for calls that run without being put to you. Read only from the configuration file in your home directory",
         shape: Shape::List(&RULE),
         // A whole command rather than a program and a wildcard. `bash(git *)`
         // would read as the obvious thing to write and would cover `git push`,
@@ -265,7 +267,7 @@ const PERMISSIONS: &[Field] = &[
     },
     Field {
         name: "extraDirectories",
-        about: "Absolute paths to directories outside the working directory that tools may reach. An absolute path names one machine, and this is not read from .crucible/config.json, so it belongs in .crucible/config.local.json",
+        about: "Absolute paths to directories outside the working directory that tools may reach. Read only from the configuration file in your home directory",
         shape: Shape::List(&DIRECTORY),
         // One spelling per platform. What counts as absolute is a drive or a
         // share on Windows and a leading slash everywhere else, and this schema
@@ -294,12 +296,11 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
     //
     // It widens for the reason `baseUrl` does, and more plainly: it decides
     // who a turn is sent to, and therefore who receives the API key and the
-    // prompt. A repository everybody clones may not make that choice on behalf
-    // of whoever opened it. A machine that wants a provider pinned per project
-    // says so in `.crucible/config.local.json`, which no clone carries.
+    // prompt. A repository may not make that choice on behalf of whoever
+    // opened it, under either project filename.
     Field {
         name: "provider",
-        about: "Which provider to ask, by the name --model qualifies a model with. Not read from .crucible/config.json, which everyone who clones gets",
+        about: "Which provider to ask, by the name --model qualifies a model with. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         // No example. It would have to name one of the providers this build
         // serves, and that list belongs to the binary rather than to this

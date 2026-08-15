@@ -1,4 +1,4 @@
-//! What answering `always` leaves behind in a file somebody else writes too.
+//! Splicing a durable rule into a user-owned configuration document.
 
 use crucible_core::{
     Ask, Command, Mode, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
@@ -10,7 +10,7 @@ use crate::settings::Settings;
 
 use super::*;
 
-const FILE: &str = ".crucible/config.local.json";
+const FILE: &str = "~/.crucible/config.json";
 
 fn call() -> ToolCall {
     ToolCall {
@@ -51,7 +51,7 @@ fn settles(text: &str, command: &str) -> Settled {
         }
     }
 
-    let document = Document::parse(text, FILE, Origin::ProjectLocal)
+    let document = Document::parse(text, FILE, Origin::User)
         .expect("what was written is a document crucible reads");
 
     Settings::resolve(vec![document])

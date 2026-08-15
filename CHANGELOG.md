@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Both workspace configuration filenames are non-authority layers.** They may
+  narrow policy, but settings that allow calls, widen filesystem reach, select
+  credentials or redirect requests are read only from the user configuration
+  outside the checkout.
+
 - **Permission questions offer once or session.** Durable `allow` rules now
   have to be written deliberately in the user configuration outside a
   checkout. The former `always` answer wrote authority into a conventional
