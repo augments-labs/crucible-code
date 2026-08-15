@@ -6,6 +6,12 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Credential-store input bounds.** A malformed key now refuses the complete
+  store instead of silently disappearing, and stores above 64 KiB fail closed
+  before they can choose startup memory.
+
 ## [0.1.6] - 2026-08-14
 
 ### Changed
