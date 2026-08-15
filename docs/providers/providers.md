@@ -224,6 +224,10 @@ and diagnostics show the recipient but redact the path and query because those
 parts often contain tenant identifiers or tokens. Authenticated model requests
 never follow redirects; the provider receives the 3xx refusal instead.
 
+A refused response body is read for at most ten seconds and 8 KiB. That deadline
+is elapsed time for the whole body, including bytes a slow peer continues to
+trickle between waits.
+
 A key never appears in a log line, an error message, a session file, or
 anything crucible prints. If you see one, that is a bug worth
 [reporting privately](../../SECURITY.md).

@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Slow refusal bodies now obey their ten-second whole-read deadline.** A peer
+  that keeps trickling bytes can no longer hold the provider thread far beyond
+  the advertised limit.
+
 - **Authenticated model requests no longer follow redirects.** A 3xx response
   is handed back to the provider as a refusal, so it cannot choose a second
   recipient for an API key or another credential.
