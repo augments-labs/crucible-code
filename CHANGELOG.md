@@ -18,6 +18,10 @@ Notable changes to crucible. Format follows
   from transport and HTTP failure diagnostics, and cancelling interrupts a
   refusal body that is still arriving.
 
+- **Provider stream errors cannot echo credentials.** The same request-bound
+  filter now covers framing and vendor error events inside successful HTTP
+  responses.
+
 - **Grep retains one global match bound.** Parallel workers add directly to the
   ordered result instead of keeping an additional batch per worker.
 

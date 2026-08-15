@@ -41,6 +41,7 @@ fn reading(body: &str, cancel: &Cancel) -> Stream {
     Stream::new(
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
         cancel.clone(),
+        crucible_core::Redactions::default(),
     )
 }
 
@@ -303,7 +304,11 @@ fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
         Said::Nothing,
     ])
     .meanwhile(move || raise.request());
-    let mut stream = Stream::new(Box::new(silent), cancel);
+    let mut stream = Stream::new(
+        Box::new(silent),
+        cancel,
+        crucible_core::Redactions::default(),
+    );
 
     assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
 
@@ -321,7 +326,11 @@ fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
     // expiring is read as a connection that broke: every pause in a long answer
     // becomes a failed turn. Nothing here fails, and this body pauses between
     // every five bytes of itself.
-    let mut stream = Stream::new(Box::new(Paused::dawdling(ANSWER, 5)), Cancel::new());
+    let mut stream = Stream::new(
+        Box::new(Paused::dawdling(ANSWER, 5)),
+        Cancel::new(),
+        crucible_core::Redactions::default(),
+    );
 
     assert_eq!(
         deltas(&mut stream),

@@ -152,6 +152,23 @@ fn a_refusal_cannot_repeat_raw_or_bearer_credentials() {
 }
 
 #[test]
+fn a_stream_error_cannot_repeat_raw_or_bearer_credentials() {
+    let body = format!(
+        "data: {{\"error\":{{\"type\":\"gateway\",\"message\":\"Bearer {SECRET}; raw {SECRET}; model remains useful\"}}}}\n\n"
+    );
+    let (moonshot, _) = provider(Moonshot::PLATFORM, &body, 200);
+
+    let mut stream = moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
+    let problem = stream.next().unwrap().unwrap_err();
+    let displayed = problem.to_string();
+    let debugged = format!("{problem:?}");
+
+    assert!(!displayed.contains(SECRET));
+    assert!(!debugged.contains(SECRET));
+    assert!(displayed.contains("model remains useful"));
+}
+
+#[test]
 fn a_cancelled_turn_is_never_sent() {
     let (moonshot, replay) = provider(Moonshot::CODING, ANSWER, 200);
     let cancel = Cancel::new();
