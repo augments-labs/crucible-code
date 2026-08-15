@@ -22,19 +22,25 @@ Implement `Tool`, and answer three questions in code rather than in a comment:
    it, so a vague answer buys a vague question and a wider grant than anyone
    agreed to.
 3. **What does it reach?** Every path goes through `Workspace` and is rejected
-   if it escapes — after symbolic links are resolved, not before, and including
-   the last component of a path being created. `bash` is the standing exception
-   and the only one: a shell reaches whatever the user can, so what bounds it is
-   question 2 rather than the workspace.
+   if it escapes. Existing paths are checked after symbolic links are resolved;
+   creation validates the existing parent and refuses an unsafe or unsupported
+   descent. `bash` is the standing exception and the only one: a shell reaches
+   whatever the user can, so what bounds it is question 2 rather than the
+   workspace.
 
 A `SpawnsProcess` is asked about in every mode but `fullAccess`, and nothing a
-tool can say about the line changes that. Containment here is a descriptor held
-open, not a name found to be safe: the file tools keep the directory they proved
-and never look a path up twice, and a program handed a path looks it up itself,
-after the check and outside this process. So a reading of a command line is
-worth a rule somebody wrote and a question somebody answers, and it is not worth
-a grant — a check that decided otherwise would be a file changed outside the
-workspace with nobody asked.
+tool can say about the line changes that. On Unix, file tools descend through
+held directory descriptors and open each component without following symbolic
+links. On Windows, they open by name, validate the final handle, and retain the
+validated parent for a replacement. The public path check is repeated by the
+operation, and edit rechecks the source identity immediately before its
+replacement; that recheck and replacement are not an atomic compare-and-swap.
+A concurrent actor can still move a held parent directory outside the workspace,
+because the supported platforms provide no portable ancestry lock. A program
+handed a path looks it up itself, after the check and outside this process. So a
+reading of a command line is worth a rule somebody wrote and a question somebody
+answers, and it is not worth a grant — a check that decided otherwise would be a
+file changed outside the workspace with nobody asked.
 
 ## Grants
 

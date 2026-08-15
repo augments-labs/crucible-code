@@ -48,6 +48,20 @@ pub enum PathError {
         requested: Box<str>,
     },
 
+    /// A workspace root names something other than a directory.
+    #[error("{requested} is not a directory")]
+    NotDirectory {
+        /// The root or extra directory as the caller wrote it.
+        requested: Box<str>,
+    },
+
+    /// A resolved or walked name no longer names a regular file.
+    #[error("{at} is not a regular file")]
+    NotFile {
+        /// The absolute path the caller reached.
+        at: Box<str>,
+    },
+
     /// The name led to a different file by the time it was opened than the one
     /// containment was settled about.
     #[error("{at} was replaced after it was checked, so it was not opened")]
@@ -59,6 +73,14 @@ pub enum PathError {
         at: Box<str>,
     },
 
+    /// A whole-file transformation was prepared from an earlier file that is
+    /// no longer the one at the destination name.
+    #[error("{at} changed while its replacement was prepared, so it was not replaced")]
+    Changed {
+        /// The resolved destination whose identity changed.
+        at: Box<str>,
+    },
+
     /// The operating system refused to open a path that resolved inside the
     /// workspace.
     #[error("{at} could not be opened: {source}")]
@@ -66,6 +88,44 @@ pub enum PathError {
         /// The resolved path, for the reason above.
         at: Box<str>,
         /// What the operating system reported.
+        source: std::io::Error,
+    },
+
+    /// A directory could not be created at a contained path.
+    #[error("{at} could not be created as a directory: {source}")]
+    Uncreated {
+        /// The resolved directory name.
+        at: Box<str>,
+        /// What the operating system reported.
+        source: std::io::Error,
+    },
+
+    /// A whole-file replacement could not be committed.
+    #[error("{at} could not be replaced: {source}")]
+    Unreplaced {
+        /// The resolved path, so the failed destination is unambiguous.
+        at: Box<str>,
+        /// What the operating system reported.
+        source: std::io::Error,
+    },
+
+    /// A whole-file replacement landed, but its post-commit flush failed.
+    #[error(
+        "{at} was replaced, but its commit could not be flushed: durability is not guaranteed: {source}"
+    )]
+    Unsynced {
+        /// The resolved destination whose new contents are already visible.
+        at: Box<str>,
+        /// What the operating system reported during the post-commit flush.
+        source: std::io::Error,
+    },
+
+    /// A new file landed, but its private preparation name remains beside it.
+    #[error("{at} was created, but its temporary name could not be removed: {source}")]
+    Uncleaned {
+        /// The resolved destination whose contents are already visible.
+        at: Box<str>,
+        /// What the operating system reported while removing the extra name.
         source: std::io::Error,
     },
 

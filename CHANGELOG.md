@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Workspace paths stay confined while the tree changes.** Unix operations
+  descend through held descriptors, Windows validates the final opened handle,
+  missing-parent proofs retain their intended leaf, and non-directory roots are
+  refused before a tool can use them.
+
 - **Private credential files on every supported platform.** The auth directory,
   store, partial write and lock are owner-only on Unix and Windows; existing
   permissions are tightened before a credential is read.

@@ -123,6 +123,21 @@ impl Target {
         Self::spelled(workspace, path.as_path(), Wanted::BOTH)
     }
 
+    /// The path a write intends to create, including missing directories.
+    ///
+    /// Permission is decided before a write makes its parents. The nearest
+    /// existing ancestor is still resolved and checked by the workspace, so
+    /// this never trusts the model's path text; it only preserves ordinary
+    /// names below the point the filesystem could prove.
+    #[must_use]
+    pub fn intended(workspace: &Workspace, requested: &str) -> Self {
+        workspace
+            .intended(requested)
+            .map_or_else(Self::unresolved, |path| {
+                Self::spelled(workspace, &path, Wanted::BOTH)
+            })
+    }
+
     /// The path a walk reached, from a root the workspace had already proved.
     ///
     /// A walk descends from a [`WorkspacePath`] and never follows a symbolic
