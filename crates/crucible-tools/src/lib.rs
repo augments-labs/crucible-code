@@ -1,8 +1,9 @@
 //! Filesystem, search and process tools the agent can call.
 //!
-//! Depends on `crucible-core` alone, and is a sibling of `crucible-provider`:
-//! neither may reach the other. Each tool implements `Tool` from core, so the
-//! runner dispatches to them without naming any of them.
+//! Its only dependency on another crucible crate is `crucible-core`, and it is
+//! a sibling of `crucible-provider`: neither may reach the other. Each tool
+//! implements `Tool` from core, so the runner dispatches to them without naming
+//! any of them.
 //!
 //! Every tool takes an `Approved` as an argument rather than asking for one —
 //! the grant the permission engine minted, bound to the call it was reached
@@ -27,8 +28,8 @@
 //! link may well point back inside.
 //!
 //! What a tool answers with is bounded before it leaves, because it goes into
-//! the next request whole. [`bound`] holds the one figure they share and says
-//! why that figure is in bytes rather than in lines.
+//! the next request whole. The private `bound` module holds the one figure they
+//! share and says why that figure is in bytes rather than in lines.
 //!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
@@ -36,6 +37,7 @@
 //! why the question it asks names the program the command is about to run.
 
 mod args;
+mod atomic;
 mod bash;
 mod bound;
 mod edit;

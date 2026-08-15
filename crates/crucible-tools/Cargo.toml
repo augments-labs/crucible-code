@@ -25,5 +25,11 @@ serde_json.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
 
+[target.'cfg(windows)'.dependencies]
+# Replacing an existing file relative to a held directory has no std API.
+# This uses the already-pinned filesystem bindings at the atomic replacement
+# boundary; process containment widens the same dependency in its own PR.
+windows-sys.workspace = true
+
 [lints]
 workspace = true

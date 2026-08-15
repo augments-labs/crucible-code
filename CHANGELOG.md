@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Whole-file writes commit atomically.** `write` prepares and flushes a
+  private sibling before replacing the destination, preserves an existing
+  mode, and refuses a destination whose file identity changed before commit.
+
 - **Grep is globally bounded and cancellable inside every file.** Parallel
   workers share one ordered match bound, partial-file names are capped, and a
   no-match file now notices cancellation before reaching its end.

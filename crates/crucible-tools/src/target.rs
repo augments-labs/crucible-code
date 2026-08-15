@@ -43,7 +43,7 @@ pub(crate) fn creatable(
     let Some(requested) = requested(tool, args, field) else {
         return Target::unresolved();
     };
-    found(workspace, workspace.creatable(&requested))
+    Target::intended(workspace, &requested)
 }
 
 /// What a search covers: the directory named in `field`, or the whole workspace
