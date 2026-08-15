@@ -44,16 +44,30 @@ at the end of the same walk, with the flag that makes the operating system
 refuse a symbolic link at the last component. `edit` reads and rewrites through
 a single open file rather than naming it twice.
 
+`write` does not truncate an existing file. It prepares a private file beside
+the destination, preserves the existing mode, flushes the complete contents,
+and renames the private file over the destination as one namespace operation.
+Unix then flushes the directory. A failure before the rename leaves the
+previous file whole; a failure of the final directory flush is reported after
+the replacement is already visible. Crucible also checks the destination's
+file identity immediately before commit and refuses a concurrent change. That
+check and rename are separate system calls, not a compare-and-swap primitive.
+
 A link you meant is untouched by any of that. A checkout reached through one
 works, because the working directory is resolved when crucible starts and the
 link is never on the way down; so does a project that links to its own files,
 because resolving followed the link and settled containment about where it led.
 What the walk refuses is a link that was not there when the path was checked.
 
-Windows has no call that opens one component against a directory already held.
-There crucible confirms the last component is not a link and then opens the path
-by name, so a directory *above* the file can still be replaced between those two
-calls, in a window as long as two system calls.
+Windows opens a file by name, then validates the final path of the resulting
+handle before content is read. `write` prepares its file privately and commits
+by rename relative to a held, validated parent, so an ancestor changed to a
+directory reparse point cannot redirect the commit. Safe relative creation of
+a missing directory is unavailable through the Windows boundary used here, so
+`write` on Windows requires its parent directory to exist and fails closed
+instead of using a full-path fallback. Its handle-relative rename has no
+write-through form: the file is flushed before and after rename, but Windows
+does not make the same directory-durability promise as Unix.
 
 What that bounds is crucible, on either platform. It is not a boundary on the
 machine, and two things get past it on Unix as well. A directory crucible is

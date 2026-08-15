@@ -1,13 +1,13 @@
 //! Putting a whole file down.
 
 use std::fs;
-use std::io::Write as _;
 
 use crucible_core::{
     Approved, PathError, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
 };
 
 use crate::args::Args;
+use crate::atomic;
 use crate::target;
 
 /// The name the model calls.
@@ -16,7 +16,7 @@ const NAME: &str = "write";
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 const SCHEMA: &str = r#"{
-  "description": "Writes a file in the workspace, replacing it if it is already there. Creates any parent directories it needs.",
+  "description": "Writes a file in the workspace, replacing it if it is already there. Creates missing parent directories on Unix; on Windows the parent directory must already exist.",
   "type": "object",
   "properties": {
     "path": {
@@ -69,7 +69,7 @@ impl Tool for Write {
         // containment is decided on a resolved path and only a directory that
         // is really there can be resolved. So the directories are made first,
         // through a parent that has itself been checked.
-        if let Some(problem) = self.prepare(requested)? {
+        if let Some(problem) = self.prepare(requested) {
             return Ok(problem);
         }
 
@@ -90,27 +90,36 @@ impl Tool for Write {
         }
 
         let replaced = already.is_ok();
-        let opened = if replaced {
-            path.open_to_change()
+        let original = if replaced {
+            let file = match path.open_regular_to_change() {
+                Ok(file) => file,
+                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+            };
+            Some(file)
         } else {
-            path.create()
+            None
         };
-
-        let mut file = match opened {
-            Ok(file) => file,
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-        };
-
-        // Both of these are about the descriptor rather than the name, so the
-        // file that was opened is the file that gets the text — there is no
-        // second lookup here for anything to arrive in.
-        file.set_len(0)
-            .and_then(|()| file.write_all(content.as_bytes()))
+        let permissions = original
+            .as_ref()
+            .map(|file| file.metadata().map(|metadata| metadata.permissions()))
+            .transpose()
             .map_err(|source| ToolError::Io {
                 tool: NAME,
-                problem: format!("could not write {requested}").into(),
+                problem: format!("could not inspect {requested}").into(),
                 source,
             })?;
+
+        // Prepared beside the destination and flushed before the namespace
+        // changes atomically. Unix also flushes the directory; Windows flushes
+        // the renamed file because its handle-relative rename has no
+        // write-through form. A failure before commit leaves the old file
+        // whole, and a file whose identity changed before the final pre-commit
+        // check is refused rather than overwritten.
+        if let Err(problem) =
+            atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
+        {
+            return Ok(ToolOutput::failed(problem.to_string()));
+        }
 
         let lines = content.lines().count();
         let what = if replaced { "replaced" } else { "created" };
@@ -128,24 +137,18 @@ impl Write {
     /// the *directories* — `../stray/one.txt` is refused at the end, after
     /// `stray` has already been made outside the tree.
     ///
-    /// Making a level is the one step here that a second writer cannot race:
-    /// the operating system refuses `create_dir` when anything at all is
-    /// already at the name, a symbolic link included, so a link planted at a
-    /// level between the check and the make is an error rather than a way out
-    /// of the tree.
-    fn prepare(&self, requested: &str) -> Result<Option<ToolOutput>, ToolError> {
-        let Some(parent) = std::path::Path::new(requested).parent() else {
-            return Ok(None);
-        };
+    /// Creation itself refuses when anything is already at the leaf, a symbolic
+    /// link included. A link planted there between the check and creation is
+    /// therefore an error rather than a path redirection.
+    fn prepare(&self, requested: &str) -> Option<ToolOutput> {
+        let parent = std::path::Path::new(requested).parent()?;
 
         let mut so_far = std::path::PathBuf::new();
         for part in parent.components() {
             so_far.push(part);
 
             let Some(step) = so_far.to_str() else {
-                return Ok(Some(ToolOutput::failed(format!(
-                    "{requested} is not valid text"
-                ))));
+                return Some(ToolOutput::failed(format!("{requested} is not valid text")));
             };
 
             // A level that is already there is not one to make, and there are
@@ -161,17 +164,15 @@ impl Write {
 
             let at = match self.workspace.creatable(step) {
                 Ok(at) => at,
-                Err(problem) => return Ok(Some(ToolOutput::failed(problem.to_string()))),
+                Err(problem) => return Some(ToolOutput::failed(problem.to_string())),
             };
 
-            fs::create_dir(&at).map_err(|source| ToolError::Io {
-                tool: NAME,
-                problem: format!("could not create {step}").into(),
-                source,
-            })?;
+            if let Err(problem) = at.create_directory() {
+                return Some(ToolOutput::failed(problem.to_string()));
+            }
         }
 
-        Ok(None)
+        None
     }
 }
 

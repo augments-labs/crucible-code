@@ -1,6 +1,8 @@
 //! What `write` puts down, and what it refuses to put down.
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 
 use super::{Sensitivity, Tool, ToolArgs, ToolOutput, Write};
 use crate::sample::{Sample, allowed, symlink};
@@ -35,6 +37,23 @@ fn an_existing_file_is_replaced_rather_than_appended_to() {
     assert_eq!(output.text(), "replaced one.txt, 1 lines");
 }
 
+#[cfg(unix)]
+#[test]
+fn replacing_a_file_preserves_its_existing_mode() {
+    let sample = Sample::new("write-mode");
+    let path = sample.root().join("one.txt");
+    sample.write("one.txt", "old\n");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+    let output = write(&sample, r#"{"path":"one.txt","content":"new\n"}"#);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
 #[test]
 fn an_empty_file_is_a_thing_that_can_be_asked_for() {
     let sample = Sample::new("write-empty");
@@ -45,6 +64,7 @@ fn an_empty_file_is_a_thing_that_can_be_asked_for() {
     assert!(!output.is_failed(), "{}", output.text());
 }
 
+#[cfg(unix)]
 #[test]
 fn the_directories_above_a_new_file_are_made() {
     let sample = Sample::new("write-deep");
@@ -57,6 +77,21 @@ fn the_directories_above_a_new_file_are_made() {
     assert_eq!(read(&sample, "src/cli/parse.rs"), "fn main() {}\n");
 }
 
+#[cfg(windows)]
+#[test]
+fn missing_directories_are_refused_when_safe_relative_creation_is_unavailable() {
+    let sample = Sample::new("write-deep-refused");
+
+    let output = write(
+        &sample,
+        r#"{"path":"src/cli/parse.rs","content":"fn main() {}\n"}"#,
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("unavailable on this platform"));
+    assert!(!sample.root().join("src").exists());
+}
+
 #[test]
 fn an_absolute_path_inside_the_workspace_is_written_like_a_relative_one() {
     // The directories are made by walking the components of the parent, and
@@ -65,6 +100,7 @@ fn an_absolute_path_inside_the_workspace_is_written_like_a_relative_one() {
     // and every absolute path was refused. Every other test here sends a
     // relative one, which is why nothing caught it.
     let sample = Sample::new("write-absolute");
+    fs::create_dir(sample.root().join("sub")).unwrap();
     let path = format!("{}/sub/one.txt", sample.named());
 
     let output = write(
@@ -232,6 +268,27 @@ fn writing_names_the_file_it_would_change() {
 
     assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
     assert_eq!(sensitivity.to_string(), "change one.txt");
+}
+
+#[test]
+fn missing_directories_do_not_hide_the_permission_configuration() {
+    // Permission is decided before `write` makes these directories. Resolving
+    // only a creatable leaf used to lose this target while `.crucible` was
+    // absent, which let allow-edits mode reach the one file no mode may write.
+    let sample = Sample::new("write-config-sensitivity");
+    let tool = Write::new(sample.workspace());
+
+    for path in [
+        ".crucible/config.json",
+        ".crucible/config.local.json",
+        "nested/.crucible/config.json",
+    ] {
+        let sensitivity = tool.sensitivity(&ToolArgs::new(format!(
+            r#"{{"path":"{path}","content":"{{}}"}}"#
+        )));
+
+        assert_eq!(sensitivity.to_string(), format!("change {path}"));
+    }
 }
 
 #[test]
