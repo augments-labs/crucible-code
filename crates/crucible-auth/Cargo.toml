@@ -13,6 +13,9 @@ authors.workspace = true
 # handed back as the type that can only be applied to a request, never as the
 # string it was written down as.
 crucible-core.workspace = true
+# Owner-only creation and tightening for the auth directory, store, partial
+# and lock, shared with session files so Windows has one DACL implementation.
+crucible-privacy.workspace = true
 # The store is JSON, read the same keyless way every other boundary here reads
 # one: the file is a version and a map of provider to key, and walking it is
 # shorter than a mirror struct plus the derive that fills it.

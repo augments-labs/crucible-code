@@ -18,7 +18,7 @@
 mod document;
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -91,6 +91,12 @@ impl Store {
     /// be done comes back in [`Keys::trouble`] for the user to be told once.
     #[must_use]
     pub fn read(&self) -> Keys {
+        let secured = match self.secure_existing() {
+            Ok(Some(secured)) => secured,
+            Ok(None) => return Keys::default(),
+            Err(problem) => return Keys::nothing(&problem.to_string()),
+        };
+
         let text = match self.read_text() {
             Ok(Some(text)) => text,
             Ok(None) => return Keys::default(),
@@ -105,7 +111,7 @@ impl Store {
             Err(said) => Keys::nothing(&said.to_string()),
         };
 
-        if let Some(said) = tighten(&self.path) {
+        if let Some(said) = secured.warning {
             keys.also(&said);
         }
 
@@ -151,6 +157,7 @@ impl Store {
     ) -> Result<(), AuthError> {
         self.directory()?;
         let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
+        let _secured = self.secure_existing()?;
 
         let mut keys = match self.read_text()? {
             Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
@@ -165,23 +172,39 @@ impl Store {
 
         let partial = self.home.join(PARTIAL);
         write_private(&partial, &document::render(&keys))?;
-        fs::rename(&partial, &self.path).map_err(AuthError::at(&self.path))
+        crucible_privacy::replace(&partial, &self.path)
+            .map_err(|problem| AuthError::at(&self.path)(problem.into_io()))
     }
 
-    /// The directory, created at a mode only this user can enter if it is not
-    /// there yet.
-    ///
-    /// One already on disk is left exactly as it is. `~/.crucible` holds the
-    /// configuration and the session logs and may predate this file by
-    /// releases; a directory the user made is theirs, and the file's own mode
-    /// is what protects the key.
+    /// The directory, created or tightened so only this user can enter it.
     fn directory(&self) -> Result<(), AuthError> {
-        if !self.home.is_dir() {
-            fs::create_dir_all(&self.home).map_err(AuthError::at(&self.home))?;
-            private(&self.home, 0o700).map_err(AuthError::at(&self.home))?;
+        crucible_privacy::directory(&self.home)
+            .map_err(|problem| AuthError::at(&self.home)(problem.into_io()))
+    }
+
+    /// An existing store, protected before any key is read from it.
+    fn secure_existing(&self) -> Result<Option<Secured>, AuthError> {
+        match fs::metadata(&self.home) {
+            Ok(_) => self.directory()?,
+            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(problem) => return Err(AuthError::at(&self.home)(problem)),
         }
 
-        Ok(())
+        match fs::symlink_metadata(&self.path) {
+            Ok(_) => {}
+            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(problem) => return Err(AuthError::at(&self.path)(problem)),
+        }
+
+        let changed = crucible_privacy::tighten(&self.path)
+            .map_err(|problem| AuthError::at(&self.path)(problem.into_io()))?;
+        Ok(Some(Secured {
+            warning: changed.then(|| {
+                format!(
+                    "{FILE} was readable by others and has been tightened to owner-only permissions"
+                )
+            }),
+        }))
     }
 
     /// Reads no more than one bounded store from disk.
@@ -205,6 +228,12 @@ impl Store {
 
         Ok(Some(text))
     }
+}
+
+/// Proof that an existing store was protected before it was read.
+struct Secured {
+    /// A successful repair the user should know happened.
+    warning: Option<String>,
 }
 
 /// The keys the store held, and anything that has to be said about reading it.
@@ -270,69 +299,17 @@ impl std::fmt::Debug for Keys {
 /// than following it, a symlink aimed elsewhere being the one that matters, so
 /// the gap between those two lines is not a way in. The mode is set at open
 /// time rather than after, because the window between creating a file at the
-/// umask's mode and tightening it is long enough to read a key out of.
+/// umask's mode and tightening it is long enough to read a key out of. On
+/// Windows the protected directory supplies that initial list by inheritance,
+/// and the file is protected outright before this function receives it.
 fn write_private(path: &Path, text: &str) -> Result<(), AuthError> {
     let _ = fs::remove_file(path);
 
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-
-    let mut file = options.open(path).map_err(AuthError::at(path))?;
+    let mut file = crucible_privacy::create_write(path)
+        .map_err(|problem| AuthError::at(path)(problem.into_io()))?;
     file.write_all(text.as_bytes())
         .map_err(AuthError::at(path))?;
     file.sync_all().map_err(AuthError::at(path))
-}
-
-/// Sets `path` to `mode`, where the platform has one.
-///
-/// Windows has no mode: the file inherits the user profile's access control
-/// list, a weaker guarantee than `0600` and the same one the session logs
-/// already have — said here rather than papered over.
-#[cfg_attr(
-    not(unix),
-    expect(
-        clippy::unnecessary_wraps,
-        reason = "the Windows arm has nothing to fail at, and a caller that had to know which platform it was on is the thing this hides"
-    )
-)]
-fn private(path: &Path, mode: u32) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
-    }
-    #[cfg(not(unix))]
-    let _ = (path, mode);
-
-    Ok(())
-}
-
-/// Narrows `path` if it is readable by anyone else, and says so.
-///
-/// Warn, tighten, continue — rather than the refusal `ssh` gives a private key
-/// at the wrong mode. A user who cannot log in without shell surgery is worse
-/// off than one who is told their file was open and that it has been closed.
-#[cfg(unix)]
-fn tighten(path: &Path) -> Option<String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mode = fs::metadata(path).ok()?.permissions().mode() & 0o777;
-    if mode == 0o600 {
-        return None;
-    }
-
-    let said = format!("{FILE} was readable by others (mode {mode:04o}) and has been tightened");
-    private(path, 0o600).ok().map(|()| said)
-}
-
-#[cfg(not(unix))]
-fn tighten(_path: &Path) -> Option<String> {
-    None
 }
 
 /// The lock two crucibles logging in at once contend for.
@@ -352,12 +329,8 @@ impl Lock {
     /// never created explains nothing, and the thing they are trying to write
     /// is the store.
     fn take(lock: &Path, store: &Path) -> Result<Self, AuthError> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock)
-            .map_err(AuthError::at(lock))?;
+        let file = crucible_privacy::lock(lock)
+            .map_err(|problem| AuthError::at(lock)(problem.into_io()))?;
 
         for _ in 0..ATTEMPTS {
             match file.try_lock() {
