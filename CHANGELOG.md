@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Every crate in the workspace is marked unpublished.** `publish = false` in
+  each manifest turns an accidental `cargo publish` into an error; releases
+  ship as tag-pushed GitHub Releases and nowhere else.
+
 - **The OpenAI provider names its subscription endpoint.** The fixed address a
   `ChatGPT` subscription credential is served at sits beside the API-key one;
   which of them a credential uses stays with the wiring that hands it over.
