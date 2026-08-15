@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Every crate in the workspace is marked unpublished.** `publish = false` in
+  each manifest turns an accidental `cargo publish` into an error; releases
+  ship as tag-pushed GitHub Releases and nowhere else.
+
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
   paste-back fallback, plus device authorization for headless terminals;
