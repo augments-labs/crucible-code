@@ -14,109 +14,119 @@
 //! is nested under `reasoning` rather than named at the top of the body.
 
 use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::Value;
 
-use crate::json::described;
+use crate::json::{Array, Json, Object, described};
 
 /// The whole request body.
-pub(super) fn build(request: &Request<'_>) -> Value {
-    let mut body = Map::new();
-    body.insert("model".to_owned(), json!(request.model));
-    body.insert("stream".to_owned(), json!(true));
+pub(super) fn serialize(request: &Request<'_>) -> String {
+    let mut json = Json::new();
+    json.object(|body| {
+        body.text("model", request.model);
+        body.boolean("stream", true);
+        body.number("max_output_tokens", request.max_tokens);
 
-    // Not kept by the vendor. This endpoint stores a response for retrieval
-    // unless told otherwise, and what a coding agent sends is somebody's source
-    // — so the default is the one setting here that has to be overridden rather
-    // than accepted.
-    body.insert("store".to_owned(), json!(false));
+        // This endpoint retains a response for retrieval unless told
+        // otherwise, and what a coding agent sends is somebody's source.
+        body.boolean("store", false);
 
-    // No ceiling is sent, and the field is left off deliberately rather than
-    // forgotten. On this endpoint one number bounds the reasoning and the
-    // visible answer together, and the models this protocol is for reason
-    // before they answer: a figure chosen for an answer is one the model can
-    // spend entirely on thinking, and the turn then ends having said nothing.
-    // The model's own ceiling is the one that applies.
+        // This endpoint counts reasoning and visible output together. The
+        // request's ceiling is for generated tokens, so `max_output_tokens` is
+        // its exact wire counterpart rather than a visible-answer promise.
 
-    // A field rather than a message, which is the whole difference from the
-    // older endpoint. Sent as a message it would be one more thing the model
-    // may answer rather than the instructions it answers under.
-    if let Some(system) = &request.system {
-        body.insert("instructions".to_owned(), json!(&**system));
-    }
+        // A field rather than a message, which is the whole difference from the
+        // older endpoint.
+        if let Some(system) = request.system {
+            body.text("instructions", system);
+        }
 
-    // Only where somebody chose one. Which rungs a model serves is the model's
-    // business on this endpoint and one it does not serve is a refusal, so a
-    // session nobody has an opinion about sends nothing and takes the vendor's
-    // own default for whichever model it is on.
-    if let Some(effort) = request.effort {
-        body.insert("reasoning".to_owned(), json!({ "effort": effort.as_str() }));
-    }
+        if let Some(effort) = request.effort {
+            body.object("reasoning", |reasoning| {
+                reasoning.text("effort", effort.as_str());
+            });
+        }
 
-    body.insert("input".to_owned(), Value::Array(input(request)));
+        body.array("input", |input| write_input(input, request));
 
-    // Absent rather than empty: an empty array is refused rather than read as
-    // a session with no tools.
-    if !request.tools.is_empty() {
-        let tools = request.tools.iter().map(tool).collect();
-        body.insert("tools".to_owned(), Value::Array(tools));
-    }
+        // Absent rather than empty: an empty array is refused rather than read
+        // as a session with no tools.
+        if !request.tools.is_empty() {
+            body.array("tools", |tools| {
+                for schema in request.tools {
+                    tools.object(|tool| write_tool(tool, schema));
+                }
+            });
+        }
+    });
+    json.finish()
+}
 
-    Value::Object(body)
+#[cfg(test)]
+fn build(request: &Request<'_>) -> Value {
+    serde_json::from_str(&serialize(request)).expect("request body is JSON")
 }
 
 /// The transcript, as the flat list of items this endpoint reads.
-fn input(request: &Request<'_>) -> Vec<Value> {
-    let mut items = Vec::new();
-
+fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
     for message in request.transcript.messages() {
-        append(&mut items, message);
+        append(items, message);
     }
-
-    items
 }
 
-/// One message, as however many items this wire needs for it.
+/// One message, as however many items this wire needs.
 ///
 /// Appends rather than maps because the counts differ both ways: a turn that
 /// said something and then called three tools is four items, and a turn that
 /// called none is one.
-fn append(items: &mut Vec<Value>, message: &Message) {
+fn append(items: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => items.push(json!({ "role": "user", "content": &**text })),
+        Message::User(text) => items.object(|item| {
+            item.text("role", "user");
+            item.text("content", text);
+        }),
         Message::Agent { text, calls, stop } => {
-            let before = items.len();
-
             // A model that goes straight to a tool says nothing first, and an
             // empty message is an item with no content for the model to read
             // back. The calls beside it carry the turn instead.
             if !text.is_empty() {
-                items.push(json!({ "role": "assistant", "content": &**text }));
+                items.object(|item| {
+                    item.text("role", "assistant");
+                    item.text("content", text);
+                });
             }
 
-            items.extend(calls.iter().map(call));
+            for call in calls {
+                items.object(|item| write_call(item, call));
+            }
 
             // An item of its own after the answer, and only where this message
             // put an answer in front of it. Left off, the model reads its own
             // half-sentence as a turn it chose to end — on the next turn of
             // this session and on every turn of a continued one.
-            let answered = items.len() > before;
+            let answered = !text.is_empty() || !calls.is_empty();
 
             if let Some(said) = StopReason::cut(*stop).filter(|_| answered) {
-                items.push(json!({ "role": "assistant", "content": said }));
+                items.object(|item| {
+                    item.text("role", "assistant");
+                    item.text("content", said);
+                });
             }
         }
-        Message::ToolResults(results) => items.extend(results.iter().map(result)),
+        Message::ToolResults(results) => {
+            for result in results {
+                items.object(|item| write_result(item, result));
+            }
+        }
     }
 }
 
 /// One call the model made, as its own item.
-fn call(call: &ToolCall) -> Value {
-    json!({
-        "type": "function_call",
-        "call_id": call.id.as_str(),
-        "name": &*call.name,
-        "arguments": arguments(call.args.as_str()),
-    })
+fn write_call(item: &mut Object<'_>, call: &ToolCall) {
+    item.text("type", "function_call");
+    item.text("call_id", call.id.as_str());
+    item.text("name", &call.name);
+    item.text("arguments", arguments(call.args.as_str()));
 }
 
 /// Argument text, as the model wrote it.
@@ -135,22 +145,15 @@ fn arguments(args: &str) -> &str {
 ///
 /// Answered by `call_id` rather than by position, which is what lets a turn's
 /// results arrive in any order and lets several calls be answered at once.
-fn result(result: &ToolResult) -> Value {
+fn write_result(item: &mut Object<'_>, result: &ToolResult) {
     let text = result.output.text();
-
-    // There is no field for a failure on this wire. Unmarked, "no such file:
-    // x" reads as the contents of a file that was read successfully.
-    let output = if result.output.is_failed() {
-        format!("error: {text}")
+    item.text("type", "function_call_output");
+    item.text("call_id", result.id.as_str());
+    if result.output.is_failed() {
+        item.prefixed_text("output", "error: ", text);
     } else {
-        text.to_owned()
-    };
-
-    json!({
-        "type": "function_call_output",
-        "call_id": result.id.as_str(),
-        "output": output,
-    })
+        item.text("output", text);
+    }
 }
 
 /// One tool, as advertised.
@@ -160,16 +163,13 @@ fn result(result: &ToolResult) -> Value {
 /// required and additional ones refused, which is not what these schemas say, so
 /// the answer is no and saying it is what keeps a later default from changing
 /// how a tool is validated.
-fn tool(schema: &ToolSchema) -> Value {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
     let (parameters, description) = described(schema.schema);
-
-    json!({
-        "type": "function",
-        "name": schema.name,
-        "description": description,
-        "parameters": Value::Object(parameters),
-        "strict": false,
-    })
+    tool.text("type", "function");
+    tool.text("name", schema.name);
+    tool.text("description", &description);
+    tool.value("parameters", &serde_json::Value::Object(parameters));
+    tool.boolean("strict", false);
 }
 
 #[cfg(test)]

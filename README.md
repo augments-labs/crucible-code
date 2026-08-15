@@ -43,8 +43,8 @@ worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
 Rendering costs nothing as a transcript grows, because it is inline: scrollback
 belongs to the terminal, not to this process. The transcript itself is held in
 memory for the life of the session and lent to each provider request rather than
-cloned. Provider request bodies are written directly into their outbound
-allocation; the transcript is what the peak-RSS figure bounds.
+cloned. Anthropic and OpenAI request bodies are written directly into their
+outbound allocation; the transcript is what the peak-RSS figure bounds.
 
 ## Installing
 

@@ -55,16 +55,12 @@ fn a_request_asks_the_vendor_not_to_keep_it() {
 }
 
 #[test]
-fn no_ceiling_is_sent_at_all() {
-    // One number bounds the reasoning and the answer together on this
-    // endpoint, and these models reason before they answer. A figure chosen
-    // for an answer is one the model can spend entirely on thinking, and the
-    // turn then ends having said nothing.
+fn the_generated_token_ceiling_reaches_the_endpoint() {
+    // This endpoint counts reasoning and visible output together, which is
+    // exactly what the domain request's generated-token ceiling bounds.
     let body = build(&request(said("hello")));
 
-    assert_eq!(at(&body, "/max_output_tokens"), &NOTHING);
-    assert_eq!(at(&body, "/max_completion_tokens"), &NOTHING);
-    assert_eq!(at(&body, "/max_tokens"), &NOTHING);
+    assert_eq!(at(&body, "/max_output_tokens"), 1024);
 }
 
 #[test]
