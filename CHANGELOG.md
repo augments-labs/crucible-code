@@ -20,6 +20,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider DNS retains no unbounded request body.** Resolution has a
+  five-second deadline; if the platform lookup outlives it, later provider
+  requests fail fast until restart instead of accumulating resolver threads.
+
 - **Cancelling interrupts model-request setup.** DNS, connection, TLS and
   response-header waits retain at most one process-wide worker and request body,
   which replacements must reap before sending another request.

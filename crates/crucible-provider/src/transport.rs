@@ -34,6 +34,10 @@ pub enum TransportError {
     #[error("request setup stopped unexpectedly")]
     SetupStopped,
 
+    /// The platform resolver outlived its deadline and cannot be reaped.
+    #[error("hostname resolution stalled; restart crucible before trying another provider request")]
+    ResolveStalled,
+
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
@@ -48,6 +52,11 @@ impl TransportError {
             Self::SetupStopped => ProviderError::Transport {
                 provider,
                 problem: "request setup stopped unexpectedly".into(),
+            },
+            Self::ResolveStalled => ProviderError::Transport {
+                provider,
+                problem: "hostname resolution stalled; restart crucible before trying another provider request"
+                    .into(),
             },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
         }
