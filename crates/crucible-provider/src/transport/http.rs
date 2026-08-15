@@ -10,6 +10,7 @@
 //! runs on one owned worker while the provider thread waits on a channel.
 
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::thread;
@@ -51,6 +52,13 @@ const CANCEL_POLL: Duration = Duration::from_millis(50);
 /// How long to wait for a connection.
 const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 
+/// How long a platform hostname lookup may retain request setup.
+///
+/// `getaddrinfo` has no portable cancellation operation. Ureq bounds its caller
+/// with a resolver thread; if that deadline expires, every process-shared
+/// transport fails fast so replacements cannot accumulate those threads.
+const TIMEOUT_RESOLVE: Duration = Duration::from_secs(5);
+
 /// An HTTPS transport.
 #[derive(Debug)]
 pub struct Https {
@@ -67,6 +75,8 @@ struct Shared {
     agent: ureq::Agent,
     /// A cancelled setup whose blocking operation has not returned yet.
     setup: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Set after the platform resolver outlives its deadline.
+    poisoned: Arc<AtomicBool>,
 }
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
@@ -92,6 +102,7 @@ impl Shared {
         Self {
             agent: ureq::Agent::new_with_config(config),
             setup: Mutex::new(None),
+            poisoned: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -160,7 +171,7 @@ impl Https {
                 status: response.status().as_u16(),
                 body: reader(response.into_body()),
             }),
-            Err(problem) => Err(request_problem(&problem)),
+            Err(problem) => Err(request_problem(&problem, &AtomicBool::new(false))),
         }
     }
 }
@@ -179,6 +190,9 @@ impl Transport for Https {
         body: String,
         cancel: &Cancel,
     ) -> Result<Response, TransportError> {
+        if self.shared.poisoned.load(Ordering::Acquire) {
+            return Err(TransportError::ResolveStalled);
+        }
         if cancel.requested() {
             return Err(TransportError::Cancelled);
         }
@@ -199,6 +213,9 @@ impl Transport for Https {
             worker.join().map_err(|_| TransportError::SetupStopped)?;
         }
 
+        if self.shared.poisoned.load(Ordering::Acquire) {
+            return Err(TransportError::ResolveStalled);
+        }
         if cancel.requested() {
             return Err(TransportError::Cancelled);
         }
@@ -207,12 +224,13 @@ impl Transport for Https {
         // response headers. Ownership moves into this one worker so the caller
         // can keep asking the turn's flag without cloning the request body.
         let agent = self.shared.agent.clone();
+        let poisoned = Arc::clone(&self.shared.poisoned);
         let url = url.to_owned();
         let (finished, result) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("crucible-http-setup".to_owned())
             .spawn(move || {
-                let _ = finished.send(send(&agent, &url, &headers, body));
+                let _ = finished.send(send(&agent, &url, &headers, body, &poisoned));
             })
             .map_err(|problem| TransportError::Unreachable(problem.to_string().into()))?;
 
@@ -247,6 +265,7 @@ fn send(
     url: &str,
     headers: &Outgoing,
     body: String,
+    poisoned: &AtomicBool,
 ) -> Result<Response, TransportError> {
     // On this request and not on the agent: it is the answer to a model that
     // pauses mid-sentence, and the caller reading it is the one that holds a
@@ -254,6 +273,7 @@ fn send(
     let mut request = agent
         .post(url)
         .config()
+        .timeout_resolve(Some(TIMEOUT_RESOLVE))
         .timeout_recv_body(Some(TIMEOUT_QUIET))
         .build();
     for (name, value) in headers.headers() {
@@ -267,12 +287,17 @@ fn send(
             status: response.status().as_u16(),
             body: Box::new(Waiting(reader(response.into_body()))),
         }),
-        Err(problem) => Err(request_problem(&problem)),
+        Err(problem) => Err(request_problem(&problem, poisoned)),
     }
 }
 
 /// Maps client errors without retaining or displaying a configured URL.
-fn request_problem(problem: &ureq::Error) -> TransportError {
+fn request_problem(problem: &ureq::Error, poisoned: &AtomicBool) -> TransportError {
+    if matches!(problem, ureq::Error::Timeout(ureq::Timeout::Resolve)) {
+        poisoned.store(true, Ordering::Release);
+        return TransportError::ResolveStalled;
+    }
+
     let said = match problem {
         ureq::Error::Timeout(_) => "request timed out",
         ureq::Error::HostNotFound => "host was not found",
@@ -769,6 +794,38 @@ mod tests {
         let mut body = String::new();
         response.body.read_to_string(&mut body).unwrap();
         assert_eq!(body, "ready");
+    }
+
+    #[test]
+    fn a_stalled_resolver_poisons_provider_replacements() {
+        let transport = Https::isolated();
+        let shared = Arc::clone(&transport.shared);
+        let first = request_problem(
+            &ureq::Error::Timeout(ureq::Timeout::Resolve),
+            &transport.shared.poisoned,
+        );
+        assert!(matches!(first, TransportError::ResolveStalled));
+        drop(transport);
+
+        let replacement = Https { shared };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+        let since = Instant::now();
+        let problem = replacement
+            .post(
+                &url,
+                Outgoing::new(),
+                "x".repeat(1024 * 1024),
+                &Cancel::new(),
+            )
+            .expect_err("a poisoned transport must not start another lookup");
+
+        assert!(matches!(problem, TransportError::ResolveStalled));
+        assert!(since.elapsed() < CANCEL_POLL);
+        assert!(
+            matches!(listener.accept(), Err(problem) if problem.kind() == io::ErrorKind::WouldBlock)
+        );
     }
 
     #[test]
