@@ -6,6 +6,12 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Internal
+
+- **Credentials carry opaque response-redaction material.** Provider adapters
+  can remove an applied secret from untrusted diagnostics without gaining an
+  accessor to the credential itself.
+
 ### Fixed
 
 - **Grep retains one global match bound.** Parallel workers add directly to the
