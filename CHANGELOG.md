@@ -15,6 +15,11 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The smoke gate verifies checksums exactly and enforces the glibc floor.**
+  `--offline` is renamed to `--no-provider`, a local tarball can be checked
+  against `--checksum HEX`, a published artifact must match exactly one
+  SHA256SUMS line, and requiring more than glibc 2.34 fails the release.
+
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
   paste-back fallback, plus device authorization for headless terminals;
