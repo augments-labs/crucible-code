@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Moonshot requests avoid an intermediate JSON tree.** Transcript messages
+  are written directly into the outbound body and failed-result prefixes no
+  longer need a second allocation.
+
 - **OpenAI requests avoid an intermediate JSON tree and honor their output
   ceiling.** Transcript items are written directly into the outbound body, and
   the generated-token limit is sent as `max_output_tokens`.
