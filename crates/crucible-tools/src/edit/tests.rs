@@ -1,12 +1,14 @@
 //! What `edit` changes, and what it declines to guess at.
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 
-use super::{Edit, Sensitivity, Tool, ToolArgs, ToolOutput};
+use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolOutput};
 use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Cancel::new());
     tool.run(allowed(&tool, args)).unwrap()
 }
 
@@ -160,10 +162,104 @@ fn something_that_is_not_text_says_so_instead_of_corrupting_it() {
 }
 
 #[test]
+fn a_file_over_the_input_ceiling_is_refused_without_reading_it_whole() {
+    let sample = Sample::new("edit-large-input");
+    let path = sample.root().join("large.txt");
+    let mut source = fs::File::create(&path).unwrap();
+    std::io::Write::write_all(&mut source, b"a").unwrap();
+    source.set_len((super::FILE_LIMIT + 1) as u64).unwrap();
+    drop(source);
+
+    let output = edit(&sample, r#"{"path":"large.txt","find":"a","replace":"b"}"#);
+
+    assert!(output.is_failed());
+    assert!(output.text().contains("too large to edit safely"));
+    assert_eq!(fs::metadata(&path).unwrap().len(), 1_000_001);
+    assert_eq!(fs::read(&path).unwrap().first(), Some(&b'a'));
+}
+
+#[test]
+fn a_stopped_turn_does_not_scan_or_change_the_file() {
+    let sample = Sample::new("edit-cancelled");
+    sample.write("one.txt", &"a".repeat(super::FILE_LIMIT));
+    let cancel = Cancel::new();
+    cancel.request();
+    let tool = Edit::new(sample.workspace(), cancel);
+
+    let problem = tool
+        .run(allowed(
+            &tool,
+            r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
+        ))
+        .unwrap_err();
+
+    assert!(matches!(
+        problem,
+        crucible_core::ToolError::Cancelled("edit")
+    ));
+    assert_eq!(
+        fs::metadata(sample.root().join("one.txt")).unwrap().len(),
+        1_000_000
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_is_refused_before_the_edit_can_wait_for_input() {
+    let sample = Sample::new("edit-fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(sample.root().join("waiting"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+
+    let output = edit(&sample, r#"{"path":"waiting","find":"a","replace":"b"}"#);
+
+    assert!(output.is_failed());
+    assert!(output.text().contains("is not a regular file"));
+}
+
+#[test]
+fn a_replacement_over_the_output_ceiling_leaves_the_original_whole() {
+    let sample = Sample::new("edit-large-output");
+    sample.write("one.txt", "a");
+    let replacement = "b".repeat(super::FILE_LIMIT + 1);
+
+    let output = edit(
+        &sample,
+        &format!(r#"{{"path":"one.txt","find":"a","replace":"{replacement}"}}"#),
+    );
+
+    assert!(output.is_failed());
+    assert!(output.text().contains("too large to edit safely"));
+    assert_eq!(read(&sample, "one.txt"), "a");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_edit_preserves_the_existing_file_mode() {
+    let sample = Sample::new("edit-mode");
+    let path = sample.root().join("one.txt");
+    sample.write("one.txt", "before\n");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+    let output = edit(
+        &sample,
+        r#"{"path":"one.txt","find":"before","replace":"after"}"#,
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[test]
 fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Cancel::new());
     let problem = tool
         .run(allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#))
         .unwrap_err();
@@ -175,7 +271,7 @@ fn a_call_with_no_find_says_what_is_missing() {
 fn editing_names_the_file_it_would_change() {
     let sample = Sample::new("edit-sensitivity");
     sample.write("one.rs", "a\n");
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Cancel::new());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.rs"}"#));
 
