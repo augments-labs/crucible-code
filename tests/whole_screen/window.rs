@@ -184,6 +184,14 @@ impl Window {
         self.settle(&format!("{keys:?} was typed"), None);
     }
 
+    /// Types `keys` and waits until the screen contains `wanted` and settles.
+    pub(crate) fn types_until(&mut self, keys: &str, wanted: &str) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.settle(&format!("{keys:?} was typed"), Some(wanted));
+    }
+
     /// Changes the size of the window, the way dragging its corner would.
     ///
     /// The kernel is what tells crucible: setting the size on the near side of
