@@ -5,8 +5,8 @@ use std::path::Path;
 use crucible_core::Disposition;
 
 use super::{
-    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, RegexMatcherBuilder, SearcherBuilder, Sensitivity,
-    Tool, ToolArgs, ToolOutput, WIDTH, report,
+    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, NAMED, Partial, RegexMatcherBuilder,
+    SearcherBuilder, Sensitivity, Stopping, Tool, ToolArgs, ToolOutput, Top, WIDTH, report, unread,
 };
 use crate::sample::{Sample, allowed, under};
 
@@ -123,7 +123,7 @@ fn a_limit_stops_and_says_that_it_did() {
             .count(),
         3
     );
-    assert!(output.text().contains("stopped at 3 matches"));
+    assert!(output.text().contains("showing first 3 matches"));
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn a_limit_past_the_ceiling_is_the_ceiling() {
     assert!(
         output
             .text()
-            .contains(&format!("stopped at {CEILING} matches")),
+            .contains(&format!("showing first {CEILING} matches")),
         "{}",
         output.text()
     );
@@ -216,7 +216,7 @@ fn a_search_the_user_stopped_answers_with_what_it_had() {
             text: "let needle = 1;".to_owned(),
         }],
         more: false,
-        partly: Vec::new(),
+        partly: Partial::default(),
         stopped: true,
     };
 
@@ -236,6 +236,20 @@ fn a_search_the_user_stopped_answers_with_what_it_had() {
 }
 
 #[test]
+fn partial_file_names_are_bounded_while_the_total_keeps_growing() {
+    let mut partial = Partial::default();
+    for number in (0..100).rev() {
+        partial.add(format!("file-{number:03}.txt"));
+    }
+
+    assert_eq!(partial.names.len(), NAMED);
+    assert_eq!(partial.total, 100);
+    let note = unread(&partial);
+    assert!(note.contains("file-000.txt, file-001.txt, file-002.txt"));
+    assert!(note.contains("and 95 more"));
+}
+
+#[test]
 fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     // The walk answers between files, which leaves one file the size of a tree
     // as the wait a stopped turn would otherwise sit through. Stopping inside
@@ -251,15 +265,39 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     // a symbolic link to the other, a path built the other way is a path the
     // walk could never hand over, so the file would be named in full.
     let workspace = sample.workspace();
-    let reached = workspace.root().join("many.txt");
+    let root = workspace.existing(".").unwrap();
+    let named = workspace.root().join("many.txt");
+    let reached = root.walked(&named).unwrap();
 
     let tool = Grep::new(workspace.clone(), cancel);
     let mut searcher = SearcherBuilder::new().line_number(true).build();
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
-    let found = tool.lines(&mut searcher, &matcher, &reached, 1_000);
+    let hits = std::sync::Mutex::new(Top::new(1_000));
+    let found = tool.lines(&mut searcher, &matcher, &reached, &hits);
+    let hits = hits.into_inner().unwrap();
 
-    assert_eq!(found.hits.len(), 1, "it read the whole file");
+    assert!(hits.hits.is_empty(), "it read after cancellation");
     assert_eq!(found.partly.as_deref(), Some("many.txt"));
+}
+
+#[test]
+fn cancellation_is_checked_before_each_file_read() {
+    let sample = Sample::new("grep-cancel-reader");
+    sample.write("many.txt", &"x".repeat(super::MAX_LINE));
+    let file = std::fs::File::open(sample.root().join("many.txt")).unwrap();
+    let cancel = Cancel::new();
+    let stopped = std::cell::Cell::new(false);
+    let mut reader = Stopping {
+        file: &file,
+        cancel: &cancel,
+        stopped: &stopped,
+    };
+    let mut block = [0_u8; 32];
+
+    assert_eq!(std::io::Read::read(&mut reader, &mut block).unwrap(), 32);
+    cancel.request();
+    assert_eq!(std::io::Read::read(&mut reader, &mut block).unwrap(), 0);
+    assert!(stopped.get());
 }
 
 #[test]
@@ -568,5 +606,72 @@ fn a_symbolic_link_to_a_file_outside_the_workspace_is_not_searched() {
         !output.text().contains("innocent"),
         "the link was searched: {}",
         output.text()
+    );
+}
+
+#[test]
+fn a_file_redirected_after_the_walk_reached_it_is_not_searched() {
+    let sample = Sample::new("grep-link-race");
+    sample.write("innocent.txt", "ordinary contents\n");
+    let secret = sample.outside("secret.txt", "the hidden needle\n");
+    let workspace = sample.workspace();
+    let from = workspace.existing(".").unwrap();
+    let named = workspace.root().join("innocent.txt");
+    let reached = from.walked(&named).unwrap();
+
+    // This is the interval the old `search_path` left: the walker has already
+    // accepted the regular directory entry, and another writer replaces its
+    // name before the searcher opens it.
+    std::fs::remove_file(&named).unwrap();
+    crate::sample::symlink(&secret, &named);
+
+    let tool = Grep::new(workspace, Cancel::new());
+    let mut searcher = SearcherBuilder::new().line_number(true).build();
+    let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
+    let hits = std::sync::Mutex::new(Top::new(1_000));
+    let found = tool.lines(&mut searcher, &matcher, &reached, &hits);
+    let hits = hits.into_inner().unwrap();
+
+    assert!(hits.hits.is_empty(), "an outside file was searched");
+    assert_eq!(found.partly.as_deref(), Some("innocent.txt"));
+}
+
+#[test]
+fn parallel_search_keeps_the_same_lowest_hits_past_the_limit() {
+    let sample = Sample::new("grep-lowest-global");
+    for name in ["z.txt", "m.txt", "a.txt", "q.txt"] {
+        sample.write(name, "needle\n");
+    }
+
+    for _ in 0..8 {
+        let output = grep(&sample, r#"{"pattern":"needle","limit":2}"#);
+        let lines: Vec<_> = output
+            .text()
+            .lines()
+            .filter(|line| !line.starts_with('[') && !line.is_empty())
+            .collect();
+        assert_eq!(lines, ["a.txt:1:needle", "m.txt:1:needle"]);
+    }
+}
+
+#[test]
+fn global_hit_retention_never_grows_past_the_requested_limit() {
+    let mut top = Top::new(3);
+    for number in (0..10_000).rev() {
+        top.add(Hit {
+            path: format!("{number:05}.txt"),
+            line: 1,
+            text: "needle".into(),
+        });
+    }
+
+    assert_eq!(top.hits.len(), 3);
+    assert_eq!(top.total, 10_000);
+    assert_eq!(
+        top.hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        ["00000.txt", "00001.txt", "00002.txt"]
     );
 }
