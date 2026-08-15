@@ -22,7 +22,7 @@ use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, RtlNtStatusToDosErro
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_WRITE_THROUGH, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileDispositionInfo,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FileDispositionInfo,
     GetFileInformationByHandle, GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
@@ -136,7 +136,13 @@ fn temporary(path: &WorkspacePath, parent: &Path) -> Result<Temporary, PathError
         options
             .write(true)
             .create_new(true)
-            .access_mode(GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .access_mode(
+                GENERIC_WRITE
+                    | DELETE
+                    | FILE_READ_ATTRIBUTES
+                    | FILE_WRITE_ATTRIBUTES
+                    | SYNCHRONIZE,
+            )
             // No sharing while private: another process cannot read prepared
             // workspace content or hold cleanup open through the temporary
             // name if its ancestor is concurrently moved.

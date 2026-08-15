@@ -154,13 +154,13 @@ mod tests {
         let path = sample.workspace().existing("sub/one.txt").unwrap();
         let original = path.open_regular().unwrap();
         let permissions = original.metadata().unwrap().permissions();
+        drop(original);
 
         std::fs::rename(sample.root().join("sub"), sample.root().join("moved")).unwrap();
         std::os::windows::fs::symlink_dir(&outside, sample.root().join("sub"))
             .expect("creating this directory link needs Windows developer mode");
 
-        let problem =
-            replace(&path, b"replacement", Some(permissions), Some(&original)).unwrap_err();
+        let problem = replace(&path, b"replacement", Some(permissions), None).unwrap_err();
 
         assert!(matches!(problem, PathError::Swapped { .. }), "{problem:?}");
         assert_eq!(
