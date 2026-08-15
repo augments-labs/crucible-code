@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider events have a tighter allocation bound.** One malformed or
+  oversized server-sent event is refused after 1 MiB instead of being allowed
+  to retain 8 MiB before cumulative response checks can run.
+
 - **Moonshot requests avoid an intermediate JSON tree.** Transcript messages
   are written directly into the outbound body and failed-result prefixes no
   longer need a second allocation.

@@ -23,8 +23,10 @@ use std::string::FromUtf8Error;
 ///
 /// A response is not trusted to be well formed. Without this, a peer that sent
 /// no line ending would grow these buffers until the process died, which is a
-/// failure this crate can prevent and the caller cannot.
-const MAX_EVENT: usize = 8 * 1024 * 1024;
+/// failure this crate can prevent and the caller cannot. One MiB still carries
+/// a large generated edit in one event while bounding the unavoidable
+/// allocation before the runner can apply cumulative response limits.
+const MAX_EVENT: usize = 1024 * 1024;
 
 /// Why a stream stopped framing.
 #[derive(Debug, thiserror::Error)]
@@ -421,6 +423,17 @@ mod tests {
             matches!(problem, SseError::TooLarge),
             "expected a bounded read to give up, got {problem:?}"
         );
+    }
+
+    #[test]
+    fn an_event_over_the_bound_is_refused_before_it_is_dispatched() {
+        let payload = "x".repeat(MAX_EVENT + 1);
+        let stream = format!("data: {payload}\n\n");
+        let mut framed = Events::new(io::Cursor::new(stream));
+
+        let problem = framed.next().unwrap().unwrap_err();
+
+        assert!(matches!(problem, SseError::TooLarge));
     }
 
     #[test]
