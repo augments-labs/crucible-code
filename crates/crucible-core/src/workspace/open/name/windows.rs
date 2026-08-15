@@ -16,10 +16,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE};
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_NAME_NORMALIZED,
-    FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_TRAVERSE, FileDispositionInfo, FileRenameInfo,
-    GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
+    DELETE, FILE_ADD_FILE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
+    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileDispositionInfo,
+    FileRenameInfo, GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
 };
 
 use super::WorkspacePath;
@@ -131,7 +131,13 @@ fn opened_parent(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options
         .read(true)
-        .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+        .access_mode(
+            FILE_LIST_DIRECTORY
+                | FILE_ADD_FILE
+                | FILE_TRAVERSE
+                | FILE_READ_ATTRIBUTES
+                | SYNCHRONIZE,
+        )
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
     options.open(path)

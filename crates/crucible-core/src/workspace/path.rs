@@ -43,10 +43,7 @@ impl WorkspacePath {
     /// descriptor walk on Unix and final-handle validation on Windows.
     #[must_use]
     pub fn walked(&self, reached: &Path) -> Option<Self> {
-        if reached
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-        {
+        if has_parent(reached) {
             return None;
         }
         let below = reached.strip_prefix(&self.resolved).ok()?;
@@ -92,6 +89,25 @@ impl WorkspacePath {
             .strip_prefix(&self.root)
             .unwrap_or(Path::new(""))
     }
+}
+
+/// Whether `path` contains a lexical parent component before prefix matching.
+///
+/// Windows' `strip_prefix` compares normalized components and can erase the
+/// parent spelling before the remainder is inspected. Its path strings are
+/// Unicode, so inspect separator-delimited text there; Unix keeps backslashes
+/// as ordinary filename bytes and therefore uses `components`.
+fn has_parent(path: &Path) -> bool {
+    #[cfg(windows)]
+    return path
+        .as_os_str()
+        .to_string_lossy()
+        .split(['/', '\\'])
+        .any(|part| part == "..");
+
+    #[cfg(not(windows))]
+    path.components()
+        .any(|part| matches!(part, Component::ParentDir))
 }
 
 impl AsRef<Path> for WorkspacePath {
