@@ -3,10 +3,10 @@
 //! Thirty-five megabytes is the budget. What it really guards is shape rather
 //! than size: a harness that keeps the whole transcript on screen, or holds
 //! every tool result to re-render it, grows with the session rather than with
-//! the turn. The transcript itself is held whole and copied into each request,
-//! and that copy is what this number is set to cover; what must not appear
-//! beside it is a second thing that grows the same way. Twenty turns is enough
-//! for that difference to show and short enough to run in a gate.
+//! the turn. The transcript itself is held whole and lent into each request;
+//! the serialized body is the one inevitable second representation. What must
+//! not appear beside it is another thing that grows the same way. Twenty turns
+//! is enough for that difference to show and short enough to run in a gate.
 //!
 //! Everything here is the real thing except the socket. The provider is the
 //! real Anthropic adapter parsing real server-sent events; the tool is the real
@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crucible_core::{
-    ApiKey, Ask, Cancel, Event, Header, HeaderKey, Post, Remember, Sensitivity, ToolCall, Verdict,
-    Workspace,
+    ApiKey, Ask, Cancel, Event, Header, HeaderKey, Outgoing, Post, Remember, Sensitivity, ToolCall,
+    Verdict, Workspace,
 };
 use crucible_provider::{Anthropic, Response, Transport, TransportError};
 use crucible_runner::{Model, Runner, Session, Tools};
@@ -114,7 +114,7 @@ impl Drop for Scratch {
 struct Canned {
     calling: String,
     saying: String,
-    round: std::sync::atomic::AtomicUsize,
+    pass: std::sync::atomic::AtomicUsize,
 }
 
 impl Canned {
@@ -143,7 +143,7 @@ impl Canned {
         Self {
             calling,
             saying,
-            round: std::sync::atomic::AtomicUsize::new(0),
+            pass: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -152,15 +152,14 @@ impl Transport for Canned {
     fn post(
         &self,
         _url: &str,
-        _headers: &[(Box<str>, Box<str>)],
-        _body: &str,
+        _headers: Outgoing,
+        _body: String,
+        _cancel: &Cancel,
     ) -> Result<Response, TransportError> {
         // Alternating, because that is the shape of a turn: the model asks for
         // a tool, sees the result, and then answers.
-        let round = self
-            .round
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let body = if round.is_multiple_of(2) {
+        let pass = self.pass.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let body = if pass.is_multiple_of(2) {
             &self.calling
         } else {
             &self.saying

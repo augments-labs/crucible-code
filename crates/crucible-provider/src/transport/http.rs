@@ -11,6 +11,8 @@
 use std::io::{self, Read};
 use std::time::Duration;
 
+use crucible_core::{Cancel, Outgoing};
+
 use super::{Response, Transport, TransportError};
 
 /// How long to wait for the response to *start*.
@@ -112,9 +114,14 @@ impl Transport for Https {
     fn post(
         &self,
         url: &str,
-        headers: &[(Box<str>, Box<str>)],
-        body: &str,
+        headers: Outgoing,
+        body: String,
+        cancel: &Cancel,
     ) -> Result<Response, TransportError> {
+        if cancel.requested() {
+            return Err(TransportError::Cancelled);
+        }
+
         // On this request and not on the agent: it is the answer to a model
         // that pauses mid-sentence, and the caller reading it is the one that
         // holds a cancel. The other direction — a body fetched to the end with
@@ -126,13 +133,13 @@ impl Transport for Https {
             .config()
             .timeout_recv_body(Some(TIMEOUT_QUIET))
             .build();
-        for (name, value) in headers {
+        for (name, value) in headers.headers() {
             request = request.header(&**name, &**value);
         }
 
         // Every status is a response; only a request that never produced one is
         // an error here, which is why this arm does not inspect the failure.
-        match request.send(body) {
+        match request.send(&body) {
             Ok(response) => {
                 let status = response.status().as_u16();
                 Ok(Response {
@@ -206,6 +213,20 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    /// Sends one test request through the owned transport boundary.
+    fn post(
+        transport: &Https,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Result<Response, TransportError> {
+        let mut outgoing = Outgoing::new();
+        for (name, value) in headers {
+            outgoing.set_header(*name, *value);
+        }
+        transport.post(url, outgoing, body.to_owned(), &Cancel::new())
+    }
 
     /// Serves a body in two halves with a pause between them, the way a model
     /// that stops to think does. The pause is longer than [`TIMEOUT_QUIET`], so
@@ -329,7 +350,7 @@ mod tests {
         let said = r#"{"error":{"message":"model: claude-nope not found"}}"#;
         let url = once(refusal("404 Not Found", said));
 
-        let mut response = Https::new().post(&url, &[], "{}").unwrap();
+        let mut response = post(&Https::new(), &url, &[], "{}").unwrap();
         let mut body = String::new();
         response.body.read_to_string(&mut body).unwrap();
 
@@ -340,9 +361,9 @@ mod tests {
     #[test]
     fn a_redirect_cannot_choose_a_new_recipient_for_a_credential() {
         let (url, reached) = redirecting();
-        let headers = [(Box::from("x-api-key"), Box::from("canary-secret"))];
+        let headers = [("x-api-key", "canary-secret")];
 
-        let response = Https::new().post(&url, &headers, "{}").unwrap();
+        let response = post(&Https::new(), &url, &headers, "{}").unwrap();
 
         assert_eq!(response.status, 302, "the redirect was followed");
         assert!(
@@ -358,7 +379,7 @@ mod tests {
         // pause read as a failure is a model that thought for too long and lost
         // the turn for it.
         let url = pausing("half ", "and the rest");
-        let mut response = Https::new().post(&url, &[], "{}").unwrap();
+        let mut response = post(&Https::new(), &url, &[], "{}").unwrap();
 
         let mut said = Vec::new();
         let mut waited = 0;
@@ -388,7 +409,7 @@ mod tests {
         // until the peer stops talking, which is `refusal`'s deadline's job and
         // is proved there.
         let url = pausing("{\"error\":", "\"nope\"}");
-        let mut response = Https::new().post(&url, &[], "{}").unwrap();
+        let mut response = post(&Https::new(), &url, &[], "{}").unwrap();
 
         let mut said = String::new();
         response.body.read_to_string(&mut said).unwrap();
@@ -447,13 +468,34 @@ mod tests {
     fn a_host_that_does_not_resolve_is_unreachable_rather_than_a_status() {
         // `.invalid` is reserved by RFC 6761 and never resolves, so this test
         // needs no network and cannot reach anything if it has one.
-        let problem = Https::new()
-            .post("https://crucible.invalid/v1/messages", &[], "{}")
-            .unwrap_err();
+        let problem = post(
+            &Https::new(),
+            "https://crucible.invalid/v1/messages",
+            &[],
+            "{}",
+        )
+        .unwrap_err();
 
         assert!(
             matches!(problem, TransportError::Unreachable(_)),
             "expected an unreachable host, got {problem:?}"
         );
+    }
+
+    #[test]
+    fn a_cancelled_request_is_not_sent() {
+        let cancel = Cancel::new();
+        cancel.request();
+
+        let problem = Https::new()
+            .post(
+                "https://crucible.invalid/v1/messages",
+                Outgoing::new(),
+                "{}".to_owned(),
+                &cancel,
+            )
+            .unwrap_err();
+
+        assert!(matches!(problem, TransportError::Cancelled));
     }
 }

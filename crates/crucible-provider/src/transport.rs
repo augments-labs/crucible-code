@@ -13,6 +13,8 @@ pub(crate) mod http;
 use std::fmt;
 use std::io::Read;
 
+use crucible_core::{Cancel, Outgoing, ProviderError};
+
 /// Why a request did not produce a response.
 ///
 /// A response that arrived and said no is not an error here — that is a status,
@@ -24,9 +26,24 @@ use std::io::Read;
 /// [`post`]: Transport::post
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
+    /// The user cancelled before response headers arrived.
+    #[error("request cancelled before a response arrived")]
+    Cancelled,
+
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
+}
+
+impl TransportError {
+    /// Adds the provider name while preserving cancellation as its own domain
+    /// outcome rather than presenting it as a network failure.
+    pub(crate) fn for_provider(self, provider: &'static str) -> ProviderError {
+        match self {
+            Self::Cancelled => ProviderError::Cancelled(provider),
+            Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
+        }
+    }
 }
 
 /// What came back.
@@ -54,15 +71,21 @@ pub trait Transport: Send + Sync + fmt::Debug {
     /// long as the model is talking, so reading it here would mean waiting for
     /// the whole answer before showing any of it.
     ///
+    /// Headers and body move into the transport because blocking setup may
+    /// finish after a cancelled caller returns. Moving them gives that setup
+    /// an owned lifetime without duplicating a transcript-sized body.
+    ///
     /// # Errors
     ///
-    /// [`TransportError`] if the request could not be sent. A response with a
-    /// status the caller dislikes is not an error.
+    /// [`TransportError`] if the request could not be sent or was cancelled
+    /// before its response headers arrived. A response with a status the caller
+    /// dislikes is not an error.
     fn post(
         &self,
         url: &str,
-        headers: &[(Box<str>, Box<str>)],
-        body: &str,
+        headers: Outgoing,
+        body: String,
+        cancel: &Cancel,
     ) -> Result<Response, TransportError>;
 }
 
@@ -117,17 +140,23 @@ impl Transport for Replay {
     fn post(
         &self,
         url: &str,
-        headers: &[(Box<str>, Box<str>)],
-        body: &str,
+        headers: Outgoing,
+        body: String,
+        cancel: &Cancel,
     ) -> Result<Response, TransportError> {
+        if cancel.requested() {
+            return Err(TransportError::Cancelled);
+        }
+
         if let Ok(mut sent) = self.sent.lock() {
             sent.push(Sent {
                 url: url.to_owned(),
                 headers: headers
+                    .headers()
                     .iter()
                     .map(|(name, value)| (name.to_string(), value.to_string()))
                     .collect(),
-                body: body.to_owned(),
+                body,
             });
         }
 
@@ -227,10 +256,11 @@ impl<T: Transport> Transport for std::sync::Arc<T> {
     fn post(
         &self,
         url: &str,
-        headers: &[(Box<str>, Box<str>)],
-        body: &str,
+        headers: Outgoing,
+        body: String,
+        cancel: &Cancel,
     ) -> Result<Response, TransportError> {
-        (**self).post(url, headers, body)
+        (**self).post(url, headers, body, cancel)
     }
 }
 
@@ -241,10 +271,16 @@ mod tests {
     #[test]
     fn a_replay_keeps_what_was_sent() {
         let replay = Replay::new(200, "body");
-        let headers = [("x-key".into(), "value".into())];
+        let mut headers = Outgoing::new();
+        headers.set_header("x-key", "value");
 
         replay
-            .post("https://example.test/v1", &headers, "{}")
+            .post(
+                "https://example.test/v1",
+                headers,
+                "{}".to_owned(),
+                &Cancel::new(),
+            )
             .unwrap();
 
         let sent = replay.sent();
@@ -257,11 +293,25 @@ mod tests {
     fn a_replay_answers_with_the_recorded_response() {
         let replay = Replay::new(429, "slow down");
 
-        let mut response = replay.post("https://example.test/v1", &[], "{}").unwrap();
+        let mut response = replay
+            .post(
+                "https://example.test/v1",
+                Outgoing::new(),
+                "{}".to_owned(),
+                &Cancel::new(),
+            )
+            .unwrap();
         let mut read = String::new();
         response.body.read_to_string(&mut read).unwrap();
 
         assert_eq!(response.status, 429);
         assert_eq!(read, "slow down");
+    }
+
+    #[test]
+    fn transport_cancellation_stays_a_cancel_at_the_provider_boundary() {
+        let problem = TransportError::Cancelled.for_provider("test");
+
+        assert!(matches!(problem, ProviderError::Cancelled("test")));
     }
 }
