@@ -145,6 +145,19 @@ fn calling(id: &str, name: &str, args: &str) -> Vec<Delta> {
     ]
 }
 
+fn many_calls(first: usize, count: usize) -> Vec<Delta> {
+    let mut deltas = Vec::with_capacity(count.saturating_mul(2).saturating_add(1));
+    for number in first..first.saturating_add(count) {
+        deltas.push(Delta::ToolStarted {
+            id: ToolId::new(number.to_string()),
+            name: "missing".into(),
+        });
+        deltas.push(Delta::ToolArgs("{}".into()));
+    }
+    deltas.push(Delta::Stopped(StopReason::WantsTools));
+    deltas
+}
+
 fn saying(text: &str) -> Vec<Delta> {
     vec![
         Delta::Text(text.into()),
@@ -328,6 +341,43 @@ fn the_second_request_carries_the_first_round_in_full() {
         [1, 3],
         "first the prompt; then the prompt, the call, and its result"
     );
+}
+
+#[test]
+fn a_turn_cannot_keep_asking_the_provider_forever() {
+    let rounds = (0..MAX_PROVIDER_RESPONSES_PER_TURN)
+        .map(|number| calling(&number.to_string(), "missing", "{}"))
+        .collect();
+    let mut scripted = Scripted::new(Script::new(rounds), Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(matches!(
+        problem,
+        TurnError::Provider(ProviderError::Limit {
+            limit: ProviderLimit::ProviderResponses,
+            maximum: MAX_PROVIDER_RESPONSES_PER_TURN,
+            ..
+        })
+    ));
+    assert_eq!(scripted.asked().len(), MAX_PROVIDER_RESPONSES_PER_TURN);
+}
+
+#[test]
+fn tool_calls_are_bounded_across_every_provider_response_in_a_turn() {
+    let script = Script::new(vec![many_calls(0, 64), many_calls(64, 65)]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(matches!(
+        problem,
+        TurnError::Provider(ProviderError::Limit {
+            limit: ProviderLimit::TurnToolCalls,
+            maximum: MAX_TOOL_CALLS_PER_TURN,
+            ..
+        })
+    ));
 }
 
 #[test]

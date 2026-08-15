@@ -115,6 +115,12 @@ pub enum ProviderLimit {
     ToolCallMetadata,
     /// Tool calls across the response.
     ToolCalls,
+    /// Tool calls across one turn.
+    TurnToolCalls,
+    /// Provider-controlled bytes retained across one turn.
+    TurnResponseBytes,
+    /// Provider responses across one turn.
+    ProviderResponses,
 }
 
 impl fmt::Display for ProviderLimit {
@@ -126,6 +132,9 @@ impl fmt::Display for ProviderLimit {
             Self::ToolCallName => "tool call name",
             Self::ToolCallMetadata => "tool call metadata",
             Self::ToolCalls => "tool calls",
+            Self::TurnToolCalls => "tool calls across the turn",
+            Self::TurnResponseBytes => "response bytes across the turn",
+            Self::ProviderResponses => "provider responses across the turn",
         })
     }
 }

@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A turn has cumulative provider-work limits.** It stops after 32 provider
+  responses, 128 tool calls, or 16 MiB of retained response data instead of
+  allowing a hostile provider to keep the turn and process growing forever.
+
 - **Provider responses are cumulatively bounded and stop is terminal.** One
   response may retain at most 8 MiB of text, 1 MiB of tool arguments, 128 tool
   calls and bounded call metadata; any delta after stop is a protocol failure.
