@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Tool results share one 4 MiB turn boundary.** A result that would cross it
+  is replaced with a bounded failure, later calls are still answered, and the
+  turn stops instead of retaining unbounded tool output.
+
 - **A turn has cumulative provider-work limits.** It stops after 32 provider
   responses, 128 tool calls, or 16 MiB of retained response data instead of
   allowing a hostile provider to keep the turn and process growing forever.

@@ -30,6 +30,13 @@ pub enum TurnError {
     /// The model asked for a tool the user refused.
     #[error("{0} was not allowed")]
     Refused(Box<str>),
+
+    /// Tool results crossed the turn's retained-output boundary.
+    #[error("tool results exceeded the {maximum}-byte per-turn limit")]
+    ToolOutputBytes {
+        /// The most tool-output text one turn retains.
+        maximum: usize,
+    },
 }
 
 /// Where a worker reports what happened.
@@ -118,6 +125,15 @@ mod tests {
     fn a_refusal_names_the_tool_that_was_refused() {
         let error = TurnError::Refused("bash".into());
         assert_eq!(error.to_string(), "bash was not allowed");
+    }
+
+    #[test]
+    fn a_tool_output_limit_names_its_exact_boundary() {
+        let error = TurnError::ToolOutputBytes { maximum: 4096 };
+        assert_eq!(
+            error.to_string(),
+            "tool results exceeded the 4096-byte per-turn limit"
+        );
     }
 
     #[test]

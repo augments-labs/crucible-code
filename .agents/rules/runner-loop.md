@@ -53,5 +53,6 @@ metadata ceilings. Stop is terminal; accepting anything after it would let a
 malformed stream keep growing a response the model already ended.
 
 Across a turn, at most 32 provider responses, 128 tool calls, and 16 MiB of
-provider-controlled response data may be retained. Each bound is checked before
-the incoming data is appended or a tool is run.
+provider-controlled response data may be retained. Tool-result text has its own
+4 MiB turn-wide boundary, with room reserved to answer every call already in
+the transcript. Each bound is checked before incoming data is retained.

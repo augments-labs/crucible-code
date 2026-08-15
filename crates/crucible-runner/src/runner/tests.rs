@@ -328,7 +328,7 @@ fn a_tool_call_runs_and_what_it_produced_goes_back_to_the_model() {
 }
 
 #[test]
-fn the_second_request_carries_the_first_round_in_full() {
+fn the_second_request_carries_the_first_pass_in_full() {
     // Without it the model answers the same question again, having no
     // record of the tool it just called.
     let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
@@ -377,6 +377,27 @@ fn tool_calls_are_bounded_across_every_provider_response_in_a_turn() {
             maximum: MAX_TOOL_CALLS_PER_TURN,
             ..
         })
+    ));
+}
+
+#[test]
+fn tool_results_share_one_retained_boundary_across_a_turn() {
+    let script = Script::new(vec![calling("a", "read", "{}")]);
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("read").answering("ninebytes")]),
+        Verdict::Allow,
+    );
+
+    let problem = scripted
+        .runner
+        .exchange_with_tool_output_limit(&mut scripted.says, &scripted.events, &scripted.cancel, 8)
+        .unwrap_err();
+
+    assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));
+    assert!(matches!(
+        scripted.runner.transcript().messages().last(),
+        Some(Message::ToolResults(results)) if results.len() == 1
     ));
 }
 
@@ -677,11 +698,11 @@ fn a_session_that_forgot_is_continued_from_where_it_started_again() {
     );
 }
 
-// When a round reaches the log, measured against when its tools run.
+// When a pass reaches the log, measured against when its tools run.
 //
 // Recording is queued rather than written, so what a test can see from inside
 // a running tool is the log as the disk has it — which is the only place the
-// ordering shows. A tool that reads the log while the round is still going is
+// ordering shows. A tool that reads the log while the pass is still going is
 // how that becomes an observation rather than a claim about the source.
 
 /// The tool whose call the log is watched for.
@@ -699,9 +720,9 @@ const WATCH: &str = "watch";
 const SETTLE: Duration = Duration::from_secs(5);
 
 #[test]
-fn the_calls_of_a_round_are_recorded_before_the_tools_run() {
+fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     // Running a tool is what changes the tree. A turn that ends part way
-    // through a round — killed, or out of power — leaves a log whose last word
+    // through a pass — killed, or out of power — leaves a log whose last word
     // is the prompt, and the next `--continue` hands the model a transcript in
     // which files it has already edited have never been touched. Recording the
     // calls first costs a line the replay knows how to drop; recording them
@@ -729,7 +750,7 @@ fn the_calls_of_a_round_are_recorded_before_the_tools_run() {
 
     assert!(
         seen.contains(WATCH),
-        "the round was still unrecorded while its tool ran: {seen}"
+        "the pass was still unrecorded while its tool ran: {seen}"
     );
 }
 
