@@ -28,11 +28,13 @@
 
 mod error;
 mod oauth;
-mod renewable;
 mod store;
 
 pub use error::AuthError;
-pub use oauth::{LoginAttempt, LoginMethod, LoginUpdate, OAuthError, SubscriptionLogin};
+pub use oauth::{
+    KimiCredential, KimiOAuth, LoginAttempt, LoginMethod, LoginUpdate, OAuthError,
+    SubscriptionLogin,
+};
 pub use store::{Store, StoredCredentials};
 
 /// Stored credentials as named by the API-key-only releases.

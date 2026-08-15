@@ -5,8 +5,9 @@
 //! token merely because serde included the rejected value in its path.
 
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::renewable::Tokens;
+use crate::oauth::Tokens;
 
 use super::{FILE, VERSION};
 
@@ -219,6 +220,13 @@ pub(super) fn render(document: &Document) -> String {
         ("identities".to_owned(), serde_json::Value::from(identities)),
     ]))
     .to_string()
+}
+
+pub(super) fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn token_value(tokens: &Tokens) -> serde_json::Value {

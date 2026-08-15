@@ -11,13 +11,20 @@
 //! redacted `Debug`, the protected store walks its fields by hand, and a
 //! [`Credential`] applies the current access token only at the request boundary.
 
+mod kimi;
+
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
+use std::thread;
 use std::time::Duration;
 
 use crucible_core::{Cancel, Credential};
 
 use crate::{AuthError, Store, StoredCredentials};
+
+pub use kimi::{KimiCredential, KimiOAuth};
 
 /// One provider-owned way to authorize an account.
 ///
@@ -231,6 +238,133 @@ pub enum OAuthError {
     /// The protected store could not be updated.
     #[error(transparent)]
     Store(#[from] AuthError),
+}
+
+/// The provider-neutral portion of a renewable credential.
+///
+/// `details` contains bounded non-token values needed by one provider at the
+/// request boundary, such as a selected workspace id. It is walked by hand in
+/// the versioned store and remains redacted here because a later provider may
+/// assign sensitive meaning to a field.
+#[derive(Clone)]
+pub(crate) struct Tokens {
+    access: Box<str>,
+    refresh: Box<str>,
+    details: BTreeMap<String, String>,
+    expires_at: u64,
+    refreshed_at: u64,
+}
+
+impl Tokens {
+    pub(crate) fn new(
+        access: Box<str>,
+        refresh: Box<str>,
+        expires_at: u64,
+        refreshed_at: u64,
+    ) -> Self {
+        Self {
+            access,
+            refresh,
+            details: BTreeMap::new(),
+            expires_at,
+            refreshed_at,
+        }
+    }
+
+    pub(crate) fn with_detail(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.details.insert(name.to_owned(), value.into());
+        self
+    }
+
+    pub(crate) fn access(&self) -> &str {
+        &self.access
+    }
+
+    pub(crate) fn refresh(&self) -> &str {
+        &self.refresh
+    }
+
+    pub(crate) fn detail(&self, name: &str) -> Option<&str> {
+        self.details.get(name).map(String::as_str)
+    }
+
+    pub(crate) fn details(&self) -> &BTreeMap<String, String> {
+        &self.details
+    }
+
+    pub(crate) fn replace_details(&mut self, details: BTreeMap<String, String>) {
+        self.details = details;
+    }
+
+    pub(crate) fn needs_refresh(&self, at: u64, skew: u64, maximum_age: u64) -> bool {
+        self.expires_at <= at.saturating_add(skew)
+            || (maximum_age > 0 && self.refreshed_at.saturating_add(maximum_age) <= at)
+    }
+
+    pub(crate) fn times(&self) -> (u64, u64) {
+        (self.expires_at, self.refreshed_at)
+    }
+}
+
+impl fmt::Debug for Tokens {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("Tokens(<redacted>)")
+    }
+}
+
+/// One bounded worker slot shared by every method of one implementation.
+pub(crate) struct LoginSlot(Mutex<Option<thread::JoinHandle<()>>>);
+
+impl LoginSlot {
+    pub(crate) const fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+
+    pub(crate) fn start(
+        &self,
+        name: &str,
+        run: impl FnOnce(Cancel, mpsc::SyncSender<Result<LoginUpdate, OAuthError>>) + Send + 'static,
+    ) -> Result<LoginAttempt, OAuthError> {
+        self.start_with_input(name, move |cancel, updates, _| run(cancel, updates))
+    }
+
+    pub(crate) fn start_with_input(
+        &self,
+        name: &str,
+        run: impl FnOnce(
+            Cancel,
+            mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
+            mpsc::Receiver<Box<str>>,
+        ) + Send
+        + 'static,
+    ) -> Result<LoginAttempt, OAuthError> {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(worker) = slot.take() {
+            if !worker.is_finished() {
+                *slot = Some(worker);
+                return Err(OAuthError::Busy);
+            }
+            worker.join().map_err(|_| OAuthError::WorkerStopped)?;
+        }
+
+        let cancel = Cancel::new();
+        let stopping = cancel.clone();
+        let (send, updates) = mpsc::sync_channel(3);
+        let (input, submitted) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || run(stopping, send, submitted))
+            .map_err(OAuthError::Worker)?;
+        *slot = Some(worker);
+        Ok(LoginAttempt {
+            updates,
+            input,
+            cancel,
+        })
+    }
 }
 
 #[cfg(test)]
