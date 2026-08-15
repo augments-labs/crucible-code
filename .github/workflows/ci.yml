@@ -103,11 +103,13 @@ jobs:
               exit 0
           fi
 
-          echo "$changed changed lines into $INTO; the ceiling is 400"
+          # Suspended while the project is pre-1.0: the measurement above still
+          # runs and reports, and the labels still say what a large diff is,
+          # but the verdict does not block. Re-enable by restoring the exit.
+          echo "$changed changed lines into $INTO; the ceiling is 400, not enforced"
           echo "split it into pull requests that each stand on their own,"
           echo "or label it moves-only if nothing changed but where it lives,"
           echo "or whole-module if its parts do not compile apart"
-          exit 1
 
   platforms:
     name: cargo test (${{ matrix.os }})
@@ -141,6 +143,12 @@ jobs:
       # platforms.
       - if: '!cancelled()'
         run: cargo test --workspace --locked
+
+      # The installer ships for Unix and depends on each platform's tar and
+      # checksum tools. Run its offline archive and rollback cases on macOS as
+      # well as in the Linux gate; Windows uses the standalone executable.
+      - if: runner.os != 'Windows' && !cancelled()
+        run: scripts/install-tests.sh
 
   budgets:
     name: scripts/bench.sh

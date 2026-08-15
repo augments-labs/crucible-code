@@ -38,7 +38,8 @@ use std::time::Duration;
 use crucible_auth::{LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
 use crucible_tui::{
-    Caret, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, clip, pressed, waiting,
+    Caret, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip, pressed,
+    waiting,
 };
 
 use crate::cli::converse::picking::{self, Picked, Taken};
@@ -325,7 +326,7 @@ fn subscribed<T: Terminal>(
             Err(problem) => return say(renderer, terms, &format!("! {problem}")),
         }
 
-        let Some(arrived) = LoginView::key()? else {
+        let Some(arrived) = view.key()? else {
             continue;
         };
         match arrived {
@@ -335,7 +336,7 @@ fn subscribed<T: Terminal>(
             }
             Pressed::Resized => renderer.resized()?,
             pressed => {
-                if !view.press(pressed, &attempt) {
+                if !view.press(pressed, &attempt)? {
                     continue;
                 }
             }
@@ -351,6 +352,7 @@ struct LoginView {
     accepts_manual: bool,
     manual: String,
     limited: bool,
+    following: Option<Pressed>,
 }
 
 impl LoginView {
@@ -362,6 +364,7 @@ impl LoginView {
             accepts_manual: false,
             manual: String::new(),
             limited: false,
+            following: None,
         }
     }
 
@@ -389,29 +392,26 @@ impl LoginView {
         }
     }
 
-    fn key() -> Result<Option<Pressed>, Fatal> {
+    fn key(&mut self) -> Result<Option<Pressed>, Fatal> {
+        if let Some(following) = self.following.take() {
+            return Ok(Some(following));
+        }
         Ok(waiting(Duration::ZERO)?.then(pressed).transpose()?)
     }
 
-    fn press(&mut self, pressed: Pressed, attempt: &LoginAttempt) -> bool {
+    fn press(&mut self, pressed: Pressed, attempt: &LoginAttempt) -> Result<bool, Fatal> {
         match pressed {
-            Pressed::Key(Key::Char(typed)) if self.accepts_manual => {
-                // One character at a time, bounded the way the key box is:
-                // past the ceiling the box keeps what it has and says why.
-                if typed.is_control() {
-                    return false;
-                }
-                if typed.len_utf8() > MAX_MANUAL.saturating_sub(self.manual.len()) {
-                    self.limited = true;
-                    return true;
-                }
-                self.manual.push(typed);
-                self.limited = false;
-                true
+            Pressed::Key(Key::Char(first)) if self.accepts_manual => {
+                let room = MAX_MANUAL.saturating_sub(self.manual.len());
+                let (text, refused, after) = characters(first, room)?.into_parts();
+                self.manual.push_str(&text);
+                self.limited = refused;
+                self.following = after;
+                Ok(true)
             }
             Pressed::Key(Key::Backspace) if self.accepts_manual => {
                 self.limited = false;
-                self.manual.pop().is_some()
+                Ok(self.manual.pop().is_some())
             }
             Pressed::Key(Key::Enter) if self.accepts_manual && !self.manual.trim().is_empty() => {
                 match attempt.submit(&self.manual) {
@@ -422,9 +422,9 @@ impl LoginView {
                     }
                     Err(problem) => self.status = Cow::Owned(format!("! {problem}")),
                 }
-                true
+                Ok(true)
             }
-            _ => false,
+            _ => Ok(false),
         }
     }
 

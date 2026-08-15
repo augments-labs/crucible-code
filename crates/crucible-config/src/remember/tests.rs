@@ -108,6 +108,43 @@ fn a_rung_and_a_model_are_two_answers_under_one_provider() {
 }
 
 #[test]
+fn choosing_another_model_removes_the_previous_models_rung() {
+    let first =
+        choosing("", "config.json", "moonshot", "k3").expect("an empty file is one to write whole");
+    let with_effort = thinking(&first, "config.json", "moonshot", Effort::Max)
+        .expect("a provider already written is one to write beside");
+    let written = choosing(&with_effort, "config.json", "moonshot", "k3-256k")
+        .expect("a model already written is one to write over");
+
+    let settings = resolving(&written);
+    assert_eq!(settings.model("moonshot"), Some("k3-256k"));
+    assert_eq!(settings.effort("moonshot"), None);
+    assert!(!written.contains("\"effort\""), "{written}");
+}
+
+#[test]
+fn a_first_member_rung_is_removed_without_rewriting_its_neighbour() {
+    let text = concat!(
+        "{\n  \"providers\": {\n    \"openai\": {\n",
+        "      \"effort\": \"high\",\n      \"kept\" : [ 1, 2 ],\n",
+        "      \"model\": \"old\"\n    }\n  }\n}\n"
+    );
+    let written = choosing(text, "config.json", "openai", "new")
+        .expect("a model already written is one to write over");
+
+    assert!(written.contains("\"kept\" : [ 1, 2 ]"), "{written}");
+    assert!(!written.contains("\"effort\""), "{written}");
+    let value: serde_json::Value =
+        serde_json::from_str(&written).expect("what was written is still JSON");
+    assert_eq!(
+        value
+            .pointer("/providers/openai/model")
+            .and_then(serde_json::Value::as_str),
+        Some("new")
+    );
+}
+
+#[test]
 fn a_rung_chosen_again_is_written_over_rather_than_written_twice() {
     let first = thinking("", "config.json", "moonshot", Effort::High)
         .expect("an empty file is one to write whole");

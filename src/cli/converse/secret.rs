@@ -18,7 +18,7 @@
 //! the box refuses another character and says why beneath itself; no supported
 //! credential is close to that boundary.
 
-use crucible_tui::{Key, Pressed, Prompt, Renderer, Slot, Terminal, pressed};
+use crucible_tui::{Key, Pressed, Prompt, Renderer, Slot, Terminal, characters, pressed};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -69,13 +69,17 @@ pub(super) fn ask<T: Terminal>(
     let mut held = String::new();
     let mut changed = true;
     let mut limited = false;
+    let mut following = None;
 
     loop {
         if changed {
             standing(renderer, style, asking, held.chars().count(), limited)?;
         }
 
-        let arrived = pressed()?;
+        let arrived = match following.take() {
+            Some(arrived) => arrived,
+            None => pressed()?,
+        };
 
         // The rows on screen were laid out for a window that is no longer this
         // one. Taking them back is the renderer's; saying the picture no longer
@@ -84,7 +88,17 @@ pub(super) fn ask<T: Terminal>(
             renderer.resized()?;
         }
 
-        match typing(arrived, &mut held) {
+        let typed = match arrived {
+            Pressed::Key(Key::Char(first)) => {
+                let room = MAX_BYTES.saturating_sub(held.len());
+                let (text, refused, after) = characters(first, room)?.into_parts();
+                following = after;
+                insert_run(&mut held, &text, refused)
+            }
+            other => typing(other, &mut held),
+        };
+
+        match typed {
             Typing::Redraw => {
                 changed = true;
                 limited = false;
@@ -152,6 +166,18 @@ fn standing<T: Terminal>(
 fn taken(held: &str) -> Option<String> {
     let trimmed = held.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// Appends one already bounded character run and asks for at most one redraw.
+fn insert_run(held: &mut String, text: &str, refused: bool) -> Typing {
+    held.push_str(text);
+    if refused {
+        Typing::Refused
+    } else if text.is_empty() {
+        Typing::Still
+    } else {
+        Typing::Redraw
+    }
 }
 
 /// What `arrived` does to a line of `held` characters.

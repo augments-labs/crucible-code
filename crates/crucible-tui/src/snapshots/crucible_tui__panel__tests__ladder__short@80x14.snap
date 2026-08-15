@@ -1,18 +1,18 @@
 ---
 source: crates/crucible-tui/src/panel.rs
-expression: "dump(&panel.within(columns, room, Glyphs::Unicode), columns)"
+expression: "picture(&panel.within(columns, room, Glyphs::Unicode), columns)"
 ---
 <Accent>────────────────────────────────────────────────────────────────────────────────</>
-                                                                                
-<Strong>Log in</>                                                                          
-                                                                                
-<Accent>›</> <Strong>Anthropic</>                                                                     
-  <Quiet>Console API key, billed by usage</>                                              
-                                                                                
-  MoonshotAI                                                                    
-  <Quiet>Kimi Code plan, or a Platform key</>                                             
-                                                                                
-  OpenAI                                                                        
-  <Quiet>Console API key, billed by usage</>                                              
-                                                                                
+
+<Strong>Log in</>
+
+<Accent>›</> <Strong>Anthropic</>
+  <Quiet>typed here, or set in ANTHROPIC_API_KEY</>
+
+  MoonshotAI
+  <Quiet>typed here, or set in MOONSHOT_API_KEY</>
+
+  OpenAI
+  <Quiet>typed here, or set in OPENAI_API_KEY</>
+
 <Quiet>esc to cancel</>

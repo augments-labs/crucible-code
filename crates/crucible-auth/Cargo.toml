@@ -1,6 +1,7 @@
 [package]
 name = "crucible-auth"
 description = "The keys crucible was given, written down where only this user can read them."
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

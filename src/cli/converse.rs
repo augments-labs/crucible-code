@@ -65,10 +65,10 @@ const QUEUED_LINES: usize = 64;
 
 /// How many prompt bytes may wait behind a running turn.
 ///
-/// The same ceiling a redirected input line is read under: one prompt is
-/// bounded wherever it is taken, so a queue of them is bounded twice over —
-/// once here in bytes, once above in lines.
-const QUEUED_BYTES: usize = 1024 * 1024;
+/// The editor's own ceiling: one prompt is bounded wherever it is taken, so a
+/// queue of them is bounded twice over — once here in bytes, once above in
+/// lines.
+const QUEUED_BYTES: usize = Editor::MAX_BYTES;
 
 /// What every turn in a conversation is taken under.
 ///

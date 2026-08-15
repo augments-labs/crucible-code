@@ -29,7 +29,7 @@ impl Sample {
             std::env::temp_dir().join(format!("crucible-{name}-{}-{nth}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
 
-        for under in ["logs", "work"] {
+        for under in ["logs", "work", "elsewhere"] {
             fs::create_dir_all(base.join(under)).expect("a temporary directory");
         }
 
@@ -44,6 +44,34 @@ impl Sample {
     /// The workspace a session is about.
     pub(crate) fn workspace(&self) -> Workspace {
         Workspace::open(self.base.join("work")).expect("the directory exists")
+    }
+
+    /// A second workspace, for what must not be offered to the first.
+    pub(crate) fn elsewhere(&self) -> Workspace {
+        Workspace::open(self.base.join("elsewhere")).expect("the directory exists")
+    }
+
+    /// The line a log starts with, naming this sample's workspace.
+    ///
+    /// Built rather than written out, because a path is what goes in it. On
+    /// Windows a separator is the character JSON escapes with, so a header
+    /// formatted into a string literal there is not a header at all — the log
+    /// is skipped for holding no workspace, and the test reports that as a
+    /// session it could not find.
+    pub(crate) fn header(&self, format: u32, id: &str) -> String {
+        serde_json::json!({
+            "format": format,
+            "session": id,
+            "workspace": self.workspace().root().display().to_string(),
+        })
+        .to_string()
+    }
+
+    /// A log written by hand, for the shapes a running session cannot produce.
+    pub(crate) fn plant(&self, id: &str, lines: &[String]) -> PathBuf {
+        let path = self.logs().join(format!("{id}.jsonl"));
+        fs::write(&path, lines.join("\n") + "\n").expect("a writable temporary directory");
+        path
     }
 }
 

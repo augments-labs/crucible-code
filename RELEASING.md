@@ -42,9 +42,11 @@ the workspace ships as one unit and there is no per-crate version to drift.
    release workflow does and put it somewhere that holds nothing else:
 
    ```bash
+   VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
    name=crucible-$VERSION-linux-x86_64
    install -Dm755 target/release/crucible "$name/crucible"
    install -Dm644 README.md LICENSE -t "$name/"
+   install -Dm755 scripts/install.sh scripts/uninstall.sh -t "$name/"
    tar czf "$name.tar.gz" "$name"
 
    scripts/smoke.sh "$name.tar.gz"
@@ -66,12 +68,13 @@ the workspace ships as one unit and there is no per-crate version to drift.
 ## Cutting it
 
 Nothing reaches `main` except through a pull request, and none merges until
-`scripts/check.sh`, `scripts/bench.sh` and `400 changed lines` are green on it.
-That is a repository ruleset with no bypass, so it holds for the person cutting
-the release too — the tired push at the end of a long day is the one it exists
-to catch. A required check is the only kind there is: one that merely runs is a
-red mark beside a merge button that still works, which is what the size check
-was until it was added to that list.
+`scripts/check.sh` and `scripts/bench.sh` are green on it. That is a repository
+ruleset with no bypass, so it holds for the person cutting the release too —
+the tired push at the end of a long day is the one it exists to catch. A
+required check is the only kind there is: one that merely runs is a red mark
+beside a merge button that still works, which is what the size check is while
+the project is pre-1.0 — it measures and reports every pull request, and its
+verdict returns when the shape settles.
 
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.
@@ -100,7 +103,7 @@ reports — and a required check that never reports leaves the pull request
 pending for ever rather than failing it.
 
 Pushing the tag is the trigger. The release workflow builds every artifact,
-checksums them all into one file, and opens the GitHub Release with the changelog
+checksums and attests them, and opens the GitHub Release with the changelog
 section as its body.
 
 ## Artifacts
@@ -114,6 +117,10 @@ section as its body.
 | Windows x86-64 | `x86_64-pc-windows-msvc` | `crucible-<version>-windows-x86_64.tar.gz`, `.exe` |
 | Windows ARM64 | `aarch64-pc-windows-msvc` | `crucible-<version>-windows-aarch64.tar.gz`, `.exe` |
 | FreeBSD x86-64 | `x86_64-unknown-freebsd` | `crucible-<version>-freebsd-x86_64.tar.gz` |
+
+`install.sh` and `uninstall.sh` are standalone release assets and are also in
+every archive. The Bash installer is for Unix targets; Windows uses the bare
+executable and the manual checksum path documented in Getting started.
 
 An artifact is named for the version it holds rather than for the tag it was cut
 from, so there is no `v` in it — the `v` belongs to git. The triple is what the
@@ -131,6 +138,12 @@ machine and the other six natively — nothing here is cross-compiled. Builds ar
 release profile — fat LTO, one codegen unit, symbols stripped — the same
 settings every published measurement was taken under, so the numbers in the
 changelog describe the binary people actually download.
+
+The Linux containers and FreeBSD guest begin without Rust. They download a
+versioned `rustup-init` for their native target, compare it with the SHA-256
+fixed in the workflow, and only then execute it. `rust-toolchain.toml` still
+chooses the compiler; pinning the bootstrapper prevents a release tag from
+executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 
 ## After the tag
 
