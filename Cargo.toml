@@ -50,7 +50,7 @@ clap = { version = "=4.6.5", features = ["derive"] }
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
 # boxed error does. Derive only — nothing of it survives into the binary.
-thiserror = "=2.0.19"
+thiserror = "=2.0.20"
 
 # `insta` compares what a component drew against a file checked in beside it.
 # A test only reaches for it where the thing under test is a *picture*: what a
