@@ -19,7 +19,7 @@
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
-use crucible_core::ProviderError;
+use crucible_core::{Cancel, ProviderError, Redactions};
 
 /// What is said where a failure names no reason at all.
 ///
@@ -47,9 +47,9 @@ const MAX_REFUSAL: u64 = 8 * 1024;
 /// expired as an interruption — the kind the `Read` contract says to retry — so
 /// a gateway that answers 429 and then stalls without closing is a reader that
 /// neither ends nor errors, and `read_to_end` retries it for ever. That leaves
-/// the turn wedged here, which is the one place in it with no cancel to consult:
-/// the runner's is not reachable from this side, because by now the turn is
-/// already failing and what is being assembled is the sentence saying why.
+/// the turn wedged here. The same cancel passed through request setup remains
+/// reachable while the refusal is read, so a user need not wait for this
+/// deadline when they have already left the turn.
 ///
 /// The whole read rather than the gaps in it, which is the stronger of the two
 /// bounds: a peer trickling one byte per gap satisfies every gap and still holds
@@ -67,8 +67,28 @@ pub(crate) fn refused(
     provider: &'static str,
     status: u16,
     body: Box<dyn Read + Send>,
+    redactions: &Redactions,
+    cancel: &Cancel,
 ) -> ProviderError {
-    said(provider, status, body, MAX_WAIT)
+    said(
+        Refusal {
+            provider,
+            status,
+            redactions,
+            cancel,
+        },
+        body,
+        MAX_WAIT,
+    )
+}
+
+/// The request facts needed while its refused body is read.
+#[derive(Clone, Copy)]
+struct Refusal<'a> {
+    provider: &'static str,
+    status: u16,
+    redactions: &'a Redactions,
+    cancel: &'a Cancel,
 }
 
 /// The same, with a wait a test can hand over as none.
@@ -76,49 +96,72 @@ pub(crate) fn refused(
 /// The wait rather than the deadline it makes, so nothing here adds to an
 /// `Instant` — that addition panics where it overflows, and a bound against
 /// hanging is a poor place to put a new way to fail.
-fn said(
-    provider: &'static str,
-    status: u16,
-    body: Box<dyn Read + Send>,
-    wait: Duration,
-) -> ProviderError {
+fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> ProviderError {
     let mut said = Vec::new();
-    let read = fill(&mut body.take(MAX_REFUSAL), &mut said, wait);
+    let read = fill(&mut body.take(MAX_REFUSAL), &mut said, wait, refusal.cancel);
 
-    let message = match read {
+    let problem = match read {
         // Lossy on purpose: this is already the failure path, and a message
         // that is not quite text is still better than no message.
-        Ok(()) => explain(&String::from_utf8_lossy(&said)),
-        Err(problem) => format!("the response could not be read: {problem}"),
+        Ok(()) => ProviderError::Refused {
+            provider: refusal.provider,
+            status: refusal.status,
+            message: explain(&String::from_utf8_lossy(&said)).into(),
+        },
+        Err(ReadError::Cancelled) => ProviderError::Cancelled(refusal.provider),
+        Err(ReadError::Body(problem)) => ProviderError::Refused {
+            provider: refusal.provider,
+            status: refusal.status,
+            message: format!("the response could not be read: {problem}").into(),
+        },
     };
 
-    ProviderError::Refused {
-        provider,
-        status,
-        message: message.into(),
-    }
+    problem.redacted(refusal.redactions)
+}
+
+/// Why reading the bounded refusal stopped.
+#[derive(Debug, thiserror::Error)]
+enum ReadError {
+    /// The turn was cancelled while its refusal was still arriving.
+    #[error("the turn was cancelled")]
+    Cancelled,
+
+    /// The response body itself failed.
+    #[error("{0}")]
+    Body(#[from] io::Error),
 }
 
 /// Reads until the body ends, its bytes run out, or `wait` does.
-fn fill(body: &mut dyn Read, said: &mut Vec<u8>, wait: Duration) -> io::Result<()> {
+fn fill(
+    body: &mut dyn Read,
+    said: &mut Vec<u8>,
+    wait: Duration,
+    cancel: &Cancel,
+) -> Result<(), ReadError> {
     let since = Instant::now();
     let mut into = [0_u8; 1024];
 
     loop {
+        if cancel.requested() {
+            return Err(ReadError::Cancelled);
+        }
         if since.elapsed() >= wait {
-            return Err(timed_out());
+            return Err(timed_out().into());
         }
 
         let read = body.read(&mut into);
+        if cancel.requested() {
+            return Err(ReadError::Cancelled);
+        }
         if since.elapsed() >= wait {
-            return Err(timed_out());
+            return Err(timed_out().into());
         }
 
         match read {
             Ok(0) => return Ok(()),
             Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
             Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
-            Err(problem) => return Err(problem),
+            Err(problem) => return Err(problem.into()),
         }
     }
 }
@@ -150,10 +193,26 @@ mod tests {
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes()))
     }
 
+    fn plain_refused(status: u16, body: Box<dyn Read + Send>) -> ProviderError {
+        refused("test", status, body, &Redactions::default(), &Cancel::new())
+    }
+
+    fn plain_said(status: u16, body: Box<dyn Read + Send>, wait: Duration) -> ProviderError {
+        said(
+            Refusal {
+                provider: "test",
+                status,
+                redactions: &Redactions::default(),
+                cancel: &Cancel::new(),
+            },
+            body,
+            wait,
+        )
+    }
+
     #[test]
     fn a_refusal_carries_the_status_and_the_sentence_that_explains_it() {
-        let problem = refused(
-            "test",
+        let problem = plain_refused(
             404,
             reading(r#"{"error":{"type":"not_found","message":"model: nope"}}"#),
         );
@@ -163,7 +222,7 @@ mod tests {
 
     #[test]
     fn a_refusal_that_is_not_the_api_still_says_what_it_said() {
-        let problem = refused("test", 502, reading("  upstream connect error  "));
+        let problem = plain_refused(502, reading("  upstream connect error  "));
 
         assert_eq!(
             problem.to_string(),
@@ -201,7 +260,7 @@ mod tests {
         // a reader that only ever says "retry" is a session that never comes
         // back and never says why. `read_to_end` is what used to read this, and
         // it retries that answer for ever.
-        let problem = said("test", 429, Box::new(Stalled), Duration::ZERO);
+        let problem = plain_said(429, Box::new(Stalled), Duration::ZERO);
 
         assert_eq!(
             problem.to_string(),
@@ -211,7 +270,7 @@ mod tests {
 
     #[test]
     fn a_body_that_keeps_producing_bytes_cannot_outlive_the_elapsed_deadline() {
-        let problem = said("test", 429, Box::new(Trickle), Duration::from_millis(1));
+        let problem = plain_said(429, Box::new(Trickle), Duration::from_millis(1));
 
         assert!(problem.to_string().contains("it stopped part-way through"));
     }
@@ -229,7 +288,7 @@ mod tests {
             Said::Bytes(br#" is unwell"}}"#.to_vec()),
         ]);
 
-        let problem = said("test", 502, Box::new(body), MAX_WAIT);
+        let problem = plain_said(502, Box::new(body), MAX_WAIT);
 
         assert_eq!(problem.to_string(), "test: HTTP 502: upstream is unwell");
     }
@@ -240,12 +299,28 @@ mod tests {
         // otherwise end up on one line in front of a user.
         let long = "x".repeat(64 * 1024);
 
-        let shown = refused("test", 500, reading(&long)).to_string();
+        let shown = plain_refused(500, reading(&long)).to_string();
 
         assert!(
             shown.len() < 16 * 1024,
             "the whole page came back: {} bytes",
             shown.len()
         );
+    }
+
+    #[test]
+    fn cancelling_while_a_refusal_is_read_stays_a_cancel() {
+        let cancel = Cancel::new();
+        cancel.request();
+
+        let problem = refused(
+            "test",
+            429,
+            Box::new(Stalled),
+            &Redactions::default(),
+            &cancel,
+        );
+
+        assert!(matches!(problem, ProviderError::Cancelled("test")));
     }
 }

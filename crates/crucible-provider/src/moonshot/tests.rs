@@ -134,6 +134,24 @@ fn a_refusal_carries_the_status_and_the_sentence_that_explains_it() {
 }
 
 #[test]
+fn a_refusal_cannot_repeat_raw_or_bearer_credentials() {
+    let said = format!(
+        r#"{{"error":{{"message":"Bearer {SECRET}; raw {SECRET}; model remains useful"}}}}"#
+    );
+    let (moonshot, _) = provider(Moonshot::PLATFORM, &said, 401);
+
+    let problem = moonshot
+        .stream(asking("hello"), &Cancel::new())
+        .unwrap_err();
+    let displayed = problem.to_string();
+    let debugged = format!("{problem:?}");
+
+    assert!(!displayed.contains(SECRET));
+    assert!(!debugged.contains(SECRET));
+    assert!(displayed.contains("model remains useful"));
+}
+
+#[test]
 fn a_cancelled_turn_is_never_sent() {
     let (moonshot, replay) = provider(Moonshot::CODING, ANSWER, 200);
     let cancel = Cancel::new();

@@ -102,18 +102,28 @@ impl Provider for Anthropic {
         }
 
         let outgoing = self.headers()?;
+        let redactions = outgoing.redactions();
         let body = body::serialize(&request);
 
         let response = self
             .transport
             .post(self.endpoint.as_str(), outgoing.headers(), &body)
-            .map_err(|problem| ProviderError::Transport {
-                provider: NAME,
-                problem: problem.to_string().into(),
+            .map_err(|problem| {
+                ProviderError::Transport {
+                    provider: NAME,
+                    problem: problem.to_string().into(),
+                }
+                .redacted(&redactions)
             })?;
 
         if response.status != 200 {
-            return Err(refused(NAME, response.status, response.body));
+            return Err(refused(
+                NAME,
+                response.status,
+                response.body,
+                &redactions,
+                cancel,
+            ));
         }
 
         Ok(Box::new(Stream::new(response.body, cancel.clone())))
@@ -269,6 +279,24 @@ mod tests {
             problem.to_string(),
             "anthropic: HTTP 502: upstream connect error"
         );
+    }
+
+    #[test]
+    fn a_refusal_cannot_repeat_the_applied_credential() {
+        let said = format!(
+            r#"{{"error":{{"message":"gateway repeated {SECRET}; model remains useful"}}}}"#
+        );
+        let (anthropic, _) = provider(401, &said);
+
+        let problem = anthropic
+            .stream(asking("hello"), &Cancel::new())
+            .unwrap_err();
+        let displayed = problem.to_string();
+        let debugged = format!("{problem:?}");
+
+        assert!(!displayed.contains(SECRET));
+        assert!(!debugged.contains(SECRET));
+        assert!(displayed.contains("model remains useful"));
     }
 
     #[test]

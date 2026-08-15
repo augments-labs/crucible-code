@@ -48,6 +48,11 @@ A provider that needs a *header name* rather than a credential kind is asking
 the right question — that is what `HeaderKey` carries. Wanting to know which
 kind is behind it means a seam is about to move into the wrong crate.
 
+Every credential representation written into an outgoing header is also passed
+to `Outgoing::protect`. Refusal and stream errors are provider-controlled text;
+they pass through the resulting opaque `Redactions` before either `Display` or
+`Debug` can reach a terminal or log.
+
 That indifference is what makes the next rule a rule rather than an accident of
 the current code. **crucible offers no vendor subscription login, for any
 vendor.** A subscription is sold scoped to its vendor's own clients: Anthropic's

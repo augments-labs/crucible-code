@@ -14,6 +14,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider refusals cannot echo credentials.** Applied secrets are removed
+  from transport and HTTP failure diagnostics, and cancelling interrupts a
+  refusal body that is still arriving.
+
 - **Grep retains one global match bound.** Parallel workers add directly to the
   ordered result instead of keeping an additional batch per worker.
 

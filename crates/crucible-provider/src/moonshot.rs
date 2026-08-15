@@ -124,18 +124,28 @@ impl Provider for Moonshot {
         }
 
         let outgoing = self.headers()?;
+        let redactions = outgoing.redactions();
         let body = body::serialize(&request);
 
         let response = self
             .transport
             .post(self.endpoint.as_str(), outgoing.headers(), &body)
-            .map_err(|problem| ProviderError::Transport {
-                provider: NAME,
-                problem: problem.to_string().into(),
+            .map_err(|problem| {
+                ProviderError::Transport {
+                    provider: NAME,
+                    problem: problem.to_string().into(),
+                }
+                .redacted(&redactions)
             })?;
 
         if response.status != 200 {
-            return Err(refused(NAME, response.status, response.body));
+            return Err(refused(
+                NAME,
+                response.status,
+                response.body,
+                &redactions,
+                cancel,
+            ));
         }
 
         Ok(Box::new(Stream::new(response.body, cancel.clone())))
