@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Authenticated model requests no longer follow redirects.** A 3xx response
+  is handed back to the provider as a refusal, so it cannot choose a second
+  recipient for an API key or another credential.
+
 - **Provider addresses cannot disguise or print a credential-bearing target.**
   Endpoint parsing rejects user information and fragments, validates the exact
   host before permitting loopback HTTP, and redacts paths and queries in
