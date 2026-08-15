@@ -127,7 +127,10 @@ depending on core alone is deliberate — the loop drives `dyn Provider` and
     already over the ceiling, the only smaller pull request is one that lands
     code without the tests that prove it. The test of the second is whether an
     intermediate pull request would compile, not whether the change is large or
-    awkward to split. `CONTRIBUTING.md` has the rest.
+    awkward to split. `CONTRIBUTING.md` has the rest. Enforcement is suspended
+    while the project is pre-1.0: the CI job still measures and reports the
+    size, but the verdict does not block — restore its `exit` to bring the rule
+    back.
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym
