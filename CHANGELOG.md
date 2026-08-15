@@ -13,6 +13,14 @@ Notable changes to crucible. Format follows
   against `--checksum HEX`, a published artifact must match exactly one
   SHA256SUMS line, and requiring more than glibc 2.34 fails the release.
 
+- **Every crate in the workspace is marked unpublished.** `publish = false` in
+  each manifest turns an accidental `cargo publish` into an error; releases
+  ship as tag-pushed GitHub Releases and nowhere else.
+
+- **The OpenAI provider names its subscription endpoint.** The fixed address a
+  `ChatGPT` subscription credential is served at sits beside the API-key one;
+  which of them a credential uses stays with the wiring that hands it over.
+
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
   paste-back fallback, plus device authorization for headless terminals;
