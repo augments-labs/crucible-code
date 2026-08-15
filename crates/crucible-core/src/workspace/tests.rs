@@ -490,10 +490,18 @@ fn a_walked_path_accepts_only_ordinary_names_below_its_start() {
     let from = f.workspace.existing(".").unwrap();
 
     assert!(from.walked(&f.workspace.root().join("kept.txt")).is_some());
+    #[cfg(not(windows))]
     assert!(
         from.walked(&f.workspace.root().join("sub/../kept.txt"))
             .is_none()
     );
+    // A Windows canonical path is verbatim, and `PathBuf::join` resolves its
+    // parent components before `walked` receives it. Check the raw-spelling
+    // guard directly rather than pretending that spelling survived the join.
+    #[cfg(windows)]
+    assert!(super::path::has_parent(Path::new(
+        r"C:\workspace\sub\..\kept.txt"
+    )));
     assert!(from.walked(&f.outside.join("secret.txt")).is_none());
 }
 

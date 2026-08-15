@@ -130,8 +130,11 @@ rustix = { version = "=1.1.4", features = ["fs"] }
 # resting on. Already in the tree as a transitive dependency of `ureq` and
 # `ignore` for Windows targets, so it costs no crate that was not being compiled
 # already. It is confined to the privacy platform boundary and core's final
-# workspace-path handle validation.
+# workspace-path handle validation. The WDK file-system surface contributes
+# the one ntdll rename call whose directory-relative contract the Win32 wrapper
+# does not honor consistently.
 windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",

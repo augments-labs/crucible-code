@@ -97,7 +97,7 @@ impl WorkspacePath {
 /// parent spelling before the remainder is inspected. Its path strings are
 /// Unicode, so inspect separator-delimited text there; Unix keeps backslashes
 /// as ordinary filename bytes and therefore uses `components`.
-fn has_parent(path: &Path) -> bool {
+pub(super) fn has_parent(path: &Path) -> bool {
     #[cfg(windows)]
     return path
         .as_os_str()

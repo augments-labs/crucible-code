@@ -14,13 +14,16 @@ use std::os::windows::io::AsRawHandle as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE};
-use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ADD_FILE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
-    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileDispositionInfo,
-    FileRenameInfo, GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
+use windows_sys::Wdk::Storage::FileSystem::{
+    FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0, FileRenameInformation, NtSetInformationFile,
 };
+use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, RtlNtStatusToDosError};
+use windows_sys::Win32::Storage::FileSystem::{
+    DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_NAME_NORMALIZED,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
+    FileDispositionInfo, GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
+};
+use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
 use super::WorkspacePath;
 
@@ -131,13 +134,7 @@ fn opened_parent(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options
         .read(true)
-        .access_mode(
-            FILE_LIST_DIRECTORY
-                | FILE_ADD_FILE
-                | FILE_TRAVERSE
-                | FILE_READ_ATTRIBUTES
-                | SYNCHRONIZE,
-        )
+        .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
     options.open(path)
@@ -174,26 +171,21 @@ fn temporary(parent: &Path) -> io::Result<(PathBuf, File)> {
 
 /// Renames the private handle below `parent` without replacing an existing name.
 fn rename(file: &File, parent: &File, leaf: &OsStr) -> io::Result<()> {
-    let name: Vec<u16> = leaf.encode_wide().chain(Some(0)).collect();
+    let name: Vec<u16> = leaf.encode_wide().collect();
     let name_bytes = name
         .len()
-        .saturating_sub(1)
         .checked_mul(size_of::<u16>())
         .ok_or_else(|| io::Error::other("the destination name is too long"))?;
-    // Windows validates this buffer against the padded C structure size, not
-    // merely the offset of its trailing array. Add the bytes beyond the one
-    // UTF-16 unit already represented by `FILE_RENAME_INFO`; using the smaller
-    // offset-based size is rejected with `ERROR_INVALID_PARAMETER` on Win32.
-    let bytes = size_of::<FILE_RENAME_INFO>()
+    let bytes = size_of::<FILE_RENAME_INFORMATION>()
         .checked_add(name_bytes)
         .ok_or_else(|| io::Error::other("the rename request is too large"))?;
     let mut storage = vec![0_usize; bytes.div_ceil(size_of::<usize>())];
-    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
 
     // SAFETY: `storage` is pointer-aligned and large enough for the fixed
     // fields plus all copied UTF-16 units. Both handles remain live.
     unsafe {
-        std::ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFO_0 {
+        std::ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFORMATION_0 {
             ReplaceIfExists: false,
         });
         std::ptr::addr_of_mut!((*info).RootDirectory).write(parent.as_raw_handle() as HANDLE);
@@ -208,20 +200,29 @@ fn rename(file: &File, parent: &File, leaf: &OsStr) -> io::Result<()> {
     }
 
     let size = u32::try_from(bytes).map_err(|_| io::Error::other("rename request too large"))?;
-    // SAFETY: `info` describes the initialized buffer above, and `file` was
-    // opened with DELETE access for this handle-relative rename.
+    let mut status = IO_STATUS_BLOCK::default();
+    // SAFETY: `info` describes the initialized buffer above, `status` is
+    // writable, and `file` was opened with DELETE access. The ntdll boundary
+    // is used because its documented file-information contract honors the
+    // held `RootDirectory`; the Win32 wrapper rejects that request on Win32.
     let renamed = unsafe {
-        SetFileInformationByHandle(
+        NtSetInformationFile(
             file.as_raw_handle() as HANDLE,
-            FileRenameInfo,
+            &raw mut status,
             info.cast(),
             size,
+            FileRenameInformation,
         )
     };
-    if renamed == 0 {
-        Err(io::Error::last_os_error())
-    } else {
+    if renamed >= 0 {
         Ok(())
+    } else {
+        // SAFETY: conversion has no preconditions and preserves the operating
+        // system's error category for the typed workspace boundary.
+        let code = unsafe { RtlNtStatusToDosError(renamed) };
+        Err(io::Error::from_raw_os_error(
+            i32::try_from(code).unwrap_or(i32::MAX),
+        ))
     }
 }
 
