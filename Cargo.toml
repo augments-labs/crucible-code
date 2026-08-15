@@ -80,7 +80,7 @@ crossterm = { version = "=0.29.0", default-features = false, features = ["events
 # binary is the same on every machine. Confined to one file behind `Transport`.
 # Default features minus `gzip`: a response here is an event stream that is read
 # as it arrives, and compressing one buys nothing for the `flate2` it costs.
-ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
+ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
