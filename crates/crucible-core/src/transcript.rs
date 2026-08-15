@@ -8,6 +8,8 @@
 //! delimited by [`Message::User`]: everything after one, until the next, is
 //! that turn.
 
+use std::fmt;
+
 use crate::ids::ToolId;
 use crate::tool::{ToolCall, ToolOutput};
 
@@ -15,7 +17,7 @@ use crate::tool::{ToolCall, ToolOutput};
 ///
 /// A closed set. A provider translates each variant into its own wire shape,
 /// so a new variant must break every provider that has not handled it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Message {
     /// What the user typed. Starts a turn.
     User(Box<str>),
@@ -41,13 +43,40 @@ pub enum Message {
     ToolResults(Vec<ToolResult>),
 }
 
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User(_) => f.debug_tuple("User").field(&"[redacted]").finish(),
+            Self::Agent { calls, stop, .. } => f
+                .debug_struct("Agent")
+                .field("text", &"[redacted]")
+                .field("calls", &calls.len())
+                .field("stop", stop)
+                .finish(),
+            Self::ToolResults(results) => f
+                .debug_tuple("ToolResults")
+                .field(&format_args!("{} redacted", results.len()))
+                .finish(),
+        }
+    }
+}
+
 /// One tool's answer, paired with the call it answers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ToolResult {
     /// The identifier from the call this answers.
     pub id: ToolId,
     /// What the tool produced.
     pub output: ToolOutput,
+}
+
+impl fmt::Debug for ToolResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolResult")
+            .field("id", &"[redacted]")
+            .field("output", &"[redacted]")
+            .finish()
+    }
 }
 
 /// Why the model stopped producing output.
@@ -126,9 +155,20 @@ impl StopReason {
 }
 
 /// The ordered record of turns.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Transcript {
     messages: Vec<Message>,
+}
+
+impl fmt::Debug for Transcript {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Transcript")
+            .field(
+                "messages",
+                &format_args!("{} redacted", self.messages.len()),
+            )
+            .finish()
+    }
 }
 
 impl Transcript {
@@ -269,5 +309,31 @@ mod tests {
         assert_eq!(transcript.len(), 0);
         assert_eq!(transcript.turns(), 0);
         assert_eq!(transcript.messages(), []);
+    }
+
+    #[test]
+    fn transcript_debug_redacts_prompts_answers_and_tool_results() {
+        let mut transcript = Transcript::new();
+        transcript.push(Message::User("prompt-debug-canary".into()));
+        transcript.push(Message::Agent {
+            text: "answer-debug-canary".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+        transcript.push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call-debug-canary"),
+            output: ToolOutput::ok("tool-debug-canary"),
+        }]));
+
+        let shown = format!("{transcript:?}");
+        for canary in [
+            "prompt-debug-canary",
+            "answer-debug-canary",
+            "call-debug-canary",
+            "tool-debug-canary",
+        ] {
+            assert!(!shown.contains(canary), "{shown}");
+        }
+        assert!(shown.contains("redacted"));
     }
 }

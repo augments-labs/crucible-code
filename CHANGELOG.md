@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Domain diagnostics no longer print transcript or tool contents.** `Debug`
+  output for prompts, answers, tool calls, arguments and results keeps only
+  structure and explicit redaction markers.
+
 - **Slow refusal bodies now obey their ten-second whole-read deadline.** A peer
   that keeps trickling bytes can no longer hold the provider thread far beyond
   the advertised limit.
