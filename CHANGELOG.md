@@ -8,6 +8,9 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Grep retains one global match bound.** Parallel workers add directly to the
+  ordered result instead of keeping an additional batch per worker.
+
 - **Tool results share one 4 MiB turn boundary.** A result that would cross it
   is replaced with a bounded failure, later calls are still answered, and the
   turn stops instead of retaining unbounded tool output.
