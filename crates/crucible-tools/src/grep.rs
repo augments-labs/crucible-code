@@ -56,6 +56,12 @@ const WIDTH: usize = 400;
 /// How many files the answer names before it starts counting them instead.
 const NAMED: usize = 5;
 
+/// Matches one worker gathers before taking the shared top-set lock.
+///
+/// This keeps lock traffic out of the per-match path while retaining only a
+/// fixed amount beside the global result, regardless of the file's size.
+const BATCH: usize = 32;
+
 /// The most heap one searcher may hold a line in.
 ///
 /// The searcher scans a line at a time, so its buffer has to grow to the longest
@@ -164,6 +170,17 @@ impl Top {
         if self.hits.len() > self.limit {
             self.hits.pop_last();
         }
+    }
+}
+
+/// Moves one worker's fixed batch into the global ordered result.
+fn retain(batch: &mut Vec<Hit>, top: &Mutex<Top>) {
+    if let Ok(mut top) = top.lock() {
+        for hit in batch.drain(..) {
+            top.add(hit);
+        }
+    } else {
+        batch.clear();
     }
 }
 
@@ -375,6 +392,7 @@ impl Grep {
             cancel: &self.cancel,
             stopped: &halted,
         };
+        let mut batch = Vec::with_capacity(BATCH);
         let found = searcher.search_reader(
             matcher,
             reader,
@@ -383,16 +401,18 @@ impl Grep {
                     halted.set(true);
                     return Ok(false);
                 }
-                if let Ok(mut hits) = hits.lock() {
-                    hits.add(Hit {
-                        path: shown.clone(),
-                        line,
-                        text: cut(text.trim_end()),
-                    });
+                batch.push(Hit {
+                    path: shown.clone(),
+                    line,
+                    text: cut(text.trim_end()),
+                });
+                if batch.len() == BATCH {
+                    retain(&mut batch, hits);
                 }
                 Ok(true)
             }),
         );
+        retain(&mut batch, hits);
 
         Searched {
             partly: (found.is_err() || halted.get()).then_some(shown),
