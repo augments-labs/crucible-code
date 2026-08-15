@@ -15,12 +15,12 @@ use serde_json::{Map, Value, json};
 use crate::json::{described, object};
 
 /// The whole request body.
-pub(super) fn build(request: &Request) -> Value {
+pub(super) fn build(request: &Request<'_>) -> Value {
     let mut body = Map::new();
-    body.insert("model".to_owned(), json!(&*request.model));
+    body.insert("model".to_owned(), json!(request.model));
     body.insert("max_tokens".to_owned(), json!(request.max_tokens));
     body.insert("stream".to_owned(), json!(true));
-    body.insert("messages".to_owned(), json!(messages(&request.transcript)));
+    body.insert("messages".to_owned(), json!(messages(request.transcript)));
 
     // Absent rather than null: the API rejects a null system prompt, and a
     // session without one is the ordinary case.
@@ -144,11 +144,11 @@ mod tests {
     /// What a pointer finds when there is nothing there.
     const NOTHING: Value = Value::Null;
 
-    fn request(transcript: Transcript) -> Request {
+    fn request(transcript: Transcript) -> Request<'static> {
         Request {
-            model: "claude-test".into(),
-            transcript,
-            tools: Vec::new(),
+            model: "claude-test",
+            transcript: Box::leak(Box::new(transcript)),
+            tools: &[],
             max_tokens: 1024,
             system: None,
             effort: None,
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn a_system_prompt_is_sent_when_there_is_one() {
         let mut request = request(said("hello"));
-        request.system = Some("be brief".into());
+        request.system = Some("be brief");
 
         assert_eq!(at(&build(&request), "/system"), &json!("be brief"));
     }
@@ -410,10 +410,10 @@ mod tests {
     #[test]
     fn a_tool_is_advertised_with_its_schema_and_its_description() {
         let mut request = request(said("go"));
-        request.tools = vec![ToolSchema {
+        request.tools = Box::leak(Box::new([ToolSchema {
             name: "read",
             schema: r#"{"description":"Reads a file.","type":"object","properties":{"path":{"type":"string"}}}"#,
-        }];
+        }]));
 
         let body = build(&request);
 

@@ -114,7 +114,7 @@ impl Provider for Moonshot {
 
     fn stream(
         &self,
-        request: Request,
+        request: Request<'_>,
         cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         // Nothing is sent for a turn the user has already abandoned. Once the

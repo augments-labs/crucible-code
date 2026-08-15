@@ -5,11 +5,11 @@ use super::*;
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
 
-fn request(transcript: Transcript) -> Request {
+fn request(transcript: Transcript) -> Request<'static> {
     Request {
-        model: "kimi-test".into(),
-        transcript,
-        tools: Vec::new(),
+        model: "kimi-test",
+        transcript: Box::leak(Box::new(transcript)),
+        tools: &[],
         max_tokens: 1024,
         system: None,
         effort: None,
@@ -68,7 +68,7 @@ fn standing_instructions_lead_the_transcript_as_a_message_of_their_own() {
     // There is no field for them on this endpoint. First rather than anywhere
     // else: the model reads them as the frame the rest is answered in.
     let mut asking = request(said("hello"));
-    asking.system = Some("be brief".into());
+    asking.system = Some("be brief");
 
     let body = build(&asking);
 
@@ -268,11 +268,11 @@ fn nothing_comes_between_a_turns_tool_calls_and_their_results() {
 #[test]
 fn a_tool_is_advertised_under_the_function_this_endpoint_nests_it_in() {
     let mut asking = request(said("hello"));
-    asking.tools = vec![ToolSchema {
+    asking.tools = Box::leak(Box::new([ToolSchema {
         name: "read",
         schema: r#"{"description":"Reads a file","type":"object",
                     "properties":{"path":{"type":"string"}}}"#,
-    }];
+    }]));
 
     let body = build(&asking);
 

@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider requests no longer clone the transcript.** The runner lends its
+  transcript and cached tool schemas through the synchronous request boundary,
+  removing one session-sized allocation from every provider pass.
+
 - **Domain diagnostics no longer print transcript or tool contents.** `Debug`
   output for prompts, answers, tool calls, arguments and results keeps only
   structure and explicit redaction markers.

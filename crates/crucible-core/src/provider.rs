@@ -90,18 +90,22 @@ pub enum ProviderError {
 }
 
 /// One turn's worth of input to a model.
-#[derive(Debug, Clone)]
-pub struct Request {
+///
+/// The large fields are borrowed from the runner. A provider consumes them
+/// before [`Provider::stream`] returns; the returned stream owns only the
+/// response, so starting a request does not duplicate the transcript.
+#[derive(Clone, Copy)]
+pub struct Request<'a> {
     /// Which model to ask.
-    pub model: Box<str>,
+    pub model: &'a str,
     /// The transcript so far.
-    pub transcript: Transcript,
+    pub transcript: &'a Transcript,
     /// The tools the model may call, as JSON Schema.
-    pub tools: Vec<ToolSchema>,
+    pub tools: &'a [ToolSchema],
     /// Ceiling on the response length.
     pub max_tokens: u32,
     /// The system prompt, if the session has one.
-    pub system: Option<Box<str>>,
+    pub system: Option<&'a str>,
     /// How hard to think, where somebody said.
     ///
     /// `None` is not a rung and does not mean the middle one: it is the field
@@ -109,6 +113,19 @@ pub struct Request {
     /// and each picked it for the models it serves, so a session nobody has
     /// said anything to about effort is one this program has not overridden.
     pub effort: Option<Effort>,
+}
+
+impl fmt::Debug for Request<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Request")
+            .field("model", &self.model)
+            .field("transcript", &"[redacted]")
+            .field("tools", &self.tools.len())
+            .field("max_tokens", &self.max_tokens)
+            .field("system", &self.system.map(|_| "[redacted]"))
+            .field("effort", &self.effort)
+            .finish()
+    }
 }
 
 /// How hard a model is asked to think before it answers.
@@ -250,6 +267,9 @@ pub trait Provider: Send + Sync {
 
     /// Starts a request and returns its stream of deltas.
     ///
+    /// The borrowed request must be consumed before this method returns. The
+    /// stream may retain the response, but no request field.
+    ///
     /// # Errors
     ///
     /// [`ProviderError`] if the request could not be sent or was refused. A
@@ -257,7 +277,7 @@ pub trait Provider: Send + Sync {
     /// instead.
     fn stream(
         &self,
-        request: Request,
+        request: Request<'_>,
         cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError>;
 }

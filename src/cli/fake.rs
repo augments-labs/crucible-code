@@ -74,7 +74,7 @@ impl Provider for Script {
 
     fn stream(
         &self,
-        request: Request,
+        request: Request<'_>,
         _cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         self.asked.fetch_add(1, Ordering::Relaxed);
@@ -82,7 +82,7 @@ impl Provider for Script {
         // A poisoned lock is a panic in another test's thread, which this one
         // cannot report better than by having nothing to assert on.
         if let Ok(mut under) = self.under.lock() {
-            under.push(request.system.unwrap_or_default().into());
+            under.push(request.system.unwrap_or_default().to_owned());
         }
 
         if self.refusing {

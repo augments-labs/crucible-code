@@ -518,17 +518,13 @@ impl Runner {
     }
 
     /// What to send this round.
-    fn request(&self) -> Request {
+    fn request(&self) -> Request<'_> {
         Request {
-            model: self.model.name.clone(),
-            // Cloned because a `Request` owns what it sends: the provider may
-            // hold it for as long as the socket is open, and the loop keeps
-            // appending to the transcript meanwhile. It is the same order of
-            // work as serialising it, which the provider does on the next line.
-            transcript: self.transcript.clone(),
+            model: &self.model.name,
+            transcript: &self.transcript,
             tools: self.tools.schemas(),
             max_tokens: self.model.max_tokens,
-            system: self.model.system.clone(),
+            system: self.model.system.as_deref(),
             effort: self.model.effort,
         }
     }
