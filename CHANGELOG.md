@@ -76,6 +76,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Switching models drops the rung chosen for the previous one.** A rung is a
+  property of one model's ladder, so `/model` now lifts
+  `providers.<provider>.effort` out of the file when it writes a new model
+  rather than letting the old rung bind the new one; a file it cannot be
+  lifted out of without rewriting is left alone, with a message saying what to
+  remove by hand.
+
 - **Release discovery has a ten-second absolute lifetime.** DNS, response
   headers and a body that starts but stalls can no longer retain its detached
   startup worker indefinitely.

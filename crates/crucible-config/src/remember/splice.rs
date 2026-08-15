@@ -111,6 +111,65 @@ pub(super) fn over(text: &str, span: Span, written: &str) -> String {
     splice(text, span.start..span.end, written)
 }
 
+/// The text without `key` inside `object`.
+///
+/// The same exact-key restrictions as [`member`] apply. The separating comma
+/// is removed with the member; surrounding whitespace is left untouched so
+/// every byte belonging to a neighbouring setting stays where its author put
+/// it.
+pub(super) fn remove(text: &str, object: Span, key: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut at = object.start + 1;
+    let mut found = None;
+
+    while at < object.end.saturating_sub(1) {
+        if bytes.get(at) != Some(&b'"') {
+            at += 1;
+            continue;
+        }
+        let key_start = at;
+        let after = end_of_string(text, at);
+        let start = after_colon(text, after);
+        let value = Span {
+            start,
+            end: end_of_value(text, start),
+        };
+        let written = &text[at + 1..after - 1];
+        if written.contains('\\') {
+            return None;
+        }
+        if written == key {
+            if found.is_some() {
+                return None;
+            }
+            found = Some((key_start, value));
+        }
+        at = value.end;
+    }
+
+    let (key_start, value) = found?;
+    let mut after = value.end;
+    while bytes.get(after).is_some_and(u8::is_ascii_whitespace) {
+        after += 1;
+    }
+    let range = if bytes.get(after) == Some(&b',') {
+        key_start..after + 1
+    } else {
+        let mut before = key_start;
+        while before > object.start + 1
+            && bytes.get(before - 1).is_some_and(u8::is_ascii_whitespace)
+        {
+            before -= 1;
+        }
+        if before > object.start + 1 && bytes.get(before - 1) == Some(&b',') {
+            before - 1..value.end
+        } else {
+            key_start..value.end
+        }
+    };
+    Some(splice(text, range, ""))
+}
+
 /// The text with `range` replaced.
 fn splice(text: &str, range: std::ops::Range<usize>, written: &str) -> String {
     let mut spliced = String::with_capacity(text.len() + written.len());
