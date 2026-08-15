@@ -28,7 +28,7 @@ fn running(command: &str) -> Sensitivity {
 fn writing_rule(sample: &Sample, command: &str) -> Result<(), RememberError> {
     let rule = narrowest(&call(), &running(command)).expect("one command can be written down");
 
-    allowing(&crucible_config::local(&sample.root()), &rule)
+    allowing(&sample.user_file(), &rule)
 }
 
 /// What the engine does with a command once the files have been read again.
@@ -37,7 +37,7 @@ fn settles(sample: &Sample, command: &str) -> Settled {
 }
 
 #[test]
-fn a_project_with_no_crucible_directory_at_all_gains_one_holding_the_rule() {
+fn a_user_with_no_config_directory_gains_one_holding_the_rule() {
     let sample = Sample::new("remember-fresh");
 
     writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
@@ -70,7 +70,7 @@ fn a_second_answer_joins_the_first_rather_than_replacing_it() {
 fn a_file_crucible_cannot_read_is_reported_rather_than_replaced() {
     // The file is somebody's, and a rule is not worth losing what they wrote.
     let sample = Sample::new("remember-broken");
-    let file = crucible_config::local(&sample.root());
+    let file = sample.user_file();
     fs::create_dir_all(file.parent().expect("a directory")).expect("a temporary tree");
     fs::write(&file, "{ oh dear").expect("a temporary tree");
 
@@ -93,7 +93,7 @@ fn a_file_the_user_narrowed_is_still_narrow_after_a_rule_joins_it() {
     // says what may run without being asked about, and widening who can write
     // to it is not part of replacing one setting.
     let sample = Sample::new("remember-narrow");
-    let file = crucible_config::local(&sample.root());
+    let file = sample.user_file();
 
     writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("a tree with modes");
@@ -115,14 +115,10 @@ fn nothing_is_left_beside_the_file_it_wrote() {
 
     writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
 
-    let file = crucible_config::local(&sample.root());
+    let file = sample.user_file();
     let names = holds(file.parent().expect("a directory"));
 
-    assert_eq!(
-        names,
-        vec![OsString::from("config.local.json")],
-        "{names:?}"
-    );
+    assert_eq!(names, vec![OsString::from("config.json")], "{names:?}");
 }
 
 /// Everything in `directory`, by name.
@@ -150,7 +146,7 @@ fn nothing_is_left_beside_a_file_that_could_not_be_replaced() {
     // only, for the same reason the mode test is: what a rename refuses and
     // what an undo is allowed to do are both the platform's to say.
     let sample = Sample::new("remember-stranded");
-    let file = crucible_config::local(&sample.root());
+    let file = sample.user_file();
     fs::create_dir_all(file.join("in the way")).expect("a temporary tree");
 
     let problem = put(&file, "{}").expect_err("no file renames over a directory");
@@ -158,7 +154,7 @@ fn nothing_is_left_beside_a_file_that_could_not_be_replaced() {
     let left = holds(file.parent().expect("a directory"));
     assert_eq!(
         left,
-        vec![OsString::from("config.local.json")],
+        vec![OsString::from("config.json")],
         "{left:?} after {problem}"
     );
 }
