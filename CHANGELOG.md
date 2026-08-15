@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider addresses cannot disguise or print a credential-bearing target.**
+  Endpoint parsing rejects user information and fragments, validates the exact
+  host before permitting loopback HTTP, and redacts paths and queries in
+  diagnostics.
+
 - **Concurrent user-setting changes no longer overwrite one another.** A
   private lock now spans the bounded reread and atomic commit; a busy file is
   reported after five seconds instead of silently losing another process's
