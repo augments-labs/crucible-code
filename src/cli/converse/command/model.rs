@@ -28,7 +28,7 @@ use super::{Terms, say};
 /// is that this outlives the session it was chosen in.
 const SAID: &str = concat!(
     "Choose the provider and model crucible asks from the next turn on. The ",
-    "choice is written down for this workspace; effort stays unset until chosen."
+    "choice is written down for every run from now on; effort stays unset until chosen."
 );
 
 /// What escape leaves behind, in place of the listing it used to write.

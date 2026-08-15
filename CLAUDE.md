@@ -39,12 +39,13 @@ src/            the binary — wiring only, the sole place concrete types meet
 crates/
   crucible-core/       domain types + traits. Depends on nothing.
   crucible-privacy/    owner-only local file primitives. Depends on nothing.
+  crucible-auth/       credential store and account logins.     -> core, privacy
   crucible-config/     configuration documents -> settings.     -> core
-  crucible-provider/   wire protocols (Anthropic, OpenAI).      -> core
+  crucible-provider/   wire protocols (Anthropic, Moonshot, OpenAI). -> core
   crucible-session/    session logs and bounded replay.  -> core, privacy
   crucible-tools/      read write edit bash grep glob.          -> core
   crucible-runner/     the turn loop, over traits only.  -> core, session
-  crucible-tui/        inline renderer, prompt, transcript.     -> core
+  crucible-tui/        inline renderer, prompt, transcript. Depends on nothing.
 schema/         the configuration schema, generated from the shape the parser
                 walks and checked in beside it
 scripts/        gates and benchmarks

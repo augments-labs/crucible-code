@@ -54,21 +54,24 @@ they pass through the resulting opaque `Redactions` before either `Display` or
 `Debug` can reach a terminal or log.
 
 That indifference is what makes the next rule a rule rather than an accident of
-the current code. **crucible offers no vendor subscription login, for any
-vendor.** A subscription is sold scoped to its vendor's own clients: Anthropic's
-terms permit a Claude Pro or Max plan in Claude Code and not in another harness,
-and people have been banned for pointing one elsewhere. Where a vendor instead
-lists their own CLI, their own IDE extension and their own app as what a plan
-covers, and prices everything else at API rates, that is the same scoping said
-in a quieter voice — absence of a quoted prohibition is not permission, and a
-credential this program mints is a credential this program is answerable for.
+the current code. **A vendor subscription login ships only where the vendor
+publishes a third-party authorization contract.** OpenAI publishes one for
+ChatGPT plans and MoonshotAI for Kimi Code, so those two ship — `OpenAiOAuth`
+and `KimiOAuth` in `crucible-auth`, each a new `impl Credential` rather than an
+edit to any provider here. Anthropic publishes none: its terms permit a Claude
+Pro or Max plan in Claude Code and not in another harness, and people have been
+banned for pointing one elsewhere, so Anthropic is reached with a Console API
+key and that is not a gap waiting to be filled. Where a vendor lists their own
+CLI, their own IDE extension and their own app as what a plan covers, and prices
+everything else at API rates, that is the same scoping said in a quieter voice —
+absence of a quoted prohibition is not permission, and a credential this program
+mints is a credential this program is answerable for.
 
-So a subscription reaches crucible however its vendor publishes for third
-parties, or not at all. Where that path exists it is an API key and the base URL
-the key is bound to — MoonshotAI's Kimi Code plan is exactly that shape — which
-is a provider module and an arm in `startup::provider`, not a new credential
-kind. An `impl Credential` that opens a browser is the one that gets sent back,
-however cleanly it is written.
+A subscription with no published third-party contract reaches crucible as an API
+key and the base URL the key is bound to, or not at all — a provider module and
+an arm in `startup::provider`, not a new credential kind. An `impl Credential`
+that opens a browser against a contract the vendor never published is the one
+that gets sent back, however cleanly it is written.
 
 The other half of arriving honestly is the header. **crucible identifies itself
 as crucible.** It never sends another harness's client identifier or user agent,

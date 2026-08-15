@@ -17,10 +17,12 @@ review will ask about.
 | `src/` | [`binary-wiring.md`](.agents/rules/binary-wiring.md) — the only place concrete types meet, and the only place an error becomes an exit code |
 | `crates/crucible-core/` | [`core-types.md`](.agents/rules/core-types.md) — what earns a place in a crate every other crate compiles, and which side of the open/closed line a new type is on |
 | `crates/crucible-privacy/` | [`privacy-files.md`](.agents/rules/privacy-files.md) — owner-only creation, identity-bound opens, replacement and platform-specific invariants |
+| `crates/crucible-auth/` | [`auth-store.md`](.agents/rules/auth-store.md) — the credential store, account login flows, and what may never leave as a string |
 | `crates/crucible-config/`, `schema/` | [`config-document.md`](.agents/rules/config-document.md) — adding a setting, how layers merge, and what an error is allowed to say |
 | `crates/crucible-provider/` | [`provider-wire.md`](.agents/rules/provider-wire.md) — adding a provider, credentials, and where a vendor's `chunk` stops |
 | `crates/crucible-tools/` | [`tools-permission.md`](.agents/rules/tools-permission.md) — adding a tool, grants, and why a failed tool is a result rather than an error |
 | `crates/crucible-runner/` | [`runner-loop.md`](.agents/rules/runner-loop.md) — the loop over traits, ending a turn once, and the transcript being the only thing that grows |
+| `crates/crucible-session/` | [`session-log.md`](.agents/rules/session-log.md) — the append-only log, its format version, and the owner-only tree |
 | `crates/crucible-tui/` | [`tui-render.md`](.agents/rules/tui-render.md) — the render budget, wrapping, and restoring the terminal you changed |
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -120,6 +122,10 @@ and every pull request has one.
 
 A change that does not fit is a sequence of pull requests that each stand on
 their own, not one larger one with a note about its size.
+
+Enforcement is suspended while the project is pre-1.0: CI still measures and
+reports the size, but the verdict does not block. It returns when the shape
+settles.
 
 Two diffs are measured wrongly, and no diff can prove either about itself, so
 each is a label — somebody saying so, left visible on the pull request

@@ -89,11 +89,15 @@ cd ~/code/my-project
 crucible
 ```
 
+`/login` inside the session is the other way in — a ChatGPT or Kimi Code
+account, or a key kept in crucible's protected store rather than exported.
+
 `--model` takes a model name, optionally qualified by the provider serving it.
-Unqualified, the provider is whichever of `ANTHROPIC_API_KEY`,
-`MOONSHOT_API_KEY` and `OPENAI_API_KEY` holds a key — hold more than one and
-nothing chooses between them, so qualify the name or set
-`providers.<name>.model` for one of them. There is no model built in: name one,
+Unqualified, the provider is whichever holds a usable credential — a key in one
+of `ANTHROPIC_API_KEY`, `MOONSHOT_API_KEY` and `OPENAI_API_KEY`, or one stored
+by `/login`, whether an API key or an account login. Hold more than one and
+nothing chooses between them, so qualify the name or set `provider` for one of
+them. There is no model built in: name one,
 configure one, or run `/model` in the session and take one off the panel, which
 writes the answer down.
 

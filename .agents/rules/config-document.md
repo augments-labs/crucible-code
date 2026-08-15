@@ -44,7 +44,7 @@ popup, and it is the only documentation most people will see.
 ## The home directory
 
 `home.rs` resolves where crucible's own files are, and it is the only place that
-asks. Everything else — including the runner's session log — is handed a path.
+asks. Everything else — including the session log — is handed a path.
 Do not read `HOME`, `CRUCIBLE_CODE_HOME` or an XDG variable anywhere else; a
 second answer to "where do the files live" is a bug that only shows up on
 somebody else's machine.

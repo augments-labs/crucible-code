@@ -5,10 +5,12 @@ paths:
 
 # Changing crucible-auth
 
-This crate holds one file: the keys `/login` was given, kept so the next launch
-does not have to ask again. It is the only place in the workspace that a secret
-meets a disk, which is the whole reason it is a crate of its own rather than a
-module inside the wiring.
+This crate holds the credentials `/login` was given: the API keys, kept so the
+next launch does not have to ask again, and the renewable secret state behind
+the account logins, whose flows — browser callback, device code, token exchange
+— it also owns. It is the only place in the workspace that a secret meets a
+disk, which is the whole reason it is a crate of its own rather than a module
+inside the wiring.
 
 ## A key leaves as an `ApiKey` or it does not leave
 
@@ -56,8 +58,9 @@ every time.
 
 ## What does not belong here
 
-No network, no clock, no flow, no token. An API key does not expire, so there is
-nothing to renew and nothing that has to mutate itself in the middle of a
-request. Where the file lives is not decided here either: `Store::in_home` is
-handed the directory, because `crucible_config::Home` is the one place that
-answers where anything is.
+The wire. This crate runs the authorization flows, keeps the tokens and renews
+them at the request boundary; shaping a request for one vendor's endpoint is
+the provider's, and a login method that knows a vendor's chat-completions shape
+has reached a layer up. Where the file lives is not decided here either:
+`Store::in_home` is handed the directory, because `crucible_config::Home` is
+the one place that answers where anything is.
