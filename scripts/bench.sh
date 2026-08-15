@@ -47,7 +47,7 @@ readonly BUDGETS=(
     "startup|bench-first-input|first input <= 60 ms p95"
     "mem|bench-session-rss|peak RSS after a 20-turn session <= 35 MB"
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
-    "stream|bench-render-burst|render commits under token burst >= 30/s"
+    "stream|bench-render-burst|render commits >= 30/s and sustained/opening >= 0.5"
 )
 
 readonly MODES=(startup mem grep stream)

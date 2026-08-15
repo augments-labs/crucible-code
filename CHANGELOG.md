@@ -8,6 +8,14 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The benchmark probes measure the shipped binary through a real terminal.**
+  The startup probes spawn `crucible` behind a controlling pseudo terminal,
+  the RSS budget runs a twenty-turn session against a loopback provider, and
+  the render burst drains a bounded kernel pipe — so the budgets now cover
+  escape assembly, raw input and process memory rather than in-process
+  stand-ins. The stream budget also requires the sustained rate to hold at
+  least half the opening rate.
+
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
   paste-back fallback, plus device authorization for headless terminals;

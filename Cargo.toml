@@ -276,16 +276,17 @@ thiserror.workspace = true
 crucible-session = { workspace = true, features = ["proof"] }
 insta.workspace = true
 
-# The one test that runs crucible the way a person does. It opens a pseudo
-# terminal, spawns the binary against it, sends keystrokes and reads back the
-# bytes — which is the only way to reach the arithmetic this program does that
-# a framework would otherwise do for it: how far a frame rewinds, where the
-# cursor parks, how tall the live region is allowed to be. Every one of those
-# is invisible to a test that calls a component directly, and one of them was
-# wrong in a shipped release. `pty` opens the pair and `termios` sets the window
-# size on it; `std` has neither. Already in the tree for `crucible-core`, so
-# this turns features on rather than adding a crate, and it is dev-only.
-rustix = { workspace = true, features = ["pty", "termios"] }
+# The Linux benchmark probes run the shipped binary behind a controlling pseudo
+# terminal and render into a bounded kernel pipe, and the one test that runs
+# crucible the way a person does drives it through a pty the same way. `std`
+# can spawn the process and read the descriptors but cannot open the pty pair,
+# put its far side in raw mode, set its window size or bound a pipe. `rustix`
+# and its version are already in the runtime graph through core, so this turns
+# features on rather than adding a crate; only the safe system-call wrappers
+# the probes and that test name become reachable, and no pty or pipe code is
+# reached by crucible itself.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["pipe", "pty", "termios"] }
 
 [lints]
 workspace = true
