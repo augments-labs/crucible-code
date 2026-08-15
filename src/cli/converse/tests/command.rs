@@ -62,37 +62,34 @@ fn the_model_a_session_is_asking_is_the_one_it_was_built_with() {
 }
 
 #[test]
-fn model_down_a_pipe_lists_what_this_provider_can_be_asked_for() {
+fn model_down_a_pipe_lists_every_provider_beside_its_models() {
     // Naming none opens the panel where there is a keyboard to walk it with.
     // Down a pipe there is not, so the same line answers the question the panel
     // would have asked: under the model in force, the ones a name would reach
     // without anybody going to look up how the vendor spells them.
     let (written, asked) = commanding("/model\n");
-    let serving = plain().provider.get().expect("these terms name a provider");
-    let served = crate::cli::PROVIDERS
-        .into_iter()
-        .find(|one| one.name == serving)
-        .expect("this build serves it");
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("script"), "{written}");
-    for model in served.models {
-        assert!(
-            written.contains(&format!("/model {}", model.name)),
-            "{written}"
-        );
+    for provider in crate::cli::PROVIDERS {
+        for model in provider.models {
+            assert!(
+                written.contains(&format!("/model {}/{}", provider.name, model.name)),
+                "{written}"
+            );
+        }
     }
 }
 
 #[test]
-fn model_lists_only_the_provider_this_run_is_set_up_for() {
-    // A name off this list is asked of whichever vendor the key belongs to, so
-    // one from another vendor is a refusal with somebody's model name in it.
-    // Offering it would be this program spelling that mistake out for them.
+fn model_lists_providers_that_are_not_active_yet() {
+    // A key says a provider can be reached; it does not choose one. A row can
+    // be shown before its key exists — taking it then meets the missing key as
+    // a missing key, rather than the catalog hiding half of itself.
     let (written, _) = commanding("/model\n");
 
-    assert!(!written.contains("gpt-"), "{written}");
-    assert!(!written.contains("kimi-"), "{written}");
+    assert!(written.contains("openai/gpt-"), "{written}");
+    assert!(written.contains("moonshot/kimi-"), "{written}");
 }
 
 #[test]

@@ -27,8 +27,6 @@ const WIDTHS: std::ops::RangeInclusive<usize> = 1..=200;
 fn welcome<'a>(sessions: &'a [Recent<'a>]) -> Welcome<'a> {
     Welcome {
         version: "v0.0.8",
-        model: "claude-sonnet-5",
-        provider: "anthropic",
         root: "~/code/crucible-code",
         sessions,
     }
@@ -126,7 +124,7 @@ fn a_terminal_too_narrow_for_two_columns_stacks_them() {
 
 #[test]
 fn a_terminal_too_narrow_for_a_frame_keeps_only_what_is_a_fact() {
-    // What this is, what it is asking, and where. A tip is an offer, and an
+    // What this is and where. A tip is an offer, and an
     // offer elided to three characters is not one.
     pictured(
         "sessions",
@@ -267,40 +265,4 @@ fn a_deep_directory_gives_up_its_middle_rather_than_its_name() {
     let drawn = drawn(&deep, 80, Glyphs::Unicode);
 
     assert!(drawn.contains("~/…/crucible-code"), "{drawn}");
-}
-
-#[test]
-fn the_card_says_whose_model_it_is_before_saying_which() {
-    // A model name says which model and never whose. On a machine holding keys
-    // for two vendors that is the question the card is there to answer, and
-    // the shape it answers it in is the one `--model` takes back.
-    let drawn = drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode);
-
-    assert!(drawn.contains("anthropic/claude-sonnet-5"), "{drawn}");
-}
-
-#[test]
-fn a_card_with_no_vendor_named_says_only_which_model() {
-    // The two are one row and not two, so a vendor nobody named cannot leave a
-    // separator standing on its own in front of the model.
-    let alone = Welcome {
-        provider: "",
-        ..welcome(&WORKED_IN)
-    };
-    let drawn = drawn(&alone, 80, Glyphs::Unicode);
-
-    assert!(drawn.contains("claude-sonnet-5"), "{drawn}");
-    assert!(!drawn.contains("/claude-sonnet-5"), "{drawn}");
-}
-
-#[test]
-fn the_card_names_the_model_and_not_the_rung_it_is_being_asked_on() {
-    // The rung is under the prompt box, where every keystroke redraws it. Drawn
-    // here it would be true until the first `/effort` and wrong after it — this
-    // card is the terminal's scrollback the moment the next thing is written,
-    // and nothing in this process can go back over it.
-    let drawn = drawn(&welcome(&WORKED_IN), 80, Glyphs::Unicode);
-
-    assert!(drawn.contains("claude-sonnet-5"), "{drawn}");
-    assert!(!drawn.contains("effort"), "{drawn}");
 }

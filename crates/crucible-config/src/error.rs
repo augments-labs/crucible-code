@@ -330,6 +330,17 @@ pub enum ConfigError {
         written: Box<str>,
     },
 
+    /// A stale setting could not be removed without rewriting its document.
+    #[error(
+        "{file}: crucible could not remove {at} without rewriting what is already in the file. Remove it by hand"
+    )]
+    Unremovable {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The stale setting, dotted.
+        at: Box<str>,
+    },
+
     /// The environment says nowhere to keep crucible's own files.
     ///
     /// Not a fault in a document — it is why there is no document to read — but

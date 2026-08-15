@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Releases ship an installer and an uninstaller.** `scripts/install.sh`
+  verifies the published checksum before replacing an existing binary, and
+  `scripts/uninstall.sh` preserves configuration and sessions unless
+  explicitly asked to purge them.
+
 ### Changed
 
 - **Session discovery uses a private fixed-size index.** The first frame no
@@ -14,7 +21,51 @@ Notable changes to crucible. Format follows
   after the first frame of the first run that starts or continues a session —
   until then its welcome list is empty; no log is moved or rewritten.
 
+- **Release builds are pinned, smoked and attested before publication.** Linux
+  artifacts now build in a digest-pinned CentOS Stream 9 image, making the
+  documented glibc 2.34 floor a build input rather than a property of
+  whichever runner image is current. rustup is bootstrapped from
+  a versioned, checksummed installer, the built archive passes the smoke gate
+  pre-publish, and the release attests its binaries and ships `install.sh`,
+  `uninstall.sh` and `budgets.json` as assets.
+
+- **Terminal paste input is bounded before parsing.** Bracketed-paste reporting
+  is disabled; immediately ready plain characters are inserted and redrawn as
+  one bounded run, while embedded newlines submit just as if they were typed.
+  A prompt retains at most 1 MiB of text, and what would cross that is refused
+  with a note under the box rather than flooding the input path.
+
+- **The welcome card no longer names a model.** Provider, model and effort stay
+  on the live prompt status, where `/login`, `/model` and `/effort` can update
+  them instead of leaving stale selection details in terminal scrollback.
+
+- **`/model` offers every provider's models, under their product names.** The
+  panel and the piped listing hold all three providers rather than only the one
+  in force, and taking a row of another provider moves the session to it.
+  MoonshotAI's models read K3, K3-256k, K2.7 Coding and K2.7 Coding Highspeed
+  beside the wire identifiers a configuration carries, and the Kimi models take
+  low, high and max — the only rungs `/effort` offers for them.
+
 ### Internal
+
+- **Subscription logins are registered at the wiring boundary.** The binary's
+  one closed list pairs each account login with the fixed audience its tokens
+  are issued for, and a stored subscription now resolves to that address when
+  a run names its provider and no key is set; nothing at the prompt writes one
+  yet.
+
+- **The smoke gate verifies checksums exactly and enforces the glibc floor.**
+  `--offline` is renamed to `--no-provider`, a local tarball can be checked
+  against `--checksum HEX`, a published artifact must match exactly one
+  SHA256SUMS line, and requiring more than glibc 2.34 fails the release.
+
+- **Every crate in the workspace is marked unpublished.** `publish = false` in
+  each manifest turns an accidental `cargo publish` into an error; releases
+  ship as tag-pushed GitHub Releases and nowhere else.
+
+- **The OpenAI provider names its subscription endpoint.** The fixed address a
+  `ChatGPT` subscription credential is served at sits beside the API-key one;
+  which of them a credential uses stays with the wiring that hands it over.
 
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
@@ -44,6 +95,13 @@ Notable changes to crucible. Format follows
   accessor to the credential itself.
 
 ### Fixed
+
+- **Switching models drops the rung chosen for the previous one.** A rung is a
+  property of one model's ladder, so `/model` now lifts
+  `providers.<provider>.effort` out of the file when it writes a new model
+  rather than letting the old rung bind the new one; a file it cannot be
+  lifted out of without rewriting is left alone, with a message saying what to
+  remove by hand.
 
 - **Release discovery has a ten-second absolute lifetime.** DNS, response
   headers and a body that starts but stalls can no longer retain its detached

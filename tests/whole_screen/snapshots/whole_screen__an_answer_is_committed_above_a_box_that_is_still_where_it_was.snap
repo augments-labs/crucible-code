@@ -9,9 +9,9 @@ expression: window.picture()
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
-|│  anthropic/claude-test-1         │                                           │|
-|│                                  │ Tips                                      │|
 |│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|

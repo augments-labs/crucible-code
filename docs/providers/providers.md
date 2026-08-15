@@ -51,12 +51,11 @@ A name this build has nothing for is refused the same way there as on the flag,
 so a file written by a later crucible is a sentence rather than a silent fall
 back to whichever key is exported.
 
-Whichever rung settled it, the answer is on screen: the welcome card and the row
-under the prompt box both name the vendor before the model, in the
-`provider/model` shape `--model` takes back. The card says what this run opened
-with; the row is redrawn on every keystroke, so it is the one that keeps up when
-`/login` hands the session to another vendor mid-way. Where nothing has chosen a
-model at all, neither says a vendor either — there is nothing being asked of it.
+Whichever rung settled it, the answer is on the live row under the prompt box,
+which names the vendor before the model in the `provider/model` shape `--model`
+takes back. It is redrawn on every keystroke, so it keeps up when `/login` hands
+the session to another vendor mid-way. The welcome card deliberately carries no
+provider, model or effort because it becomes terminal scrollback immediately.
 
 ## Which model
 
