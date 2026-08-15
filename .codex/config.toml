@@ -1,12 +1,14 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
 # Codex settings for working in this repository.
 #
 # The rules themselves are not here — Codex reads AGENTS.md, which is a symlink
 # to CLAUDE.md, and the skills under .agents/skills/ are symlinks to the
 # originals in .claude/skills/. This file only says how Codex should run.
 
-# Ask before anything outside the sandbox. `scripts/check.sh` runs cargo, which
-# spawns rustc and writes to target/ — both inside the workspace, so the gate
-# runs without a prompt.
+# Keep commands inside the workspace sandbox. Eligible requests to cross that
+# boundary go to Codex's automatic reviewer; the sandbox still applies unless
+# that reviewer allows the specific request.
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 approvals_reviewer = "auto_review"
@@ -23,9 +25,21 @@ web_search = "cached"
 [features]
 memories = true
 
+[agents]
+# A shallow tree keeps reviews independent rather than turning one task into an
+# unbounded chain of delegated context.
+max_depth = 2
+max_concurrent_threads_per_session = 5
+
+[shell_environment_policy]
+# Codex otherwise retains variables whose names contain KEY, SECRET or TOKEN.
+# Commands get the ordinary shell environment, less those secret-shaped names.
+ignore_default_excludes = false
+
 [sandbox_workspace_write]
-# cargo resolves and downloads from crates.io. Without this the first build in
-# a clean checkout fails, and so does the gate.
+# Commands in this sandbox may make outbound connections. Cargo needs that on a
+# clean checkout to reach crates.io, but the permission is not domain-limited:
+# code run by a build or test can use it too.
 #
 # cargo also writes outside the workspace, to $CARGO_HOME (~/.cargo by default)
 # for the registry cache. If a build fails on a read-only path rather than on
