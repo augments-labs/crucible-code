@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The OpenAI provider names its subscription endpoint.** The fixed address a
+  `ChatGPT` subscription credential is served at sits beside the API-key one;
+  which of them a credential uses stays with the wiring that hands it over.
+
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
   `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
   paste-back fallback, plus device authorization for headless terminals;
