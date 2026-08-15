@@ -6,10 +6,9 @@ paths:
 # Changing crucible-runner
 
 The runner drives turns to completion over `dyn Provider` and `dyn Tool`. Its
-`[dependencies]` names `crucible-core` and two crates that hold no opinion about
-the loop — `serde_json` for the session log and `thiserror` for its error. No
-sibling crate belongs in that list, and that is deliberate rather than
-incidental.
+`[dependencies]` names `crucible-core` and `crucible-session`, which holds the
+log a turn is recorded to. No other sibling crate belongs in that list, and
+that is deliberate rather than incidental.
 
 ## Never name a concrete provider or tool
 
@@ -30,14 +29,6 @@ that reads as complete is worse than a visible failure.
 
 Cancellation is the same shape: everything already produced is delivered before
 the loop stops, so the transcript never ends mid-sentence with no explanation.
-
-## A format change is a format version change
-
-A log written by a different build is refused rather than half-understood;
-guessing produces a session that looks fine and is missing turns. So a change
-to what a line holds is a change to `wire::FORMAT` in the same commit — the
-append-only shape is described where it is implemented, but the version is the
-part a change to this crate has to remember.
 
 ## The transcript is the only thing that grows
 

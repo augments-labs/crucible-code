@@ -7,13 +7,15 @@
 //! it; this is what does it afterwards.
 //!
 //! Deliberately the smallest thing that is still an editor: characters,
-//! backspace, the arrows, a word either way, the two ends, and the three keys
-//! that end a line. History, bracketed paste and a second row are each
-//! separable, and none of them is what makes a bordered prompt possible.
+//! sanitized bulk text, backspace, the arrows, a word either way, the two ends,
+//! and the three keys that end a line. History and a second row are separable,
+//! and neither is what makes a bordered prompt possible.
 //!
 //! Nothing here reads a key or draws a row. It is a string and an offset, so a
 //! test of what a keystroke does is a test of what a keystroke does, and the
 //! component that owns the box decides what any of it looks like.
+//! The string retains at most one MiB. An edit that would cross that boundary is
+//! refused whole, leaving the caller to say so in the box.
 
 use crate::width;
 
@@ -62,6 +64,8 @@ pub enum Typed {
     Changed,
     /// Nothing moved. There is nothing to draw.
     Ignored,
+    /// The edit would exceed the line's retained-memory ceiling.
+    Refused,
     /// The line is finished and is waiting in the editor to be taken.
     Submitted,
     /// Ctrl-C arrived with no line to abandon, so what is left to abandon is
@@ -87,6 +91,9 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// The most prompt text this process retains, in UTF-8 bytes.
+    pub const MAX_BYTES: usize = 1024 * 1024;
+
     /// An empty line.
     #[must_use]
     pub fn new() -> Self {
@@ -170,6 +177,39 @@ impl Editor {
         }
     }
 
+    /// Inserts sanitized bulk text at the cursor.
+    ///
+    /// The suffix is moved once by `insert_str`, rather than once per pasted
+    /// character. That makes a bulk insertion into the middle linear in the
+    /// line plus the inserted text. Control characters
+    /// are left out for the same reason `insert` leaves them out: a
+    /// one-line prompt cannot safely draw or place its cursor after them.
+    pub fn paste(&mut self, pasted: &str) -> Typed {
+        let Some(first_control) = pasted.find(char::is_control) else {
+            return self.insert_text(pasted);
+        };
+
+        let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
+        let mut kept = 0;
+        for character in pasted.chars().filter(|character| !character.is_control()) {
+            kept += character.len_utf8();
+            if kept > remaining {
+                return Typed::Refused;
+            }
+        }
+
+        let mut plain = String::with_capacity(kept);
+        plain.push_str(pasted.get(..first_control).unwrap_or_default());
+        plain.extend(
+            pasted
+                .get(first_control..)
+                .unwrap_or_default()
+                .chars()
+                .filter(|character| !character.is_control()),
+        );
+        self.insert_text(&plain)
+    }
+
     /// Everything the cursor has passed.
     ///
     /// The offset is always on a character boundary, so the empty string is
@@ -204,9 +244,26 @@ impl Editor {
         if typed.is_control() {
             return Typed::Ignored;
         }
+        if typed.len_utf8() > Self::MAX_BYTES.saturating_sub(self.said.len()) {
+            return Typed::Refused;
+        }
 
         self.said.insert(self.at, typed);
         self.at += typed.len_utf8();
+        Typed::Changed
+    }
+
+    /// Puts already-sanitized text at the cursor with one suffix move.
+    fn insert_text(&mut self, text: &str) -> Typed {
+        if text.is_empty() {
+            return Typed::Ignored;
+        }
+        if text.len() > Self::MAX_BYTES.saturating_sub(self.said.len()) {
+            return Typed::Refused;
+        }
+
+        self.said.insert_str(self.at, text);
+        self.at += text.len();
         Typed::Changed
     }
 

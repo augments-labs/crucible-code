@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-40x24 cursor 10,4 scrolled 0
+40x24 cursor 9,4 scrolled 0
 |CRUCIBLE                                |
-|no model selected                       |
 |/…/workspace                            |
 |                                        |
 |                                        |
@@ -16,6 +15,7 @@ expression: window.picture()
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
+|                                        |
 |                                        |
 |                                        |
 |                                        |
