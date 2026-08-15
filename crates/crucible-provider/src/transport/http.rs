@@ -156,12 +156,26 @@ impl Https {
     /// needs. Widening it would make every fake in this workspace implement a
     /// verb no provider uses.
     ///
+    /// `lifetime` covers resolution through the last response-body byte.
+    ///
     /// # Errors
     ///
     /// [`TransportError`] if the request could not be sent. A response with a
     /// status the caller dislikes is not an error.
-    pub fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, TransportError> {
-        let mut request = self.shared.agent.get(url);
+    pub fn get(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        lifetime: Duration,
+    ) -> Result<Response, TransportError> {
+        let mut request = self
+            .shared
+            .agent
+            .get(url)
+            .config()
+            .timeout_global(Some(lifetime))
+            .timeout_resolve(Some(lifetime))
+            .build();
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -412,6 +426,24 @@ mod tests {
         format!("http://{address}/v1/messages")
     }
 
+    /// Starts a GET response, then withholds its end past the request lifetime.
+    fn slow_get() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                heard(&stream);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nhalf");
+                let _ = stream.flush();
+                thread::sleep(Duration::from_millis(400));
+                let _ = stream.write_all(b"done");
+            }
+        });
+
+        (format!("http://{address}/latest"), server)
+    }
+
     /// Serves one canned response on loopback and returns the URL for it.
     ///
     /// A real socket, because the branch worth testing is what the client does
@@ -563,6 +595,27 @@ mod tests {
 
         assert_eq!(response.status, 404);
         assert_eq!(body, said);
+    }
+
+    #[test]
+    fn a_get_lifetime_includes_a_body_that_started_but_never_finished() {
+        let (url, server) = slow_get();
+        let since = Instant::now();
+        let mut response = Https::isolated()
+            .get(&url, &[], Duration::from_millis(100))
+            .expect("the response head arrived");
+        let mut body = String::new();
+
+        let problem = response
+            .body
+            .read_to_string(&mut body)
+            .expect_err("the body exceeded the request lifetime");
+        let elapsed = since.elapsed();
+        server.join().unwrap();
+
+        assert!(elapsed < Duration::from_millis(300), "waited {elapsed:?}");
+        assert_eq!(body, "half");
+        assert!(problem.to_string().contains("timeout"), "{problem}");
     }
 
     #[test]

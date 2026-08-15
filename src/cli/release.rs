@@ -37,6 +37,9 @@ const REMEMBERED: &str = "release";
 /// would be a request per terminal window for an answer that changes weekly.
 const ASK_AFTER: Duration = Duration::from_hours(24);
 
+/// The absolute lifetime of release discovery, including its response body.
+const CHECK_LIFETIME: Duration = Duration::from_secs(10);
+
 /// The most of a response that is read before giving up on it.
 ///
 /// The body is a few kilobytes of JSON. The ceiling is what stops a server that
@@ -133,7 +136,7 @@ fn asked() -> Option<Box<str>> {
         ("user-agent", agent.as_str()),
     ];
 
-    let response = Https::new().get(LATEST, &headers).ok()?;
+    let response = Https::new().get(LATEST, &headers, CHECK_LIFETIME).ok()?;
     if response.status != 200 {
         return None;
     }

@@ -20,6 +20,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Release discovery has a ten-second absolute lifetime.** DNS, response
+  headers and a body that starts but stalls can no longer retain its detached
+  startup worker indefinitely.
+
 - **Provider DNS retains no unbounded request body.** Resolution has a
   five-second deadline; if the platform lookup outlives it, later provider
   requests fail fast until restart instead of accumulating resolver threads.
