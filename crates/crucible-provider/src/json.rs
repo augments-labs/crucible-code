@@ -7,6 +7,166 @@
 
 use serde_json::{Map, Value};
 
+/// A JSON document written directly into its final allocation.
+pub(crate) struct Json(String);
+
+impl Json {
+    pub(crate) fn new() -> Self {
+        Self(String::new())
+    }
+
+    pub(crate) fn finish(self) -> String {
+        self.0
+    }
+
+    pub(crate) fn object(&mut self, fill: impl FnOnce(&mut Object<'_>)) {
+        self.0.push('{');
+        let mut object = Object {
+            json: self,
+            first: true,
+        };
+        fill(&mut object);
+        object.json.0.push('}');
+    }
+
+    fn array(&mut self, fill: impl FnOnce(&mut Array<'_>)) {
+        self.0.push('[');
+        let mut array = Array {
+            json: self,
+            first: true,
+        };
+        fill(&mut array);
+        array.json.0.push(']');
+    }
+
+    fn text(&mut self, text: &str) {
+        self.0.push('"');
+        for character in text.chars() {
+            match character {
+                '"' => self.0.push_str("\\\""),
+                '\\' => self.0.push_str("\\\\"),
+                '\u{08}' => self.0.push_str("\\b"),
+                '\u{0c}' => self.0.push_str("\\f"),
+                '\n' => self.0.push_str("\\n"),
+                '\r' => self.0.push_str("\\r"),
+                '\t' => self.0.push_str("\\t"),
+                '\u{00}'..='\u{1f}' => {
+                    let byte = character as usize;
+                    self.0.push_str("\\u00");
+                    self.0.push(hex(byte >> 4));
+                    self.0.push(hex(byte & 0x0f));
+                }
+                other => self.0.push(other),
+            }
+        }
+        self.0.push('"');
+    }
+
+    fn value(&mut self, value: &Value) {
+        match value {
+            Value::Null => self.0.push_str("null"),
+            Value::Bool(value) => self.0.push_str(if *value { "true" } else { "false" }),
+            Value::Number(value) => self.0.push_str(&value.to_string()),
+            Value::String(value) => self.text(value),
+            Value::Array(values) => self.array(|array| {
+                for value in values {
+                    array.item(|json| json.value(value));
+                }
+            }),
+            Value::Object(values) => self.object(|object| {
+                for (name, value) in values {
+                    object.value(name, value);
+                }
+            }),
+        }
+    }
+}
+
+fn hex(nibble: usize) -> char {
+    match nibble {
+        0 => '0',
+        1 => '1',
+        2 => '2',
+        3 => '3',
+        4 => '4',
+        5 => '5',
+        6 => '6',
+        7 => '7',
+        8 => '8',
+        9 => '9',
+        10 => 'a',
+        11 => 'b',
+        12 => 'c',
+        13 => 'd',
+        14 => 'e',
+        _ => 'f',
+    }
+}
+
+/// Fields within an object currently being written.
+pub(crate) struct Object<'a> {
+    json: &'a mut Json,
+    first: bool,
+}
+
+impl Object<'_> {
+    fn member(&mut self, name: &str, value: impl FnOnce(&mut Json)) {
+        if !self.first {
+            self.json.0.push(',');
+        }
+        self.first = false;
+        self.json.text(name);
+        self.json.0.push(':');
+        value(self.json);
+    }
+
+    pub(crate) fn text(&mut self, name: &str, value: &str) {
+        self.member(name, |json| json.text(value));
+    }
+
+    pub(crate) fn number(&mut self, name: &str, value: u32) {
+        self.member(name, |json| json.0.push_str(&value.to_string()));
+    }
+
+    pub(crate) fn boolean(&mut self, name: &str, value: bool) {
+        self.member(name, |json| {
+            json.0.push_str(if value { "true" } else { "false" });
+        });
+    }
+
+    pub(crate) fn object(&mut self, name: &str, fill: impl FnOnce(&mut Object<'_>)) {
+        self.member(name, |json| json.object(fill));
+    }
+
+    pub(crate) fn array(&mut self, name: &str, fill: impl FnOnce(&mut Array<'_>)) {
+        self.member(name, |json| json.array(fill));
+    }
+
+    pub(crate) fn value(&mut self, name: &str, value: &Value) {
+        self.member(name, |json| json.value(value));
+    }
+}
+
+/// Values within an array currently being written.
+pub(crate) struct Array<'a> {
+    json: &'a mut Json,
+    first: bool,
+}
+
+impl Array<'_> {
+    fn item(&mut self, value: impl FnOnce(&mut Json)) {
+        if !self.first {
+            self.json.0.push(',');
+        }
+        self.first = false;
+        value(self.json);
+    }
+
+    pub(crate) fn object(&mut self, fill: impl FnOnce(&mut Object<'_>)) {
+        self.item(|json| json.object(fill));
+    }
+}
+
 /// JSON text as an object, or an empty one.
 ///
 /// A tool that takes no arguments is called with no argument text at all, so
@@ -72,5 +232,23 @@ mod tests {
         assert!(object("").is_empty());
         assert!(object("[1,2]").is_empty());
         assert!(object("not json").is_empty());
+    }
+
+    #[test]
+    fn direct_writing_escapes_text_and_preserves_nested_schema_values() {
+        let nested = json!({"type": "object", "required": ["path"]});
+        let mut document = Json::new();
+        document.object(|root| {
+            root.text("text", "quote \" slash \\ line\n tab\t nul\0 snowman ☃");
+            root.value("schema", &nested);
+        });
+
+        let written: Value = serde_json::from_str(&document.finish()).unwrap();
+
+        assert_eq!(
+            written.get("text"),
+            Some(&json!("quote \" slash \\ line\n tab\t nul\0 snowman ☃"))
+        );
+        assert_eq!(written.get("schema"), Some(&nested));
     }
 }
