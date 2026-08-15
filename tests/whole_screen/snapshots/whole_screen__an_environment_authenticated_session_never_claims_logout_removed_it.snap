@@ -2,12 +2,16 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 15,4 scrolled 4
+80x24 cursor 19,4 scrolled 0
+|╭─ crucible v0.1.7 ────────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
-|│  anthropic/claude-test-1         │                                           │|
-|│                                  │ Tips                                      │|
 |│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|
@@ -21,9 +25,5 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
