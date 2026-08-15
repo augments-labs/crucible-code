@@ -1,7 +1,7 @@
 //! The proof that a path is one the workspace reaches.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use super::written;
@@ -34,6 +34,32 @@ impl WorkspacePath {
         Self { root, resolved }
     }
 
+    /// Proves a name yielded below this path by a non-following tree walk.
+    ///
+    /// A walker has already reached every directory component and reports its
+    /// entries without following symbolic links. Only ordinary names below the
+    /// proven starting path are accepted here. Opening the result repeats the
+    /// containment-sensitive part at the operating-system boundary: a
+    /// descriptor walk on Unix and final-handle validation on Windows.
+    #[must_use]
+    pub fn walked(&self, reached: &Path) -> Option<Self> {
+        if has_parent(reached) {
+            return None;
+        }
+        let below = reached.strip_prefix(&self.resolved).ok()?;
+        if !below
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return None;
+        }
+
+        Some(Self {
+            root: Arc::clone(&self.root),
+            resolved: reached.to_owned(),
+        })
+    }
+
     /// The resolved, absolute path.
     #[must_use]
     pub fn as_path(&self) -> &Path {
@@ -63,6 +89,25 @@ impl WorkspacePath {
             .strip_prefix(&self.root)
             .unwrap_or(Path::new(""))
     }
+}
+
+/// Whether `path` contains a lexical parent component before prefix matching.
+///
+/// Windows' `strip_prefix` compares normalized components and can erase the
+/// parent spelling before the remainder is inspected. Its path strings are
+/// Unicode, so inspect separator-delimited text there; Unix keeps backslashes
+/// as ordinary filename bytes and therefore uses `components`.
+pub(super) fn has_parent(path: &Path) -> bool {
+    #[cfg(windows)]
+    return path
+        .as_os_str()
+        .to_string_lossy()
+        .split(['/', '\\'])
+        .any(|part| part == "..");
+
+    #[cfg(not(windows))]
+    path.components()
+        .any(|part| matches!(part, Component::ParentDir))
 }
 
 impl AsRef<Path> for WorkspacePath {

@@ -13,11 +13,55 @@
 //! about text somebody sent; whether the tree still agrees is decided there,
 //! at the moment of the call.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::{PathError, Workspace, WorkspacePath};
 
 impl Workspace {
+    /// Resolves the name a write intends to create, through the nearest parent
+    /// that already exists.
+    ///
+    /// Unlike [`Workspace::creatable`], this is only for describing a call at
+    /// the permission boundary. A write can make several missing directories
+    /// before it makes its file, so requiring the immediate parent here would
+    /// turn the target into an unresolved one and hide its name from policy.
+    /// The ancestor that does exist is still canonicalised and contained; only
+    /// the ordinary names below it are appended. A `..` among the missing
+    /// components therefore resolves nothing rather than being guessed at.
+    pub(crate) fn intended(&self, requested: &str) -> Option<PathBuf> {
+        if Path::new(requested)
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+        {
+            return None;
+        }
+
+        let mut ancestor = self.join(requested);
+        let mut missing = Vec::new();
+
+        loop {
+            if let Ok(mut resolved) = ancestor.canonicalize() {
+                self.roots.containing(&resolved)?;
+
+                for name in missing.iter().rev() {
+                    resolved.push(name);
+                }
+
+                return self.roots.containing(&resolved).map(|_| resolved);
+            }
+
+            let Component::Normal(name) = ancestor.components().next_back()? else {
+                // A root or prefix cannot be appended below an existing
+                // ancestor, and a parent component would make the lexical
+                // target say something different after the permission
+                // question was answered.
+                return None;
+            };
+            missing.push(name.to_owned());
+            ancestor = ancestor.parent()?.to_owned();
+        }
+    }
+
     /// Resolves a path that must already exist — what `read`, `grep` and
     /// `edit` need.
     ///

@@ -27,10 +27,17 @@ thiserror.workspace = true
 # makes containment hold against something else writing into the tree at the
 # same time. Every crate above inherits it, on Unix targets — and there it is
 # already being compiled for `crossterm`, so what arrives is a feature rather
-# than a crate. Windows has no `openat` and gets the check on names instead;
-# `workspace/open.rs` says what that costs.
+# than a crate. Windows has no `openat`; the separate target dependency below
+# validates final opened handles and commits new files under a held parent.
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# A name can be redirected through an ancestor between containment and open.
+# GetFinalPathNameByHandleW validates the handle actually opened before a byte
+# is read; std exposes the handle but not that query. The exact-pinned crate and
+# FileSystem feature are already in the workspace for privacy.
+windows-sys.workspace = true
 
 [lints]
 workspace = true

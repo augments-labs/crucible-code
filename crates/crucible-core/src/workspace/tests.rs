@@ -67,12 +67,54 @@ fn symlink(target: impl AsRef<Path>, link: impl AsRef<Path>) {
     made.expect("a symbolic link: on Windows this needs developer mode");
 }
 
+/// A symbolic link to a directory, with the kind Windows requires up front.
+fn symlink_directory(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(target, link);
+
+    made.expect("a directory symbolic link: on Windows this needs developer mode");
+}
+
 #[test]
 fn a_path_inside_the_workspace_resolves() {
     let f = Fixture::new("inside");
     let path = f.workspace.existing("kept.txt").unwrap();
     assert!(path.as_path().starts_with(f.workspace.root()));
     assert!(path.as_path().ends_with("kept.txt"));
+}
+
+#[test]
+fn a_regular_file_cannot_be_the_workspace_root() {
+    let base = std::env::temp_dir().join(format!("crucible-ws-file-root-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    let file = base.join("not-a-directory");
+    fs::write(&file, "contents").unwrap();
+
+    let problem = Workspace::open(&file).unwrap_err();
+
+    assert!(matches!(problem, PathError::NotDirectory { .. }));
+    assert_eq!(
+        problem.to_string(),
+        format!("{} is not a directory", file.display())
+    );
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn a_regular_file_cannot_widen_the_workspace() {
+    let f = Fixture::new("file-reach");
+    let file = f.beside.join("shared.txt");
+
+    let problem = f
+        .workspace
+        .clone()
+        .reaching([file.display().to_string()])
+        .unwrap_err();
+
+    assert!(matches!(problem, PathError::NotDirectory { .. }));
 }
 
 #[test]
@@ -189,6 +231,41 @@ fn creating_under_a_directory_that_does_not_exist_is_rejected() {
     let f = Fixture::new("nodir");
     let err = f.workspace.creatable("absent/new.txt").unwrap_err();
     assert!(matches!(err, PathError::Missing { .. }), "got {err:?}");
+}
+
+#[test]
+fn a_parent_component_below_a_missing_directory_has_no_intended_target() {
+    let f = Fixture::new("intended-parent");
+
+    assert!(
+        f.workspace
+            .intended("missing/../.crucible/config.json")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_parent_component_below_a_missing_directory_cannot_intend_an_escape() {
+    let f = Fixture::new("intended-parent-escape");
+
+    assert!(
+        f.workspace
+            .intended("missing/../../outside/.crucible/config.json")
+            .is_none()
+    );
+}
+
+#[test]
+fn ordinary_names_below_a_missing_directory_keep_their_intended_target() {
+    let f = Fixture::new("intended-missing");
+
+    let intended = f
+        .workspace
+        .intended("missing/.crucible/config.json")
+        .expect("ordinary missing components inside the workspace");
+
+    assert!(intended.starts_with(f.workspace.root()));
+    assert!(intended.ends_with("missing/.crucible/config.json"));
 }
 
 #[test]
@@ -336,15 +413,106 @@ fn a_link_planted_where_a_new_file_goes_is_not_created_through() {
     assert!(!f.outside.join("absent.txt").exists());
 }
 
+#[test]
+fn a_successful_create_still_exists_after_its_handle_closes() {
+    let f = Fixture::new("create-persists");
+    let path = f.workspace.creatable("fresh.txt").unwrap();
+
+    drop(path.create().unwrap());
+
+    assert!(f.workspace.root().join("fresh.txt").is_file());
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn a_directory_redirected_after_resolution_is_not_created_outside() {
+    let f = Fixture::new("mkdir-race");
+    fs::create_dir_all(f.workspace.root().join("parent")).unwrap();
+    let path = f.workspace.creatable("parent/new").unwrap();
+
+    fs::rename(
+        f.workspace.root().join("parent"),
+        f.workspace.root().join("moved"),
+    )
+    .unwrap();
+    symlink_directory(&f.outside, f.workspace.root().join("parent"));
+
+    let problem = path.create_directory().unwrap_err();
+
+    assert!(
+        matches!(
+            problem,
+            PathError::Swapped { .. } | PathError::Uncreated { .. }
+        ),
+        "{problem:?}"
+    );
+    assert!(!f.outside.join("new").exists());
+    assert!(!f.workspace.root().join("moved/new").exists());
+}
+
+#[test]
+fn a_walked_file_is_not_read_after_its_directory_is_redirected() {
+    let f = Fixture::new("walkswapabove");
+    fs::write(f.workspace.root().join("sub/one.txt"), "inside").unwrap();
+    fs::write(f.outside.join("one.txt"), "outside").unwrap();
+    let from = f.workspace.existing(".").unwrap();
+    let named = f.workspace.root().join("sub/one.txt");
+    let walked = from.walked(&named).unwrap();
+
+    fs::remove_dir_all(f.workspace.root().join("sub")).unwrap();
+    symlink_directory(&f.outside, f.workspace.root().join("sub"));
+
+    let problem = walked.open_regular().unwrap_err();
+    assert!(matches!(problem, PathError::Swapped { .. }), "{problem:?}");
+}
+
 #[cfg(unix)]
+#[test]
+fn a_fifo_is_refused_before_a_read_or_change_can_wait_for_a_peer() {
+    let f = Fixture::new("fifo-open");
+    let fifo = f.workspace.root().join("waiting");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+    let path = f.workspace.existing("waiting").unwrap();
+
+    let read = path.open_regular().unwrap_err();
+    assert!(matches!(read, PathError::NotFile { .. }), "{read:?}");
+    let change = path.open_regular_to_change().unwrap_err();
+    assert!(matches!(change, PathError::NotFile { .. }), "{change:?}");
+}
+
+#[test]
+fn a_walked_path_accepts_only_ordinary_names_below_its_start() {
+    let f = Fixture::new("walked-shape");
+    let from = f.workspace.existing(".").unwrap();
+
+    assert!(from.walked(&f.workspace.root().join("kept.txt")).is_some());
+    #[cfg(not(windows))]
+    assert!(
+        from.walked(&f.workspace.root().join("sub/../kept.txt"))
+            .is_none()
+    );
+    // A Windows canonical path is verbatim, and `PathBuf::join` resolves its
+    // parent components before `walked` receives it. Check the raw-spelling
+    // guard directly rather than pretending that spelling survived the join.
+    #[cfg(windows)]
+    assert!(super::path::has_parent(Path::new(
+        r"C:\workspace\sub\..\kept.txt"
+    )));
+    assert!(from.walked(&f.outside.join("secret.txt")).is_none());
+}
+
+#[cfg(any(unix, windows))]
 #[test]
 fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
     // The other half of the race, and the one a check on the last component
-    // never sees: it is not the file that moves but a directory above it. What
-    // answers is the walk down from the root, which asks for `sub` against a
-    // descriptor for the directory holding it and with `O_NOFOLLOW` — so a
-    // `sub` that has become a link is refused by the same call that would
-    // otherwise have followed it, for reading and for creating alike.
+    // never sees: it is not the file that moves but a directory above it. Unix
+    // walks from the root with no-follow descriptors; Windows validates the
+    // final opened handle and commits creation below a held parent. Both refuse
+    // the redirected name before any file content crosses the boundary.
     let f = Fixture::new("swapabove");
     fs::write(f.workspace.root().join("sub/one.txt"), "in").unwrap();
     fs::write(f.outside.join("one.txt"), "out").unwrap();
@@ -352,7 +520,7 @@ fn a_directory_swapped_above_a_proven_path_cannot_reach_outside() {
     let fresh = f.workspace.creatable("sub/fresh.txt").unwrap();
 
     fs::remove_dir_all(f.workspace.root().join("sub")).unwrap();
-    std::os::unix::fs::symlink(&f.outside, f.workspace.root().join("sub")).unwrap();
+    symlink_directory(&f.outside, f.workspace.root().join("sub"));
 
     let err = existing.open().unwrap_err();
     assert!(

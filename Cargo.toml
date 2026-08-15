@@ -129,8 +129,12 @@ rustix = { version = "=1.1.4", features = ["fs"] }
 # last published in 2021, which is not what security-critical code should be
 # resting on. Already in the tree as a transitive dependency of `ureq` and
 # `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. It is confined to the session and privacy platform boundaries.
+# already. It is confined to the privacy platform boundary and core's final
+# workspace-path handle validation. The WDK file-system surface contributes
+# the one ntdll rename call whose directory-relative contract the Win32 wrapper
+# does not honor consistently.
 windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -153,7 +157,7 @@ windows-sys = { version = "=0.61.2", features = [
 # into a third-party crate rather than removed it, which is the same unsafe with
 # less review. `deny` keeps every file in this tree an error by default and
 # makes the one exception appear in the diff, spelled out, where it can be
-# argued with. Only the session and privacy Windows modules opt in.
+# argued with. Only the privacy and workspace-validation Windows modules opt in.
 unsafe_code = "deny"
 missing_docs = "warn"
 missing_debug_implementations = "warn"

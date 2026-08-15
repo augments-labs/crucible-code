@@ -32,7 +32,7 @@ impl Roots {
     /// Resolves the root, which must exist.
     pub(super) fn open(root: &Path) -> Result<Self, PathError> {
         Ok(Self {
-            root: canonical(root, &root.display().to_string())?.into(),
+            root: canonical_directory(root, &root.display().to_string())?.into(),
             extra: Vec::new(),
         })
     }
@@ -50,7 +50,8 @@ impl Roots {
                 requested: directory.into(),
             });
         }
-        self.extra.push(canonical(given, directory)?.into());
+        self.extra
+            .push(canonical_directory(given, directory)?.into());
         Ok(())
     }
 
@@ -79,11 +80,21 @@ impl Roots {
 
 /// Resolves a directory, reporting it under the name the caller used rather
 /// than the one this function built.
-fn canonical(directory: &Path, requested: &str) -> Result<PathBuf, PathError> {
-    directory
+fn canonical_directory(directory: &Path, requested: &str) -> Result<PathBuf, PathError> {
+    let resolved = directory
         .canonicalize()
         .map_err(|source| PathError::Missing {
             requested: requested.into(),
             source,
-        })
+        })?;
+    let metadata = resolved.metadata().map_err(|source| PathError::Missing {
+        requested: requested.into(),
+        source,
+    })?;
+    if !metadata.is_dir() {
+        return Err(PathError::NotDirectory {
+            requested: requested.into(),
+        });
+    }
+    Ok(resolved)
 }
