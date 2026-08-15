@@ -4,8 +4,9 @@
 //! that has always worked, and it is read fresh every launch by whoever set it.
 //! The other is `/login`, which takes a key once and writes it here so the next
 //! launch does not have to ask again. The protected document can also hold the
-//! renewable secret state used by account credentials; authorization protocol
-//! and request renewal remain separate from this storage boundary.
+//! renewable secret state used by account credentials. Authorization methods
+//! meet the binary through the provider-neutral [`SubscriptionLogin`] trait;
+//! request renewal remains separate from this storage boundary.
 //!
 //! Two rules shape every line of it. **A secret this program wrote down is this
 //! program's fault if it leaks**, so the value inside the file is never returned
@@ -26,10 +27,12 @@
 //! where anything is.
 
 mod error;
+mod oauth;
 mod renewable;
 mod store;
 
 pub use error::AuthError;
+pub use oauth::{LoginAttempt, LoginMethod, LoginUpdate, OAuthError, SubscriptionLogin};
 pub use store::{Store, StoredCredentials};
 
 /// Stored credentials as named by the API-key-only releases.
