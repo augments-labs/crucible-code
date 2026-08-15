@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`/model` offers every provider's models, under their product names.** The
+  panel and the piped listing hold all three providers rather than only the one
+  in force, and taking a row of another provider moves the session to it.
+  MoonshotAI's models read K3, K3-256k, K2.7 Coding and K2.7 Coding Highspeed
+  beside the wire identifiers a configuration carries, and the Kimi models take
+  low, high and max — the only rungs `/effort` offers for them.
+
 ### Internal
 
 - **The OpenAI provider names its subscription endpoint.** The fixed address a
