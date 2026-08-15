@@ -20,9 +20,17 @@ Notable changes to crucible. Format follows
   one bounded run, while embedded newlines submit just as if they were typed.
   A prompt retains at most 1 MiB of text, and what would cross that is refused
   with a note under the box rather than flooding the input path.
+
 - **The welcome card no longer names a model.** Provider, model and effort stay
   on the live prompt status, where `/login`, `/model` and `/effort` can update
   them instead of leaving stale selection details in terminal scrollback.
+
+- **`/model` offers every provider's models, under their product names.** The
+  panel and the piped listing hold all three providers rather than only the one
+  in force, and taking a row of another provider moves the session to it.
+  MoonshotAI's models read K3, K3-256k, K2.7 Coding and K2.7 Coding Highspeed
+  beside the wire identifiers a configuration carries, and the Kimi models take
+  low, high and max — the only rungs `/effort` offers for them.
 
 ### Internal
 
