@@ -13,6 +13,14 @@ Notable changes to crucible. Format follows
   `scripts/uninstall.sh` preserves configuration and sessions unless
   explicitly asked to purge them.
 
+### Changed
+
+- **Terminal paste input is bounded before parsing.** Bracketed-paste reporting
+  is disabled; immediately ready plain characters are inserted and redrawn as
+  one bounded run, while embedded newlines submit just as if they were typed.
+  A prompt retains at most 1 MiB of text, and what would cross that is refused
+  with a note under the box rather than flooding the input path.
+
 ### Internal
 
 - **The smoke gate verifies checksums exactly and enforces the glibc floor.**
