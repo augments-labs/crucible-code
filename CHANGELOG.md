@@ -6,6 +6,24 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-15
+
+### Changed
+
+- **Session discovery uses a private fixed-size index.** The first frame no
+  longer enumerates the session directory, so startup stays flat as recordings
+  accumulate. A directory of logs written before this release is indexed once,
+  after the first frame of the first run that starts or continues a session —
+  until then its welcome list is empty; no log is moved or rewritten.
+
+- **The benchmark probes measure the shipped binary through a real terminal.**
+  The startup probes spawn `crucible` behind a controlling pseudo terminal,
+  the RSS budget runs a twenty-turn session against a loopback provider, and
+  the render burst drains a bounded kernel pipe — so the budgets now cover
+  escape assembly, raw input and process memory rather than in-process
+  stand-ins. The stream budget also requires the sustained rate to hold at
+  least half the opening rate.
+
 ## [0.1.7] - 2026-08-15
 
 ### Added
@@ -16,12 +34,6 @@ Notable changes to crucible. Format follows
   explicitly asked to purge them.
 
 ### Changed
-
-- **Session discovery uses a private fixed-size index.** The first frame no
-  longer enumerates the session directory, so startup stays flat as recordings
-  accumulate. A directory of logs written before this release is indexed once,
-  after the first frame of the first run that starts or continues a session —
-  until then its welcome list is empty; no log is moved or rewritten.
 
 - **Release builds are pinned, smoked and attested before publication.** Linux
   artifacts now build in a digest-pinned CentOS Stream 9 image, making the
@@ -49,14 +61,6 @@ Notable changes to crucible. Format follows
   low, high and max — the only rungs `/effort` offers for them.
 
 ### Internal
-
-- **The benchmark probes measure the shipped binary through a real terminal.**
-  The startup probes spawn `crucible` behind a controlling pseudo terminal,
-  the RSS budget runs a twenty-turn session against a loopback provider, and
-  the render burst drains a bounded kernel pipe — so the budgets now cover
-  escape assembly, raw input and process memory rather than in-process
-  stand-ins. The stream budget also requires the sustained rate to hold at
-  least half the opening rate.
 
 - **Subscription logins are registered at the wiring boundary.** The binary's
   one closed list pairs each account login with the fixed audience its tokens
@@ -1522,7 +1526,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/augments-labs/crucible-code/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/augments-labs/crucible-code/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/augments-labs/crucible-code/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/augments-labs/crucible-code/compare/v0.1.4...v0.1.5
