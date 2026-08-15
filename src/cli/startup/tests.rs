@@ -6,6 +6,7 @@ use crucible_core::Outgoing;
 
 use super::*;
 use crate::cli::sample::{Sample, WRITTEN};
+use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 
 /// The entry the wiring resolves before it builds anything.
 fn serving(named: &str) -> Served {
@@ -20,8 +21,18 @@ fn built(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
+    let stored = StoredCredentials::default();
     let subscriptions = Subscriptions::production();
-    provider(serving, settings, from, &Keys::default(), &subscriptions)
+    provider(
+        serving,
+        NOTHING_TO_ASK,
+        ProviderAuth {
+            settings,
+            from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        },
+    )
 }
 
 /// What a credential writes into the header it signs with.
@@ -175,11 +186,42 @@ fn an_openai_subscription_uses_its_fixed_audience() {
             vendor: OpenAi::VENDOR,
         },
         None,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("a stored subscription");
+
+    assert_eq!(endpoint, OpenAi::SUBSCRIPTION);
+}
+
+#[test]
+fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
+    // A variable is inherited from whichever shell launched this run; an
+    // account authorized through `/login` was chosen on purpose, after the
+    // shell was what it was. The deliberate credential signs the request.
+    let sample = Sample::new("subscription-over-environment");
+    let keys = sample.subscribed("openai");
+    let subscriptions = Subscriptions::production();
+
+    let (endpoint, _) = credential(
+        ApiAudience {
+            provider: "openai",
+            variable: "OPENAI_API_KEY",
+            vendor: OpenAi::VENDOR,
+        },
+        None,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| Some("inherited-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
+    )
+    .expect("the explicitly stored account login");
 
     assert_eq!(endpoint, OpenAi::SUBSCRIPTION);
 }
@@ -197,9 +239,12 @@ fn a_kimi_subscription_uses_the_managed_coding_audience() {
             vendor: Moonshot::CODING,
         },
         None,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("a stored Kimi account");
 
@@ -223,9 +268,12 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
             vendor: OpenAi::VENDOR,
         },
         sending_to(&settings, "openai").expect("an address the check accepted"),
-        &|_| Some("an-exported-key".to_owned()),
-        &keys,
-        &subscriptions,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| Some("an-exported-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect("the explicit API key for this run");
 
@@ -235,8 +283,9 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
 #[test]
 fn a_subscription_token_never_follows_a_configured_api_key_address() {
     // `baseUrl` is somebody's reason not to reach the vendor, and a plan's
-    // token is the vendor's: with nothing else to sign with, the run gets the
-    // missing-key sentence rather than a subscription sent to a gateway.
+    // token is the vendor's: with nothing else to sign with, the run is told
+    // the two settings cannot stand together rather than sending the token to
+    // a gateway.
     let sample = Sample::new("subscription-custom-endpoint");
     let keys = sample.subscribed("openai");
     let settings =
@@ -245,14 +294,17 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
 
     let problem = provider(
         Some(serving("openai")),
-        &settings,
-        &|_| None,
-        &keys,
-        &subscriptions,
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| None,
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
     )
     .expect_err("a subscription sent to an API-key gateway");
 
-    assert!(matches!(problem, Fatal::Credential(_)), "{problem:?}");
+    assert!(matches!(problem, Fatal::SubscriptionAddress { .. }));
 }
 
 #[test]
@@ -363,6 +415,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
         provider: Some(serving("openai")),
+        unasked: NO_MODEL_CHOSEN,
         model: Some("gpt-5.6-terra"),
         effort: None,
         resuming: false,
@@ -372,7 +425,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
-        stored: &Keys::default(),
+        stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
     }) else {
         panic!("a startup with no key was accepted");
@@ -394,6 +447,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 
     let runner = assemble(&Startup {
         provider: None,
+        unasked: NOTHING_TO_ASK,
         model: None,
         effort: None,
         resuming: false,
@@ -403,7 +457,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         workspace: &workspace,
         cancel: &Cancel::new(),
         from: &|_| None,
-        stored: &Keys::default(),
+        stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
     })
     .expect("a session with nothing set up still starts");

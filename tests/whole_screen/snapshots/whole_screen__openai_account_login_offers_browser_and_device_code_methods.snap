@@ -2,7 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 12,4 scrolled 13
+80x24 cursor 20,0 scrolled 12
+|╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
@@ -10,20 +11,19 @@ expression: window.picture()
 |                                                                                |
 |› /login                                                                        |
 |                                                                                |
-|logged in to anthropic, asking claude-test-1                                    |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
-|› what is 2+2                                                                   |
-|Two plus two is four.                                                           |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ ›                                                                            │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|OpenAI                                                                          |
 |                                                                                |
+|Choose where to finish account authorization.                                   |
 |                                                                                |
+|› Continue in browser                                                           |
+|  sign in to ChatGPT on this device                                             |
 |                                                                                |
+|  Use a device code                                                             |
+|  sign in to ChatGPT from another device                                        |
 |                                                                                |
-|                                                                                |
-|                                                                                |
+|esc to cancel                                                                   |
 |                                                                                |
 |                                                                                |
 |                                                                                |

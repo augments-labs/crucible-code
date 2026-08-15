@@ -75,6 +75,16 @@ fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
 }
 
 #[test]
+fn a_remembered_provider_without_its_credential_still_opens_the_session() {
+    // `/model` persists all three names, but the credential may belong only to
+    // the shell that selected them. Once that variable is unset, the remembered
+    // names become dormant setup rather than an error before the prompt exists.
+    let window = Window::unavailable("remembered-without-key", 80, 24);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width() {
     // Half the width, where the welcome drops to one column and the wordmark
     // has to go. Two widths rather than one because a row that fits at eighty
@@ -149,31 +159,46 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_at_the_foot_of_it() {
 }
 
 #[test]
+fn an_environment_authenticated_session_never_claims_logout_removed_it() {
+    // The key belongs to the shell that launched this real process. `/logout`
+    // can remove only Crucible's protected store, so this screen must name the
+    // inherited source and leave the selected provider and model in force.
+    let vendor = Vendor::answering("still authenticated");
+    let mut window = Window::answering("environment-logout", 80, 24, &vendor);
+
+    window.types("/logout\r");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     // The first minute on a machine that has never logged in, end to end: the
     // welcome says there is nothing to ask, `/login` takes a key into a box that
-    // does not echo it, and the next thing typed is answered. Nothing restarts
-    // in between, which is the whole of what this case is here to prove — and
-    // only a real run can, since what a key has to reach is a socket.
+    // does not echo it, `/model` explicitly chooses what answers, and the next
+    // thing typed is answered. Nothing restarts in between, which is the whole
+    // of what this case is here to prove — and only a real run can, since what
+    // a key has to reach is a socket.
     //
-    // Named on the line, which is what skips both panels: this is the way in for
-    // somebody who already knows whose key they hold.
+    // Named on the line, which is what skips the provider panel: this is the
+    // way in for somebody who already knows whose key they hold.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Window::keyless("logged-in", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types("/model claude-test-1\r");
     window.types("what is 2+2\r");
 
     insta::assert_snapshot!(window.picture());
 }
 
 #[test]
-fn the_two_panels_of_login_reach_a_turn_without_a_provider_being_named() {
-    // `/login` with nothing after it, walked the whole way: how crucible is paid
-    // for, then whose console the key is from, then the key. Two panels because
-    // they are two questions, and this is the case that proves the second one is
-    // reached and that what comes off the pair signs the turn after it.
+fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
+    // `/login` with nothing after it, walked the whole way: past the two
+    // account rows to the console account, then whose key this is, then the
+    // key. `/model` remains a separate explicit choice; this proves what comes
+    // off the login panel signs the next turn after that choice.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Window::keyless("login-walked", 80, 24, &vendor);
 
@@ -183,6 +208,7 @@ fn the_two_panels_of_login_reach_a_turn_without_a_provider_being_named() {
     window.types("\x1b[B\x1b[B\r");
     window.types("\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types("/model claude-test-1\r");
     window.types("what is 2+2\r");
 
     insta::assert_snapshot!(window.picture());
@@ -218,13 +244,12 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
 }
 
 #[test]
-fn a_plan_crucible_cannot_sign_with_yet_says_so_rather_than_asking_for_a_key() {
-    // The honest half of a panel that draws more than it can do. A plan row is
-    // there so somebody holding one learns crucible knows about it — and the
-    // moment they choose it, it has to say that it is unbuilt rather than open
-    // a key box, which is the thing a plan holder has no key for.
-    let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::keyless("unbuilt", 80, 24, &vendor);
+fn openai_account_login_offers_browser_and_device_code_methods() {
+    // Provider first, method second. Browser sign-in is the ordinary local
+    // path; device code stays visible for a remote terminal or another device.
+    // This stops before either network flow starts and snapshots Crucible's
+    // own inline panel rather than a provider's interface.
+    let mut window = Window::open("openai-login-methods", 80, 24);
 
     window.types("/login\r");
     window.types("\r");
@@ -245,6 +270,7 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
 
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
+    window.types("/model claude-test-1\r");
     window.types("/effort\r");
 
     insta::assert_snapshot!(window.picture());

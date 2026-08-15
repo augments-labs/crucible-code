@@ -36,8 +36,3 @@ pub use oauth::{
     OpenAiCredential, OpenAiOAuth, SubscriptionLogin,
 };
 pub use store::{Store, StoredCredentials};
-
-/// Stored credentials as named by the API-key-only releases.
-///
-/// Kept while the binary migrates to the credential-neutral name.
-pub type Keys = StoredCredentials;

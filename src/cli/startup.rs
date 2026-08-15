@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use crucible_auth::Keys;
+use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
     ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Mode, Provider, Workspace,
@@ -22,7 +22,7 @@ use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
 use super::standing;
 use super::subscription::Subscriptions;
-use super::{Fatal, NOTHING_TO_ASK, PROVIDERS, Served};
+use super::{Fatal, PROVIDERS, Served};
 
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
@@ -35,8 +35,12 @@ const MAX_TOKENS: u32 = 8192;
 /// fail, and eight of those in a row is a call nobody can read.
 pub(super) struct Startup<'a> {
     /// Which provider, after the command line and the files have both spoken.
-    /// `None` where this machine holds no key for any of them.
+    /// `None` where this machine holds no usable credential for any of them.
     pub(super) provider: Option<Served>,
+    /// The exact missing-choice sentence the provider that answers nothing
+    /// refuses with, resolved once from the same credential set the opening
+    /// drew it from.
+    pub(super) unasked: &'static str,
     /// Which model of it, resolved the same way. `None` where nothing named
     /// one, which is a session that can do everything but take a turn.
     pub(super) model: Option<&'a str>,
@@ -63,7 +67,7 @@ pub(super) struct Startup<'a> {
     pub(super) from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
-    pub(super) stored: &'a Keys,
+    pub(super) stored: &'a StoredCredentials,
     /// The subscription logins compiled into this binary, which is what pairs
     /// a stored account credential with the one address its tokens are issued
     /// for.
@@ -86,10 +90,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // offer instead of the last real session.
     let provider = provider(
         startup.provider,
-        settings,
-        startup.from,
-        startup.stored,
-        startup.subscriptions,
+        startup.unasked,
+        ProviderAuth {
+            settings,
+            from: startup.from,
+            stored: startup.stored,
+            subscriptions: startup.subscriptions,
+        },
     )?;
 
     let (session, earlier) = if startup.resuming {
@@ -133,16 +140,30 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
         })
 }
 
+/// Credential sources provider construction resolves as one boundary.
+#[derive(Clone, Copy)]
+pub(super) struct ProviderAuth<'a> {
+    /// What the configuration files said.
+    pub(super) settings: &'a Settings,
+    /// Reads the environment.
+    pub(super) from: &'a dyn Fn(&str) -> Option<String>,
+    /// What `/login` wrote down.
+    pub(super) stored: &'a StoredCredentials,
+    /// The subscription logins compiled into this binary.
+    pub(super) subscriptions: &'a Subscriptions,
+}
+
 /// The provider that serves the chosen model.
 ///
 /// The one place in the program where a provider's name becomes a type. Adding
 /// another is an arm here and a `Credential` beside it — nothing in any crate
 /// below has to learn that it exists.
 ///
-/// `None` is a machine with no key for any provider, and it gets the provider
-/// that answers nothing. Ending the run instead would take away the session the
-/// key is about to be set up from, and the sentence it refuses with is the one
-/// already drawn under the welcome.
+/// `None` is a machine with no usable credential for any provider, and it gets
+/// the provider that answers nothing. Ending the run instead would take away
+/// the session the credential is about to be set up from, and the sentence it
+/// refuses with is the one already drawn under the welcome — `unasked` is that
+/// sentence, resolved by the caller from the same credential set.
 ///
 /// `from` reads the environment. It is a parameter because the pairing below is
 /// worth a test and the real environment cannot be set from one: writing to it
@@ -161,26 +182,24 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// the names below in a second file.
 pub(super) fn provider(
     serving: Option<Served>,
-    settings: &Settings,
-    from: &dyn Fn(&str) -> Option<String>,
-    stored: &Keys,
-    subscriptions: &Subscriptions,
+    unasked: &'static str,
+    auth: ProviderAuth<'_>,
 ) -> Result<Box<dyn Provider>, Fatal> {
     let Some(serving) = serving else {
-        return Ok(Box::new(Unavailable::new(NOTHING_TO_ASK)));
+        return Ok(Box::new(Unavailable::new(unasked)));
     };
 
     let named = serving.name;
-    let variable = settings.api_key_env(named).unwrap_or(serving.key);
-    let written = stored.get(named);
-    let sending = sending_to(settings, named)?;
+    let variable = auth.settings.api_key_env(named).unwrap_or(serving.key);
+    let written = auth.stored.get(named);
+    let sending = sending_to(auth.settings, named)?;
 
     match named {
         // Two protocols, one credential kind pointed at different headers.
         // Authentication is a separate axis, and this is what that buys.
         "anthropic" => Ok(Box::new(Anthropic::at(
             sending.unwrap_or(Anthropic::VENDOR),
-            key(variable, Header::bare("x-api-key"), from, written)?,
+            key(variable, Header::bare("x-api-key"), auth.from, written)?,
             Box::new(Https::new()),
         ))),
 
@@ -198,9 +217,7 @@ pub(super) fn provider(
                     vendor: Moonshot::CODING,
                 },
                 sending,
-                from,
-                stored,
-                subscriptions,
+                auth,
             )?;
             Ok(Box::new(Moonshot::at(
                 endpoint,
@@ -217,9 +234,7 @@ pub(super) fn provider(
                     vendor: OpenAi::VENDOR,
                 },
                 sending,
-                from,
-                stored,
-                subscriptions,
+                auth,
             )?;
             Ok(Box::new(OpenAi::at(
                 endpoint,
@@ -251,34 +266,47 @@ struct ApiAudience<'a> {
 /// separately would let a later endpoint choice send it somewhere it was never
 /// meant to go.
 ///
-/// The order is the one [`key`] keeps for every provider: the variable first,
-/// then the key `/login` wrote down. A stored subscription answers last, and
-/// only at the vendor's own address — `baseUrl` is set by somebody with a
-/// reason not to reach the vendor, and a plan's token is the vendor's, so one
-/// configured to go elsewhere is no credential at all.
+/// A stored subscription answers first, and only at the vendor's own address:
+/// an account authorized through `/login` is a deliberate choice, made after
+/// any variable the shell happened to inherit, and `baseUrl` is set by somebody
+/// with a reason not to reach the vendor — a plan's token is the vendor's, so
+/// one configured to go elsewhere is no credential at all. Below it the order
+/// is the one [`key`] keeps for every provider: the variable first, then the
+/// key `/login` wrote down.
 fn credential(
     audience: ApiAudience<'_>,
     sending: Option<Endpoint>,
-    from: &dyn Fn(&str) -> Option<String>,
-    stored: &Keys,
-    subscriptions: &Subscriptions,
+    auth: ProviderAuth<'_>,
 ) -> Result<(Endpoint, Box<dyn Credential>), Fatal> {
-    match ApiKey::from_lookup(audience.variable, from) {
+    if sending.is_none()
+        && let Some(subscribed) = auth
+            .subscriptions
+            .credential(audience.provider, auth.stored)
+    {
+        return Ok((subscribed.endpoint, subscribed.credential));
+    }
+    match ApiKey::from_lookup(audience.variable, auth.from) {
         Ok(exported) => Ok((
             sending.unwrap_or(audience.vendor),
             Box::new(HeaderKey::new(exported, Header::bearer())),
         )),
         Err(absent) => {
-            if let Some(written) = stored.get(audience.provider) {
+            if let Some(written) = auth.stored.get(audience.provider) {
                 return Ok((
                     sending.unwrap_or(audience.vendor),
                     Box::new(HeaderKey::new(written, Header::bearer())),
                 ));
             }
-            if sending.is_none()
-                && let Some(subscribed) = subscriptions.credential(audience.provider, stored)
+            if auth
+                .subscriptions
+                .credential(audience.provider, auth.stored)
+                .is_some()
             {
-                return Ok((subscribed.endpoint, subscribed.credential));
+                // Reachable only with `sending` set: without an address
+                // configured, the first arm above has already answered.
+                return Err(Fatal::SubscriptionAddress {
+                    provider: audience.provider.into(),
+                });
             }
             Err(absent.into())
         }

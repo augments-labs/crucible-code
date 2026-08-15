@@ -53,6 +53,7 @@ fn terms(sample: &Sample) -> Terms {
         provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
+        subscriptions: crate::cli::subscription::Subscriptions::production(),
 
         // `/resume` never reaches it, and these terms have no provider to build
         // one from either — the loop they drive answers from a script.

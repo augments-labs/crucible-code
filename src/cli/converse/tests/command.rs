@@ -10,7 +10,7 @@
 use std::cell::Cell;
 use std::io::Cursor;
 
-use crucible_auth::Keys;
+use crucible_auth::StoredCredentials;
 use crucible_runner::Tools;
 use crucible_tui::{Recording, Renderer};
 
@@ -290,7 +290,46 @@ fn logout_says_so_where_nothing_was_ever_written_down() {
     let (written, asked) = commanding("/logout\n");
 
     assert_eq!(asked, 0, "{written}");
-    assert!(written.contains("nothing is logged in"), "{written}");
+    assert!(
+        written.contains("nothing is stored by Crucible"),
+        "{written}"
+    );
+    assert!(
+        written.contains("environment keys in the shell"),
+        "{written}"
+    );
+}
+
+/// Terms whose selected provider is authenticated by its ordinary environment
+/// variable, without reading or retaining any secret in the test.
+fn environmental(provider: &'static str) -> Terms {
+    let mut terms = plain();
+    terms.provider = Cell::new(Some(provider));
+    terms.serving = Box::new(|named, _| {
+        Ok(crate::cli::Resolved {
+            provider: Box::new(crucible_provider::Unavailable::new(
+                crate::cli::NOTHING_TO_ASK,
+            )),
+            source: crate::cli::CredentialSource::Environment(named.key.into()),
+        })
+    });
+    terms
+}
+
+#[test]
+fn logout_names_an_active_environment_credential_and_how_to_remove_it() {
+    let terms = environmental("openai");
+    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/logout\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the session to finish");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("OPENAI_API_KEY"), "{written}");
+    assert!(written.contains("still uses OPENAI_API_KEY"), "{written}");
+    assert!(written.contains("unset it in the shell"), "{written}");
+    assert!(!written.contains("now signed out"), "{written}");
 }
 
 /// Drives the loop over a store of its own that was told `provider`'s key.
@@ -300,7 +339,7 @@ fn logout_says_so_where_nothing_was_ever_written_down() {
 /// the file can answer, and a session that said it forgot one and did not is the
 /// defect worth a temporary tree. `tree` keeps two of them apart, since these
 /// run at once and each removes its own on the way out.
-fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, Keys) {
+fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, StoredCredentials) {
     let sample = Sample::new(&format!("logout-{tree}"));
     sample.stored(provider);
 
@@ -325,12 +364,61 @@ fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, Keys) {
 fn logout_naming_a_provider_forgets_its_key_and_says_what_it_left() {
     let (written, left) = logging_out("named", "openai", "/logout openai\n");
 
-    assert!(written.contains("logged out of openai"), "{written}");
+    assert!(
+        written.contains("removed the stored credential for openai"),
+        "{written}"
+    );
     assert!(left.get("openai").is_none(), "{written}");
 
-    // The other place a key can be is nobody's to take away here. An answer
-    // that stopped at "logged out" would be one somebody trusts and should not.
-    assert!(written.contains("environment"), "{written}");
+    // This was not the active provider, so removing it cannot silently switch
+    // the provider serving the current session.
+    assert!(
+        written.contains("active provider is unchanged"),
+        "{written}"
+    );
+}
+
+#[test]
+fn removing_the_active_stored_credential_exposes_an_environment_fallback() {
+    let sample = Sample::new("logout-active-environment");
+    sample.stored("openai");
+    let mut terms = environmental("openai");
+    terms.logins = sample.store();
+    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/logout openai\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the session to finish");
+
+    let written = renderer.terminal().written();
+    assert!(
+        written.contains("removed the stored credential"),
+        "{written}"
+    );
+    assert!(written.contains("OPENAI_API_KEY"), "{written}");
+    assert!(written.contains("unset it in the shell"), "{written}");
+    assert!(terms.logins.read().get("openai").is_none(), "{written}");
+}
+
+#[test]
+fn removing_the_only_active_credential_disables_the_current_session() {
+    let sample = Sample::new("logout-active-only");
+    sample.stored("openai");
+    let mut terms = plain();
+    terms.provider = Cell::new(Some("openai"));
+    terms.logins = sample.store();
+    let runner = scripted(Script::new(Vec::new()), Tools::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/logout openai\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the session to finish");
+
+    let written = renderer.terminal().written();
+    assert!(
+        written.contains("active session is now signed out"),
+        "{written}"
+    );
+    assert_eq!(terms.provider.get(), None, "{written}");
 }
 
 #[test]
@@ -349,7 +437,7 @@ fn logout_naming_a_provider_with_no_key_here_says_so_and_lists_what_has_one() {
     let (written, left) = logging_out("other", "openai", "/logout anthropic\n");
 
     assert!(
-        written.contains("! not logged in to anthropic"),
+        written.contains("! no credential for anthropic is stored by Crucible"),
         "{written}"
     );
     assert!(written.contains("/logout openai"), "{written}");

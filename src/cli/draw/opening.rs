@@ -9,8 +9,9 @@ use std::time::SystemTime;
 
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
-use crucible_tui::{Notice, Recent, Renderer, Terminal, TerminalError, Welcome};
+use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, clip};
 
+use crate::cli::CredentialSource;
 use crate::cli::release::Newer;
 use crate::cli::style::Style;
 
@@ -21,10 +22,17 @@ use super::when;
 /// A struct rather than six parameters, because four of them are `&str`-shaped
 /// and a call with four of those in a row is one nobody can read.
 pub(crate) struct Opening<'a> {
+    /// The non-secret source authenticating this session. Drawn once so an
+    /// inherited environment key can never look like a stored account that
+    /// `/logout` could remove.
+    pub(crate) credential: Option<&'a CredentialSource>,
     /// The model this session will ask, or `None` where nothing chose one. Used
     /// only to decide whether the setup warning belongs under the card; the
-    /// live prompt status owns model display.
+    /// row under the prompt box owns model display.
     pub(crate) model: Option<&'a str>,
+    /// The vendor it will be asked of, or `None` where nothing chose one. Used
+    /// to name the active authentication source under the card.
+    pub(crate) provider: Option<&'a str>,
     /// What to say where there is none: which of the two halves of setting
     /// crucible up is the one still missing.
     pub(crate) unasked: &'a str,
@@ -94,6 +102,13 @@ pub(crate) fn opening<T: Terminal>(
     renderer.present(&welcome.rows(columns, style.glyphs()), style.palette())?;
     renderer.commit("")?;
 
+    if let (Some(provider), Some(credential)) = (opening.provider, opening.credential) {
+        let said = format!("authentication: {provider} · {credential}");
+        let row = Row::new().then(Slot::Quiet, clip(&said, columns));
+        renderer.present(&[row], style.palette())?;
+        renderer.commit("")?;
+    }
+
     if let Some(newer) = opening.update {
         let said = format!(
             "New version {} is available. Download it from",
@@ -162,7 +177,9 @@ mod tests {
             columns,
             terminal,
             &Opening {
+                credential: Some(&CredentialSource::StoredKey),
                 model: Some("claude-sonnet-5"),
+                provider: Some("anthropic"),
                 unasked: NOTHING_TO_ASK,
                 workspace,
                 sessions,
@@ -271,11 +288,11 @@ mod tests {
     #[test]
     fn the_opening_leaves_a_row_between_itself_and_the_first_turn() {
         // Without it the first thing the model says starts on the row under the
-        // frame. Asserted on the redirected path, where a row ending is the
-        // only thing written between one row and the next.
+        // last line of the opening. Asserted on the redirected path, where a row
+        // ending is the only thing written between one row and the next.
         let screen = opened(80, false);
 
-        assert!(screen.ends_with("╯\n\n"), "{screen}");
+        assert!(screen.ends_with("\n\n"), "{screen}");
     }
 
     #[test]
@@ -302,7 +319,9 @@ mod tests {
             80,
             false,
             &Opening {
+                credential: None,
                 model: None,
+                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],
@@ -317,9 +336,58 @@ mod tests {
     }
 
     #[test]
+    fn the_opening_names_an_environment_credential_without_a_secret() {
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let source = CredentialSource::Environment("OPENAI_API_KEY".into());
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                credential: Some(&source),
+                model: Some("gpt-5.6-sol"),
+                provider: Some("openai"),
+                unasked: NOTHING_TO_ASK,
+                workspace: &workspace,
+                sessions: &[],
+                trouble: None,
+                update: None,
+                style: Style::plain(),
+            },
+        );
+
+        assert!(
+            screen.contains("authentication: openai · environment variable OPENAI_API_KEY"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn authentication_is_not_drawn_without_a_credential_source() {
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let screen = shown(
+            80,
+            false,
+            &Opening {
+                credential: None,
+                model: None,
+                provider: Some("anthropic"),
+                unasked: NOTHING_TO_ASK,
+                workspace: &workspace,
+                sessions: &[],
+                trouble: None,
+                update: None,
+                style: Style::plain(),
+            },
+        );
+
+        assert!(!screen.contains("anthropic"), "{screen}");
+    }
+
+    #[test]
     fn the_card_says_nothing_about_the_live_turn_selection() {
         // All three facts are on the row under the prompt box. `/model` and
         // `/effort` change them after this card has become terminal scrollback.
+        // The provider may still be named by the separate authentication row.
         let screen = opened(80, false);
 
         assert!(!screen.contains("claude-sonnet-5"), "{screen}");
@@ -347,7 +415,9 @@ mod tests {
             80,
             false,
             &Opening {
+                credential: None,
                 model: None,
+                provider: None,
                 unasked: NOTHING_TO_ASK,
                 workspace: &workspace,
                 sessions: &[],

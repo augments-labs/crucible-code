@@ -3,7 +3,9 @@
 use std::cell::Cell;
 use std::io;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{Delta, Mode, Permission, Rules, StopReason, ToolId};
@@ -11,8 +13,17 @@ use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, Terminal, TerminalError};
 
 use super::*;
-use crate::cli::fake::{Fixed, Script, changing, running};
+use crate::cli::fake::{Fixed, Script, Stalling, changing, running};
 use crate::cli::sample::Sample;
+
+/// An editor holding `text`, arrived at the way the box would have.
+fn typed(text: &str) -> Editor {
+    let mut editor = Editor::new();
+    for key in text.chars() {
+        editor.press(Key::Char(key));
+    }
+    editor
+}
 
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
@@ -33,6 +44,7 @@ fn plain() -> Terms {
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
+        subscriptions: crate::cli::subscription::Subscriptions::production(),
 
         // Unreachable from here and truthful about it: `/login` asks for a key
         // from a keyboard, and a loop driven off a pipe has none. What a key
@@ -149,13 +161,57 @@ fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
     // line as readily as the first and clears itself both times, so a queue
     // that kept only one of them loses a prompt the user watched it accept --
     // and it never runs, and nothing says so.
-    let mut waiting = VecDeque::new();
+    let mut waiting = Prompts::default();
+    let mut editor = typed("run the tests");
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    let mut editor = typed("now fix what failed");
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
 
-    queue(&mut waiting, Some("run the tests".to_owned()));
-    queue(&mut waiting, None);
-    queue(&mut waiting, Some("now fix what failed".to_owned()));
+    assert_eq!(waiting.pop().as_deref(), Some("run the tests"));
+    assert_eq!(waiting.pop().as_deref(), Some("now fix what failed"));
+    assert!(waiting.pop().is_none());
+}
 
-    assert_eq!(waiting, ["run the tests", "now fix what failed"]);
+#[test]
+fn typed_ahead_prompt_count_is_bounded_without_losing_the_refused_line() {
+    let mut waiting = Prompts::default();
+
+    for index in 0..QUEUED_LINES {
+        let mut editor = typed(&format!("prompt-{index}"));
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    let mut editor = typed("still in the box");
+    assert_eq!(waiting.accept(&mut editor), Retained::Refused);
+    assert_eq!(editor.text(), "still in the box");
+    assert_eq!(waiting.lines.len(), QUEUED_LINES);
+
+    let _ = waiting.pop();
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    assert!(editor.is_empty());
+}
+
+#[test]
+fn typed_ahead_prompt_bytes_are_bounded_without_losing_the_refused_line() {
+    let mut waiting = Prompts::default();
+
+    let mut first = typed("x");
+    assert_eq!(waiting.accept(&mut first), Retained::Accepted);
+    assert_eq!(waiting.bytes, 1);
+
+    // The accounting is what is being pinned, so the queue is stood one byte
+    // short of the ceiling directly rather than by retaining a real MiB.
+    waiting.bytes = QUEUED_BYTES - 1;
+
+    let mut editor = typed("still in the box");
+    assert_eq!(waiting.accept(&mut editor), Retained::Refused);
+    assert_eq!(editor.text(), "still in the box");
+    assert_eq!(waiting.bytes, QUEUED_BYTES - 1);
+
+    waiting.bytes = QUEUED_BYTES - 2;
+    let mut editor = typed("xy");
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    assert_eq!(waiting.bytes, QUEUED_BYTES);
 }
 
 #[test]
@@ -261,8 +317,10 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     let kept = Arc::new(Mutex::new(Vec::new()));
     let session = Session::onto("/nowhere".into(), Kept(Arc::clone(&kept)));
 
+    let provider = Script::new(vec![saying("what the model said")]);
+    let started = provider.asked();
     let runner = Runner::new(
-        Box::new(Script::new(vec![saying("what the model said")])),
+        Box::new(provider),
         Tools::new(),
         Model {
             name: "script".into(),
@@ -276,9 +334,10 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     // One write is the prompt mark, colour and all, which the loop makes before
     // it reads. That leaves the first frame of the turn as what finds the
     // terminal gone -- after the worker has been handed the runner.
-    let mut renderer = Renderer::new(Breaking {
+    let mut renderer = Renderer::new(BreakingWhenStarted {
         inner: Recording::new(80, 24),
         left: 1,
+        started: Arc::clone(&started),
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
@@ -286,11 +345,45 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         converse(runner, &mut renderer, &plain(), &mut input).expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+    assert_eq!(started.load(Ordering::Acquire), 1, "the turn never began");
 
     let written = String::from_utf8(kept.lock().expect("a lock").clone()).expect("a log of text");
     assert!(
         written.contains("what the model said"),
         "the turn never reached the log: {written:?}"
+    );
+}
+
+#[test]
+fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
+    let (provider, escaped) = Stalling::new();
+    let runner = Runner::new(
+        Box::new(provider),
+        Tools::new(),
+        Model {
+            name: "stalling".into(),
+            max_tokens: 64,
+            system: None,
+            effort: None,
+        },
+        Session::nowhere(),
+    );
+    let terms = plain();
+    let cancellation = terms.cancel.clone();
+    let mut renderer = Renderer::new(Breaking {
+        inner: Recording::new(80, 24),
+        left: 1,
+    });
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    let problem =
+        converse(runner, &mut renderer, &terms, &mut input).expect_err("the terminal to fail");
+
+    assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
+    assert!(cancellation.requested(), "the provider was never cancelled");
+    assert!(
+        !escaped.load(std::sync::atomic::Ordering::Acquire),
+        "the provider reached its test escape instead of observing cancellation"
     );
 }
 
@@ -603,6 +696,44 @@ impl Terminal for Breaking {
     }
 }
 
+/// A closing window whose failure waits until the provider has the request.
+///
+/// The worker records the prompt before it asks the provider. Waiting on that
+/// boundary removes a scheduler race from the test above without making the
+/// drawing side wait in production.
+struct BreakingWhenStarted {
+    inner: Recording,
+    left: usize,
+    started: Arc<AtomicUsize>,
+}
+
+impl Terminal for BreakingWhenStarted {
+    fn size(&self) -> Result<Size, TerminalError> {
+        self.inner.size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        if self.left == 0 {
+            let until = Instant::now() + Duration::from_secs(2);
+            while self.started.load(Ordering::Acquire) == 0 && Instant::now() < until {
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            return Err(TerminalError::Io(io::ErrorKind::BrokenPipe.into()));
+        }
+
+        self.left -= 1;
+        self.inner.write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.inner.flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
+    }
+}
+
 /// A log that fails every write, the way a full disk does.
 pub(super) struct Failing;
 
@@ -635,6 +766,17 @@ impl io::Write for Kept {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
+}
+
+#[test]
+fn a_huge_line_without_a_newline_is_refused_before_it_is_retained() {
+    let bytes = vec![b'x'; QUEUED_BYTES + 1];
+    let mut input = io::BufReader::with_capacity(4096, Cursor::new(bytes));
+
+    let problem = read(&mut input).expect_err("an oversized input line to be refused");
+
+    assert!(matches!(problem, Fatal::InputTooLong), "{problem:?}");
+    assert!(problem.to_string().contains("1 MiB"), "{problem}");
 }
 
 #[test]

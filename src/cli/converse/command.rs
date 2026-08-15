@@ -48,7 +48,7 @@ pub(super) enum Command {
     Effort,
     /// A key for a provider, given to a box that does not echo it.
     Login,
-    /// A key crucible wrote down, forgotten.
+    /// An account or API key Crucible stored, removed.
     Logout,
     /// The permission mode: the one in force, or the one named.
     Mode,
@@ -125,8 +125,8 @@ impl Command {
             // How you are signed in, rather than what crucible signs with. A
             // key is one of the ways in and the row is read by somebody who
             // does not know yet which of them is theirs.
-            Self::Login => "sign in with your provider account",
-            Self::Logout => "sign out from your provider account",
+            Self::Login => "sign in to a provider account",
+            Self::Logout => "remove a stored account or API key",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -268,7 +268,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Logout,
             rest,
-        } => logout::run(rest, renderer, terms, keys)?,
+        } => logout::run(rest, renderer, runner, terms, keys)?,
 
         Wanted::Known {
             command: Command::Mode,
@@ -359,8 +359,8 @@ fn forgotten(held: usize, columns: usize) -> Vec<Row> {
 
 /// Says one line back, quietly, clipped to the window it is said in.
 ///
-/// What `/login` and `/logout` answer with when there is one thing to say: a key
-/// was written down, a key was forgotten, or neither happened and here is why.
+/// What `/login` and `/logout` answer with when there is one thing to say: a
+/// credential was stored, removed, or left alone with the reason why.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Result<(), Fatal> {
     let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
 

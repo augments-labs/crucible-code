@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
-use crucible_auth::{Keys, Store};
+use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
 use crucible_core::{Ask, Mode, Remember, Sensitivity, Settled, ToolCall, Verdict, Workspace};
 
@@ -78,7 +78,7 @@ impl Sample {
     /// rather than assembled: what a test hands the wiring is a file that went
     /// out and came back the way a real one does, which is the half of `/login`
     /// the wiring depends on and cannot see.
-    pub(super) fn stored(&self, provider: &str) -> Keys {
+    pub(super) fn stored(&self, provider: &str) -> StoredCredentials {
         let store = self.store();
         store.keep(provider, WRITTEN).expect("a writable home");
 
@@ -92,7 +92,7 @@ impl Sample {
     /// deliberately exposes no token constructor. The value is inert and far
     /// from expiry; tests can therefore prove endpoint and precedence wiring
     /// without a network request or a readable credential API.
-    pub(super) fn subscribed(&self, provider: &str) -> Keys {
+    pub(super) fn subscribed(&self, provider: &str) -> StoredCredentials {
         let home = self.base.join("home");
         fs::create_dir_all(&home).expect("a temporary home");
         let details = if provider == "moonshot" {

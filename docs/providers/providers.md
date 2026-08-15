@@ -18,28 +18,29 @@ provider for `meta/llama-4`.
 **No provider is written into the build**, and none of these rungs is a guess:
 
 1. `--model provider/model`, where it names one outright.
-2. `provider` in your [configuration](../configuration/configuration.md). This
-   is the only setting that chooses a vendor.
-3. Exactly one of the variables in [Keys](#keys) holding a key. That is not a
-   choice between providers so much as the absence of one to make, and it is
-   what lets a first run work with one key exported and nothing configured.
+2. `provider` in your [configuration](../configuration/configuration.md), when
+   that provider still has a usable credential. This is the only setting that
+   remembers a vendor choice.
+3. Exactly one provider having a usable credential: a stored account login, a
+   stored API key, or a key in one of the variables in [Keys](#keys). That is
+   the absence of a choice to make, and it lets a first run work with one
+   credential and nothing configured.
 
-A key says a provider **can be reached**, and never which to ask. Which variable
-your shell happens to carry is a fact about that shell, and a turn sent to the
-wrong vendor is billed there and leaves your prompt behind — so no key outranks
-another key, and no order between vendors is written down anywhere in crucible.
+A credential says a provider **can be reached**, and never which to ask. Which
+variable your shell happens to carry is a fact about that shell, and a turn sent
+to the wrong vendor is billed there and leaves your prompt behind — so no
+credential outranks another, and no order between vendors is written down
+anywhere in crucible.
 
 A variable exported empty holds no key, so it does not compete: a shell carrying
 `ANTHROPIC_API_KEY=` alongside a real `OPENAI_API_KEY` asks OpenAI. A provider
 pointed at another variable by `apiKeyEnv` is looked for under that name.
 
-Two keys and nothing choosing between them is a question rather than a coin
-toss:
+Several authenticated providers and nothing choosing between them is a question
+rather than a coin toss. crucible starts without selecting one and says:
 
 ```
-crucible: more than one provider holds a key (ANTHROPIC_API_KEY, OPENAI_API_KEY),
-so which to ask is not decided; qualify the name as --model provider/model, or
-set provider to one of them
+Warning: No provider selected. Use /model to select a provider and model.
 ```
 
 A model written under a provider does not answer it. `providers.openai.model`
@@ -50,6 +51,12 @@ vendor a model had been chosen for weeks earlier.
 A name this build has nothing for is refused the same way there as on the flag,
 so a file written by a later crucible is a sentence rather than a silent fall
 back to whichever key is exported.
+
+A remembered provider, model and effort become dormant when their credential
+is removed or its environment variable is unset. crucible still opens with no
+active provider, model or effort so `/login` and `/model` remain available; it
+does not silently fall through to a different provider whose credential happens
+to be present.
 
 Whichever rung settled it, the answer is on the live row under the prompt box,
 which names the vendor before the model in the `provider/model` shape `--model`
@@ -240,45 +247,61 @@ tightened before a credential is read. A key kept there is set up once and
 needs nothing from your shell afterwards:
 
 ```json
-{ "version": 1, "keys": { "openai": "sk-…" } }
+{
+  "version": 2,
+  "keys": { "openai": "sk-…" },
+  "subscriptions": {},
+  "identities": {}
+}
 ```
 
-`/login <provider>` inside a session is what writes it, into a box that draws a
-dot per character rather than the key; `/login` on its own asks how you pay
-first — a console account billed by usage, which is what this page is about and
-what works today, or one of the two subscription plans it lists without being
-connected to yet. A console account then asks whose.
+`/login <provider>` inside a session is the direct API-key route. It writes
+from a box that draws a dot per character rather than the key. `/login` on its
+own offers the account plans and a Console account; the console route then
+opens the provider list and the same box.
+
+The command reports that the key was stored, not that it was verified. Provider
+authentication is established by the next request; a rejected key stays stored
+until `/logout <provider>` removes it.
 
 The session is then set up with that provider from the next turn on, without
-restarting — the same resolution the next run here would do, so the model and
-rung [Which model](#which-model) and
-[How hard to think](#how-hard-to-think) settle for it arrive with the key,
-wherever nothing has already chosen one. A flag or a panel that named one is
-your answer and is left alone.
+restarting. Authentication selects neither [model](#which-model) nor
+[effort](#how-hard-to-think); where neither was already chosen, `/model` is the
+next explicit step.
 
-`provider` is written down for it too, because a key says a vendor can be
-reached and never which to ask — logging in is somebody saying which, and the
-next run here should not have to be asked again.
+`provider` is written down for the login too, because a credential says a
+vendor can be reached and never which to ask — logging in is somebody saying
+which, and the next run here should not have to be asked again. That still
+selects neither a model nor an effort.
 
 Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.
 
-`/logout <provider>` takes one back out again, and `/logout` on its own
-offers the providers a key is written down for. Editing the file by hand works
-too — crucible only reads what is there, and a name under `keys` that this build
-does not serve is left alone rather than offered for logging out of.
+`/logout <provider>` removes that provider's stored account or API key, and
+`/logout` on its own offers every stored credential crucible can remove.
+Editing the file by hand works too — crucible only reads what is there, and a
+name under `keys` that this build does not serve is left alone rather than
+offered for removal.
 
 The names under `keys` are provider names, the same ones `--model openai/…`
 takes. `version` says which crucible wrote the file, so one from a later version
 is left alone rather than guessed at.
 
-**The variable wins.** A key exported into a run is the one you chose for that
-run — a second account, a work key, one rotated an hour ago — and it lasts as
-long as the shell it was exported in. What is written down is the standing
-answer underneath it, so `OPENAI_API_KEY=` turns off the *variable* and leaves
-the file's key doing its job. A provider holding a key both ways is still one
-provider, not two — and `/logout` reaches the written-down half of it, which is
-why what it says names the other.
+For API-key authentication, **the variable wins over a stored API key**. It is
+the key chosen for this process — a second account, a work key, one rotated an
+hour ago — while the stored key is the standing answer underneath it, so
+`OPENAI_API_KEY=` turns off the *variable* and leaves the file's key doing its
+job. A deliberately authorized subscription account wins instead, at that
+provider's fixed account endpoint, so an inherited key cannot silently switch
+plan usage to API billing. A custom `baseUrl` is an API-key audience and
+therefore uses the configured environment or stored key rather than an account
+token; with nothing else to sign with, the run is refused rather than sending
+a plan's token to a gateway.
+
+`/logout` reaches the protected store only. A child process cannot unset a
+variable in its parent shell, so after removing a stored credential crucible
+resolves the provider again and names any environment variable that remains
+active — unset it in the launching shell if that one is meant to go too.
 
 A file crucible cannot read is a sentence under the welcome — `! auth.json could
 not be read: …` — and not the end of the run: nobody is logged in for that run,
@@ -292,30 +315,29 @@ read. How you prove who you are is a different question, and crucible keeps them
 apart: a provider is handed an already-resolved credential and never learns what
 kind it was.
 
-Every provider above uses the same kind of credential — an API key in a header —
-pointed at different headers with different prefixes. That is why a different
-way of proving who you are is a new credential rather than an edit to any
-provider.
+API keys are one credential implementation. ChatGPT browser and device login
+and Kimi Code device login are renewable credential implementations behind the
+same trait; the OpenAI and Moonshot wire modules receive an applied header and
+never learn whether it came from an account or a key.
 
-### Why there is no "log in with your subscription"
+### Account login today
 
-crucible authenticates by API key, and a vendor's chat subscription is not one
-of the keys it accepts. That is deliberate and it is not a gap waiting to be
-filled.
+`/login` offers ChatGPT and Kimi Code account plans. ChatGPT uses browser PKCE
+or device authorization and is fixed to the ChatGPT Codex Responses endpoint.
+Kimi Code uses RFC 8628 device authorization and is fixed to its managed coding
+endpoint. Its token exchange stays on `auth.kimi.com`, while the browser opens
+the authorization page on `www.kimi.com`; crucible accepts only those fixed
+HTTPS origins. Both refresh in the protected store. A configured `baseUrl` is
+never allowed to receive either token.
 
-A subscription is sold scoped to the vendor's own software. Anthropic's terms
-permit a Claude Pro or Max plan in Claude Code and not in another program, and
-accounts have been closed for pointing something else at one. Other vendors say
-the same thing more quietly, by listing their own CLI, their own editor
-extension and their own app as what a plan covers and pricing everything else at
-API rates. crucible will not put your account in that position, so it does not
-offer the login at all.
+Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
+are not a third-party authentication contract. Anthropic is reached with a
+Console API key instead. The generic Console account route also stores API keys
+for OpenAI and MoonshotAI.
 
-A plan a vendor *does* publish for other programs is a different thing, and
-crucible takes it. That path is an API key and the base URL the key belongs to,
-which is a key in your environment and a `baseUrl` in your configuration —
-nothing new to learn. crucible also identifies itself as crucible on every
-request, and will not claim to be another program to reach a plan that way.
+Moonshot authorization and model requests identify the host truthfully as
+crucible with a stable protected device id. They do not reuse another harness's
+product identity.
 
 ## What differs between them
 
