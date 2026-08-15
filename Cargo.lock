@@ -267,6 +267,7 @@ dependencies = [
  "crucible-privacy",
  "crucible-provider",
  "crucible-runner",
+ "crucible-session",
  "crucible-tools",
  "crucible-tui",
  "insta",
@@ -315,6 +316,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
+version = "0.1.6"
+dependencies = [
+ "crucible-core",
+ "crucible-session",
+]
+
+[[package]]
+name = "crucible-session"
 version = "0.1.6"
 dependencies = [
  "crucible-core",

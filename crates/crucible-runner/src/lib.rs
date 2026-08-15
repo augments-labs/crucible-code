@@ -4,9 +4,11 @@
 //! model asks for, feeds the results back, and repeats until the model yields
 //! or the user cancels.
 //!
-//! It depends on `crucible-core` alone. Every collaborator arrives as a trait
-//! object chosen during wiring, so the loop never names Anthropic, `OpenAI`,
-//! `grep`, or a renderer. Swapping any of them is a change in `main.rs`.
+//! It depends on `crucible-core` for every domain type and on
+//! `crucible-session` for the log a turn is recorded to. Every other
+//! collaborator arrives as a trait object chosen during wiring, so the loop
+//! never names Anthropic, `OpenAI`, `grep`, or a renderer. Swapping any of
+//! them is a change in `main.rs`.
 //!
 //! Two things leave this crate, and they leave by different routes. *Progress*
 //! — words arriving, a tool starting, a tool finishing — goes out as events,
@@ -19,9 +21,8 @@ mod fake;
 mod runner;
 #[cfg(test)]
 mod sample;
-mod session;
 mod tools;
 
+pub use crucible_session::{Recorded, Session, SessionError, recent};
 pub use runner::{Model, Runner};
-pub use session::{Recorded, Session, SessionError, recent};
 pub use tools::Tools;

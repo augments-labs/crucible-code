@@ -41,8 +41,9 @@ crates/
   crucible-privacy/    owner-only local file primitives. Depends on nothing.
   crucible-config/     configuration documents -> settings.     -> core
   crucible-provider/   wire protocols (Anthropic, OpenAI).      -> core
+  crucible-session/    session logs and bounded replay.         -> core
   crucible-tools/      read write edit bash grep glob.          -> core
-  crucible-runner/     the turn loop, over traits only.         -> core
+  crucible-runner/     the turn loop, over traits only.  -> core, session
   crucible-tui/        inline renderer, prompt, transcript.     -> core
 schema/         the configuration schema, generated from the shape the parser
                 walks and checked in beside it
@@ -53,8 +54,8 @@ docs/           the published site. One directory per topic, `index.md` beside
 
 Dependencies point **down only**. Cargo enforces it: a crate reaches only what
 its own `[dependencies]` names, and cycles are rejected. `crucible-runner`
-depending on core alone is deliberate — the loop drives `dyn Provider` and
-`dyn Tool` and must never name a concrete one.
+naming no concrete provider or tool is deliberate — the loop drives
+`dyn Provider` and `dyn Tool` and must never name one.
 
 ## Hard rules
 
