@@ -1,12 +1,12 @@
-//! What can go wrong writing a key down.
+//! What can go wrong writing a credential down.
 //!
 //! Only writing: a store nobody can read must not stop a launch that needs no
 //! store, so reading answers with an empty one and a sentence out of
-//! [`crate::Keys::trouble`] rather than with an error.
+//! [`crate::StoredCredentials::trouble`] rather than with an error.
 
 use std::path::{Path, PathBuf};
 
-/// Why a key could not be written down.
+/// Why a credential could not be written down.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     /// The directory, the lock or the file itself would not open.
@@ -37,7 +37,7 @@ pub enum AuthError {
     /// Reading tolerates this and reports nobody logged in. Writing may not:
     /// a read-modify-write over a file this program cannot read is not a
     /// modification, it is a replacement, and the thing being replaced is the
-    /// only copy of somebody's other logins.
+    /// only copy of somebody's other credentials.
     #[error(
         "{path} cannot be read, so it will not be written over — move it aside to log in again"
     )]

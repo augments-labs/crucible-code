@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The protected credential store is provider-neutral.** Its versioned,
+  bounded document can retain API keys and renewable account credentials
+  without exposing either secret kind through parsing or diagnostics.
+
 - **Providers share one process-wide connection pool.** Replacing a provider
   keeps established HTTP connections instead of constructing another pool.
 

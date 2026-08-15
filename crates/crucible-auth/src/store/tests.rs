@@ -58,6 +58,16 @@ fn held(store: &Store, provider: &str) -> Option<String> {
         .map(|(_, value)| value.to_string())
 }
 
+fn subscription(canary: &str) -> Tokens {
+    Tokens::new(
+        format!("access-{canary}").into(),
+        format!("refresh-{canary}").into(),
+        u64::MAX,
+        1,
+    )
+    .with_detail("account_id", format!("account-{canary}"))
+}
+
 #[test]
 fn a_key_in_the_file_is_the_key_read_back() {
     let scratch = Scratch::new("round-trip");
@@ -99,7 +109,7 @@ fn a_store_nobody_can_parse_reports_it_and_still_starts() {
 
     let keys = store.read();
 
-    assert_eq!(keys.providers().count(), 0, "nobody is logged in");
+    assert_eq!(keys.providers().count(), 0, "no stored credential was read");
     let said = keys.trouble().expect("a sentence for the user");
     assert!(
         said.contains(FILE),
@@ -119,10 +129,13 @@ fn one_non_text_key_refuses_the_whole_store_and_is_never_rewritten() {
         keys.trouble().is_some(),
         "the malformed key was not reported"
     );
-    assert!(matches!(
-        store.keep("anthropic", SECRET),
-        Err(AuthError::Unreadable { .. })
-    ));
+    assert!(
+        matches!(
+            store.keep("anthropic", SECRET),
+            Err(AuthError::Unreadable { .. })
+        ),
+        "writing over the part this build could not read was allowed"
+    );
     assert_eq!(
         fs::read_to_string(scratch.home().join(FILE)).unwrap(),
         written
@@ -139,7 +152,8 @@ fn a_store_over_the_byte_bound_is_refused_before_it_can_choose_an_allocation() {
     assert_eq!(keys.providers().count(), 0);
     assert!(
         keys.trouble()
-            .is_some_and(|said| said.contains(&MAX_STORE.to_string()))
+            .is_some_and(|said| said.contains(&MAX_STORE.to_string())),
+        "the user was not told which bound was reached"
     );
     assert!(matches!(
         store.keep("openai", SECRET),
@@ -162,7 +176,7 @@ fn a_store_from_a_later_version_is_left_alone_rather_than_guessed_at() {
 
     let keys = store.read();
 
-    assert_eq!(keys.providers().count(), 0, "nobody is logged in");
+    assert_eq!(keys.providers().count(), 0, "no stored credential was read");
     assert!(keys.trouble().is_some(), "and the user is told why");
     assert_eq!(
         fs::read_to_string(scratch.home().join(FILE)).expect("still there"),
@@ -178,7 +192,7 @@ fn a_store_that_does_not_say_its_version_is_not_guessed_at_either() {
 
     let keys = store.read();
 
-    assert_eq!(keys.providers().count(), 0, "nobody is logged in");
+    assert_eq!(keys.providers().count(), 0, "no stored credential was read");
     assert!(keys.trouble().is_some(), "and the user is told why");
 }
 
@@ -206,6 +220,83 @@ fn a_key_written_down_is_the_key_read_back() {
     store.keep("openai", SECRET).expect("a writable home");
 
     assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+}
+
+#[test]
+fn a_version_one_store_is_migrated_without_losing_a_key() {
+    let scratch = Scratch::new("migrate-v1");
+    let store = scratch.holding(&format!(
+        r#"{{"version":1,"keys":{{"openai":"{SECRET}"}}}}"#
+    ));
+
+    store.keep("moonshot", "moonshot-key").unwrap();
+
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+    assert_eq!(held(&store, "moonshot").as_deref(), Some("moonshot-key"));
+    let written = fs::read_to_string(scratch.home().join(FILE)).unwrap();
+    assert!(written.contains(r#""version":2"#), "{written}");
+    assert!(written.contains(r#""subscriptions":{}"#), "{written}");
+}
+
+#[test]
+fn selecting_a_subscription_replaces_only_that_providers_key() {
+    let scratch = Scratch::new("subscription-over-key");
+    let store = Store::in_home(scratch.home());
+    store.keep("openai", SECRET).unwrap();
+    store.keep("moonshot", "moonshot-key").unwrap();
+
+    store
+        .keep_subscription("openai", subscription("do-not-show"))
+        .unwrap();
+
+    let keys = store.read();
+    assert!(keys.has("openai"));
+    assert!(keys.get("openai").is_none());
+    assert_eq!(held(&store, "moonshot").as_deref(), Some("moonshot-key"));
+    assert!(!format!("{keys:?}").contains("do-not-show"));
+}
+
+#[test]
+fn selecting_an_api_key_replaces_only_that_providers_subscription() {
+    let scratch = Scratch::new("key-over-subscription");
+    let store = Store::in_home(scratch.home());
+    store
+        .keep_subscription("openai", subscription("old"))
+        .unwrap();
+
+    store.keep("openai", SECRET).unwrap();
+
+    let keys = store.read();
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+    assert!(!keys.has_subscription("openai"));
+}
+
+#[test]
+fn forgetting_a_provider_removes_its_subscription() {
+    let scratch = Scratch::new("forget-subscription");
+    let store = Store::in_home(scratch.home());
+    store
+        .keep_subscription("openai", subscription("forgotten"))
+        .unwrap();
+
+    assert!(store.forget("openai").unwrap());
+    assert!(!store.read().has("openai"));
+}
+
+#[test]
+fn a_malformed_subscription_refuses_the_complete_store() {
+    let scratch = Scratch::new("bad-subscription");
+    let store = scratch.holding(
+        r#"{"version":2,"keys":{"moonshot":"kept"},"subscriptions":{"openai":{"access_token":"only-one-field"}}}"#,
+    );
+
+    let keys = store.read();
+    assert_eq!(keys.providers().count(), 0);
+    assert!(keys.trouble().is_some());
+    assert!(matches!(
+        store.keep("anthropic", SECRET),
+        Err(AuthError::Unreadable { .. })
+    ));
 }
 
 #[test]
@@ -298,18 +389,59 @@ fn an_existing_open_auth_directory_is_tightened_before_files_are_created() {
 
 #[cfg(unix)]
 #[test]
-fn a_store_symlink_is_refused_without_touching_its_target() {
+fn an_existing_open_auth_directory_is_tightened_before_a_store_is_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("open-directory-read");
+    let store = scratch.holding(&format!(
+        r#"{{"version":1,"keys":{{"openai":"{SECRET}"}}}}"#
+    ));
+    fs::set_permissions(scratch.home(), fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+    assert_eq!(mode_of(scratch.home()), 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_that_cannot_be_tightened_is_refused_before_it_is_opened() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("cannot-tighten");
+    let path = scratch.home().join(FILE);
+    symlink(scratch.home().join("missing-target"), &path).unwrap();
+    let store = Store::in_home(scratch.home());
+
+    let keys = store.read();
+    assert_eq!(keys.providers().count(), 0);
+    assert!(keys.trouble().is_some(), "the failed protection was hidden");
+    assert!(
+        matches!(
+            store.keep("openai", SECRET),
+            Err(AuthError::Unwritable { .. })
+        ),
+        "writing followed a path that could not be protected"
+    );
+    assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_symlinked_to_a_live_file_is_refused_without_touching_the_target() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
-    let scratch = Scratch::new("store-link");
+    let scratch = Scratch::new("live-store-link");
     let target = scratch.home().join("elsewhere.json");
     let text = format!(r#"{{"version":1,"keys":{{"openai":"{SECRET}"}}}}"#);
     fs::write(&target, &text).unwrap();
     fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
-    symlink(&target, scratch.home().join(FILE)).unwrap();
+    let path = scratch.home().join(FILE);
+    symlink(&target, &path).unwrap();
     let store = Store::in_home(scratch.home());
 
-    assert_eq!(store.read().providers().count(), 0);
+    let keys = store.read();
+    assert_eq!(keys.providers().count(), 0);
+    assert!(keys.trouble().is_some());
     assert!(store.keep("openai", "replacement").is_err());
     assert_eq!(fs::read_to_string(&target).unwrap(), text);
     assert_eq!(mode_of(&target), 0o644);
