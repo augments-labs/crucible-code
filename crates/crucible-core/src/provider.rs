@@ -11,7 +11,7 @@
 use std::fmt;
 
 use crate::cancel::Cancel;
-use crate::credential::CredentialError;
+use crate::credential::{CredentialError, Redactions};
 use crate::ids::ToolId;
 use crate::transcript::{StopReason, Transcript};
 
@@ -98,6 +98,57 @@ pub enum ProviderError {
     /// there to set one up in.
     #[error("{0}")]
     Unconfigured(Box<str>),
+}
+
+impl ProviderError {
+    /// Removes request credentials from provider-controlled diagnostic text.
+    ///
+    /// Rebuilding the same variant preserves the typed failure while filtering
+    /// every string field that could have crossed the provider boundary.
+    #[must_use]
+    pub fn redacted(self, redactions: &Redactions) -> Self {
+        match self {
+            Self::Limit { .. } | Self::Cancelled(_) => self,
+            Self::Transport { provider, problem } => Self::Transport {
+                provider,
+                problem: redactions.redact(&problem).into(),
+            },
+            Self::Refused {
+                provider,
+                status,
+                message,
+            } => Self::Refused {
+                provider,
+                status,
+                message: redactions.redact(&message).into(),
+            },
+            Self::Upstream {
+                provider,
+                kind,
+                message,
+            } => Self::Upstream {
+                provider,
+                kind: redactions.redact(&kind).into(),
+                message: redactions.redact(&message).into(),
+            },
+            Self::Protocol { provider, problem } => Self::Protocol {
+                provider,
+                problem: redactions.redact(&problem).into(),
+            },
+            Self::Credential { provider, source } => Self::Credential {
+                provider,
+                source: match source {
+                    CredentialError::NotInEnvironment(variable) => {
+                        CredentialError::NotInEnvironment(redactions.redact(&variable).into())
+                    }
+                    CredentialError::NotRenewed(problem) => {
+                        CredentialError::NotRenewed(redactions.redact(&problem).into())
+                    }
+                },
+            },
+            Self::Unconfigured(problem) => Self::Unconfigured(redactions.redact(&problem).into()),
+        }
+    }
 }
 
 /// Which bounded part of one provider response grew too far.
@@ -423,5 +474,23 @@ mod tests {
             shown.contains("ANTHROPIC_API_KEY"),
             "the variable name helps"
         );
+    }
+
+    #[test]
+    fn redaction_preserves_error_kinds_and_useful_provider_text() {
+        let mut outgoing = crate::Outgoing::new();
+        outgoing.protect("credential-canary");
+        let error = ProviderError::Upstream {
+            provider: "openai",
+            kind: "rate_limit".into(),
+            message: "account credential-canary is over quota".into(),
+        }
+        .redacted(&outgoing.redactions());
+
+        assert_eq!(
+            error.to_string(),
+            "openai: rate_limit: account <redacted> is over quota"
+        );
+        assert!(!format!("{error:?}").contains("credential-canary"));
     }
 }

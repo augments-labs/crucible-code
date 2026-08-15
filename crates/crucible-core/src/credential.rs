@@ -61,8 +61,11 @@ impl ApiKey {
     /// Writes the key into a request the way `header` says to.
     ///
     /// The value is formatted here and never returned, so this stays the only
-    /// place the secret is read.
+    /// place the secret is read. Registering it with [`Outgoing::protect`]
+    /// also gives the provider an opaque filter for a gateway that repeats the
+    /// submitted key in a response.
     pub fn apply(&self, request: &mut Outgoing, header: &Header) {
+        request.protect(self.0.as_str());
         request.set_header(&*header.name, format!("{}{}", header.scheme, self.0));
     }
 
@@ -176,6 +179,7 @@ impl fmt::Debug for ApiKey {
 #[derive(Default, Clone)]
 pub struct Outgoing {
     headers: Vec<(Box<str>, Box<str>)>,
+    redactions: Redactions,
 }
 
 impl Outgoing {
@@ -199,12 +203,91 @@ impl Outgoing {
         }
     }
 
+    /// Marks an exact secret representation carried by this request.
+    ///
+    /// A credential calls this while it applies itself. The value can then be
+    /// removed from provider-controlled text without an accessor ever handing
+    /// it back to the provider. Empty values are ignored.
+    pub fn protect(&mut self, value: impl Into<Box<str>>) {
+        let value = value.into();
+        if value.is_empty() || self.redactions.values.contains(&value) {
+            return;
+        }
+        let at = self
+            .redactions
+            .values
+            .partition_point(|present| present.len() >= value.len());
+        self.redactions.values.insert(at, value);
+    }
+
+    /// An opaque filter for the secrets a credential applied.
+    ///
+    /// Cloning this duplicates only credential-sized values, never the request
+    /// body. Its fields and formatting expose no value.
+    #[must_use]
+    pub fn redactions(&self) -> Redactions {
+        self.redactions.clone()
+    }
+
     /// The headers, for the transport to send. This is the only way a value
     /// comes back out, and it is called by the code that is about to put the
     /// bytes on the socket.
     #[must_use]
     pub fn headers(&self) -> &[(Box<str>, Box<str>)] {
         &self.headers
+    }
+}
+
+/// Exact secret representations to remove from untrusted diagnostic text.
+///
+/// A gateway sees request headers and can repeat one in a response. This type
+/// carries those values across the response boundary without exposing an
+/// accessor or a formatting path for them.
+#[derive(Clone, Default)]
+pub struct Redactions {
+    values: Vec<Box<str>>,
+}
+
+impl Redactions {
+    /// Replaces every protected value while leaving other text intact.
+    #[must_use]
+    pub fn redact(&self, text: &str) -> String {
+        let marker = if self
+            .values
+            .iter()
+            .all(|value| !"<redacted>".contains(&**value))
+        {
+            "<redacted>"
+        } else {
+            ""
+        };
+        let mut remaining = text;
+        let mut redacted = String::with_capacity(text.len());
+
+        while let Some((at, value)) = self
+            .values
+            .iter()
+            .filter_map(|value| remaining.find(&**value).map(|at| (at, value.as_ref())))
+            .min_by(|(left_at, left), (right_at, right)| {
+                left_at
+                    .cmp(right_at)
+                    .then_with(|| right.len().cmp(&left.len()))
+            })
+        {
+            redacted.push_str(remaining.get(..at).unwrap_or_default());
+            redacted.push_str(marker);
+            remaining = remaining
+                .get(at.saturating_add(value.len())..)
+                .unwrap_or_default();
+        }
+        redacted.push_str(remaining);
+        redacted
+    }
+}
+
+impl fmt::Debug for Redactions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Redactions(<redacted>)")
     }
 }
 
@@ -216,6 +299,7 @@ impl fmt::Debug for Outgoing {
         for (name, _) in &self.headers {
             out.field(name, &"<redacted>");
         }
+        out.field("redactions", &self.redactions);
         out.finish()
     }
 }
@@ -226,6 +310,11 @@ impl fmt::Debug for Outgoing {
 /// becomes a value a caller can hold, format or store.
 pub trait Credential: Send + Sync + fmt::Debug {
     /// Writes whatever this credential needs into the request.
+    ///
+    /// Every exact secret representation written into a header must also be
+    /// passed to [`Outgoing::protect`]. A gateway can echo a header in a
+    /// response; protection lets the provider keep the useful sentence while
+    /// removing the credential.
     ///
     /// Called on every request, which is what makes this the place a token is
     /// renewed: a credential holding one is deciding here whether what it holds
@@ -285,6 +374,52 @@ mod tests {
             shown.contains("x-api-key"),
             "the header name is useful: {shown}"
         );
+    }
+
+    #[test]
+    fn protected_values_can_only_be_applied_as_redactions() {
+        let mut request = Outgoing::new();
+        request.protect(SECRET);
+        let redactions = request.redactions();
+
+        let shown = redactions.redact(&format!("gateway repeated {SECRET} here"));
+
+        assert_eq!(shown, "gateway repeated <redacted> here");
+        assert!(!format!("{redactions:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn overlapping_values_are_removed_longest_first_without_cascading() {
+        let mut request = Outgoing::new();
+        request.protect("secret");
+        request.protect("secret-long");
+        request.protect("secret");
+
+        let shown = request.redactions().redact("secret-long and secret");
+
+        assert_eq!(shown, "<redacted> and <redacted>");
+    }
+
+    #[test]
+    fn redaction_preserves_nuls_that_came_from_the_provider() {
+        let mut request = Outgoing::new();
+        request.protect(SECRET);
+
+        let shown = request
+            .redactions()
+            .redact(&format!("before\0{SECRET}\0after"));
+
+        assert_eq!(shown, "before\0<redacted>\0after");
+    }
+
+    #[test]
+    fn the_redaction_marker_cannot_itself_reveal_a_protected_value() {
+        let mut request = Outgoing::new();
+        request.protect("redacted");
+
+        let shown = request.redactions().redact("gateway repeated redacted");
+
+        assert_eq!(shown, "gateway repeated ");
     }
 
     #[test]

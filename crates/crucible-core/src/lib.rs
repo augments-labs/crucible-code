@@ -26,7 +26,9 @@ mod transcript;
 mod workspace;
 
 pub use cancel::Cancel;
-pub use credential::{ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing};
+pub use credential::{
+    ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
+};
 pub use event::{Event, Post, TurnError};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
 pub use permission::{
