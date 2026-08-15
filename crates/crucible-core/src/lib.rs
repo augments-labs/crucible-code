@@ -34,7 +34,8 @@ pub use permission::{
     Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
 pub use provider::{
-    Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, Request, ToolSchema,
+    Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
+    ToolSchema,
 };
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
