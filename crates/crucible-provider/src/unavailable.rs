@@ -41,7 +41,7 @@ impl Provider for Unavailable {
 
     fn stream(
         &self,
-        _request: Request,
+        _request: Request<'_>,
         _cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         Err(ProviderError::Unconfigured(self.said.clone()))
@@ -54,14 +54,14 @@ mod tests {
 
     use super::*;
 
-    fn asking() -> Request {
+    fn asking() -> Request<'static> {
         let mut transcript = Transcript::new();
         transcript.push(Message::User("hello".into()));
 
         Request {
-            model: "".into(),
-            transcript,
-            tools: Vec::new(),
+            model: "",
+            transcript: Box::leak(Box::new(transcript)),
+            tools: &[],
             max_tokens: 1024,
             system: None,
             effort: None,

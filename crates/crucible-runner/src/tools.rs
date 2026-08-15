@@ -10,6 +10,7 @@ use crucible_core::{Tool, ToolSchema};
 #[derive(Debug, Default)]
 pub struct Tools {
     tools: Vec<Box<dyn Tool>>,
+    schemas: Vec<ToolSchema>,
 }
 
 impl Tools {
@@ -28,9 +29,23 @@ impl Tools {
     pub fn add(&mut self, tool: Box<dyn Tool>) {
         let name = tool.name();
 
-        match self.tools.iter_mut().find(|present| present.name() == name) {
-            Some(slot) => *slot = tool,
-            None => self.tools.push(tool),
+        if let Some((present, schema)) = self
+            .tools
+            .iter_mut()
+            .zip(&mut self.schemas)
+            .find(|(present, _)| present.name() == name)
+        {
+            *schema = ToolSchema {
+                name: tool.name(),
+                schema: tool.schema(),
+            };
+            *present = tool;
+        } else {
+            self.schemas.push(ToolSchema {
+                name: tool.name(),
+                schema: tool.schema(),
+            });
+            self.tools.push(tool);
         }
     }
 
@@ -45,14 +60,8 @@ impl Tools {
 
     /// Every tool, as a provider advertises them.
     #[must_use]
-    pub fn schemas(&self) -> Vec<ToolSchema> {
-        self.tools
-            .iter()
-            .map(|tool| ToolSchema {
-                name: tool.name(),
-                schema: tool.schema(),
-            })
-            .collect()
+    pub fn schemas(&self) -> &[ToolSchema] {
+        &self.schemas
     }
 }
 

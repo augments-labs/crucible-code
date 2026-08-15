@@ -41,8 +41,8 @@ part a change to this crate has to remember.
 
 ## The transcript is the only thing that grows
 
-It is held whole, it is cloned into every request, and that is the cost the
-peak-RSS budget in `CLAUDE.md` is set to cover. Nothing *else* here may become
-proportional to how long the session has run: what the loop holds besides it is
-what the current turn needs, and a `.clone()` of a transcript-sized value needs
-a comment saying why.
+It is held whole and lent to the provider while one request is serialized. The
+provider stream cannot retain that borrowed request after `stream` returns.
+Nothing *else* here may become proportional to how long the session has run:
+what the loop holds besides it is what the current turn needs, and a `.clone()`
+of a transcript-sized value needs a comment saying why.

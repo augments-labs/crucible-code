@@ -19,9 +19,9 @@ use serde_json::{Map, Value, json};
 use crate::json::described;
 
 /// The whole request body.
-pub(super) fn build(request: &Request) -> Value {
+pub(super) fn build(request: &Request<'_>) -> Value {
     let mut body = Map::new();
-    body.insert("model".to_owned(), json!(&*request.model));
+    body.insert("model".to_owned(), json!(request.model));
     body.insert("stream".to_owned(), json!(true));
 
     // Not kept by the vendor. This endpoint stores a response for retrieval
@@ -65,7 +65,7 @@ pub(super) fn build(request: &Request) -> Value {
 }
 
 /// The transcript, as the flat list of items this endpoint reads.
-fn input(request: &Request) -> Vec<Value> {
+fn input(request: &Request<'_>) -> Vec<Value> {
     let mut items = Vec::new();
 
     for message in request.transcript.messages() {

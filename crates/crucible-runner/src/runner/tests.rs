@@ -111,7 +111,7 @@ impl Scripted {
             .lock()
             .unwrap()
             .iter()
-            .map(|request| request.transcript.len())
+            .map(|request| request.transcript_len)
             .collect()
     }
 
@@ -199,9 +199,7 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
     let sent = after.lock().unwrap();
     let carried = sent.first().expect("the request it was just handed");
     assert!(
-        carried.transcript.messages().iter().any(
-            |message| matches!(message, Message::Agent { text, .. } if &**text == "from the first")
-        ),
+        carried.carried("from the first"),
         "the first provider's answer was not carried"
     );
 }
@@ -238,7 +236,7 @@ impl Provider for Elsewhere {
 
     fn stream(
         &self,
-        _request: Request,
+        _request: Request<'_>,
         _cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         Err(ProviderError::Transport {

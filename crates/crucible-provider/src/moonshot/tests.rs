@@ -21,14 +21,14 @@ fn provider(endpoint: Endpoint, body: &str, status: u16) -> (Moonshot, std::sync
     )
 }
 
-fn asking(text: &str) -> Request {
+fn asking(text: &str) -> Request<'static> {
     let mut transcript = Transcript::new();
     transcript.push(Message::User(text.into()));
 
     Request {
-        model: "kimi-test".into(),
-        transcript,
-        tools: Vec::new(),
+        model: "kimi-test",
+        transcript: Box::leak(Box::new(transcript)),
+        tools: &[],
         max_tokens: 1024,
         system: None,
         effort: None,

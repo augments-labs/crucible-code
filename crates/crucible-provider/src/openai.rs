@@ -112,7 +112,7 @@ impl Provider for OpenAi {
 
     fn stream(
         &self,
-        request: Request,
+        request: Request<'_>,
         cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
         // Nothing is sent for a turn the user has already abandoned. Once the
@@ -186,14 +186,14 @@ mod tests {
         assert_eq!(replay.sent().url, "http://localhost:8080/v1");
     }
 
-    fn asking(text: &str) -> Request {
+    fn asking(text: &str) -> Request<'static> {
         let mut transcript = Transcript::new();
         transcript.push(Message::User(text.into()));
 
         Request {
-            model: "gpt-test".into(),
-            transcript,
-            tools: Vec::new(),
+            model: "gpt-test",
+            transcript: Box::leak(Box::new(transcript)),
+            tools: &[],
             max_tokens: 1024,
             system: None,
             effort: None,

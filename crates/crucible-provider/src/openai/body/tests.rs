@@ -10,11 +10,11 @@ use super::*;
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
 
-fn request(transcript: Transcript) -> Request {
+fn request(transcript: Transcript) -> Request<'static> {
     Request {
-        model: "gpt-test".into(),
-        transcript,
-        tools: Vec::new(),
+        model: "gpt-test",
+        transcript: Box::leak(Box::new(transcript)),
+        tools: &[],
         max_tokens: 1024,
         system: None,
         effort: None,
@@ -90,7 +90,7 @@ fn a_system_prompt_is_a_field_rather_than_a_message() {
     // Sent as a message it would be one more thing the model may answer,
     // rather than the instructions it answers under.
     let mut asking = request(said("hello"));
-    asking.system = Some("be brief".into());
+    asking.system = Some("be brief");
 
     let body = build(&asking);
 
@@ -275,11 +275,11 @@ fn a_tool_is_advertised_flat_with_its_schema_and_its_description() {
     // fields sit nested under a `function` object. Sent that way here the
     // request is refused outright.
     let mut asking = request(said("hello"));
-    asking.tools = vec![ToolSchema {
+    asking.tools = Box::leak(Box::new([ToolSchema {
         name: "read",
         schema: r#"{"description":"Reads a file","type":"object",
                     "properties":{"path":{"type":"string"}}}"#,
-    }];
+    }]));
 
     let body = build(&asking);
 

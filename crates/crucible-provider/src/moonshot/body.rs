@@ -18,9 +18,9 @@ use serde_json::{Map, Value, json};
 use crate::json::described;
 
 /// The whole request body.
-pub(super) fn build(request: &Request) -> Value {
+pub(super) fn build(request: &Request<'_>) -> Value {
     let mut body = Map::new();
-    body.insert("model".to_owned(), json!(&*request.model));
+    body.insert("model".to_owned(), json!(request.model));
     body.insert("max_tokens".to_owned(), json!(request.max_tokens));
     body.insert("stream".to_owned(), json!(true));
     body.insert("messages".to_owned(), json!(messages(request)));
@@ -49,7 +49,7 @@ pub(super) fn build(request: &Request) -> Value {
 /// the only place this wire has for them. It is a weaker promise than a field —
 /// the model may answer the instructions rather than obey them — and it is the
 /// one this endpoint offers.
-fn messages(request: &Request) -> Vec<Value> {
+fn messages(request: &Request<'_>) -> Vec<Value> {
     let mut messages = Vec::new();
 
     if let Some(system) = &request.system {

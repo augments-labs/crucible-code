@@ -5,18 +5,42 @@
 //! the loop itself: what it sends, what it records, and when it stops.
 
 use std::collections::VecDeque;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Ask, Cancel, Delta, DeltaStream, Provider, ProviderError, Remember, Request,
-    Sensitivity, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Verdict,
+    Approved, Ask, Cancel, Delta, DeltaStream, Effort, Message, Provider, ProviderError, Remember,
+    Request, Sensitivity, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, ToolSchema,
+    Verdict,
 };
 
 /// The name a scripted provider answers to.
 const SCRIPT: &str = "script";
 
 /// Every request a provider was given, shared with the test that made it.
-pub(crate) type Sent = Arc<Mutex<Vec<Request>>>;
+pub(crate) type Sent = Arc<Mutex<Vec<SentRequest>>>;
+
+/// Fixed-size request evidence retained after its borrowed view is gone.
+#[derive(Debug)]
+pub(crate) struct SentRequest {
+    pub(crate) transcript_len: usize,
+    agent_text: Vec<u64>,
+    pub(crate) tools: Vec<ToolSchema>,
+    pub(crate) effort: Option<Effort>,
+}
+
+impl SentRequest {
+    /// Whether the request carried an agent answer with exactly this text.
+    pub(crate) fn carried(&self, text: &str) -> bool {
+        self.agent_text.contains(&fingerprint(text))
+    }
+}
+
+fn fingerprint(text: &str) -> u64 {
+    let mut hash = DefaultHasher::new();
+    text.hash(&mut hash);
+    hash.finish()
+}
 
 /// A provider that answers from a script, one round per request.
 pub(crate) struct Script {
@@ -73,10 +97,23 @@ impl Provider for Script {
 
     fn stream(
         &self,
-        request: Request,
+        request: Request<'_>,
         _cancel: &Cancel,
     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        self.sent.lock().unwrap().push(request);
+        self.sent.lock().unwrap().push(SentRequest {
+            transcript_len: request.transcript.len(),
+            agent_text: request
+                .transcript
+                .messages()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::Agent { text, .. } => Some(fingerprint(text)),
+                    Message::User(_) | Message::ToolResults(_) => None,
+                })
+                .collect(),
+            tools: request.tools.to_vec(),
+            effort: request.effort,
+        });
 
         if self.refuses {
             return Err(ProviderError::Refused {
