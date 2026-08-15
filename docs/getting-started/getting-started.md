@@ -375,3 +375,10 @@ it with a short list of variables — `PATH`, `HOME`, the locale — rather than
 environment crucible is running in. Your provider key is not on that list, so a
 command that prints the environment prints no key. Anything else a command needs
 is named in [`env`](../configuration/configuration.md#env).
+
+The shell and its descendants are one command scope. When the command exits,
+times out, is cancelled, or cannot be collected, crucible stops that scope and
+waits only for a bounded interval: a background process does not keep an output
+reader or a turn alive. Windows uses a kill-on-close job and Unix a process
+group. A Unix program that deliberately creates a new session can leave that
+group; this is resource cleanup, not a sandbox around an allowed command.

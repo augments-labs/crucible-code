@@ -151,6 +151,55 @@ fn a_wrapper_anywhere_in_a_chain_makes_the_whole_line_unreadable() {
 }
 
 #[test]
+fn quoting_escaping_or_globbing_cannot_disguise_a_wrapper() {
+    for line in [
+        "'sh' -c 'echo hidden'",
+        r#"\"sh\" -c 'echo hidden'"#,
+        r"s\h -c 'echo hidden'",
+        "s\\\nh -c 'echo hidden'",
+        "s? -c 'echo hidden'",
+        "/usr/bin/'sh' -c 'echo hidden'",
+    ] {
+        assert!(opaque(line), "{line} should not be coverable by a rule");
+    }
+}
+
+#[test]
+fn interpreters_launchers_and_shell_grammar_are_conservatively_opaque() {
+    for line in [
+        "dash -c 'echo hidden'",
+        "fish -c 'echo hidden'",
+        "bash5 -c 'echo hidden'",
+        "zsh5.9 -c 'echo hidden'",
+        "sh.exe -c 'echo hidden'",
+        "python -c 'print(1)'",
+        "python3.13 -c 'print(1)'",
+        "python3.13t -c 'print(1)'",
+        "pypy3 -c 'print(1)'",
+        "node --eval 'process.exit()'",
+        "node20 --eval 'process.exit()'",
+        "perl -e 'system q(id)'",
+        "perl5.40 -e 'system q(id)'",
+        "ruby3.4 -e 'system(%q(id))'",
+        "php8.4 -r 'system(\"id\");'",
+        "lua5.4 -e 'os.execute(\"id\")'",
+        "cmd.exe /c whoami",
+        "cscript.exe commands.js",
+        "nu -c 'echo hidden'",
+        "pwsh7 -c 'echo hidden'",
+        "julia1.11 -e 'run(`id`)'",
+        "busybox sh -c 'echo hidden'",
+        "command sh -c 'echo hidden'",
+        ". ./commands.sh",
+        "source ./commands.sh",
+        "if true; then sh -c 'echo hidden'; fi",
+        "export PATH=/tmp/other; cargo test",
+    ] {
+        assert!(opaque(line), "{line} should not be coverable by a rule");
+    }
+}
+
+#[test]
 fn a_line_that_runs_nothing_is_unreadable() {
     // Not an empty list of commands: an empty list is a thing every `allow`
     // rule vacuously covers.

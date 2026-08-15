@@ -21,14 +21,16 @@ serde_json.workspace = true
 # spawned; the negated group id reaches the rest, and there is no call in `std`
 # that takes one. Unix targets only, and already in the tree under
 # `crucible-core`, so this turns a feature on rather than adding a crate.
-# Confined to `bash/output.rs`.
+# Confined to `bash/platform/unix.rs`.
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
-# Replacing an existing file relative to a held directory has no std API.
-# This uses the already-pinned filesystem bindings at the atomic replacement
-# boundary; process containment widens the same dependency in its own PR.
+# Windows refuses std::fs::rename over an existing file, has no safe job-object
+# API for containing descendants, cannot discover the suspended primary thread
+# that must be resumed after job attachment, and cannot poll anonymous pipes
+# through std. Those bindings stay inside the atomic and process boundaries;
+# all features and the exact version are pinned once at the workspace root.
 windows-sys.workspace = true
 
 [lints]
