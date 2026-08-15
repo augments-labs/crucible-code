@@ -12,6 +12,7 @@
 //! [`Credential`] applies the current access token only at the request boundary.
 
 mod kimi;
+mod openai;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,6 +26,7 @@ use crucible_core::{Cancel, Credential};
 use crate::{AuthError, Store, StoredCredentials};
 
 pub use kimi::{KimiCredential, KimiOAuth};
+pub use openai::{OpenAiCredential, OpenAiOAuth};
 
 /// One provider-owned way to authorize an account.
 ///
