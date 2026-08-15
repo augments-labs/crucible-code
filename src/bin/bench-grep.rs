@@ -1,4 +1,4 @@
-//! The grep budget: the `grep` tool within 1.25× of the `rg` binary.
+//! The grep budget: the tool's worst paired median within 1.25× of `rg`.
 //!
 //! A ratio rather than a duration, because the number that matters is not how
 //! fast this machine is. `rg` is the fastest thing anyone will compare this
@@ -9,16 +9,16 @@
 //! must mean the same thing on a machine that has just cloned this and on one
 //! that has been building in it for a week.
 //!
-//! The search is timed twice, because a walk costs different things depending
-//! on whether anything was written about the tool. With no rules the check each
-//! walked file goes through answers on the spot; with rules it resolves that
-//! file's path first. Both are what somebody runs, so both are measured, and
-//! the ratio reported is whichever of the two is worse.
+//! Three workloads cover the shapes that change a search: a rare match where
+//! walking dominates, no match where the whole tree must be disproved, and
+//! high output where collecting and formatting matter. Each is timed with and
+//! without permission rules.
 //!
-//! Every side is timed many times and the fastest run of each is what the ratio
-//! divides. A search that took longer had something else on the machine in it,
-//! and the fastest run is the one that timed the code. The rounds interleave
-//! for the same reason: what a ratio must not do is move with the load.
+//! Ratios are paired inside every round. Crucible and `rg` see the same workload
+//! and adjacent machine state, and their order alternates so neither always gets
+//! the warmer cache. The median owns the budget; p95 and its distance from the
+//! median are emitted as evidence of noise rather than hidden by independent
+//! best-case samples.
 
 use std::fmt::{self, Write as _};
 use std::fs;
@@ -45,25 +45,37 @@ const FILES: usize = 50;
 /// Lines in each file.
 const LINES: usize = 120;
 
-/// What both tools search for. Rare enough that the time goes into scanning
-/// rather than into printing.
-const PATTERN: &str = "fn assemble_widget";
+/// Rare enough that the time goes into scanning rather than printing.
+const RARE: &str = "fn assemble_widget";
 
-/// Rounds per side. The fastest of them is the measurement.
-///
-/// Thirty is where the reported ratio stops moving. Repeating this probe on one
-/// machine, the ratio varies by about a seventh of itself at ten rounds and a
-/// tenth at thirty, and the next tenth costs as much again — while the round
-/// that turns out to hold a side's fastest time lands past the fifteenth more
-/// often than not, so a smaller budget stops short of the floor rather than
-/// finding it early.
-///
-/// Keeping the fastest is also why no warm-up round is run and thrown away. A
-/// minimum already ignores a first run that paid for a cold page cache, without
-/// having to be told which run that was — and measured here the first run was
-/// not reliably the slow one, so discarding it deliberately would have been
-/// paying for a correction that had nothing to correct.
-const ROUNDS: usize = 30;
+/// Present once in every file, so output collection is part of the reading.
+const DENSE: &str = "fn streamed_result";
+
+/// Absent by construction, so both implementations have to disprove it.
+const ABSENT: &str = "fn widget_that_does_not_exist";
+
+/// Twenty makes p95 the second-worst paired reading while keeping the complete
+/// three-workload matrix under a few seconds on the CI corpus.
+const ROUNDS: usize = 20;
+
+/// Every shape of search this budget covers.
+const WORKLOADS: [Workload; 3] = [
+    Workload {
+        name: "rare-match",
+        pattern: RARE,
+        expected: Expected::Matches,
+    },
+    Workload {
+        name: "no-match",
+        pattern: ABSENT,
+        expected: Expected::None,
+    },
+    Workload {
+        name: "high-output",
+        pattern: DENSE,
+        expected: Expected::Matches,
+    },
+];
 
 /// Rules about `grep`, written the way a project writes them: a directory, a
 /// suffix, and one file by name.
@@ -82,100 +94,157 @@ const DENIED: [&str; 4] = [
 
 fn main() -> Result<(), Problem> {
     let corpus = Corpus::build()?;
-    let (open, ruled, rg) = rounds(&corpus)?;
+    let mut worst_median = 0.0_f64;
+    let mut worst_p95 = 0.0_f64;
+    let mut widest = 0.0_f64;
 
-    // The worse of the two against the budget. A figure taken on the cheaper
-    // path is a figure nobody with a rule written down is held to.
-    let ratio = open.ratio(rg).max(ruled.ratio(rg));
+    for workload in WORKLOADS {
+        let evidence = rounds(&corpus, workload)?;
+        worst_median = worst_median
+            .max(evidence.open.median)
+            .max(evidence.ruled.median);
+        worst_p95 = worst_p95.max(evidence.open.p95).max(evidence.ruled.p95);
+        widest = widest
+            .max(evidence.open.dispersion)
+            .max(evidence.ruled.dispersion);
 
-    writeln!(io::stdout(), "{ratio:.2} x {LIMIT}")?;
+        writeln!(
+            io::stderr(),
+            "         {:11} no rules {}, with {} rules {}",
+            workload.name,
+            evidence.open,
+            DENIED.len(),
+            evidence.ruled,
+        )?;
+    }
+
+    writeln!(
+        io::stdout(),
+        "{worst_median:.2} x {LIMIT} p95={worst_p95:.2} dispersion={widest:.1}"
+    )?;
     writeln!(
         io::stderr(),
-        "         grep {open} with no rules, {ruled} with {} rules, rg {rg}, \
-         best of {ROUNDS} interleaved rounds over {} files",
-        DENIED.len(),
-        DIRS * FILES
+        "         {ROUNDS} paired rounds per workload over {} files",
+        DIRS * FILES,
     )?;
 
-    if ratio > LIMIT {
-        return Err(Problem::Over { ratio });
+    if worst_median > LIMIT {
+        return Err(Problem::Over {
+            ratio: worst_median,
+        });
     }
 
     Ok(())
 }
 
-/// Every side, `ROUNDS` times, a round at a time rather than a side at a time.
-///
-/// Interleaving is what makes comparing the fastest runs fair. Timing all of
-/// one side and then all of another puts the whole of one block of work between
-/// the two numbers the ratio divides, so whatever else the machine was doing
-/// during one block is charged to that side alone — and the ratio then moves
-/// with the load instead of with the code. A round that times all three sides
-/// in turn hands them the same machine, so interference lands on both sides of
-/// the division and mostly cancels: measured here, each side's fastest time
-/// varies across repeats of this probe several times as much as the ratio built
-/// out of them does.
-fn rounds(corpus: &Corpus) -> Result<(Spread, Spread, Spread), Problem> {
-    let mut open = Spread::new();
-    let mut ruled = Spread::new();
-    let mut rg = Spread::new();
-
-    for _ in 0..ROUNDS {
-        open.saw(ours(corpus, false)?);
-        ruled.saw(ours(corpus, true)?);
-        rg.saw(theirs(corpus)?);
-    }
-
-    Ok((open, ruled, rg))
+/// One generated search shape and what its result should look like.
+#[derive(Debug, Clone, Copy)]
+struct Workload {
+    name: &'static str,
+    pattern: &'static str,
+    expected: Expected,
 }
 
-/// What one side's rounds came to.
-///
-/// The fastest is the measurement. The slowest is carried alongside it because
-/// a red build is read by somebody who was not there: the two together say
-/// whether the machine was quiet while the number was taken, and a slowest
-/// several times the fastest is the first thing to suspect before the code.
-#[derive(Clone, Copy)]
-struct Spread {
-    fastest: Duration,
-    slowest: Duration,
+#[derive(Debug, Clone, Copy)]
+enum Expected {
+    Matches,
+    None,
 }
 
-impl Spread {
-    fn new() -> Self {
-        Self {
-            fastest: Duration::MAX,
-            slowest: Duration::ZERO,
-        }
-    }
+/// Both permission paths through one workload.
+#[derive(Debug, Clone, Copy)]
+struct Evidence {
+    open: Stats,
+    ruled: Stats,
+}
 
-    fn saw(&mut self, took: Duration) {
-        self.fastest = self.fastest.min(took);
-        self.slowest = self.slowest.max(took);
-    }
+/// A paired ratio distribution.
+#[derive(Debug, Clone, Copy)]
+struct Stats {
+    median: f64,
+    p95: f64,
+    /// Percentage by which p95 stands above the median.
+    dispersion: f64,
+}
 
-    /// How this side compares with another, fastest against fastest.
-    fn ratio(self, other: Self) -> f64 {
-        self.fastest.as_secs_f64() / other.fastest.as_secs_f64()
+impl Stats {
+    fn from(mut ratios: Vec<f64>) -> Result<Self, Problem> {
+        ratios.sort_by(f64::total_cmp);
+        let median = percentile(&ratios, 50)?;
+        let p95 = percentile(&ratios, 95)?;
+        Ok(Self {
+            median,
+            p95,
+            dispersion: (p95 / median - 1.0).max(0.0) * 100.0,
+        })
     }
 }
 
-impl fmt::Display for Spread {
+impl fmt::Display for Stats {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             out,
-            "{:.1} ms (slowest {:.1})",
-            self.fastest.as_secs_f64() * 1000.0,
-            self.slowest.as_secs_f64() * 1000.0
+            "median {:.2}x, p95 {:.2}x, +{:.0}%",
+            self.median, self.p95, self.dispersion
         )
     }
 }
 
+/// Paired readings, with order alternating each round.
+fn rounds(corpus: &Corpus, workload: Workload) -> Result<Evidence, Problem> {
+    // Fill page caches and worker pools before the distribution starts.
+    let _ = ours(corpus, workload, false)?;
+    let _ = ours(corpus, workload, true)?;
+    let _ = theirs(corpus, workload)?;
+
+    let mut open = Vec::with_capacity(ROUNDS);
+    let mut ruled = Vec::with_capacity(ROUNDS);
+    for round in 0..ROUNDS {
+        let ours_first = round % 2 == 0;
+        open.push(paired(corpus, workload, false, ours_first)?);
+        ruled.push(paired(corpus, workload, true, !ours_first)?);
+    }
+
+    Ok(Evidence {
+        open: Stats::from(open)?,
+        ruled: Stats::from(ruled)?,
+    })
+}
+
+fn paired(
+    corpus: &Corpus,
+    workload: Workload,
+    ruled: bool,
+    ours_first: bool,
+) -> Result<f64, Problem> {
+    let (mine, reference) = if ours_first {
+        (ours(corpus, workload, ruled)?, theirs(corpus, workload)?)
+    } else {
+        (theirs(corpus, workload)?, ours(corpus, workload, ruled)?)
+    };
+    if mine.is_zero() || reference.is_zero() {
+        return Err(Problem::Clock);
+    }
+    Ok(if ours_first {
+        mine.as_secs_f64() / reference.as_secs_f64()
+    } else {
+        reference.as_secs_f64() / mine.as_secs_f64()
+    })
+}
+
+fn percentile(values: &[f64], percent: usize) -> Result<f64, Problem> {
+    let rank = values.len().saturating_mul(percent).div_ceil(100).max(1) - 1;
+    values.get(rank).copied().ok_or(Problem::NoReadings)
+}
+
 /// One search through the tool, timed, with rules standing behind it or not.
-fn ours(corpus: &Corpus, ruled: bool) -> Result<Duration, Problem> {
+fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Problem> {
     let workspace = Workspace::open(corpus.path())?;
     let grep = Grep::new(workspace, crucible_core::Cancel::new());
-    let args = ToolArgs::new(format!(r#"{{"pattern":"{PATTERN}","limit":100000}}"#));
+    let args = ToolArgs::new(format!(
+        r#"{{"pattern":"{}","limit":100000}}"#,
+        workload.pattern
+    ));
 
     // Read outside the clock. What the two runs are being compared on is what a
     // walk pays per file, and reading four patterns once is neither.
@@ -185,9 +254,14 @@ fn ours(corpus: &Corpus, ruled: bool) -> Result<Duration, Problem> {
     let output = grep.run(approved(&grep, args, &mut engine)?)?;
     let took = started.elapsed();
 
-    if output.is_failed() {
-        return Err(Problem::NoMatch {
+    let expected = match workload.expected {
+        Expected::Matches => !output.is_failed() && !output.text().is_empty(),
+        Expected::None => output.is_failed() && output.text().starts_with("nothing matched"),
+    };
+    if !expected {
+        return Err(Problem::Unexpected {
             who: "grep",
+            workload: workload.name,
             saw: output.text().into(),
         });
     }
@@ -200,20 +274,25 @@ fn ours(corpus: &Corpus, ruled: bool) -> Result<Duration, Problem> {
 /// Includes the process start, because that is what a user pays when they run
 /// `rg` themselves — and it is a cost this tool does not have, so counting it
 /// makes the comparison harder on us rather than easier.
-fn theirs(corpus: &Corpus) -> Result<Duration, Problem> {
+fn theirs(corpus: &Corpus, workload: Workload) -> Result<Duration, Problem> {
     let started = Instant::now();
     let run = Command::new("rg")
         .arg("--line-number")
         .arg("--no-heading")
-        .arg(PATTERN)
+        .arg(workload.pattern)
         .arg(corpus.path())
         .output()
         .map_err(|source| Problem::NoRipgrep { source })?;
     let took = started.elapsed();
 
-    if run.stdout.is_empty() {
-        return Err(Problem::NoMatch {
+    let expected = match workload.expected {
+        Expected::Matches => run.status.success() && !run.stdout.is_empty(),
+        Expected::None => run.status.code() == Some(1) && run.stdout.is_empty(),
+    };
+    if !expected {
+        return Err(Problem::Unexpected {
             who: "rg",
+            workload: workload.name,
             saw: String::from_utf8_lossy(&run.stderr).into_owned().into(),
         });
     }
@@ -270,8 +349,7 @@ struct Corpus {
 }
 
 impl Corpus {
-    /// Writes the tree, with the pattern in one file per directory so both
-    /// tools have something to report and neither can stop early.
+    /// Writes rare, absent and high-output patterns into one stable tree.
     fn build() -> Result<Self, Problem> {
         let root = std::env::temp_dir().join(format!("crucible-bench-grep-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -307,7 +385,9 @@ fn body(dir: usize, file: usize, wanted: bool) -> String {
 
     for line in 0..LINES {
         if wanted && line == LINES / 2 {
-            let _ = writeln!(text, "pub {PATTERN}_{dir}_{file}() -> usize {{ {line} }}");
+            let _ = writeln!(text, "pub {RARE}_{dir}_{file}() -> usize {{ {line} }}");
+        } else if line == LINES / 3 {
+            let _ = writeln!(text, "pub {DENSE}_{dir}_{file}() -> usize {{ {line} }}");
         } else {
             let _ = writeln!(
                 text,
@@ -322,11 +402,21 @@ fn body(dir: usize, file: usize, wanted: bool) -> String {
 /// Why the budget could not be reported.
 #[derive(thiserror::Error)]
 enum Problem {
-    #[error("the grep tool is {ratio:.2}x rg, over the {LIMIT}x budget")]
+    #[error("the grep tool's worst median is {ratio:.2}x rg, over the {LIMIT}x budget")]
     Over { ratio: f64 },
 
-    #[error("{who} found nothing to time: {saw}")]
-    NoMatch { who: &'static str, saw: Box<str> },
+    #[error("{who} returned the wrong result for {workload}: {saw}")]
+    Unexpected {
+        who: &'static str,
+        workload: &'static str,
+        saw: Box<str>,
+    },
+
+    #[error("the benchmark clock returned a zero-duration search")]
+    Clock,
+
+    #[error("no paired grep readings were collected")]
+    NoReadings,
 
     #[error("rg is not on PATH, and the grep budget is measured against it")]
     NoRipgrep { source: io::Error },

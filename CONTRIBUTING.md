@@ -165,8 +165,11 @@ that regresses the budget is a defect regardless of what it adds:
 | Time to first frame | ≤ 20 ms p95 |
 | Time to first input | ≤ 60 ms p95 |
 | Peak RSS after a 20-turn session | ≤ 35 MB |
-| `grep` tool vs the `rg` binary | ≤ 1.25× |
+| Worst paired median, `grep` tool / `rg` binary | ≤ 1.25× |
 | Render commits under token burst | ≥ 30/s |
+
+The grep probe pairs each tool run with `rg` over representative workloads. Its
+worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
 
 If your change moves one of these, say so in the pull request and explain the
 trade. A budget change is a decision, not a side effect.
