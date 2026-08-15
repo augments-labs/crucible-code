@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-16
+
+### Internal
+
+- **Routine dependency updates.** ureq 3.3.0 to 3.4.0, thiserror 2.0.19 to
+  2.0.20 and clap 4.6.5 to 4.6.6, each through the usual gates including the
+  advisory scan. No behavior changes.
+
 ## [0.1.9] - 2026-08-16
 
 ### Changed
@@ -1592,7 +1600,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/augments-labs/crucible-code/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/augments-labs/crucible-code/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/augments-labs/crucible-code/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/augments-labs/crucible-code/compare/v0.1.6...v0.1.7
