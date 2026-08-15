@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use crucible_core::ApiKey;
 
 use crate::error::AuthError;
-use crate::renewable::Tokens;
+use crate::oauth::{OAuthError, Tokens};
 
 use self::document::Document;
 
@@ -104,19 +104,19 @@ impl Store {
     pub fn read(&self) -> StoredCredentials {
         let secured = match self.secure_existing() {
             Ok(Some(secured)) => secured,
-            Ok(None) => return StoredCredentials::default(),
-            Err(problem) => return StoredCredentials::nothing(&problem.to_string()),
+            Ok(None) => return StoredCredentials::empty(self.clone()),
+            Err(problem) => return StoredCredentials::nothing(self.clone(), &problem.to_string()),
         };
 
         let text = match self.read_text() {
             Ok(Some(text)) => text,
-            Ok(None) => return StoredCredentials::default(),
-            Err(problem) => return StoredCredentials::nothing(&problem.to_string()),
+            Ok(None) => return StoredCredentials::empty(self.clone()),
+            Err(problem) => return StoredCredentials::nothing(self.clone(), &problem.to_string()),
         };
 
         let mut keys = match document::parse(&text) {
-            Ok(document) => StoredCredentials::from_document(document),
-            Err(problem) => StoredCredentials::nothing(&problem.to_string()),
+            Ok(document) => StoredCredentials::from_document(self.clone(), document),
+            Err(problem) => StoredCredentials::nothing(self.clone(), &problem.to_string()),
         };
         if let Some(said) = secured.warning {
             keys.also(&said);
@@ -143,7 +143,6 @@ impl Store {
 
     /// Writes a completed subscription login and removes an API key previously
     /// selected for the same provider.
-    #[cfg(test)]
     pub(crate) fn keep_subscription(
         &self,
         provider: &str,
@@ -153,6 +152,30 @@ impl Store {
             document.keys.remove(provider);
             document.subscriptions.insert(provider.to_owned(), tokens);
             true
+        })
+    }
+
+    /// Returns the stable installation identity for one provider, persisting
+    /// `candidate` when this is the first login to need one.
+    ///
+    /// The read and possible insert share the auth-store lock, so concurrent
+    /// first logins cannot leave two processes identifying the same Crucible
+    /// installation differently.
+    pub(crate) fn identity(&self, provider: &str, candidate: &str) -> Result<String, AuthError> {
+        let mut chosen = None;
+        self.change(|document| {
+            if let Some(existing) = document.identities.get(provider) {
+                chosen = Some(existing.clone());
+                return false;
+            }
+            document
+                .identities
+                .insert(provider.to_owned(), candidate.to_owned());
+            chosen = Some(candidate.to_owned());
+            true
+        })?;
+        chosen.ok_or_else(|| AuthError::Unreadable {
+            path: self.path.clone(),
         })
     }
 
@@ -194,6 +217,44 @@ impl Store {
         }
 
         self.write(&document)
+    }
+
+    /// Refreshes one provider's current rotation while holding the store lock.
+    ///
+    /// Reading the latest rotation after taking the lock is what prevents two
+    /// processes from presenting the same one-use refresh token. The network
+    /// request is deliberately inside the lock: another process waits or
+    /// fails visibly rather than invalidating the rotation in flight.
+    pub(crate) fn refresh_subscription(
+        &self,
+        provider: &str,
+        needs_refresh: impl Fn(&Tokens, u64) -> bool,
+        refresh: impl FnOnce(&Tokens) -> Result<Tokens, OAuthError>,
+    ) -> Result<Tokens, OAuthError> {
+        self.directory()?;
+        let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
+        let _secured = self.secure_existing()?;
+        let mut document = match self.read_text()? {
+            Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
+                path: self.path.clone(),
+            })?,
+            None => return Err(OAuthError::SignedOut),
+        };
+        let current = document
+            .subscriptions
+            .get(provider)
+            .cloned()
+            .ok_or(OAuthError::SignedOut)?;
+        if !needs_refresh(&current, document::now()) {
+            return Ok(current);
+        }
+
+        let fresh = refresh(&current)?;
+        document
+            .subscriptions
+            .insert(provider.to_owned(), fresh.clone());
+        self.write(&document)?;
+        Ok(fresh)
     }
 
     /// Replaces the complete protected document after its caller took the
@@ -278,13 +339,23 @@ pub struct StoredCredentials {
     subscriptions: BTreeMap<String, Tokens>,
     /// The union, retained once so listing never duplicates a malformed name.
     providers: BTreeSet<String>,
+    /// The store whose latest rotation a subscription credential renews.
+    store: Option<Store>,
     /// What reading could not do, in a sentence for the user.
     trouble: Option<Box<str>>,
 }
 
 impl StoredCredentials {
-    /// A complete parsed document.
-    fn from_document(document: Document) -> Self {
+    /// No credentials in an ordinary, readable store.
+    fn empty(store: Store) -> Self {
+        Self {
+            store: Some(store),
+            ..Self::default()
+        }
+    }
+
+    /// A parsed document tied to the store it came from.
+    fn from_document(store: Store, document: Document) -> Self {
         let providers = document
             .keys
             .keys()
@@ -296,13 +367,15 @@ impl StoredCredentials {
             subscriptions: document.subscriptions,
             providers,
             trouble: None,
+            store: Some(store),
         }
     }
 
     /// No keys, and a reason.
-    fn nothing(said: &str) -> Self {
+    fn nothing(store: Store, said: &str) -> Self {
         Self {
             trouble: Some(said.into()),
+            store: Some(store),
             ..Self::default()
         }
     }
@@ -339,6 +412,16 @@ impl StoredCredentials {
     #[must_use]
     pub fn has_subscription(&self, provider: &str) -> bool {
         self.subscriptions.contains_key(provider)
+    }
+
+    /// The protected state an in-crate subscription implementation resolves.
+    /// Tokens remain crate-private: callers receive only a [`Credential`]
+    /// through [`crate::SubscriptionLogin::credential`].
+    pub(crate) fn subscription(&self, provider: &str) -> Option<(Store, Tokens)> {
+        Some((
+            self.store.as_ref()?.clone(),
+            self.subscriptions.get(provider)?.clone(),
+        ))
     }
 
     /// Every provider with either stored credential kind, in name order.

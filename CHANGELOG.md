@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The auth crate has its first account-login implementation.** Kimi's device
+  authorization flow logs in through a browser and renews through the protected
+  store; nothing in the binary calls it yet.
+
 - **Account login has one provider-neutral boundary.** Login methods expose
   bounded, cancellable updates without making the TUI or credential store know
   which authorization protocol a provider uses.
