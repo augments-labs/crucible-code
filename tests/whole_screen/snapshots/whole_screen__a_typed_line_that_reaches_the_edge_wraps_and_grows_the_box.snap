@@ -1,18 +1,17 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 96
 expression: window.picture()
 ---
 80x24 cursor 20,65 scrolled 0
-|╭─ crucible v0.1.6 ────────────────────────────────────────────────────────────╮|
+|╭─ crucible v0.1.7 ────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
-|│  no model selected               │                                           │|
-|│                                  │ Tips                                      │|
 |│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl-c     clears the line typed so far │|

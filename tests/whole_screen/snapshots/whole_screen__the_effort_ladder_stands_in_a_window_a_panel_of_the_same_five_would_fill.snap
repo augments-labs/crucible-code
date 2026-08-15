@@ -2,16 +2,19 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 20,0 scrolled 16
+80x24 cursor 23,0 scrolled 9
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl-c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /login anthropic                                                              |
 |                                                                                |
-|logged in to anthropic; choose a model with /model                              |
-|                                                                                |
-|› /model claude-test-1                                                          |
-|                                                                                |
-|anthropic/claude-test-1                                                         |
+|logged in to anthropic, asking claude-test-1                                    |
 |                                                                                |
 |› /effort                                                                       |
 |                                                                                |
@@ -24,6 +27,3 @@ expression: window.picture()
 |  low         medium         high          xhigh          max                   |
 |                                                                                |
 |←/→ to adjust · enter to confirm · esc to cancel                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |

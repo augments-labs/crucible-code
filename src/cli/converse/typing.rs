@@ -29,7 +29,7 @@ use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tui::{
     Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Reporting, Row, Slot,
-    Terminal, Typed, caret, pressed, waiting,
+    Terminal, Typed, caret, characters, pressed, waiting,
 };
 
 use crate::cli::Fatal;
@@ -54,6 +54,9 @@ const CYCLE: &str = "(shift+tab to cycle)";
 /// say would be that the offer had already gone.
 const LEAVING: &str = "press ctrl-c again to leave";
 
+/// What the row under the box says when an edit would retain too much input.
+const LIMITED: &str = "prompt is limited to 1 MiB";
+
 /// What the row under the box says while a turn is running.
 ///
 /// Two keys, both of which do something at that moment. The one that steps the
@@ -77,6 +80,35 @@ pub(crate) enum Asked {
     Ended,
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
+}
+
+/// What inserting one immediately ready character run changed.
+struct Inserted {
+    /// Whether the line changed and therefore its filtered list is stale.
+    changed: bool,
+    /// Whether at least one character crossed the retained-memory boundary.
+    refused: bool,
+    /// Whether the live box owes exactly one redraw for the whole run.
+    redraw: bool,
+    /// The structural event that ended the run, processed next.
+    following: Option<Pressed>,
+}
+
+/// Inserts the bounded run beginning at `first` in one edit.
+fn insert(editor: &mut Editor, first: char) -> Result<Inserted, Fatal> {
+    let room = Editor::MAX_BYTES.saturating_sub(editor.text().len());
+    let (text, refused, following) = characters(first, room)?.into_parts();
+
+    let typed = editor.paste(&text);
+    let changed = typed == Typed::Changed;
+    let refused = refused || typed == Typed::Refused;
+
+    Ok(Inserted {
+        changed,
+        refused,
+        redraw: changed || refused,
+        following,
+    })
 }
 
 /// Reads one prompt, drawing it as it arrives.
@@ -116,8 +148,12 @@ pub(crate) fn ask<T: Terminal>(
     let mut open = Opened::filtered(editor.text(), glyphs);
     let mut shown = draw(renderer, editor, style, &says, &open)?;
 
+    let mut following = None;
     loop {
-        let arrived = pressed()?;
+        let arrived = match following.take() {
+            Some(arrived) => arrived,
+            None => pressed()?,
+        };
 
         // Whatever arrived, the offer to leave was made to the key after the
         // one that made it, and this is that key.
@@ -175,6 +211,21 @@ pub(crate) fn ask<T: Terminal>(
                 shown = draw(renderer, editor, style, &says, &open)?;
             }
 
+            Pressed::Key(Key::Char(first)) => {
+                let inserted = insert(editor, first)?;
+                following = inserted.following;
+
+                if inserted.changed {
+                    open = Opened::filtered(editor.text(), glyphs);
+                }
+                if inserted.refused {
+                    says.asking = Some(LIMITED);
+                }
+                if inserted.redraw || offered.is_some() {
+                    shown = draw(renderer, editor, style, &says, &open)?;
+                }
+            }
+
             Pressed::Key(key) => match editor.press(key) {
                 // A key that moved nothing costs no frame, unless the offer
                 // above is on screen and now stale. An arrow held down against
@@ -186,6 +237,10 @@ pub(crate) fn ask<T: Terminal>(
                 }
                 Typed::Changed => {
                     open = Opened::filtered(editor.text(), glyphs);
+                    shown = draw(renderer, editor, style, &says, &open)?;
+                }
+                Typed::Refused => {
+                    says.asking = Some(LIMITED);
                     shown = draw(renderer, editor, style, &says, &open)?;
                 }
                 Typed::Submitted => return said(renderer, editor, &open, style),
@@ -230,6 +285,7 @@ fn together(offered: Option<Instant>, now: Instant) -> bool {
 /// The box is redrawn on every keystroke and this is the same row until a key
 /// changes the mode, so formatting it per frame would be work done to produce
 /// the bytes that were already there.
+#[derive(Clone)]
 pub(super) struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
     mode: Cow<'static, str>,
@@ -306,9 +362,16 @@ pub(super) fn during<T: Terminal>(
 ) -> Result<Option<String>, Fatal> {
     let mut moved = false;
     let mut finished = None;
+    let mut notice = None;
 
-    while waiting(Duration::ZERO)? {
-        match pressed()? {
+    let mut following = None;
+    while following.is_some() || waiting(Duration::ZERO)? {
+        let arrived = match following.take() {
+            Some(arrived) => arrived,
+            None => pressed()?,
+        };
+
+        match arrived {
             // The rows on screen were laid out for a width the window no longer
             // has. The renderer takes them back; the redraw below puts the box
             // down again at the new one.
@@ -332,7 +395,28 @@ pub(super) fn during<T: Terminal>(
                 moved = true;
             }
 
-            Pressed::Key(key) => moved |= editor.press(key) == Typed::Changed,
+            Pressed::Key(Key::Char(first)) => {
+                let inserted = insert(editor, first)?;
+                following = inserted.following;
+                moved |= inserted.redraw;
+                if inserted.refused {
+                    notice = Some(LIMITED);
+                } else if inserted.changed {
+                    notice = None;
+                }
+            }
+
+            Pressed::Key(key) => match editor.press(key) {
+                Typed::Changed => {
+                    moved = true;
+                    notice = None;
+                }
+                Typed::Refused => {
+                    moved = true;
+                    notice = Some(LIMITED);
+                }
+                Typed::Ignored | Typed::Submitted | Typed::Interrupted | Typed::Ended => {}
+            },
 
             // A click, an arrow through a list there is none of, a mode step.
             // None of them has anything to act on while a turn is running.
@@ -346,7 +430,13 @@ pub(super) fn during<T: Terminal>(
     }
 
     if moved {
-        stand(renderer, editor, says, style)?;
+        if let Some(notice) = notice {
+            let mut says = says.clone();
+            says.asking = Some(notice);
+            stand(renderer, editor, &says, style)?;
+        } else {
+            stand(renderer, editor, says, style)?;
+        }
     }
 
     Ok(finished)

@@ -1,0 +1,39 @@
+[package]
+name = "crucible-session"
+description = "Private session logs and bounded replay."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Domain messages, identifiers and workspaces.
+crucible-core.workspace = true
+# A session log is JSON, one object per line, read back by a build that may
+# not be the one that wrote it. Hand-rolling that parser would be a second
+# place for a malformed line to become a panic.
+serde_json.workspace = true
+# `SessionError`, which the wiring turns into something the user reads.
+thiserror.workspace = true
+
+# The DACL that holds a session log private on Windows. Unix does the same job
+# with a file mode and needs nothing.
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+# A log that has stopped working cannot be made from outside this crate: every
+# public way in ends at a real file, and a real file on a real disk does not
+# fail on request. The wiring in the binary that reports such a failure is
+# therefore untestable from the binary's own tests without a way in — so there
+# is one, and it exists only when this feature is on. Nothing in the workspace
+# turns it on as a dependency; only the binary's `[dev-dependencies]` does,
+# which cargo does not resolve for a release build. It is not in the shipped
+# binary and it is not API anyone can rely on.
+[features]
+proof = []
+
+[lints]
+workspace = true

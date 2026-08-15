@@ -8,9 +8,9 @@ expression: "dump(&welcome.rows(columns, glyphs), columns)"
 <Accent>│</>  <Strong>█   █▄▄ █  █ █   █ █▄█ █   █▄▄</>  <Accent>│</> <Quiet>No recent sessions</>                        <Accent>│</>
 <Accent>│</>  <Strong>▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄</>  <Accent>│</>                                           <Accent>│</>
 <Accent>│</>                                  <Accent>│</> <Quiet>─────────────────────────────────────────</> <Accent>│</>
-<Accent>│</>  anthropic/claude-sonnet-5       <Accent>│</>                                           <Accent>│</>
-<Accent>│</>                                  <Accent>│</> <Strong>Tips</>                                      <Accent>│</>
 <Accent>│</>  <Quiet>~/code/crucible-code</>            <Accent>│</>                                           <Accent>│</>
+<Accent>│</>                                  <Accent>│</> <Strong>Tips</>                                      <Accent>│</>
+<Accent>│</>                                  <Accent>│</>                                           <Accent>│</>
 <Accent>│</>                                  <Accent>│</> <Quiet>·</> <Accent>/</>          opens the command list       <Accent>│</>
 <Accent>│</>                                  <Accent>│</> <Quiet>·</> <Accent>shift+tab</>  steps the permission mode    <Accent>│</>
 <Accent>│</>                                  <Accent>│</> <Quiet>·</> <Accent>ctrl-c</>     clears the line typed so far <Accent>│</>

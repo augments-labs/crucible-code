@@ -64,6 +64,37 @@ fn a_key_written_down_sets_a_provider_up_with_no_variable_exported() {
 }
 
 #[test]
+fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
+    let moonshot = serving("moonshot");
+    let offered: Vec<_> = moonshot
+        .models
+        .iter()
+        .map(|model| (model.name, model.shown, model.rungs))
+        .collect();
+
+    assert_eq!(
+        offered,
+        [
+            ("k3", "K3", KIMI),
+            ("k3-256k", "K3-256k", KIMI),
+            ("kimi-for-coding", "K2.7 Coding", KIMI),
+            ("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
+        ]
+    );
+    for model in [
+        "k3",
+        "k3-256k",
+        "kimi-for-coding",
+        "kimi-for-coding-highspeed",
+    ] {
+        assert_eq!(
+            rungs("moonshot", model),
+            [Effort::Low, Effort::High, Effort::Max]
+        );
+    }
+}
+
+#[test]
 fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
     // Somebody who logged in and then exported the same key — which is what
     // happens the first time they put it in a shell profile. Counted twice it

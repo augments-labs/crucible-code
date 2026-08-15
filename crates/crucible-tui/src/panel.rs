@@ -307,8 +307,8 @@ mod tests {
     /// The sentence the login panel opens with, which is prose and runs to two
     /// rows at eighty columns.
     const SAID: &str = concat!(
-        "Select a provider to use crucible as part of your subscription plan, ",
-        "or billed based on API usage through your Console account."
+        "Choose the provider whose API key you have. The key is typed into a ",
+        "box that does not echo it, and signs requests from the next turn on."
     );
 
     /// What `/login` offers, in the order it is listed.
@@ -317,23 +317,21 @@ mod tests {
     /// the list under the reader, and any ranking of vendors is one this
     /// project would have to argue for.
     ///
-    /// A description says what the key buys, since that is the part a reader is
-    /// choosing between. It never says which plans a subscription covers — a
-    /// plan is scoped to its vendor's own software, and a row of this panel
-    /// claiming otherwise is the sentence somebody gets banned over.
+    /// A description says where the key can come from, which is the part that
+    /// differs between otherwise identical rows.
     fn offered() -> [Offered<'static>; 3] {
         [
             Offered {
                 name: "Anthropic",
-                says: "Console API key, billed by usage",
+                says: "typed here, or set in ANTHROPIC_API_KEY",
             },
             Offered {
                 name: "MoonshotAI",
-                says: "Kimi Code plan, or a Platform key",
+                says: "typed here, or set in MOONSHOT_API_KEY",
             },
             Offered {
                 name: "OpenAI",
-                says: "Console API key, billed by usage",
+                says: "typed here, or set in OPENAI_API_KEY",
             },
         ]
     }
@@ -382,6 +380,19 @@ mod tests {
         row.spans().map(|(slot, _)| slot).collect()
     }
 
+    /// A snapshot drawing without the row-end cells `dump` pads to the width.
+    ///
+    /// Padding carries no visual information, and the property test below
+    /// separately proves every row fits. Leaving it in snapshots makes a prose
+    /// edit add invisible trailing whitespace to the diff.
+    fn picture(rows: &[Row], columns: usize) -> String {
+        dump(rows, columns)
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// The panel at `columns`, against the picture checked in beside it under
     /// `name@columns`.
     ///
@@ -390,7 +401,7 @@ mod tests {
     /// one argument decides both what was drawn and which file it is read from.
     fn pictured(name: &str, panel: &Panel<'_>, columns: usize, glyphs: Glyphs) {
         insta::with_settings!({snapshot_suffix => columns.to_string()}, {
-            insta::assert_snapshot!(name, dump(&panel.rows(columns, glyphs), columns));
+            insta::assert_snapshot!(name, picture(&panel.rows(columns, glyphs), columns));
         });
     }
 
@@ -446,7 +457,7 @@ mod tests {
 
         assert!(says.ends_with('…'), "{says:?}");
         assert!(wide(says) <= 34, "{says:?}");
-        assert!(says.starts_with("  Kimi Code plan,"), "{says:?}");
+        assert!(says.starts_with("  typed here, or set in"), "{says:?}");
     }
 
     #[test]
@@ -646,7 +657,7 @@ mod tests {
             insta::with_settings!({snapshot_suffix => format!("{columns}x{room}")}, {
                 insta::assert_snapshot!(
                     name,
-                    dump(&panel.within(columns, room, Glyphs::Unicode), columns)
+                    picture(&panel.within(columns, room, Glyphs::Unicode), columns)
                 );
             });
         }

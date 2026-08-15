@@ -16,9 +16,11 @@ Seven builds, one per release:
 
 `SHA256SUMS` beside them covers all of it. Anything else builds from source.
 
-The Linux binaries are dynamically linked against glibc and need **2.34 or
-newer** — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older
-than that has to build from source. Every build asks the system for nothing
+The Linux release workflow builds dynamically linked binaries against glibc
+2.34 — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older than
+that has to build from source. The already-published 0.1.6 Linux artifacts
+predate that build and need glibc 2.39; release artifacts cannot be changed in
+place. A binary from the current release workflow asks the system for nothing
 else: no certificate bundle, no runtime to install. `scripts/smoke.sh` is what
 keeps that true, by running each release in a sandbox holding the binary and its
 two libraries and nothing besides.
@@ -32,24 +34,36 @@ one, everything except the `bash` tool works and that tool says what is missing.
 
 ## Install it
 
-The archives are attached to the
-[releases page](https://github.com/augments-labs/crucible-code/releases), with
-`SHA256SUMS` beside them. Take the one for your platform and that file, check
-one against the other, unpack it, and put the binary somewhere on your `PATH`:
+On Linux, macOS and FreeBSD, download and run the release installer:
 
 ```bash
-sha256sum --ignore-missing -c SHA256SUMS
-tar xzf crucible-<version>-linux-x86_64.tar.gz
-install crucible-<version>-linux-x86_64/crucible ~/.local/bin/
+curl --proto '=https' --tlsv1.2 -fsSLO \
+  https://github.com/augments-labs/crucible-code/releases/latest/download/install.sh
+bash install.sh
 ```
 
-`--ignore-missing` is what lets one checksum file covering the whole release
-check the one archive you took. Each archive unpacks into a directory named
-after it, holding the binary, the README and the licence.
+The script requires Bash. Linux and macOS installations normally have it;
+FreeBSD keeps it in the `bash` package rather than the base system. Without
+Bash, use the manual path below. The script detects the platform, verifies
+exactly the archive it downloads
+against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
+`cru` alias in `~/.local/bin`. It never asks for `sudo` or edits a shell
+profile. Use `--version`, `--dir` or `--dry-run` when the defaults are not the
+ones you want. The matching `uninstall.sh` removes only those executables and
+preserves `~/.crucible`; deleting configuration, credentials and sessions
+requires the explicit `--purge --yes` pair.
+
+For a manual Unix install, download the archive and `SHA256SUMS` from the
+[releases page](https://github.com/augments-labs/crucible-code/releases). On
+Linux use `sha256sum -c`, on macOS use `shasum -a 256 -c`, and on FreeBSD use
+`sha256 -c`, with a checksum file narrowed to the downloaded archive. Then
+unpack it with `tar xzf` and copy `crucible` into a directory on `PATH`.
 
 Each Windows target also ships the executable on its own, beside the archive and
 named the same way — `crucible-<version>-windows-x86_64.exe` — so there is
-nothing to unpack. `SHA256SUMS` covers those too.
+nothing to unpack. `SHA256SUMS` covers those too; PowerShell verifies it with
+`(Get-FileHash .\crucible-<version>-windows-x86_64.exe -Algorithm SHA256).Hash`
+before the executable is moved into a directory on `PATH`.
 
 ## Build it
 
