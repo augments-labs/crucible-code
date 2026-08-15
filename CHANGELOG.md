@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Subscription logins are registered at the wiring boundary.** The binary's
+  one closed list pairs each account login with the fixed audience its tokens
+  are issued for, and a stored subscription now resolves to that address when
+  a run names its provider and no key is set; nothing at the prompt writes one
+  yet.
+
 - **The OpenAI provider names its subscription endpoint.** The fixed address a
   `ChatGPT` subscription credential is served at sits beside the API-key one;
   which of them a credential uses stays with the wiring that hands it over.

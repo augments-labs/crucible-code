@@ -24,6 +24,7 @@ mod seen;
 mod standing;
 mod startup;
 mod style;
+mod subscription;
 
 use std::cell::Cell;
 use std::io::{self, Write as _};
@@ -42,6 +43,7 @@ use crate::cli::converse::Terms;
 use crate::cli::draw::Opening;
 use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
+use crate::cli::subscription::Subscriptions;
 
 /// The providers this is built with, and where each one's key is read from.
 ///
@@ -454,6 +456,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
     let keys = Store::in_home(home.path()).read();
+    let subscriptions = Subscriptions::production();
 
     // Widened after the files are read because the root is what found them:
     // `.crucible/config.json` is looked for in the directory crucible was
@@ -547,6 +550,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // run already read: nothing in them grows with the transcript.
         serving: {
             let settings = settings.clone();
+            let subscriptions = subscriptions.clone();
 
             Box::new(move |named: Served, stored: &Keys| {
                 Ok(Resolved {
@@ -555,6 +559,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
                         &settings,
                         &|name| std::env::var(name).ok(),
                         stored,
+                        &subscriptions,
                     )?,
 
                     // No flag on either, and that is the whole of the
@@ -630,6 +635,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         cancel: &cancel,
         from: &from,
         stored: &keys,
+        subscriptions: &subscriptions,
     })?;
     let outcome = converse::converse(runner, &mut renderer, &terms, &mut io::stdin().lock());
 

@@ -85,6 +85,32 @@ impl Sample {
         store.read()
     }
 
+    /// The store this tree holds, with a completed subscription login for
+    /// `provider`.
+    ///
+    /// Written as a file at this wiring test boundary because the auth crate
+    /// deliberately exposes no token constructor. The value is inert and far
+    /// from expiry; tests can therefore prove endpoint and precedence wiring
+    /// without a network request or a readable credential API.
+    pub(super) fn subscribed(&self, provider: &str) -> Keys {
+        let home = self.base.join("home");
+        fs::create_dir_all(&home).expect("a temporary home");
+        let details = if provider == "moonshot" {
+            r#"{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"}"#
+        } else {
+            r#"{"account_id":"test-account"}"#
+        };
+        fs::write(
+            home.join("auth.json"),
+            format!(
+                r#"{{"version":2,"keys":{{}},"subscriptions":{{"{provider}":{{"access_token":"test-access","refresh_token":"test-refresh","details":{details},"expires_at":18446744073709551615,"refreshed_at":1}}}},"identities":{{}}}}"#
+            ),
+        )
+        .expect("a writable store");
+
+        self.store().read()
+    }
+
     /// The store this tree keeps, which is the file `/login` writes and
     /// `/logout` takes a name back out of.
     pub(super) fn store(&self) -> Store {
