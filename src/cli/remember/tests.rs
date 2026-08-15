@@ -83,6 +83,30 @@ fn a_file_crucible_cannot_read_is_reported_rather_than_replaced() {
     );
 }
 
+#[test]
+fn a_file_over_the_configuration_bound_is_not_read_or_replaced() {
+    let sample = Sample::new("remember-too-large");
+    let file = sample.user_file();
+    fs::create_dir_all(file.parent().expect("a directory")).expect("a temporary tree");
+    let written = " ".repeat(crucible_config::MAX_DOCUMENT_BYTES + 1);
+    fs::write(&file, &written).expect("a temporary tree");
+
+    let problem =
+        choosing(&file, "anthropic", "claude-opus-5").expect_err("a document beyond the boundary");
+
+    assert!(
+        matches!(
+            problem,
+            RememberError::Unusable(ConfigError::TooLarge {
+                maximum: crucible_config::MAX_DOCUMENT_BYTES,
+                ..
+            })
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(fs::read_to_string(file).unwrap(), written);
+}
+
 #[cfg(unix)]
 #[test]
 fn a_file_the_user_narrowed_is_still_narrow_after_a_rule_joins_it() {
@@ -114,11 +138,13 @@ fn fresh_user_configuration_state_is_owner_only() {
 
     let sample = Sample::new("remember-private");
     let file = sample.user_file();
+    let lock = lock_name(&file);
     writing_rule(&sample, "cargo test").expect("a private user file");
 
     for (path, wanted) in [
         (file.parent().expect("the user directory"), 0o700),
         (file.as_path(), 0o600),
+        (lock.as_path(), 0o600),
     ] {
         let mode = fs::metadata(path)
             .expect("the private state exists")
@@ -131,8 +157,8 @@ fn fresh_user_configuration_state_is_owner_only() {
 
 #[test]
 fn nothing_is_left_beside_the_file_it_wrote() {
-    // Written beside and renamed over, so the directory holds one file rather
-    // than one file and the wreckage of writing it.
+    // Written beside and renamed over, so the only sibling is the durable lock
+    // that serializes later changes rather than wreckage holding a document.
     let sample = Sample::new("remember-tidy");
 
     writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
@@ -140,15 +166,24 @@ fn nothing_is_left_beside_the_file_it_wrote() {
     let file = sample.user_file();
     let names = holds(file.parent().expect("a directory"));
 
-    assert_eq!(names, vec![OsString::from("config.json")], "{names:?}");
+    assert_eq!(
+        names,
+        vec![
+            OsString::from("config.json"),
+            OsString::from("config.json.lock")
+        ],
+        "{names:?}"
+    );
 }
 
 /// Everything in `directory`, by name.
 fn holds(directory: &Path) -> Vec<OsString> {
-    fs::read_dir(directory)
+    let mut names: Vec<_> = fs::read_dir(directory)
         .expect("a temporary tree")
         .map(|entry| entry.expect("a readable entry").file_name())
-        .collect()
+        .collect();
+    names.sort();
+    names
 }
 
 #[cfg(unix)]
@@ -179,6 +214,41 @@ fn nothing_is_left_beside_a_file_that_could_not_be_replaced() {
         vec![OsString::from("config.json")],
         "{left:?} after {problem}"
     );
+}
+
+#[test]
+fn simultaneous_answers_keep_every_provider() {
+    let sample = Sample::new("remember-concurrent");
+    let file = sample.user_file();
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(17));
+
+    std::thread::scope(|scope| {
+        let mut writes = Vec::new();
+        for number in 0..16 {
+            let ready = std::sync::Arc::clone(&ready);
+            let file = file.clone();
+            writes.push(scope.spawn(move || {
+                ready.wait();
+                choosing(
+                    &file,
+                    &format!("provider-{number}"),
+                    &format!("model-{number}"),
+                )
+            }));
+        }
+        ready.wait();
+        for write in writes {
+            write.join().expect("a writer did not panic").unwrap();
+        }
+    });
+
+    let written = fs::read_to_string(file).expect("every answer was written");
+    for number in 0..16 {
+        assert!(
+            written.contains(&format!("model-{number}")),
+            "model-{number} was lost from {written}"
+        );
+    }
 }
 
 #[cfg(unix)]
