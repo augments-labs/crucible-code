@@ -100,31 +100,31 @@ fn said(
 }
 
 /// Reads until the body ends, its bytes run out, or `wait` does.
-///
-/// The clock is looked at only where a read said to retry, so a body arriving
-/// steadily is never cut short by it — [`MAX_REFUSAL`] is what ends that one,
-/// and a refusal that fits arrives in a round trip. Nothing spins here either: a
-/// retry means a reader that waited, and how long it waited is that reader's
-/// business.
 fn fill(body: &mut dyn Read, said: &mut Vec<u8>, wait: Duration) -> io::Result<()> {
     let since = Instant::now();
     let mut into = [0_u8; 1024];
 
     loop {
-        match body.read(&mut into) {
+        if since.elapsed() >= wait {
+            return Err(timed_out());
+        }
+
+        let read = body.read(&mut into);
+        if since.elapsed() >= wait {
+            return Err(timed_out());
+        }
+
+        match read {
             Ok(0) => return Ok(()),
             Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
-            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {
-                if since.elapsed() >= wait {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "it stopped part-way through",
-                    ));
-                }
-            }
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
             Err(problem) => return Err(problem),
         }
     }
+}
+
+fn timed_out() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "it stopped part-way through")
 }
 
 /// The sentence inside a refusal body.
@@ -181,6 +181,20 @@ mod tests {
         }
     }
 
+    /// A peer that stays just active enough never to report an interrupted read.
+    struct Trickle;
+
+    impl Read for Trickle {
+        fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+            std::thread::sleep(Duration::from_millis(2));
+            if let Some(first) = into.first_mut() {
+                *first = b'x';
+                return Ok(1);
+            }
+            Ok(0)
+        }
+    }
+
     #[test]
     fn a_body_that_stalls_and_never_closes_gives_up_rather_than_holding_the_turn() {
         // The turn thread is inside this function with no cancel to look at, so
@@ -193,6 +207,13 @@ mod tests {
             problem.to_string(),
             "test: HTTP 429: the response could not be read: it stopped part-way through"
         );
+    }
+
+    #[test]
+    fn a_body_that_keeps_producing_bytes_cannot_outlive_the_elapsed_deadline() {
+        let problem = said("test", 429, Box::new(Trickle), Duration::from_millis(1));
+
+        assert!(problem.to_string().contains("it stopped part-way through"));
     }
 
     #[test]
