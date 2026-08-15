@@ -20,6 +20,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Cancelling interrupts model-request setup.** DNS, connection, TLS and
+  response-header waits retain at most one process-wide worker and request body,
+  which replacements must reap before sending another request.
+
 - **HTTP failures no longer repeat configured request URLs.** Diagnostics keep
   the failure kind without exposing a query or path that may carry a secret.
 

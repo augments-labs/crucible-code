@@ -5,11 +5,14 @@
 //! client is this file.
 //!
 //! Blocking on purpose. A turn owns a thread for as long as the model is
-//! talking, so there is nothing here for an async runtime to interleave — it
-//! would be a scheduler brought in to serve one socket.
+//! talking, so there is nothing here for an async runtime to interleave. The
+//! one blocking span that cannot inspect the turn's cancel — request setup —
+//! runs on one owned worker while the provider thread waits on a channel.
 
 use std::io::{self, Read};
-use std::sync::{Arc, OnceLock};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::thread;
 use std::time::Duration;
 
 use crucible_core::{Cancel, Outgoing};
@@ -39,6 +42,12 @@ const TIMEOUT_HEAD: Duration = Duration::from_mins(1);
 /// than [`TIMEOUT_HEAD`]. Both expire the same way.
 const TIMEOUT_QUIET: Duration = Duration::from_millis(250);
 
+/// How often setup hands control back to check cancellation.
+///
+/// This wait is local — the blocking network operation remains on its worker
+/// until it returns — so shortening it adds no socket traffic.
+const CANCEL_POLL: Duration = Duration::from_millis(50);
+
 /// How long to wait for a connection.
 const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 
@@ -48,24 +57,26 @@ pub struct Https {
     shared: Arc<Shared>,
 }
 
-/// Process-lifetime connection state shared by every provider.
+/// Process-lifetime connection and request-setup state.
+///
+/// Provider replacement constructs another [`Https`], so keeping the setup
+/// slot on the handle would detach its worker when the old provider was
+/// dropped. Every replacement instead reaps the same slot.
 #[derive(Debug)]
 struct Shared {
     agent: ureq::Agent,
+    /// A cancelled setup whose blocking operation has not returned yet.
+    setup: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 
-impl Https {
-    /// A transport over the process's pooled agent.
-    ///
-    /// The agent is what keeps the TLS handshake off every turn after the
-    /// first, which is the difference between a turn starting in milliseconds
-    /// and starting a network request.
-    #[must_use]
-    pub fn new() -> Self {
+impl Shared {
+    fn new() -> Self {
         let config = ureq::Agent::config_builder()
             .timeout_connect(Some(TIMEOUT_CONNECT))
+            .timeout_send_request(Some(TIMEOUT_HEAD))
+            .timeout_send_body(Some(TIMEOUT_HEAD))
             .timeout_recv_response(Some(TIMEOUT_HEAD))
             // Every model request carries a credential. A redirect is a new
             // recipient, and non-standard credential headers such as
@@ -79,11 +90,48 @@ impl Https {
             .build();
 
         Self {
-            shared: Arc::clone(SHARED.get_or_init(|| {
-                Arc::new(Shared {
-                    agent: ureq::Agent::new_with_config(config),
-                })
-            })),
+            agent: ureq::Agent::new_with_config(config),
+            setup: Mutex::new(None),
+        }
+    }
+}
+
+impl Https {
+    /// A transport over the process's pooled agent and request setup slot.
+    ///
+    /// The agent is what keeps the TLS handshake off every turn after the
+    /// first, which is the difference between a turn starting in milliseconds
+    /// and starting a network request.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            shared: Arc::clone(SHARED.get_or_init(|| Arc::new(Shared::new()))),
+        }
+    }
+
+    /// A transport with isolated state for an adversarial socket test.
+    #[cfg(test)]
+    fn isolated() -> Self {
+        Self {
+            shared: Arc::new(Shared::new()),
+        }
+    }
+
+    /// Exclusively owns request setup without making contention uninterruptible.
+    fn setup_slot<'a>(
+        &'a self,
+        cancel: &Cancel,
+    ) -> Result<MutexGuard<'a, Option<thread::JoinHandle<()>>>, TransportError> {
+        loop {
+            if cancel.requested() {
+                return Err(TransportError::Cancelled);
+            }
+
+            match self.shared.setup.try_lock() {
+                Ok(slot) => return Ok(slot),
+                Err(TryLockError::Poisoned(problem)) => return Ok(problem.into_inner()),
+                Err(TryLockError::WouldBlock) => thread::sleep(CANCEL_POLL),
+            }
         }
     }
 }
@@ -135,34 +183,91 @@ impl Transport for Https {
             return Err(TransportError::Cancelled);
         }
 
-        // On this request and not on the agent: it is the answer to a model
-        // that pauses mid-sentence, and the caller reading it is the one that
-        // holds a cancel. The other direction — a body fetched to the end with
-        // nobody waiting on it — is better off blocking, and keeps the deadline
-        // it has.
-        let mut request = self
-            .shared
-            .agent
-            .post(url)
-            .config()
-            .timeout_recv_body(Some(TIMEOUT_QUIET))
-            .build();
-        for (name, value) in headers.headers() {
-            request = request.header(&**name, &**value);
+        let mut setup = self.setup_slot(cancel)?;
+
+        // A prior turn may have returned while `ureq` was still blocked. Wait
+        // for that one worker rather than letting repeated cancels accumulate
+        // threads and serialized request bodies.
+        if let Some(worker) = setup.take() {
+            while !worker.is_finished() {
+                if cancel.requested() {
+                    *setup = Some(worker);
+                    return Err(TransportError::Cancelled);
+                }
+                thread::sleep(CANCEL_POLL);
+            }
+            worker.join().map_err(|_| TransportError::SetupStopped)?;
         }
 
-        // Every status is a response; only a request that never produced one is
-        // an error here, which is why this arm does not inspect the failure.
-        match request.send(&body) {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                Ok(Response {
-                    status,
-                    body: Box::new(Waiting(reader(response.into_body()))),
-                })
-            }
-            Err(problem) => Err(request_problem(&problem)),
+        if cancel.requested() {
+            return Err(TransportError::Cancelled);
         }
+
+        // `ureq` is blocking across DNS, connect, TLS, request send and the
+        // response headers. Ownership moves into this one worker so the caller
+        // can keep asking the turn's flag without cloning the request body.
+        let agent = self.shared.agent.clone();
+        let url = url.to_owned();
+        let (finished, result) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name("crucible-http-setup".to_owned())
+            .spawn(move || {
+                let _ = finished.send(send(&agent, &url, &headers, body));
+            })
+            .map_err(|problem| TransportError::Unreachable(problem.to_string().into()))?;
+
+        let response = loop {
+            if cancel.requested() {
+                *setup = Some(worker);
+                return Err(TransportError::Cancelled);
+            }
+
+            match result.recv_timeout(CANCEL_POLL) {
+                Ok(response) => break response,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    worker.join().map_err(|_| TransportError::SetupStopped)?;
+                    return Err(TransportError::SetupStopped);
+                }
+            }
+        };
+
+        worker.join().map_err(|_| TransportError::SetupStopped)?;
+        if cancel.requested() {
+            Err(TransportError::Cancelled)
+        } else {
+            response
+        }
+    }
+}
+
+/// Performs the blocking part of one request on its setup thread.
+fn send(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: &Outgoing,
+    body: String,
+) -> Result<Response, TransportError> {
+    // On this request and not on the agent: it is the answer to a model that
+    // pauses mid-sentence, and the caller reading it is the one that holds a
+    // cancel.
+    let mut request = agent
+        .post(url)
+        .config()
+        .timeout_recv_body(Some(TIMEOUT_QUIET))
+        .build();
+    for (name, value) in headers.headers() {
+        request = request.header(&**name, &**value);
+    }
+
+    // Every status is a response; only a request that never produced one is an
+    // error here, which is why this arm does not inspect the failure.
+    match request.send(body) {
+        Ok(response) => Ok(Response {
+            status: response.status().as_u16(),
+            body: Box::new(Waiting(reader(response.into_body()))),
+        }),
+        Err(problem) => Err(request_problem(&problem)),
     }
 }
 
@@ -237,7 +342,7 @@ fn reader(body: ureq::Body) -> Box<dyn Read + Send> {
 mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::sync::mpsc;
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::thread;
     use std::time::Instant;
 
@@ -299,6 +404,54 @@ mod tests {
         });
 
         format!("http://{address}/v1/messages")
+    }
+
+    /// Accepts one request and withholds every response byte until released.
+    fn stalling() -> (
+        String,
+        Receiver<()>,
+        Sender<()>,
+        Receiver<bool>,
+        thread::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (arrived, accepted) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (reported, repeated) = mpsc::channel();
+
+        let server = thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                heard(&stream);
+                let _ = arrived.send(());
+                let _ = released.recv_timeout(Duration::from_secs(2));
+                drop(stream);
+
+                listener.set_nonblocking(true).unwrap();
+                let until = Instant::now() + Duration::from_millis(250);
+                while Instant::now() < until {
+                    match listener.accept() {
+                        Ok(_) => {
+                            let _ = reported.send(true);
+                            return;
+                        }
+                        Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            let _ = reported.send(false);
+        });
+
+        (
+            format!("http://{address}/v1/messages"),
+            accepted,
+            release,
+            repeated,
+            server,
+        )
     }
 
     /// Serves a redirect and reports whether the client contacted its target.
@@ -515,6 +668,107 @@ mod tests {
         let replacement = Https::new();
 
         assert!(Arc::ptr_eq(&first.shared, &replacement.shared));
+    }
+
+    #[test]
+    fn cancellation_while_response_headers_stall_returns_promptly() {
+        let (url, accepted, release, _repeated, server) = stalling();
+        let cancel = Cancel::new();
+        let raise = cancel.clone();
+        let (reported, raised_at) = mpsc::channel();
+        let raiser = thread::spawn(move || {
+            accepted.recv().unwrap();
+            let now = Instant::now();
+            raise.request();
+            reported.send(now).unwrap();
+        });
+
+        let problem = Https::isolated()
+            .post(&url, Outgoing::new(), "{}".to_owned(), &cancel)
+            .expect_err("the stalled response was cancelled");
+        let returned_at = Instant::now();
+        let raised_at = raised_at.recv().unwrap();
+
+        let _ = release.send(());
+        raiser.join().unwrap();
+        server.join().unwrap();
+
+        assert!(matches!(problem, TransportError::Cancelled));
+        assert!(
+            returned_at.saturating_duration_since(raised_at) <= CANCEL_POLL * 5,
+            "cancellation took {:?}",
+            returned_at.saturating_duration_since(raised_at)
+        );
+    }
+
+    #[test]
+    fn replacement_cannot_abandon_more_setup_workers() {
+        let (url, accepted, release, repeated, server) = stalling();
+        let transport = Https::isolated();
+        let shared = Arc::clone(&transport.shared);
+        let first = Cancel::new();
+        let raise = first.clone();
+        let first_raiser = thread::spawn(move || {
+            accepted.recv().unwrap();
+            raise.request();
+        });
+
+        let problem = transport
+            .post(&url, Outgoing::new(), "first".to_owned(), &first)
+            .expect_err("the first stalled response was cancelled");
+        assert!(matches!(problem, TransportError::Cancelled));
+        first_raiser.join().unwrap();
+        drop(transport);
+
+        for replacement in 0..3 {
+            let transport = Https {
+                shared: Arc::clone(&shared),
+            };
+            let cancel = Cancel::new();
+            let raise = cancel.clone();
+            let (reported, raised_at) = mpsc::channel();
+            let raiser = thread::spawn(move || {
+                thread::sleep(CANCEL_POLL * 2);
+                let now = Instant::now();
+                raise.request();
+                reported.send(now).unwrap();
+            });
+
+            let problem = transport
+                .post(
+                    &url,
+                    Outgoing::new(),
+                    format!("replacement-{replacement}"),
+                    &cancel,
+                )
+                .expect_err("waiting for prior setup remained cancellable");
+            let returned_at = Instant::now();
+            let raised_at = raised_at.recv().unwrap();
+
+            raiser.join().unwrap();
+            assert!(matches!(problem, TransportError::Cancelled));
+            assert!(
+                returned_at.saturating_duration_since(raised_at) <= CANCEL_POLL * 5,
+                "replacement {replacement} cancellation took {:?}",
+                returned_at.saturating_duration_since(raised_at)
+            );
+        }
+
+        let _ = release.send(());
+        server.join().unwrap();
+        assert!(
+            !repeated.recv().unwrap(),
+            "replacement setup reached server"
+        );
+
+        let url = once(refusal("200 OK", "ready"));
+        let transport = Https { shared };
+        let mut response = transport
+            .post(&url, Outgoing::new(), "final".to_owned(), &Cancel::new())
+            .expect("finished setup was reaped and the transport was reusable");
+        let mut body = String::new();
+        response.body.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "ready");
     }
 
     #[test]

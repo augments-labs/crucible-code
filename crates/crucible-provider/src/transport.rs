@@ -30,6 +30,10 @@ pub enum TransportError {
     #[error("request cancelled before a response arrived")]
     Cancelled,
 
+    /// The isolated request-setup worker stopped without reporting an outcome.
+    #[error("request setup stopped unexpectedly")]
+    SetupStopped,
+
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
@@ -41,6 +45,10 @@ impl TransportError {
     pub(crate) fn for_provider(self, provider: &'static str) -> ProviderError {
         match self {
             Self::Cancelled => ProviderError::Cancelled(provider),
+            Self::SetupStopped => ProviderError::Transport {
+                provider,
+                problem: "request setup stopped unexpectedly".into(),
+            },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
         }
     }
