@@ -122,7 +122,7 @@ impl Provider for OpenAi {
         }
 
         let outgoing = self.headers()?;
-        let body = body::build(&request).to_string();
+        let body = body::serialize(&request);
 
         let response = self
             .transport

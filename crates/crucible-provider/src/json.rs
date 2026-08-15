@@ -41,6 +41,11 @@ impl Json {
 
     fn text(&mut self, text: &str) {
         self.0.push('"');
+        self.text_content(text);
+        self.0.push('"');
+    }
+
+    fn text_content(&mut self, text: &str) {
         for character in text.chars() {
             match character {
                 '"' => self.0.push_str("\\\""),
@@ -59,7 +64,6 @@ impl Json {
                 other => self.0.push(other),
             }
         }
-        self.0.push('"');
     }
 
     fn value(&mut self, value: &Value) {
@@ -122,6 +126,15 @@ impl Object<'_> {
 
     pub(crate) fn text(&mut self, name: &str, value: &str) {
         self.member(name, |json| json.text(value));
+    }
+
+    pub(crate) fn prefixed_text(&mut self, name: &str, prefix: &str, value: &str) {
+        self.member(name, |json| {
+            json.0.push('"');
+            json.text_content(prefix);
+            json.text_content(value);
+            json.0.push('"');
+        });
     }
 
     pub(crate) fn number(&mut self, name: &str, value: u32) {

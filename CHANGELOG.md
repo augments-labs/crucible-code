@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **OpenAI requests avoid an intermediate JSON tree and honor their output
+  ceiling.** Transcript items are written directly into the outbound body, and
+  the generated-token limit is sent as `max_output_tokens`.
+
 - **Anthropic requests use one outbound JSON allocation.** Transcript messages
   are written directly into the request body instead of first building an owned
   JSON tree, reducing peak memory as sessions grow.
