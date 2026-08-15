@@ -6,10 +6,10 @@
 //! somebody is about to be shown a list — and it runs before the first frame,
 //! where twenty milliseconds is the whole budget.
 //!
-//! Everything here is bounded twice over: how many logs may be opened, and how
-//! much of one may be read. Neither bound grows with the directory, which is
-//! what keeps a machine that has run crucible for a year starting as fast as
-//! one that never has.
+//! Candidate names come from the fixed recent-session index. An older flat log
+//! directory is indexed once by session start, after the first frame; this
+//! path neither enumerates the directory nor migrates it. Logs opened and
+//! bytes read from one log are bounded separately below.
 
 use std::fs::File;
 use std::io::{BufRead as _, BufReader, Read as _};
@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use crucible_core::{Message, SessionId, Workspace};
 
-use super::replay::logs;
+use super::index;
 use super::wire;
 
 /// How many logs may be opened before the scan gives up.
@@ -97,12 +97,11 @@ pub fn recent(directory: &Path, workspace: &Workspace, wanted: usize) -> Vec<Rec
         return found;
     }
 
-    // The listing is the one unbounded read, and it is a read of names: no file
-    // is opened to put them in time order, because the name is what the order
-    // is in.
-    let logs = logs(directory).unwrap_or_default();
+    // One fixed-size file supplies the names, so first-frame work does not
+    // grow with the number of logs in the directory.
+    let logs = index::logs(directory, EXAMINED).unwrap_or_default();
 
-    for path in logs.into_iter().rev().take(EXAMINED) {
+    for path in logs {
         if let Some(session) = read(&path, workspace) {
             found.push(session);
 

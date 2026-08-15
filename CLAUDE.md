@@ -41,7 +41,7 @@ crates/
   crucible-privacy/    owner-only local file primitives. Depends on nothing.
   crucible-config/     configuration documents -> settings.     -> core
   crucible-provider/   wire protocols (Anthropic, OpenAI).      -> core
-  crucible-session/    session logs and bounded replay.         -> core
+  crucible-session/    session logs and bounded replay.  -> core, privacy
   crucible-tools/      read write edit bash grep glob.          -> core
   crucible-runner/     the turn loop, over traits only.  -> core, session
   crucible-tui/        inline renderer, prompt, transcript.     -> core

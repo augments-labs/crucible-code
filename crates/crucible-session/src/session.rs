@@ -26,6 +26,7 @@ use std::thread::{self, JoinHandle};
 use crucible_core::{Message, SessionId, Transcript, Workspace};
 
 mod claim;
+mod index;
 mod log;
 mod privacy;
 mod recent;
@@ -64,6 +65,15 @@ pub enum SessionError {
     #[error("could not use the session directory {at}: {source}")]
     Directory {
         /// Where.
+        at: Box<str>,
+        /// What the operating system said.
+        source: io::Error,
+    },
+
+    /// The bounded newest-session index could not be read or replaced.
+    #[error("could not use the session index {at}: {source}")]
+    Index {
+        /// Which file.
         at: Box<str>,
         /// What the operating system said.
         source: io::Error,
@@ -168,6 +178,10 @@ impl Session {
             source,
         })?;
 
+        // A legacy scan happens here, after the first frame, and once. The
+        // welcome itself reads only the fixed index this makes.
+        index::ensure(directory)?;
+
         Self::naming(directory, workspace, SessionId::new)
     }
 
@@ -189,6 +203,16 @@ impl Session {
             let Some((mut file, held)) = taking(&path)? else {
                 continue;
             };
+
+            // Before the header: a crash between these steps leaves a name the
+            // index reader validates and skips. The opposite order could leave
+            // a complete session no bounded lookup could discover.
+            if let Err(problem) = index::record(directory, &id) {
+                drop(file);
+                drop(held);
+                let _ = std::fs::remove_file(&path);
+                return Err(problem);
+            }
 
             let header = wire::header(&id, workspace.root());
             writeln!(file, "{header}").map_err(|source| SessionError::Log {
@@ -228,6 +252,11 @@ impl Session {
             at: directory.display().to_string().into(),
             source,
         })?;
+
+        // An upgraded `--continue` preserves flat legacy sessions. This scan
+        // runs after the first frame and is replaced by fixed index reads from
+        // then on.
+        index::ensure(directory)?;
 
         Self::continuing(&newest(directory, workspace)?)
     }

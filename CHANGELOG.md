@@ -17,6 +17,12 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **Session discovery uses a private fixed-size index.** The first frame no
+  longer enumerates the session directory, so startup stays flat as recordings
+  accumulate. A directory of logs written before this release is indexed once,
+  after the first frame of the first run that starts or continues a session —
+  until then its welcome list is empty; no log is moved or rewritten.
+
 - **Release builds are pinned, smoked and attested before publication.** Linux
   artifacts now build in a digest-pinned CentOS Stream 9 image, making the
   documented glibc 2.34 floor a build input rather than a property of
