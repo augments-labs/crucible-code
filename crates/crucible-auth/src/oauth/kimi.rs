@@ -58,6 +58,16 @@ impl KimiOAuth {
         }
     }
 
+    #[cfg(test)]
+    fn testing(flow: Flow) -> Self {
+        Self {
+            shared: Arc::new(Shared {
+                flow,
+                worker: LoginSlot::new(),
+            }),
+        }
+    }
+
     fn start_method(&self, method: LoginMethod, store: Store) -> Result<LoginAttempt, OAuthError> {
         if method != Self::DEVICE {
             return Err(OAuthError::Method);
@@ -196,6 +206,17 @@ impl Flow {
             minimum_interval: interval,
             login_lifetime: login,
         }
+    }
+
+    #[cfg(test)]
+    fn testing(host: &str) -> Self {
+        Self::at(
+            host,
+            host,
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            Duration::from_millis(1),
+        )
     }
 
     fn login(
@@ -571,3 +592,6 @@ fn now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+#[cfg(test)]
+mod tests;

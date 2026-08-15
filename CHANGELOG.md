@@ -12,6 +12,11 @@ Notable changes to crucible. Format follows
   `ChatGPT` subscription credential is served at sits beside the API-key one;
   which of them a credential uses stays with the wiring that hands it over.
 
+- **OpenAI account login joins Kimi at the provider-neutral boundary.**
+  `ChatGPT` sign-in offers browser PKCE with a loopback callback and a
+  paste-back fallback, plus device authorization for headless terminals;
+  nothing in the binary calls it yet.
+
 - **The auth crate has its first account-login implementation.** Kimi's device
   authorization flow logs in through a browser and renews through the protected
   store; nothing in the binary calls it yet.
