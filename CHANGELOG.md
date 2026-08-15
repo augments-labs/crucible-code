@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Releases ship an installer and an uninstaller.** `scripts/install.sh`
+  verifies the published checksum before replacing an existing binary, and
+  `scripts/uninstall.sh` preserves configuration and sessions unless
+  explicitly asked to purge them.
+
 ### Internal
 
 - **The smoke gate verifies checksums exactly and enforces the glibc floor.**
