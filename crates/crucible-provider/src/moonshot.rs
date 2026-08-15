@@ -129,14 +129,8 @@ impl Provider for Moonshot {
 
         let response = self
             .transport
-            .post(self.endpoint.as_str(), outgoing.headers(), &body)
-            .map_err(|problem| {
-                ProviderError::Transport {
-                    provider: NAME,
-                    problem: problem.to_string().into(),
-                }
-                .redacted(&redactions)
-            })?;
+            .post(self.endpoint.as_str(), outgoing, body, cancel)
+            .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
         if response.status != 200 {
             return Err(refused(
