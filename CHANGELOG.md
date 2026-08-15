@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Permission questions offer once or session.** Durable `allow` rules now
+  have to be written deliberately in the user configuration outside a
+  checkout. The former `always` answer wrote authority into a conventional
+  local filename that a repository could still commit.
+
 - **Command cleanup is bounded and reaches descendants.** Output readers poll
   for cancellation, every failure path stops and reaps the command scope, Unix
   uses process groups, and Windows attaches a suspended child to a kill-on-close

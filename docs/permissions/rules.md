@@ -2,9 +2,7 @@
 
 A rule is a standing statement, written in
 [configuration](../configuration/configuration.md) before any call exists: a
-tool name, and what it may act on. Answering
-[`always`](permissions.md#what-always-writes) at a question writes one for you,
-into the file this project keeps out of git; the rest you write yourself.
+tool name, and what it may act on.
 
 ```json
 {
@@ -55,7 +53,7 @@ A pattern separates directories with `/` on every platform, Windows included:
 write `read(src/**)` and `read(C:/Users/you/src/**)`. A backslash is the escape
 character in a pattern rather than a separator, so a Windows path spelled with
 one names something else. Crucible writes rules that way itself — a path in a
-question and a rule `always` writes down are both spelled with `/` there.
+question and a rule are both spelled with `/` there.
 
 **Command patterns** — `bash(cargo test)`, `bash(git *)` — are matched against
 each simple command a line decomposes into, with runs of whitespace collapsed,
@@ -122,16 +120,10 @@ files](../configuration/configuration.md): what `~/.crucible/config.json`
 denies, a project's checked-in file cannot allow. A nearer layer can add to
 what may happen, never subtract from what may not.
 
-That holds for the rules crucible writes as well as the ones you do. `always`
-adds an `allow` to `.crucible/config.local.json`, which is the nearest layer of
-all — and a `deny` anywhere still beats it. A file you must never have touched
-is denied once, in your home configuration, and no answer given in a project
-can qualify that.
-
-`ask` beats an allow the same way, so a call some layer wrote an `ask` rule
-about goes on asking however often `always` is answered. That is the intended
-reading: the rule is what you decided with the file open, and the answer is
-what you decided with a turn waiting.
+Both workspace filenames may add `ask` and `deny` rules, and neither may add an
+`allow`: a repository can commit either name, whatever its ignore convention
+says. Durable allows therefore live only in the user configuration outside the
+checkout. A deny in any layer still beats them.
 
 ## The model never sees them
 

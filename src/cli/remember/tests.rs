@@ -1,4 +1,4 @@
-//! Whether a rule that was written down is one crucible reads back.
+//! Whether a configuration splice is replaced whole without losing its file.
 
 use std::ffi::OsString;
 
@@ -24,8 +24,8 @@ fn running(command: &str) -> Sensitivity {
     }
 }
 
-/// Answers `always` to one command, into this sample's own tree.
-fn remembering(sample: &Sample, command: &str) -> Result<(), RememberError> {
+/// Writes one rule through the same replacement boundary as user choices.
+fn writing_rule(sample: &Sample, command: &str) -> Result<(), RememberError> {
     let rule = narrowest(&call(), &running(command)).expect("one command can be written down");
 
     allowing(&crucible_config::local(&sample.root()), &rule)
@@ -40,7 +40,7 @@ fn settles(sample: &Sample, command: &str) -> Settled {
 fn a_project_with_no_crucible_directory_at_all_gains_one_holding_the_rule() {
     let sample = Sample::new("remember-fresh");
 
-    remembering(&sample, "cargo test").expect("a tree crucible may write in");
+    writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
 
     assert!(matches!(
         settles(&sample, "cargo test"),
@@ -53,8 +53,8 @@ fn a_project_with_no_crucible_directory_at_all_gains_one_holding_the_rule() {
 fn a_second_answer_joins_the_first_rather_than_replacing_it() {
     let sample = Sample::new("remember-second");
 
-    remembering(&sample, "cargo test").expect("a tree crucible may write in");
-    remembering(&sample, "git status").expect("a tree crucible may write in");
+    writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
+    writing_rule(&sample, "git status").expect("a tree crucible may write in");
 
     assert!(matches!(
         settles(&sample, "cargo test"),
@@ -74,7 +74,7 @@ fn a_file_crucible_cannot_read_is_reported_rather_than_replaced() {
     fs::create_dir_all(file.parent().expect("a directory")).expect("a temporary tree");
     fs::write(&file, "{ oh dear").expect("a temporary tree");
 
-    let problem = remembering(&sample, "cargo test").expect_err("a file crucible cannot read");
+    let problem = writing_rule(&sample, "cargo test").expect_err("a file crucible cannot read");
 
     assert!(matches!(problem, RememberError::Unusable(_)), "{problem:?}");
     assert_eq!(
@@ -91,14 +91,14 @@ fn a_file_the_user_narrowed_is_still_narrow_after_a_rule_joins_it() {
     // A rename puts a new file where the old one was rather than new bytes
     // inside it, so the mode comes from whatever made the new one. This file
     // says what may run without being asked about, and widening who can write
-    // to it is not something answering `always` was asked to do.
+    // to it is not part of replacing one setting.
     let sample = Sample::new("remember-narrow");
     let file = crucible_config::local(&sample.root());
 
-    remembering(&sample, "cargo test").expect("a tree crucible may write in");
+    writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("a tree with modes");
 
-    remembering(&sample, "git status").expect("a tree crucible may write in");
+    writing_rule(&sample, "git status").expect("a tree crucible may write in");
 
     let mode = fs::metadata(&file)
         .expect("the file is still there")
@@ -113,7 +113,7 @@ fn nothing_is_left_beside_the_file_it_wrote() {
     // than one file and the wreckage of writing it.
     let sample = Sample::new("remember-tidy");
 
-    remembering(&sample, "cargo test").expect("a tree crucible may write in");
+    writing_rule(&sample, "cargo test").expect("a tree crucible may write in");
 
     let file = crucible_config::local(&sample.root());
     let names = holds(file.parent().expect("a directory"));
@@ -136,7 +136,7 @@ fn holds(directory: &Path) -> Vec<OsString> {
 #[cfg(unix)]
 #[test]
 fn nothing_is_left_beside_a_file_that_could_not_be_replaced() {
-    // A rule that was not remembered must not cost the user a stray file
+    // A rule that was not written must not cost the user a stray file
     // holding the whole permission document, under a name nothing will look at
     // again.
     //

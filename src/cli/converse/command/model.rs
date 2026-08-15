@@ -139,7 +139,7 @@ fn chosen<T: Terminal>(
 ///
 /// A failure to write does not undo the switch. What is lost is the part that
 /// outlives the process, and the line drawn says so, which is the same bargain
-/// an answer of `always` is on.
+/// as a choice made through `/effort`.
 fn taken<T: Terminal>(
     name: &str,
     provider: &str,

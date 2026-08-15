@@ -528,11 +528,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ),
         cancel: cancel.clone(),
 
-        // The layer git ignores, resolved from the root the project's own
-        // files were read from — so what an answer of `always` writes is what
-        // the next crucible started here reads back.
-        remembering: crucible_config::local(workspace.root()),
-
         // Who `/model` is choosing for, and where it writes the choice down.
         // The second is a fact about how this run was set up and the prompt is
         // not the place to work it out again; the first is the one thing here a

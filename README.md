@@ -112,11 +112,11 @@ Reading never asks. Anything that changes a file or starts a process does:
 
 ```
 ? bash wants to run: cargo
-  [y]es  [s]ession  [a]lways  [n]o › 
+  [y]es  [s]ession  [n]o ›
 ```
 
-`always` writes the rule into `.crucible/config.local.json`, so the next
-session starts already knowing.
+`session` remembers calls like it until this process exits. Durable rules are
+written deliberately in the user configuration outside a checkout.
 
 Full documentation is in [`docs/`](docs/index.md).
 

@@ -85,19 +85,17 @@ fn every_way_out_of_a_question_leaves_the_tool_unrun() {
             panic!("{arrived:?} was not an answer");
         };
 
-        assert_eq!(verdict(Some(&said), true), (Verdict::Deny, Remember::Never));
+        assert_eq!(verdict(Some(&said)), (Verdict::Deny, Remember::Never));
     }
 }
 
 #[test]
-fn an_answer_of_always_is_on_the_disk_before_the_next_turn_is_asked_for() {
-    // The whole path, end to end: the rule the question offered is the rule
-    // that reaches the file, and the file is the one crucible reads at start-up.
+fn always_is_refused_until_rules_have_a_store_outside_the_workspace() {
+    // An ignored filename is still one a repository can commit. Until durable
+    // rules live somewhere the checkout cannot supply, promising persistence
+    // would either trust the repository or write a file the next run refuses.
     let sample = Sample::new("converse-always");
-    let terms = Terms {
-        remembering: crucible_config::local(&sample.root()),
-        ..plain()
-    };
+    let terms = plain();
 
     let written = answering(
         &terms,
@@ -106,13 +104,10 @@ fn an_answer_of_always_is_on_the_disk_before_the_next_turn_is_asked_for() {
         "go\na\n",
     );
 
-    assert!(written.contains("remembered bash(ls)"), "{written}");
+    assert!(written.contains("was not allowed"), "{written}");
     assert!(
-        matches!(
-            sample.settles(&asking("bash"), &running("ls")),
-            Settled::Approved(_)
-        ),
-        "the rule is not in {}",
+        !crucible_config::local(&sample.root()).exists(),
+        "a durable rule was written into {}",
         crucible_config::local(&sample.root()).display()
     );
 }
@@ -124,10 +119,7 @@ fn a_call_no_rule_can_be_written_for_writes_nothing_when_always_is_typed() {
     // that leaves the user to answer again rather than one that quietly
     // widens what a file allows.
     let sample = Sample::new("converse-unwritable");
-    let terms = Terms {
-        remembering: crucible_config::local(&sample.root()),
-        ..plain()
-    };
+    let terms = plain();
 
     let written = answering(
         &terms,
@@ -145,56 +137,23 @@ fn a_call_no_rule_can_be_written_for_writes_nothing_when_always_is_typed() {
 
 #[test]
 fn yes_allows_this_call_only() {
-    assert_eq!(
-        verdict(Some("y\n"), true),
-        (Verdict::Allow, Remember::Never)
-    );
-    assert_eq!(
-        verdict(Some("yes"), true),
-        (Verdict::Allow, Remember::Never)
-    );
+    assert_eq!(verdict(Some("y\n")), (Verdict::Allow, Remember::Never));
+    assert_eq!(verdict(Some("yes")), (Verdict::Allow, Remember::Never));
 }
 
 #[test]
 fn session_allows_calls_like_it_until_crucible_exits() {
+    assert_eq!(verdict(Some("s\n")), (Verdict::Allow, Remember::Session));
     assert_eq!(
-        verdict(Some("s\n"), true),
-        (Verdict::Allow, Remember::Session)
-    );
-    assert_eq!(
-        verdict(Some("session"), true),
+        verdict(Some("session")),
         (Verdict::Allow, Remember::Session)
     );
 }
 
 #[test]
-fn always_allows_calls_like_it_from_now_on() {
-    // The answer that costs a file. It is a different word from `session`
-    // because it is a different promise, and one of the two outlives the
-    // process that made it.
-    assert_eq!(
-        verdict(Some("a\n"), true),
-        (Verdict::Allow, Remember::Always)
-    );
-    assert_eq!(
-        verdict(Some("always"), true),
-        (Verdict::Allow, Remember::Always)
-    );
-}
-
-#[test]
-fn always_is_not_an_answer_where_no_rule_can_be_written() {
-    // The question did not offer it, so it is a word the user typed at a
-    // prompt that has no such answer — and the failure worth having is the
-    // one where nothing runs.
-    assert_eq!(
-        verdict(Some("a\n"), false),
-        (Verdict::Deny, Remember::Never)
-    );
-    assert_eq!(
-        verdict(Some("always"), false),
-        (Verdict::Deny, Remember::Never)
-    );
+fn always_is_refused_until_a_trusted_store_can_keep_the_promise() {
+    assert_eq!(verdict(Some("a\n")), (Verdict::Deny, Remember::Never));
+    assert_eq!(verdict(Some("always")), (Verdict::Deny, Remember::Never));
 }
 
 #[test]
@@ -204,7 +163,7 @@ fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
     // other, so there is nothing for a duration to hold.
     for answer in ["n", "no", "", "\n", "yeah", "Y E S", "1"] {
         assert_eq!(
-            verdict(Some(answer), true),
+            verdict(Some(answer)),
             (Verdict::Deny, Remember::Never),
             "{answer:?}"
         );
@@ -214,5 +173,5 @@ fn anything_else_is_a_refusal_that_is_remembered_about_nothing() {
 #[test]
 fn end_of_input_is_a_refusal() {
     // A pipe that closed mid-question cannot consent to anything.
-    assert_eq!(verdict(None, true), (Verdict::Deny, Remember::Never));
+    assert_eq!(verdict(None), (Verdict::Deny, Remember::Never));
 }

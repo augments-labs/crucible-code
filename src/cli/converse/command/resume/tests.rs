@@ -50,7 +50,6 @@ fn terms(sample: &Sample) -> Terms {
     Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
-        remembering: sample.root().join("unwritten.json"),
         provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
