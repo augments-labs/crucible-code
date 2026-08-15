@@ -13,34 +13,43 @@
 //! `model` rather than an object of its own.
 
 use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::{Value, json};
 
-use crate::json::described;
+use crate::json::{Array, Json, Object, described};
 
 /// The whole request body.
-pub(super) fn build(request: &Request<'_>) -> Value {
-    let mut body = Map::new();
-    body.insert("model".to_owned(), json!(request.model));
-    body.insert("max_tokens".to_owned(), json!(request.max_tokens));
-    body.insert("stream".to_owned(), json!(true));
-    body.insert("messages".to_owned(), json!(messages(request)));
+pub(super) fn serialize(request: &Request<'_>) -> String {
+    let mut json = Json::new();
+    json.object(|body| {
+        body.text("model", request.model);
+        body.number("max_tokens", request.max_tokens);
+        body.boolean("stream", true);
+        body.array("messages", |messages| write_messages(messages, request));
 
-    // Beside `model` rather than nested, which is where this older wire shape
-    // puts it. Only where somebody chose one: this vendor serves three of the
-    // five rungs, so a request nobody had an opinion about is one that cannot
-    // be refused for naming a rung the model has never heard of.
-    if let Some(effort) = request.effort {
-        body.insert("reasoning_effort".to_owned(), json!(effort.as_str()));
-    }
+        // Beside `model` rather than nested, which is where this older wire
+        // shape puts it. Only where somebody chose one: this vendor serves
+        // three of the five rungs.
+        if let Some(effort) = request.effort {
+            body.text("reasoning_effort", effort.as_str());
+        }
 
-    // Absent rather than empty: an empty array is refused rather than read as
-    // a session with no tools.
-    if !request.tools.is_empty() {
-        let tools = request.tools.iter().map(tool).collect();
-        body.insert("tools".to_owned(), Value::Array(tools));
-    }
+        // Absent rather than empty: an empty array is refused rather than read
+        // as a session with no tools.
+        if !request.tools.is_empty() {
+            body.array("tools", |tools| {
+                for schema in request.tools {
+                    tools.object(|tool| write_tool(tool, schema));
+                }
+            });
+        }
+    });
+    json.finish()
+}
 
-    Value::Object(body)
+#[cfg(test)]
+fn build(request: &Request<'_>) -> Value {
+    serde_json::from_str(&serialize(request)).expect("request body is JSON")
 }
 
 /// The transcript, as the list of messages this endpoint reads.
@@ -49,18 +58,17 @@ pub(super) fn build(request: &Request<'_>) -> Value {
 /// the only place this wire has for them. It is a weaker promise than a field —
 /// the model may answer the instructions rather than obey them — and it is the
 /// one this endpoint offers.
-fn messages(request: &Request<'_>) -> Vec<Value> {
-    let mut messages = Vec::new();
-
-    if let Some(system) = &request.system {
-        messages.push(json!({ "role": "system", "content": &**system }));
+fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
+    if let Some(system) = request.system {
+        messages.object(|message| {
+            message.text("role", "system");
+            message.text("content", system);
+        });
     }
 
     for message in request.transcript.messages() {
-        append(&mut messages, message);
+        append(messages, message);
     }
-
-    messages
 }
 
 /// One message, as however many this wire needs for it.
@@ -68,35 +76,37 @@ fn messages(request: &Request<'_>) -> Vec<Value> {
 /// Appends rather than maps because the counts differ both ways: a turn that
 /// called three tools is answered by three messages, and a turn cut short is
 /// two.
-fn append(messages: &mut Vec<Value>, message: &Message) {
+fn append(messages: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => messages.push(json!({ "role": "user", "content": &**text })),
+        Message::User(text) => messages.object(|message| {
+            message.text("role", "user");
+            message.text("content", text);
+        }),
         Message::Agent { text, calls, stop } => {
-            let mut assistant = Map::new();
-            assistant.insert("role".to_owned(), json!("assistant"));
-
             // Both fields are optional and one of them has to be there. A model
             // that goes straight to a tool says nothing first, and a message
             // with neither is one the API refuses.
-            if !text.is_empty() {
-                assistant.insert("content".to_owned(), json!(&**text));
-            }
-            if !calls.is_empty() {
-                assistant.insert(
-                    "tool_calls".to_owned(),
-                    Value::Array(calls.iter().map(call).collect()),
-                );
-            }
-
             // Nothing said and nothing asked for: a turn cancelled or filtered
             // before the model's first word. It is recorded, so it would be
             // sent on every turn after it — one bad turn making the session
             // refuse to continue at all.
-            if assistant.len() == 1 {
+            if text.is_empty() && calls.is_empty() {
                 return;
             }
 
-            messages.push(Value::Object(assistant));
+            messages.object(|assistant| {
+                assistant.text("role", "assistant");
+                if !text.is_empty() {
+                    assistant.text("content", text);
+                }
+                if !calls.is_empty() {
+                    assistant.array("tool_calls", |items| {
+                        for call in calls {
+                            items.object(|item| write_call(item, call));
+                        }
+                    });
+                }
+            });
 
             // A message of its own after the answer. Left off, the model reads
             // its own half-sentence as a turn it chose to end — on the next
@@ -107,26 +117,31 @@ fn append(messages: &mut Vec<Value>, message: &Message) {
             // one in between is a request the API refuses outright. A turn
             // holding calls ended by asking for them, which is not a cut.
             if let Some(said) = StopReason::cut(*stop).filter(|_| calls.is_empty()) {
-                messages.push(json!({ "role": "assistant", "content": said }));
+                messages.object(|message| {
+                    message.text("role", "assistant");
+                    message.text("content", said);
+                });
             }
         }
         // One message each, and a role of their own. Answered by `tool_call_id`
         // rather than by position, which is what lets a turn's results arrive
         // in any order.
-        Message::ToolResults(results) => messages.extend(results.iter().map(result)),
+        Message::ToolResults(results) => {
+            for result in results {
+                messages.object(|message| write_result(message, result));
+            }
+        }
     }
 }
 
 /// One call the model made.
-fn call(call: &ToolCall) -> Value {
-    json!({
-        "id": call.id.as_str(),
-        "type": "function",
-        "function": {
-            "name": &*call.name,
-            "arguments": arguments(call.args.as_str()),
-        },
-    })
+fn write_call(item: &mut Object<'_>, call: &ToolCall) {
+    item.text("id", call.id.as_str());
+    item.text("type", "function");
+    item.object("function", |function| {
+        function.text("name", &call.name);
+        function.text("arguments", arguments(call.args.as_str()));
+    });
 }
 
 /// Argument text, as the model wrote it.
@@ -142,39 +157,29 @@ fn arguments(args: &str) -> &str {
 }
 
 /// One tool result, as its own message.
-fn result(result: &ToolResult) -> Value {
+fn write_result(message: &mut Object<'_>, result: &ToolResult) {
     let text = result.output.text();
-
-    // There is no field for a failure on this wire. Unmarked, "no such file:
-    // x" reads as the contents of a file that was read successfully.
-    let content = if result.output.is_failed() {
-        format!("error: {text}")
+    message.text("role", "tool");
+    message.text("tool_call_id", result.id.as_str());
+    if result.output.is_failed() {
+        message.prefixed_text("content", "error: ", text);
     } else {
-        text.to_owned()
-    };
-
-    json!({
-        "role": "tool",
-        "tool_call_id": result.id.as_str(),
-        "content": content,
-    })
+        message.text("content", text);
+    }
 }
 
 /// One tool, as advertised.
 ///
 /// Nested under a `function` object, which is where this endpoint keeps a
 /// tool's name and schema and where the newer one does not.
-fn tool(schema: &ToolSchema) -> Value {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
     let (parameters, description) = described(schema.schema);
-
-    json!({
-        "type": "function",
-        "function": {
-            "name": schema.name,
-            "description": description,
-            "parameters": Value::Object(parameters),
-        },
-    })
+    tool.text("type", "function");
+    tool.object("function", |function| {
+        function.text("name", schema.name);
+        function.text("description", &description);
+        function.value("parameters", &serde_json::Value::Object(parameters));
+    });
 }
 
 #[cfg(test)]
