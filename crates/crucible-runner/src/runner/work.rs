@@ -2,7 +2,7 @@
 //!
 //! One rule shapes this file: **every call the transcript records has a result
 //! recorded with it.** A provider refuses a transcript containing a request
-//! with no answer, so a turn that stops half way through a round — because the
+//! with no answer, so a turn that stops half way through a pass — because the
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.
 
@@ -19,13 +19,16 @@ const NOT_RUN: &str = "not run: the turn ended first";
 /// What a call is answered with when the user said no.
 const DENIED: &str = "the user did not allow this";
 
+/// What a call is answered with when its output would cross the turn boundary.
+const OUTPUT_LIMIT: &str = "not run: the turn output limit was reached";
+
 /// What a call is answered with when standing policy forbids it — a rule, or
 /// the engine keeping its own configuration out of reach. Phrased for the
 /// model, which is what reads it: it says the wall is standing rather than
 /// momentary, so the answer is to do something else and not to rephrase this.
 const FORBIDDEN: &str = "permission policy does not allow this; asking again will not change it";
 
-/// What one round of calls decided about the turn.
+/// What one pass of calls decided about the turn.
 pub(crate) enum Went {
     /// Every call ran. Ask the model again.
     On,
@@ -33,6 +36,8 @@ pub(crate) enum Went {
     Stopped(StopReason),
     /// The user refused this tool.
     Refused(Box<str>),
+    /// A tool result would have crossed the retained-output boundary.
+    OutputLimit,
 }
 
 /// What one call produced.
@@ -45,7 +50,7 @@ enum Ran {
     Refused,
 }
 
-/// Everything a round of calls needs, gathered so the loop reads as one thing.
+/// Everything a pass of calls needs, gathered so the runner reads as one thing.
 pub(crate) struct Work<'a> {
     /// What may be called.
     pub(crate) tools: &'a Tools,
@@ -61,12 +66,18 @@ pub(crate) struct Work<'a> {
 
 impl Work<'_> {
     /// Runs `calls` in order, and answers every one of them.
-    pub(crate) fn round(&mut self, calls: &[ToolCall]) -> (Vec<ToolResult>, Went) {
+    pub(crate) fn pass(
+        &mut self,
+        calls: &[ToolCall],
+        held: usize,
+        maximum: usize,
+    ) -> (Vec<ToolResult>, Went, usize) {
         let mut results = Vec::with_capacity(calls.len());
         let mut went = Went::On;
+        let mut produced = 0_usize;
 
-        for call in calls {
-            let output = match went {
+        for (index, call) in calls.iter().enumerate() {
+            let mut output = match went {
                 Went::On => match self.one(call) {
                     Ran::Output(output) => output,
                     Ran::Stopped(stop) => {
@@ -81,7 +92,27 @@ impl Work<'_> {
                 // The turn is already over. The call is still answered, so the
                 // transcript stays one a provider will accept.
                 Went::Stopped(_) | Went::Refused(_) => ToolOutput::failed(NOT_RUN),
+                Went::OutputLimit => ToolOutput::failed(""),
             };
+
+            // Leave enough room to answer every later call even when this one
+            // fills the budget. The provider requires a result for every call
+            // already recorded, so dropping the tail is not a valid bound.
+            let later = calls.len().saturating_sub(index + 1);
+            let reserved = later.saturating_mul(NOT_RUN.len());
+            let room = maximum
+                .saturating_sub(held)
+                .saturating_sub(produced)
+                .saturating_sub(reserved);
+            if output.text().len() > room {
+                output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
+                    OUTPUT_LIMIT
+                } else {
+                    ""
+                });
+                went = Went::OutputLimit;
+            }
+            produced = produced.saturating_add(output.text().len());
 
             // Cloned because both halves need it: the renderer shows what the
             // tool produced, and the transcript sends it to the model. It is
@@ -97,7 +128,7 @@ impl Work<'_> {
             });
         }
 
-        (results, went)
+        (results, went, produced)
     }
 
     /// Runs one call, if it is allowed to run.
@@ -166,8 +197,8 @@ mod tests {
     use super::*;
     use crate::fake::{Fixed, Says, changing};
 
-    /// One round, with everything it needed set up around it.
-    struct Round {
+    /// One pass, with everything it needed set up around it.
+    struct Proof {
         tools: Tools,
         permission: Permission,
         says: Says,
@@ -176,7 +207,7 @@ mod tests {
         seen: Receiver<Event>,
     }
 
-    impl Round {
+    impl Proof {
         fn new(verdict: Verdict) -> Self {
             Self::asking(Says::new(verdict))
         }
@@ -199,7 +230,17 @@ mod tests {
             self
         }
 
-        fn round(&mut self, calls: &[ToolCall]) -> (Vec<ToolResult>, Went) {
+        fn pass(&mut self, calls: &[ToolCall]) -> (Vec<ToolResult>, Went) {
+            let (results, went, _) = self.within(calls, 0, usize::MAX);
+            (results, went)
+        }
+
+        fn within(
+            &mut self,
+            calls: &[ToolCall],
+            held: usize,
+            maximum: usize,
+        ) -> (Vec<ToolResult>, Went, usize) {
             Work {
                 tools: &self.tools,
                 permission: &mut self.permission,
@@ -207,7 +248,7 @@ mod tests {
                 events: &self.events,
                 cancel: &self.cancel,
             }
-            .round(calls)
+            .pass(calls, held, maximum)
         }
     }
 
@@ -225,10 +266,10 @@ mod tests {
 
     #[test]
     fn a_call_that_runs_comes_back_with_what_the_tool_produced() {
-        let mut round =
-            Round::new(Verdict::Allow).offering(Fixed::new("read").answering("fn main() {}"));
+        let mut proof =
+            Proof::new(Verdict::Allow).offering(Fixed::new("read").answering("fn main() {}"));
 
-        let (results, went) = round.round(&[call("a", "read")]);
+        let (results, went) = proof.pass(&[call("a", "read")]);
 
         assert_eq!(texts(&results), ["fn main() {}"]);
         assert!(matches!(went, Went::On), "the turn should carry on");
@@ -237,13 +278,13 @@ mod tests {
     #[test]
     fn the_tool_that_runs_is_the_one_the_verdict_was_reached_about() {
         // The name is dispatched on out of the approval, beside the arguments
-        // and the proof. Two tools answering differently are how a round can
+        // and the proof. Two tools answering differently are how a pass can
         // say which of them ran.
-        let mut round = Round::new(Verdict::Allow)
+        let mut proof = Proof::new(Verdict::Allow)
             .offering(Fixed::new("read").answering("what read produced"))
             .offering(Fixed::new("grep").answering("what grep produced"));
 
-        let (results, went) = round.round(&[call("a", "grep")]);
+        let (results, went) = proof.pass(&[call("a", "grep")]);
 
         assert_eq!(texts(&results), ["what grep produced"]);
         assert!(matches!(went, Went::On));
@@ -252,9 +293,9 @@ mod tests {
     #[test]
     fn a_name_no_tool_answers_to_is_reported_to_the_model_rather_than_ending_the_turn() {
         // The model invented it, so the model is the one that can fix it.
-        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
+        let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read"));
 
-        let (results, went) = round.round(&[call("a", "frobnicate")]);
+        let (results, went) = proof.pass(&[call("a", "frobnicate")]);
 
         assert_eq!(texts(&results), ["no tool named frobnicate"]);
         assert!(results.first().is_some_and(|r| r.output.is_failed()));
@@ -263,10 +304,10 @@ mod tests {
 
     #[test]
     fn a_tool_that_fails_reports_it_to_the_model_rather_than_ending_the_turn() {
-        let mut round =
-            Round::new(Verdict::Allow).offering(Fixed::new("read").breaking("unreadable"));
+        let mut proof =
+            Proof::new(Verdict::Allow).offering(Fixed::new("read").breaking("unreadable"));
 
-        let (results, went) = round.round(&[call("a", "read")]);
+        let (results, went) = proof.pass(&[call("a", "read")]);
 
         assert_eq!(texts(&results), ["read: unreadable"]);
         assert!(matches!(went, Went::On));
@@ -274,9 +315,9 @@ mod tests {
 
     #[test]
     fn a_denied_call_ends_the_turn_and_says_so_in_its_result() {
-        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
+        let mut proof = Proof::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
-        let (results, went) = round.round(&[call("a", "write")]);
+        let (results, went) = proof.pass(&[call("a", "write")]);
 
         assert_eq!(texts(&results), [DENIED]);
         assert!(
@@ -289,9 +330,9 @@ mod tests {
     fn every_call_is_answered_even_after_the_turn_is_over() {
         // A call with no result is a transcript the provider refuses, so the
         // ones that never ran are answered too.
-        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
+        let mut proof = Proof::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
-        let (results, _) = round.round(&[call("a", "write"), call("b", "write")]);
+        let (results, _) = proof.pass(&[call("a", "write"), call("b", "write")]);
 
         assert_eq!(results.len(), 2);
         assert_eq!(texts(&results), [DENIED, NOT_RUN]);
@@ -299,32 +340,32 @@ mod tests {
 
     #[test]
     fn a_call_allowed_for_the_session_is_not_put_to_the_user_again() {
-        // One permission engine covers the round, so the second call finds what
+        // One permission engine covers the pass, so the second call finds what
         // the first was allowed. A fresh engine per call would ask twice and
         // make `always` mean `once`.
-        let mut round = Round::asking(Says::for_the_session())
+        let mut proof = Proof::asking(Says::for_the_session())
             .offering(Fixed::new("write").risking(changing()));
 
-        round.round(&[call("a", "write"), call("b", "write")]);
+        proof.pass(&[call("a", "write"), call("b", "write")]);
 
-        assert_eq!(round.says.asked, 1);
+        assert_eq!(proof.says.asked, 1);
     }
 
     #[test]
     fn a_call_after_a_denial_is_never_put_to_the_user() {
-        let mut round = Round::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
+        let mut proof = Proof::new(Verdict::Deny).offering(Fixed::new("write").risking(changing()));
 
-        round.round(&[call("a", "write"), call("b", "write")]);
+        proof.pass(&[call("a", "write"), call("b", "write")]);
 
-        assert_eq!(round.says.asked, 1, "the user was asked about a dead turn");
+        assert_eq!(proof.says.asked, 1, "the user was asked about a dead turn");
     }
 
     #[test]
-    fn a_cancelled_round_stops_the_turn_without_running_anything_more() {
-        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
-        round.cancel.request();
+    fn a_cancelled_pass_stops_the_turn_without_running_anything_more() {
+        let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read"));
+        proof.cancel.request();
 
-        let (results, went) = round.round(&[call("a", "read")]);
+        let (results, went) = proof.pass(&[call("a", "read")]);
 
         assert_eq!(texts(&results), [NOT_RUN]);
         assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
@@ -334,9 +375,9 @@ mod tests {
     fn a_tool_that_noticed_the_cancellation_itself_stops_the_turn() {
         // A long-running tool checks the flag mid-work and returns. That is not
         // a failure to report to the model — the user stopped the turn.
-        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("bash").cancelling());
+        let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("bash").cancelling());
 
-        let (_, went) = round.round(&[call("a", "bash")]);
+        let (_, went) = proof.pass(&[call("a", "bash")]);
 
         assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
     }
@@ -345,11 +386,11 @@ mod tests {
     fn every_call_reports_that_it_finished() {
         // The renderer redraws the line it drew when the call was requested, so
         // a call with no finish stays on screen as if it were still running.
-        let mut round = Round::new(Verdict::Allow).offering(Fixed::new("read"));
+        let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read"));
 
-        round.round(&[call("a", "read"), call("b", "read")]);
+        proof.pass(&[call("a", "read"), call("b", "read")]);
 
-        let finished: Vec<String> = round
+        let finished: Vec<String> = proof
             .seen
             .try_iter()
             .filter_map(|event| match event {
@@ -363,5 +404,21 @@ mod tests {
             .collect();
 
         assert_eq!(finished, ["a", "b"]);
+    }
+
+    #[test]
+    fn an_output_limit_still_answers_every_recorded_call() {
+        let oversized = "x".repeat(OUTPUT_LIMIT.len() + 1);
+        let maximum = OUTPUT_LIMIT.len() + NOT_RUN.len();
+        let mut proof =
+            Proof::new(Verdict::Allow).offering(Fixed::new("read").answering(&oversized));
+
+        let (results, went, produced) =
+            proof.within(&[call("a", "read"), call("b", "read")], 0, maximum);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(texts(&results), [OUTPUT_LIMIT, ""]);
+        assert!(matches!(went, Went::OutputLimit));
+        assert!(produced <= maximum);
     }
 }

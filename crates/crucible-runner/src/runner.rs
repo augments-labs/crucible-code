@@ -24,6 +24,7 @@ use work::{Went, Work};
 const MAX_PROVIDER_RESPONSES_PER_TURN: usize = 32;
 const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_TURN: usize = 128;
+const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
 
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
@@ -31,6 +32,7 @@ struct TurnBounds {
     responses: usize,
     retained: usize,
     calls: usize,
+    tool_output: usize,
 }
 
 impl TurnBounds {
@@ -398,7 +400,7 @@ impl Runner {
         stop
     }
 
-    /// Rounds of asking and running, until something ends the turn.
+    /// Passes of asking and running, until something ends the turn.
     ///
     /// A failure returns instead, and the caller posts nothing: the failure is
     /// its own event, and a turn with two endings on screen has one too many.
@@ -407,6 +409,17 @@ impl Runner {
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
+    ) -> Result<StopReason, TurnError> {
+        self.exchange_with_tool_output_limit(ask, events, cancel, MAX_TOOL_OUTPUT_BYTES_PER_TURN)
+    }
+
+    /// Completes a turn under an explicit tool-result byte ceiling.
+    fn exchange_with_tool_output_limit(
+        &mut self,
+        ask: &mut dyn Ask,
+        events: &dyn Post,
+        cancel: &Cancel,
+        tool_output_maximum: usize,
     ) -> Result<StopReason, TurnError> {
         let mut bounds = TurnBounds::default();
         loop {
@@ -440,12 +453,12 @@ impl Runner {
             }
 
             // Recorded before they run, because running them is what changes
-            // the tree: a turn that ends part way through a round would
+            // the tree: a turn that ends part way through a tool pass would
             // otherwise leave a log whose last word is the prompt, and a
             // continued session that reads files it has already edited. A log
             // ending on a call nothing answered is the shape the replay already
-            // drops on the way back in. The calls are cloned because the round
-            // needs them too — one round's worth, which is what the turn holds
+            // drops on the way back in. The calls are cloned because the pass
+            // needs them too — one pass's worth, which is what the turn holds
             // either way and does not grow with the transcript.
             self.record(Message::Agent {
                 text,
@@ -453,14 +466,16 @@ impl Runner {
                 stop: Some(said),
             });
 
-            let (results, went) = Work {
+            let (results, went, output_bytes) = Work {
                 tools: &self.tools,
                 permission: &mut self.permission,
                 ask,
                 events,
                 cancel,
             }
-            .round(&calls);
+            .pass(&calls, bounds.tool_output, tool_output_maximum);
+
+            bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
             self.record(Message::ToolResults(results));
 
@@ -468,6 +483,11 @@ impl Runner {
                 Went::On => {}
                 Went::Stopped(stop) => return Ok(stop),
                 Went::Refused(name) => return Err(TurnError::Refused(name)),
+                Went::OutputLimit => {
+                    return Err(TurnError::ToolOutputBytes {
+                        maximum: tool_output_maximum,
+                    });
+                }
             }
         }
     }
@@ -567,7 +587,7 @@ impl Runner {
         (1..transcript.turns()).fold(TurnId::FIRST, |turn, _| turn.next())
     }
 
-    /// What to send this round.
+    /// What to send this pass.
     fn request(&self) -> Request<'_> {
         Request {
             model: &self.model.name,
