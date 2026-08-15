@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-15
+
 ### Added
 
 - **Releases ship an installer and an uninstaller.** `scripts/install.sh`
@@ -1506,7 +1508,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/augments-labs/crucible-code/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/augments-labs/crucible-code/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/augments-labs/crucible-code/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/augments-labs/crucible-code/compare/v0.1.3...v0.1.4
