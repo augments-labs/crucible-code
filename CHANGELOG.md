@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **The smoke gate verifies checksums exactly and enforces the glibc floor.**
+  `--offline` is renamed to `--no-provider`, a local tarball can be checked
+  against `--checksum HEX`, a published artifact must match exactly one
+  SHA256SUMS line, and requiring more than glibc 2.34 fails the release.
+
 - **Every crate in the workspace is marked unpublished.** `publish = false` in
   each manifest turns an accidental `cargo publish` into an error; releases
   ship as tag-pushed GitHub Releases and nowhere else.
