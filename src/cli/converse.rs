@@ -24,18 +24,17 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Event, Minted, Post as _, Remember, Verdict, Workspace, narrowest};
+use crucible_core::{Cancel, Event, Post as _, Remember, Verdict, Workspace};
 use crucible_runner::Runner;
-use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, TerminalError, pressed};
+use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
 
 use super::draw;
-use super::remember;
 use super::seen::{Answer, Asking, Relay, Seen};
 use super::style::Style;
 use super::unasked;
@@ -80,8 +79,6 @@ pub(crate) struct Terms {
     pub(crate) style: Style,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
-    /// The file an answer of `always` writes its rule into.
-    pub(crate) remembering: PathBuf,
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
     /// there is no name to write it under.
@@ -92,7 +89,7 @@ pub(crate) struct Terms {
     pub(crate) provider: Cell<Option<&'static str>>,
     /// The file at home that `/model` writes its answer into. A model is a fact
     /// about who is running crucible rather than about the checkout, so it is
-    /// not the file beside `remembering`.
+    /// not a project configuration file.
     pub(crate) choosing: PathBuf,
     /// Where a key given to `/login` is written down. Built by the caller from
     /// the same home directory the launch read its keys out of: a store built
@@ -375,7 +372,7 @@ fn take<T: Terminal>(
                     // loop waits on the worker. A refusal is what a drawing
                     // thread that has stopped already means, said out loud
                     // rather than by going quiet.
-                    let _ = reply.send(verdict(None, false));
+                    let _ = reply.send(verdict(None));
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -461,10 +458,9 @@ struct Answers<'a> {
 fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     answers: &mut Answers<'_>,
-    writable: bool,
 ) -> Result<Answer, Fatal> {
     if !answers.keys {
-        return Ok(verdict(read(answers.input)?.as_deref(), writable));
+        return Ok(verdict(read(answers.input)?.as_deref()));
     }
 
     loop {
@@ -486,7 +482,7 @@ fn answered<T: Terminal>(
         };
 
         draw::answered(renderer, &said)?;
-        return Ok(verdict(Some(&said), writable));
+        return Ok(verdict(Some(&said)));
     }
 }
 
@@ -548,21 +544,12 @@ fn shown<T: Terminal>(
     match one {
         Seen::Turn(event) => draw::event(renderer, event, style)?,
         Seen::Question { call, sensitivity } => {
-            // Minted once and used twice. What the question offers has to be
-            // the rule that gets written, or the user agreed to one thing and
-            // crucible wrote down another.
-            let rule = narrowest(&call, &sensitivity);
-
-            draw::question(renderer, &call, &sensitivity, rule.as_ref(), style)?;
-            let answer = answered(renderer, answers, rule.is_some())?;
-
-            // Before the answer goes back, so the file is written by the time
-            // the tool it allowed runs. `always` is only ever answered where a
-            // rule was minted, so the two arriving together is one fact twice
-            // rather than a case that has to be handled.
-            if let (Some(rule), Remember::Always) = (&rule, answer.1) {
-                keep(renderer, &terms.remembering, rule, style)?;
-            }
+            // Either project configuration filename can arrive with a
+            // checkout. Until durable policy has a store outside it, offer
+            // only lifetimes this process can honour without trusting the
+            // repository.
+            draw::question(renderer, &call, &sensitivity, style)?;
+            let answer = answered(renderer, answers)?;
 
             // A worker that stopped waiting has already denied itself.
             let _ = reply.send(answer);
@@ -570,31 +557,6 @@ fn shown<T: Terminal>(
     }
 
     Ok(())
-}
-
-/// Writes one rule down, and says what happened either way.
-///
-/// A failure here does not end the turn and does not change the answer. The
-/// engine treats `always` as at least a session's worth on its own, so what a
-/// failed write costs is the part that outlives the process — and the line
-/// drawn says which rule that was, so it can be added by hand.
-fn keep<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    file: &Path,
-    rule: &Minted,
-    style: Style,
-) -> Result<(), TerminalError> {
-    let outcome = remember::allowing(file, rule);
-
-    draw::remembered(
-        renderer,
-        rule,
-        match &outcome {
-            Ok(()) => Ok(file),
-            Err(problem) => Err(problem),
-        },
-        style,
-    )
 }
 
 /// Reads one line, or `None` at end of input.
@@ -614,15 +576,12 @@ fn read(input: &mut dyn BufRead) -> Result<Option<String>, Fatal> {
 /// yes is explicit; everything else, including a typo and a closed pipe, leaves
 /// the tool unrun.
 ///
-/// `writable` is whether a rule could be minted for this call. Where none can,
-/// `always` is neither offered nor accepted: an answer that cannot be written
-/// down would last a session while reading as though it lasted for ever, and
-/// the difference would only show up the next time crucible started.
-fn verdict(answer: Option<&str>, writable: bool) -> Answer {
+/// Durable rules have no trusted per-workspace store yet, so `always` is not an
+/// answer. Treating it as a session answer would promise more than was kept.
+fn verdict(answer: Option<&str>) -> Answer {
     match answer.map(str::trim) {
         Some("y" | "Y" | "yes") => (Verdict::Allow, Remember::Never),
         Some("s" | "S" | "session") => (Verdict::Allow, Remember::Session),
-        Some("a" | "A" | "always") if writable => (Verdict::Allow, Remember::Always),
         _ => (Verdict::Deny, Remember::Never),
     }
 }

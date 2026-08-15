@@ -6,9 +6,7 @@ use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use crucible_auth::Store;
-use crucible_core::{
-    Delta, Mode, Permission, Rules, Settled, StopReason, ToolArgs, ToolCall, ToolId,
-};
+use crucible_core::{Delta, Mode, Permission, Rules, StopReason, ToolId};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, Terminal, TerminalError};
 
@@ -19,17 +17,12 @@ use crate::cli::sample::Sample;
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-/// The file `always` would write to is inside a tree of this process's own and
-/// is never created: a test that watches the writing points these terms at a
-/// sample of its own instead.
 fn plain() -> Terms {
     let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
 
     Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
-        remembering: crucible_config::local(&unwritten),
-
         // A provider, so `/model` has a name to write its answer under, and a
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.
@@ -377,14 +370,6 @@ fn tools(tool: Fixed) -> Tools {
     let mut offered = Tools::new();
     offered.add(Box::new(tool));
     offered
-}
-/// The call the script below made, as the engine will be asked about it.
-fn asking(name: &str) -> ToolCall {
-    ToolCall {
-        id: ToolId::new("a"),
-        name: name.into(),
-        args: ToolArgs::new("{}"),
-    }
 }
 fn calling(name: &str) -> Vec<Delta> {
     vec![

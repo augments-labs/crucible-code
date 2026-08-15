@@ -32,10 +32,10 @@ which is the point. Two projects open in two terminals are two sessions.
 `--continue` replays the transcript so the model has the earlier turns, and
 appends to the same file. It does not restore permissions: a session-long allow
 lives as long as the process that made it, and the mode is read fresh from
-configuration at every start. An answer of `always` is the exception, and it is
-not restored so much as never lost — it was written into
-`.crucible/config.local.json` as an `allow` rule, so every start reads it, this
-one included. See [Permissions](../permissions/permissions.md).
+configuration at every start. A durable `allow` rule you deliberately wrote in
+`~/.crucible/config.json` is read again, but crucible does not turn an answer at
+a permission question into one. See
+[Permissions](../permissions/permissions.md).
 
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.

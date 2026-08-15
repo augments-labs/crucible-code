@@ -25,14 +25,15 @@ pub enum Remember {
     /// Every call like this one until crucible exits. Nothing is written to
     /// disk, so it does not survive the process that made it.
     Session,
-    /// Every call like this one, from now on. A rule is written into the
-    /// project's git-ignored configuration, so it outlives this process and can
-    /// be read — and deleted — like any rule somebody wrote by hand.
+    /// Every call like this one, from now on. Reserved for an [`Ask`]
+    /// implementation backed by a trusted durable policy store; an
+    /// implementation that cannot keep that promise must not return it.
     ///
     /// The writing happens above this crate, which reaches no files. What the
     /// engine does with it is what it does with `Session`: an answer that lasts
     /// for ever lasts for the rest of this session too, without waiting for the
-    /// file to be read back.
+    /// store to be read back. The terminal implementation does not currently
+    /// offer it.
     Always,
 }
 

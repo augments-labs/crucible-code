@@ -151,8 +151,8 @@ fn chosen<T: Terminal>(
 /// Asks for it from the next turn on, and writes it down for the next run.
 ///
 /// A failure to write does not undo the rung. What is lost is the part that
-/// outlives the process, and the line drawn says so — the same bargain `/model`
-/// and an answer of `always` are both on.
+/// outlives the process, and the line drawn says so — the same bargain as a
+/// choice made through `/model`.
 fn taken<T: Terminal>(
     effort: Effort,
     provider: &str,

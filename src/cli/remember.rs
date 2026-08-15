@@ -1,9 +1,8 @@
 //! Writing one answer into a configuration file.
 //!
-//! Into two files: the rule an answer of `always` leaves behind goes into the
-//! layer a project keeps out of git, and what `/model` and `/effort` pick goes
-//! into the one at home, because which model to ask and how hard to think are
-//! facts about who is running crucible rather than about the checkout.
+//! `/model` and `/effort` write into the file at home, because which model to
+//! ask and how hard to think are facts about who is running crucible rather
+//! than about the checkout.
 //!
 //! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
@@ -13,14 +12,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crucible_config::ConfigError;
-use crucible_core::{Effort, Minted};
+use crucible_core::Effort;
 
-/// What can stop an answer of `always` from lasting.
-///
-/// None of these ends the turn. The call the user allowed still runs and the
-/// engine still remembers it for the session; what is lost is the part that
-/// outlives the process, and the report says which rule that was so it can be
-/// written by hand.
+#[cfg(test)]
+use crucible_core::Minted;
+
+/// What can stop a configuration choice from lasting.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RememberError {
     #[error("{file} could not be written: {source}")]
@@ -34,7 +31,8 @@ pub(crate) enum RememberError {
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
 /// that is not there yet becomes one holding the rule and nothing else.
-pub(crate) fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
+#[cfg(test)]
+fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::allowing(text, named, rule)
     })
@@ -118,7 +116,7 @@ fn put(file: &Path, text: &str) -> io::Result<()> {
     // the user narrowed this to would be widened back to what the account
     // creates a file as — and this is the file that says what may run without
     // being asked about, so widening who can write to it is the last thing
-    // answering `always` should do. `None` where there is nothing there yet,
+    // replacing one choice should do. `None` where there is nothing there yet,
     // which is the case the account's own default is right for.
     let held = fs::metadata(file).map(|found| found.permissions()).ok();
 
@@ -186,7 +184,7 @@ impl Drop for Beside {
         }
 
         // Whatever went wrong is already on its way to the user, and it is the
-        // part they need: the rule was not remembered. A tidy-up that failed
+        // part they need: the choice was not written. A tidy-up that failed
         // has nowhere to go that would not be in front of that, so it goes
         // nowhere. The same silence covers the write that never made a file.
         let _ = fs::remove_file(&self.path);

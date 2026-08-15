@@ -22,8 +22,7 @@ use std::path::Path;
 /// cannot match. The separator is one: `/` is what the pattern language has, a
 /// matcher normalises a candidate to it before comparing, and a path left as it
 /// arrived mints `src[\]main.rs` — the backslash escaped as the literal
-/// character it is not. Somebody would answer "always" and be asked the same
-/// question next turn.
+/// character it is not. Somebody would write that rule and still be asked.
 ///
 /// The prefix is the other. Resolving a path yields the extended-length
 /// spelling, `\\?\C:\...`, which nobody writes and nobody would recognise their

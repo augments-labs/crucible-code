@@ -41,7 +41,7 @@ without a question is `fullAccess`, and there is no other.
 That leaves `allowEdits` as one sentence, which is the whole of what it is for:
 the tools that change files change them, and anything that starts a process is
 put to you. Standing permission for a command you run all day is an
-[allow rule](rules.md) or an answer of `always` — written down where you can
+[allow rule](rules.md) in `~/.crucible/config.json`, written down where you can
 read it back and take it away again.
 
 ## The mode is always on screen
@@ -94,7 +94,7 @@ up its transcript; it does not pick up the mode the session last ran in — a
 step made with <kbd>Shift-Tab</kbd> included — nor a session-long allow, which
 lives only as long as the process it was made in.
 
-An answer of `always` is not one of those. It writes an `allow`
-[rule](rules.md) into `.crucible/config.local.json`, and every later start reads
-that file, so the permission is in force until you delete the line —
-see [What `always` writes](permissions.md#what-always-writes).
+A durable [allow rule](rules.md) in `~/.crucible/config.json` is read again on
+the next start. Crucible does not write one from a permission question: either
+workspace filename can be committed, so neither is a trusted place to remember
+authority for one checkout.

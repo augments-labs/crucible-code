@@ -29,12 +29,12 @@ When a call comes down to asking, the turn stops:
 
 ```
 ? write wants to change: src/main.rs
-  [y]es  [s]ession  [a]lways  [n]o ›
+  [y]es  [s]ession  [n]o ›
 ```
 
 ```
 ? bash wants to run: cargo test
-  [y]es  [s]ession  [a]lways  [n]o ›
+  [y]es  [s]ession  [n]o ›
 ```
 
 A file change names the file it would touch — the resolved path, after
@@ -46,23 +46,22 @@ choose: a newline left in it would commit a second row, and the question you
 answer would be one the model wrote rather than the one crucible asked.
 Nothing runs while the question is on screen.
 
-## The four answers
+## The three answers
 
 | You type | What happens |
 | --- | --- |
 | `y`, `Y`, `yes` | Runs, this once. The next call like it asks again. |
 | `s`, `S`, `session` | Runs, and stops asking for calls like this one until crucible exits. |
-| `a`, `A`, `always` | Runs, stops asking, and [writes the rule down](#what-always-writes) so the next session starts with it. |
 | anything else | Does not run. |
 
 **Anything else** means exactly that: `n`, `no`, an empty line, a typo, or the
-input ending. There are three ways to say yes and all of them are explicit;
+input ending. There are two ways to say yes and both are explicit;
 everything that is not one of them leaves the tool unrun.
 
-The two durations are separate words because they are separate promises, and
-one of them costs a file. `s` is the answer for a command you will run twenty
-times this afternoon and never think about again; `a` is the answer for one you
-will still be running next month.
+`s` is the answer for a command you will run twenty times this afternoon and
+never think about again. Durable standing policy is edited as a rule with the
+configuration file open, where its scope can be reviewed before it takes
+effect.
 
 ## Two kinds of no
 
@@ -99,57 +98,13 @@ written to disk, so `--continue` starts with none — resuming a session does
 not resume its permissions, and the mode comes fresh from configuration at
 every start.
 
-## What `always` writes
+## Durable rules
 
-`always` is the same allow, put where the next start will find it. The line
-under the question says where it went:
-
-```
-· remembered bash(cargo test) in /home/you/api/.crucible/config.local.json
-```
-
-That is an `allow` [rule](rules.md), and it is the narrowest one that covers
-the call: the tool, and exactly what the question named, spelled so that it
-matches itself and nothing else. A `*` in the command or the filename is
-escaped rather than left to widen the rule — `rm *.tmp` is remembered as the
-command you saw, not as `rm` on anything ending in `.tmp`.
-
-It goes into `.crucible/config.local.json`, the layer
-[git ignores](../configuration/configuration.md#the-file-that-travels), so an
-answer you gave on your machine stays on it and does not reach everyone who
-clones. Everything already in that file is left where it was, byte for byte,
-including the parts crucible has no setting for.
-
-Since it is an ordinary allow rule in an ordinary file, taking the permission
-back is opening the file and deleting the line.
-
-### When there is nothing to write
-
-Some calls have no rule that describes them. A command line that is several
-commands, or one whose text does not say what will run — a substitution, an
-expansion, a redirection, a background `&`, a leading `VAR=value`, a
-[wrapper program](allowing.md) — could only be written down as something wider
-than what you were asked about. So `always` is not offered:
-
-```
-? bash wants to run: git add ., then git commit
-  [y]es  [s]ession  [n]o ›
-```
-
-Typing `a` at that question is a word the prompt has no answer for, and
-anything the prompt has no answer for does not run. `s` still works: a session
-remembers the call itself and needs no rule text.
-
-### When the file cannot be written
-
-```
-! bash(cargo test) was not remembered: /home/you/api/.crucible/config.local.json is not valid JSON at line 2, column 1
-```
-
-The call still runs and the session still stops asking about calls like it.
-What is lost is the part that outlives the process — so the rule is printed
-exactly as it would have been written, and adding it by hand is a copy and a
-paste.
+A lasting `allow` is written deliberately in `~/.crucible/config.json`, outside
+the checkout. Neither workspace configuration filename can carry authority:
+an ignored-by-convention file is still a filename a repository can commit, and
+crucible cannot distinguish the two sources safely. Project files may add
+`ask` and `deny` policy because both narrow what can happen.
 
 ## The files no tool may write
 
@@ -159,11 +114,6 @@ one in your home directory. Not in any mode, and not under any rule — a single
 write there could put an allow for everything into the next start, so that
 refusal cannot be entrusted to the rules and modes it would defeat. Reading
 them stays ordinary; it is how a session begins.
-
-`always` writes to one of those files, and is not an exception to this: it is
-not a tool call. The model can ask for a command; it cannot ask for a rule, and
-the only thing that puts one in the file is the letter you typed at a question
-about a call you were shown.
 
 ## The guarantee underneath
 

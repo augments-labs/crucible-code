@@ -269,11 +269,11 @@ fn allowing_one_file_for_the_session_does_not_allow_another() {
 }
 
 #[test]
-fn what_an_always_answer_showed_is_what_it_governs_the_session_by() {
-    // `always` writes a rule naming one file, and until something reads that
-    // file back the session's own memory is what stands for it. The two have
-    // to cover the same thing: a memory wider than the rule shown is a promise
-    // broken in the turn it was made.
+fn what_a_durable_answer_showed_is_what_it_governs_the_session_by() {
+    // A caller with a trusted store persists a rule naming one file. Until the
+    // next process reads that store, this session's memory stands for it. The
+    // two must cover the same thing: wider memory would break the promise in
+    // the turn where it was made.
     let mut permission = Permission::new();
     let mut answer = Answer::for_ever();
     let call = call("write");

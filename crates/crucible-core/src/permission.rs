@@ -130,9 +130,9 @@ impl Permission {
     /// For a process that has picked up a different session. "For the rest of
     /// this session" was answered about the session being left behind, and an
     /// allow that outlived the thing it was scoped to would be a question
-    /// nobody was asked. An answer of `always` is untouched, because it was
-    /// never held here: it was written down as a rule, and the rules are what
-    /// they were.
+    /// nobody was asked. A durable policy store, if an [`Ask`] implementation
+    /// has one, is outside this engine and must build the rules for the session
+    /// being entered.
     pub fn forget(&mut self) {
         self.remembered = HashSet::new();
     }
@@ -273,10 +273,9 @@ impl Permission {
     /// hook git runs on every commit — the question showed one of them, so that
     /// is the whole of what an answer to it can cover.
     ///
-    /// Spelled the way the question spelled it, which is also the way a rule
-    /// minted from an `always` spells it. The two are one promise made twice:
-    /// the rule is what the next session reads, and this is what stands for it
-    /// until something does.
+    /// Spelled the way the question spelled it, which is also the way a durable
+    /// rule is minted. The two scopes must agree: this is what stands for a
+    /// persisted answer during the current session.
     fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Box<str> {
         match sensitivity {
             // A read never reaches here — an `ask` about one became a refusal
