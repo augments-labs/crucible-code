@@ -164,14 +164,41 @@ pub fn asking(text: &str, file: &str, provider: &str) -> Result<String, ConfigEr
 /// [`ConfigError::Malformed`] when the text is not JSON, and
 /// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
 /// into without rewriting — which is the moment to tell somebody what to type
-/// rather than to guess at their file.
+/// rather than to guess at their file. [`ConfigError::Unremovable`] when the
+/// rung chosen for the previous model cannot be lifted out for the same
+/// reason.
 pub fn choosing(
     text: &str,
     file: &str,
     provider: &str,
     model: &str,
 ) -> Result<String, ConfigError> {
-    beside(text, file, provider, "model", model)
+    let written = beside(text, file, provider, "model", model)?;
+    without_effort(&written, file, provider)
+}
+
+/// Removes a rung chosen for the previous model.
+fn without_effort(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+    let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })?;
+    let Some(chosen) = value.get("providers").and_then(|all| all.get(provider)) else {
+        return Ok(text.to_owned());
+    };
+    if chosen.get("effort").is_none() {
+        return Ok(text.to_owned());
+    }
+    let refuse = || ConfigError::Unremovable {
+        file: file.into(),
+        at: format!("providers.{provider}.effort").into(),
+    };
+    let root = splice::root(text).ok_or_else(refuse)?;
+    let providers = splice::member(text, root, "providers").ok_or_else(refuse)?;
+    let provider = splice::member(text, providers, provider).ok_or_else(refuse)?;
+    splice::remove(text, provider, "effort").ok_or_else(refuse)
 }
 
 /// The text of a configuration file that asks `provider` to think this hard.
@@ -183,7 +210,8 @@ pub fn choosing(
 ///
 /// # Errors
 ///
-/// The same two, for the same reasons.
+/// [`ConfigError::Malformed`] and [`ConfigError::Unspliceable`], for the same
+/// reasons as [`choosing`].
 pub fn thinking(
     text: &str,
     file: &str,

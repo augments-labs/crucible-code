@@ -20,7 +20,8 @@ fn built(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, Fatal> {
-    provider(serving, settings, from, &Keys::default())
+    let subscriptions = Subscriptions::production();
+    provider(serving, settings, from, &Keys::default(), &subscriptions)
 }
 
 /// What a credential writes into the header it signs with.
@@ -159,6 +160,102 @@ fn a_provider_is_built_at_the_address_its_configuration_names() {
 }
 
 #[test]
+fn an_openai_subscription_uses_its_fixed_audience() {
+    // A plan's token is issued against one address, and the registry is what
+    // keeps the two paired: the credential and its audience come back as one
+    // answer rather than as halves a call site could recombine.
+    let sample = Sample::new("subscription-endpoint");
+    let keys = sample.subscribed("openai");
+    let subscriptions = Subscriptions::production();
+
+    let (endpoint, _) = credential(
+        ApiAudience {
+            provider: "openai",
+            variable: "OPENAI_API_KEY",
+            vendor: OpenAi::VENDOR,
+        },
+        None,
+        &|_| None,
+        &keys,
+        &subscriptions,
+    )
+    .expect("a stored subscription");
+
+    assert_eq!(endpoint, OpenAi::SUBSCRIPTION);
+}
+
+#[test]
+fn a_kimi_subscription_uses_the_managed_coding_audience() {
+    let sample = Sample::new("kimi-subscription-endpoint");
+    let keys = sample.subscribed("moonshot");
+    let subscriptions = Subscriptions::production();
+
+    let (endpoint, _) = credential(
+        ApiAudience {
+            provider: "moonshot",
+            variable: "MOONSHOT_API_KEY",
+            vendor: Moonshot::CODING,
+        },
+        None,
+        &|_| None,
+        &keys,
+        &subscriptions,
+    )
+    .expect("a stored Kimi account");
+
+    assert_eq!(endpoint, Moonshot::CODING);
+}
+
+#[test]
+fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() {
+    // An exported key is chosen for this run, and the configured gateway is
+    // where its owner pointed it. A stored subscription outranks neither.
+    let sample = Sample::new("api-key-over-subscription");
+    let keys = sample.subscribed("openai");
+    let settings =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    let subscriptions = Subscriptions::production();
+
+    let (endpoint, _) = credential(
+        ApiAudience {
+            provider: "openai",
+            variable: "OPENAI_API_KEY",
+            vendor: OpenAi::VENDOR,
+        },
+        sending_to(&settings, "openai").expect("an address the check accepted"),
+        &|_| Some("an-exported-key".to_owned()),
+        &keys,
+        &subscriptions,
+    )
+    .expect("the explicit API key for this run");
+
+    assert_eq!(endpoint.as_str(), "https://gateway.example/v1");
+}
+
+#[test]
+fn a_subscription_token_never_follows_a_configured_api_key_address() {
+    // `baseUrl` is somebody's reason not to reach the vendor, and a plan's
+    // token is the vendor's: with nothing else to sign with, the run gets the
+    // missing-key sentence rather than a subscription sent to a gateway.
+    let sample = Sample::new("subscription-custom-endpoint");
+    let keys = sample.subscribed("openai");
+    let settings =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    let subscriptions = Subscriptions::production();
+
+    let problem = provider(
+        Some(serving("openai")),
+        &settings,
+        &|_| None,
+        &keys,
+        &subscriptions,
+    )
+    .expect_err("a subscription sent to an API-key gateway");
+
+    assert!(matches!(problem, Fatal::Credential(_)), "{problem:?}");
+}
+
+#[test]
 fn an_address_that_would_put_the_key_on_the_wire_stops_the_run() {
     // Not a warning that carries on at the vendor's address: somebody who set
     // this has a reason not to reach the vendor, and going there anyway would
@@ -276,6 +373,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         cancel: &Cancel::new(),
         from: &|_| None,
         stored: &Keys::default(),
+        subscriptions: &Subscriptions::production(),
     }) else {
         panic!("a startup with no key was accepted");
     };
@@ -306,6 +404,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         cancel: &Cancel::new(),
         from: &|_| None,
         stored: &Keys::default(),
+        subscriptions: &Subscriptions::production(),
     })
     .expect("a session with nothing set up still starts");
 

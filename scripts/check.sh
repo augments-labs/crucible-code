@@ -100,6 +100,18 @@ if ! cargo fmt --all --check; then
     failed=1
 fi
 
+section "installer"
+for script in scripts/install.sh scripts/uninstall.sh scripts/install-tests.sh; do
+    if ! bash -n "$script"; then
+        printf '    FAIL %s is not valid Bash\n' "$script"
+        failed=1
+    fi
+done
+if ! scripts/install-tests.sh; then
+    printf '    FAIL the installer did not preserve its checksum, ownership, or rollback contract\n'
+    failed=1
+fi
+
 # `--locked` on both, because CI passes it and a release builds with it. Without
 # it cargo rewrites `Cargo.lock` on the way past whenever the manifest asks for
 # something the lock does not have, and the run goes green on a lockfile that

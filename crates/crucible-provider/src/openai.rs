@@ -51,6 +51,9 @@ const NAME: &str = "openai";
 /// Where requests go unless a setting says otherwise.
 const VENDOR: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
 
+/// Where `ChatGPT` subscription credentials serve the Responses protocol.
+const SUBSCRIPTION: Endpoint = Endpoint::fixed("https://chatgpt.com/backend-api/codex/responses");
+
 /// OpenAI's Responses API.
 #[derive(Debug)]
 pub struct OpenAi {
@@ -63,6 +66,13 @@ impl OpenAi {
     /// The address this API is served at, for a caller with no reason to send
     /// anywhere else.
     pub const VENDOR: Endpoint = VENDOR;
+
+    /// The fixed endpoint that accepts a `ChatGPT` subscription credential.
+    ///
+    /// Kept distinct from [`OpenAi::VENDOR`]: an API key may be redirected to a
+    /// configured compatible gateway, while a subscription token is minted for
+    /// this audience and must never follow that setting.
+    pub const SUBSCRIPTION: Endpoint = SUBSCRIPTION;
 
     /// A provider that authenticates with `credential`, sends over `transport`
     /// and posts to `endpoint`.
@@ -192,6 +202,28 @@ mod tests {
         provider.stream(asking("hello"), &Cancel::new()).unwrap();
 
         assert_eq!(replay.sent().url, "http://localhost:8080/v1");
+    }
+
+    #[test]
+    fn a_subscription_credential_is_served_at_its_own_fixed_address() {
+        // The same constructor, the other fixed address: which of the two a
+        // credential belongs to is decided by whoever wires it up, and what
+        // this asserts is that the choice reaches the transport intact.
+        let replay = std::sync::Arc::new(Replay::new(200, ANSWER));
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+
+        let provider = OpenAi::at(
+            OpenAi::SUBSCRIPTION,
+            Box::new(credential),
+            Box::new(std::sync::Arc::clone(&replay)),
+        );
+
+        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+
+        assert_eq!(
+            replay.sent().url,
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
     }
 
     fn asking(text: &str) -> Request<'static> {

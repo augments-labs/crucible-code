@@ -24,6 +24,7 @@ mod seen;
 mod standing;
 mod startup;
 mod style;
+mod subscription;
 
 use std::cell::Cell;
 use std::io::{self, Write as _};
@@ -42,6 +43,7 @@ use crate::cli::converse::Terms;
 use crate::cli::draw::Opening;
 use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
+use crate::cli::subscription::Subscriptions;
 
 /// The providers this is built with, and where each one's key is read from.
 ///
@@ -88,16 +90,15 @@ const PROVIDERS: [Served; 3] = [
         // names and does not serve the second of these at all, so a key from
         // there is a `baseUrl` and a typed name rather than a shorter list.
         models: &[
-            Model::new("k3", KIMI),
+            Model::shown("k3", "K3", KIMI),
             // The same model held to a quarter of its context. Offered beside
-            // it because the choice is a plan's rather than a preference: the
-            // full window is what the cheapest tier does not come with.
-            Model::new("k3-256k", KIMI),
-            // Both coding models think on every turn and are not asked how
-            // hard: the field is not theirs to read, and thinking cannot be
-            // turned off either.
-            Model::new("kimi-for-coding", NONE),
-            Model::new("kimi-for-coding-highspeed", NONE),
+            // it because the smaller context is a distinct provider offering
+            // rather than a local preference.
+            Model::shown("k3-256k", "K3-256k", KIMI),
+            // The coding models are known by their product names; the wire
+            // identifier stays the one the console serves them under.
+            Model::shown("kimi-for-coding", "K2.7 Coding", KIMI),
+            Model::shown("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ],
     },
     Served {
@@ -145,6 +146,9 @@ pub(crate) struct Model {
     /// What `--model` and `/model` name it, spelled the way the vendor spells
     /// it, because it is the vendor that has to recognise it.
     pub(crate) name: &'static str,
+    /// What a picker row calls it, where the product name differs from the wire
+    /// identifier a configuration or command must carry.
+    pub(crate) shown: &'static str,
     /// The rungs of [`Effort`] this model serves, weakest first, as its
     /// vendor's documentation had them when this was built.
     ///
@@ -160,7 +164,16 @@ pub(crate) struct Model {
 impl Model {
     /// One entry of the table above.
     const fn new(name: &'static str, rungs: &'static [Effort]) -> Self {
-        Self { name, rungs }
+        Self {
+            name,
+            shown: name,
+            rungs,
+        }
+    }
+
+    /// One entry whose product name and wire identifier differ.
+    const fn shown(name: &'static str, shown: &'static str, rungs: &'static [Effort]) -> Self {
+        Self { name, shown, rungs }
     }
 }
 
@@ -454,6 +467,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
     let keys = Store::in_home(home.path()).read();
+    let subscriptions = Subscriptions::production();
 
     // Widened after the files are read because the root is what found them:
     // `.crucible/config.json` is looked for in the directory crucible was
@@ -547,6 +561,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // run already read: nothing in them grows with the transcript.
         serving: {
             let settings = settings.clone();
+            let subscriptions = subscriptions.clone();
 
             Box::new(move |named: Served, stored: &Keys| {
                 Ok(Resolved {
@@ -555,6 +570,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
                         &settings,
                         &|name| std::env::var(name).ok(),
                         stored,
+                        &subscriptions,
                     )?,
 
                     // No flag on either, and that is the whole of the
@@ -604,7 +620,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         &mut renderer,
         &Opening {
             model: model.as_deref(),
-            provider: terms.provider.get(),
             unasked: unasked(terms.provider.get()),
             trouble: keys.trouble(),
             workspace: &workspace,
@@ -630,6 +645,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         cancel: &cancel,
         from: &from,
         stored: &keys,
+        subscriptions: &subscriptions,
     })?;
     let outcome = converse::converse(runner, &mut renderer, &terms, &mut io::stdin().lock());
 

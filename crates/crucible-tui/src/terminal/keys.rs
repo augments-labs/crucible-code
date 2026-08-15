@@ -7,8 +7,17 @@
 //!
 //! Above this line there is [`Key`], which is closed and small. A key nothing
 //! here maps is [`Pressed::Ignored`] rather than a variant, so an emulator
-//! sending something exotic costs a frame that is not drawn instead of a
-//! character nobody typed.
+//! sending something exotic costs no frame. Paste reporting stays disabled:
+//! crossterm otherwise retains the entire block before this boundary can cap it.
+//! Immediately ready character events are instead gathered by [`characters`]
+//! into one bounded run. The first structural event ends the run and is handed
+//! back, so batching changes neither its order nor its meaning.
+//!
+//! Crossterm still assumes a syntactically unfinished terminal control sequence
+//! is finite. That input comes only from the local terminal under the user's
+//! control; provider and model bytes are rendered as text and never reach this
+//! parser. Replacing the terminal reader is what would change that trust
+//! boundary, rather than presenting this local assumption as a remote bound.
 
 use std::time::Duration;
 
@@ -19,6 +28,13 @@ use crossterm::event::{
 
 use super::TerminalError;
 use crate::editor::Key;
+
+/// Most character events one call gathers before returning to its caller.
+///
+/// A prompt cannot retain more than this many one-byte characters. Keeping the
+/// same ceiling on already refused input also prevents a terminal that stays
+/// readable from monopolising the drawing thread in one nominal batch.
+const READY_CHARACTERS: usize = 1024 * 1024;
 
 /// What arrived while the prompt was waiting.
 ///
@@ -57,6 +73,71 @@ pub enum Pressed {
     Ignored,
 }
 
+/// One immediately ready run of ordinary characters.
+///
+/// Text never grows past the room its caller said remained. Characters beyond
+/// that boundary are consumed but marked refused, which lets the editor retain
+/// its prefix and draw one visible refusal instead of allocating or redrawing
+/// for every excess character. The first non-character is kept in `following`
+/// for the caller to process next.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Characters {
+    text: String,
+    following: Option<Pressed>,
+    refused: bool,
+    room: usize,
+}
+
+impl Characters {
+    /// Starts a bounded run with the character already read.
+    fn new(first: char, room: usize) -> Self {
+        let mut run = Self {
+            text: String::with_capacity(room.min(4096)),
+            following: None,
+            refused: false,
+            room,
+        };
+        let _ = run.push(Pressed::Key(Key::Char(first)));
+        run
+    }
+
+    /// Takes the gathered text, refusal mark, and structural boundary.
+    #[must_use]
+    pub fn into_parts(self) -> (String, bool, Option<Pressed>) {
+        (self.text, self.refused, self.following)
+    }
+
+    /// Adds one event, returning whether it was another character.
+    fn push(&mut self, arrived: Pressed) -> bool {
+        let Pressed::Key(Key::Char(character)) = arrived else {
+            self.following = Some(arrived);
+            return false;
+        };
+
+        if character.is_control() {
+            return true;
+        }
+        if character.len_utf8() > self.room.saturating_sub(self.text.len()) {
+            self.refused = true;
+            return true;
+        }
+
+        let needed = self.text.len() + character.len_utf8();
+        if needed > self.text.capacity() {
+            let grown = self
+                .text
+                .capacity()
+                .max(64)
+                .saturating_mul(2)
+                .min(self.room)
+                .max(needed);
+            self.text.reserve_exact(grown - self.text.len());
+        }
+        self.text.push(character);
+        true
+    }
+}
+
 /// Waits for the next thing the terminal has to say.
 ///
 /// Blocking, and deliberately so: the thread that draws the prompt has nothing
@@ -69,7 +150,32 @@ pub enum Pressed {
 ///
 /// [`TerminalError::Io`] if the terminal could not be read from.
 pub fn pressed() -> Result<Pressed, TerminalError> {
-    Ok(meaning(&event::read()?))
+    Ok(meaning(event::read()?))
+}
+
+/// Gathers the immediately ready characters following `first`.
+///
+/// The first structural event is read but returned with the run, so Enter,
+/// navigation, resize and every modifier remain boundaries. Input that has not
+/// arrived is never waited for: ordinary typing therefore still draws as each
+/// keystroke arrives, while a terminal paste already queued in the event reader
+/// becomes one insertion and one redraw.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be polled or read.
+pub fn characters(first: char, room: usize) -> Result<Characters, TerminalError> {
+    let mut run = Characters::new(first, room);
+    let mut gathered = 1;
+
+    while gathered < READY_CHARACTERS && run.following.is_none() && waiting(Duration::ZERO)? {
+        if !run.push(pressed()?) {
+            break;
+        }
+        gathered += 1;
+    }
+
+    Ok(run)
 }
 
 /// Whether the terminal has something to say, waiting up to `patience` for it.
@@ -90,11 +196,11 @@ pub fn waiting(patience: Duration) -> Result<bool, TerminalError> {
 ///
 /// Separate from the read so that every mapping below is a test rather than a
 /// keyboard.
-fn meaning(event: &Event) -> Pressed {
+fn meaning(event: Event) -> Pressed {
     match event {
         Event::Resize(..) => Pressed::Resized,
-        Event::Key(key) => key_pressed(*key),
-        Event::Mouse(mouse) => clicked(*mouse),
+        Event::Key(key) => key_pressed(key),
+        Event::Mouse(mouse) => clicked(mouse),
         _ => Pressed::Ignored,
     }
 }
@@ -227,11 +333,11 @@ mod tests {
     #[test]
     fn a_character_is_the_character_that_was_typed() {
         assert_eq!(
-            meaning(&press(KeyCode::Char('a'))),
+            meaning(press(KeyCode::Char('a'))),
             Pressed::Key(Key::Char('a'))
         );
         assert_eq!(
-            meaning(&press(KeyCode::Char('日'))),
+            meaning(press(KeyCode::Char('日'))),
             Pressed::Key(Key::Char('日'))
         );
     }
@@ -246,7 +352,7 @@ mod tests {
             (KeyCode::End, Key::End),
             (KeyCode::Enter, Key::Enter),
         ] {
-            assert_eq!(meaning(&press(code)), Pressed::Key(key), "{code:?}");
+            assert_eq!(meaning(press(code)), Pressed::Key(key), "{code:?}");
         }
     }
 
@@ -255,34 +361,31 @@ mod tests {
         // Raw mode is what stops these being a signal and an end of file, so
         // this file is where they stop being either.
         assert_eq!(
-            meaning(&control(KeyCode::Char('c'))),
+            meaning(control(KeyCode::Char('c'))),
             Pressed::Key(Key::Interrupt)
         );
-        assert_eq!(
-            meaning(&control(KeyCode::Char('d'))),
-            Pressed::Key(Key::Eof)
-        );
+        assert_eq!(meaning(control(KeyCode::Char('d'))), Pressed::Key(Key::Eof));
     }
 
     #[test]
     fn the_keys_that_act_on_the_mode_are_not_keys_the_editor_sees() {
         // A line is a line whatever mode the session is in, so neither of
         // these reaches the thing holding one.
-        assert_eq!(meaning(&press(KeyCode::BackTab)), Pressed::Cycle);
-        assert_eq!(meaning(&press(KeyCode::Esc)), Pressed::Escape);
+        assert_eq!(meaning(press(KeyCode::BackTab)), Pressed::Cycle);
+        assert_eq!(meaning(press(KeyCode::Esc)), Pressed::Escape);
 
         // Some emulators set the modifier as well as sending the code, and
         // one that does is not sending a different key.
         let shifted = Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(meaning(&shifted), Pressed::Cycle);
+        assert_eq!(meaning(shifted), Pressed::Cycle);
     }
 
     #[test]
     fn the_arrows_that_move_down_a_list_are_not_keys_the_editor_sees() {
         // A line is one row. Up and down could only mean the line if there
         // were a second one, and what is above the box is not the line.
-        assert_eq!(meaning(&press(KeyCode::Up)), Pressed::Up);
-        assert_eq!(meaning(&press(KeyCode::Down)), Pressed::Down);
+        assert_eq!(meaning(press(KeyCode::Up)), Pressed::Up);
+        assert_eq!(meaning(press(KeyCode::Down)), Pressed::Down);
     }
 
     #[test]
@@ -290,7 +393,7 @@ mod tests {
         // The two are one key apart and only one of them was bound. Reading a
         // near miss as the binding is how somebody ends up in a mode they did
         // not ask for.
-        assert_eq!(meaning(&press(KeyCode::Tab)), Pressed::Ignored);
+        assert_eq!(meaning(press(KeyCode::Tab)), Pressed::Ignored);
     }
 
     #[test]
@@ -298,19 +401,19 @@ mod tests {
         // Three spellings and one meaning. A reader who learned the binding on
         // one of these platforms is not asked to learn it again on the next.
         for held in [control(KeyCode::Left), alt(KeyCode::Left)] {
-            assert_eq!(meaning(&held), Pressed::Key(Key::WordLeft), "{held:?}");
+            assert_eq!(meaning(held), Pressed::Key(Key::WordLeft), "{held:?}");
         }
 
         for held in [control(KeyCode::Right), alt(KeyCode::Right)] {
-            assert_eq!(meaning(&held), Pressed::Key(Key::WordRight), "{held:?}");
+            assert_eq!(meaning(held), Pressed::Key(Key::WordRight), "{held:?}");
         }
 
         assert_eq!(
-            meaning(&alt(KeyCode::Char('b'))),
+            meaning(alt(KeyCode::Char('b'))),
             Pressed::Key(Key::WordLeft)
         );
         assert_eq!(
-            meaning(&alt(KeyCode::Char('f'))),
+            meaning(alt(KeyCode::Char('f'))),
             Pressed::Key(Key::WordRight)
         );
     }
@@ -319,12 +422,12 @@ mod tests {
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
         // Ctrl-A is the start of a line in one program and select-all in the
         // next. Typing a bare `a` for it would be the worst of the three.
-        assert_eq!(meaning(&control(KeyCode::Char('a'))), Pressed::Ignored);
+        assert_eq!(meaning(control(KeyCode::Char('a'))), Pressed::Ignored);
 
         // Alt is the modifier a reader is most likely to be holding for
         // something this program has never heard of — a window manager's, an
         // emulator's — and the letter under it is not what they meant to type.
-        assert_eq!(meaning(&alt(KeyCode::Char('a'))), Pressed::Ignored);
+        assert_eq!(meaning(alt(KeyCode::Char('a'))), Pressed::Ignored);
     }
 
     #[test]
@@ -337,17 +440,57 @@ mod tests {
             KeyEventKind::Release,
         ));
 
-        assert_eq!(meaning(&released), Pressed::Ignored);
+        assert_eq!(meaning(released), Pressed::Ignored);
     }
 
     #[test]
     fn a_window_that_changed_size_is_not_a_key() {
-        assert_eq!(meaning(&Event::Resize(100, 40)), Pressed::Resized);
+        assert_eq!(meaning(Event::Resize(100, 40)), Pressed::Resized);
     }
 
     #[test]
     fn everything_else_the_terminal_can_send_means_nothing_here() {
-        assert_eq!(meaning(&Event::FocusGained), Pressed::Ignored);
-        assert_eq!(meaning(&press(KeyCode::F(5))), Pressed::Ignored);
+        assert_eq!(meaning(Event::FocusGained), Pressed::Ignored);
+        assert_eq!(meaning(press(KeyCode::F(5))), Pressed::Ignored);
+    }
+
+    #[test]
+    fn bracketed_paste_is_absent_from_the_cross_platform_event_build() {
+        // Crossterm implements `Copy` for Event only when its bracketed-paste
+        // feature is absent. This assertion is target-independent, so the same
+        // dependency features are proved on Unix and Windows builds.
+        fn needs_copy<T: Copy>() {}
+
+        needs_copy::<Event>();
+    }
+
+    #[test]
+    fn a_large_character_run_is_bounded_and_stops_at_enter() {
+        const ROOM: usize = 900 * 1024;
+        let mut run = Characters::new('a', ROOM);
+
+        for _ in 1..ROOM + 4096 {
+            assert!(run.push(Pressed::Key(Key::Char('a'))));
+        }
+        assert!(!run.push(Pressed::Key(Key::Enter)));
+
+        let (text, refused, following) = run.into_parts();
+        assert_eq!(text.len(), ROOM);
+        assert!(text.capacity() <= ROOM);
+        assert!(refused);
+        assert_eq!(following, Some(Pressed::Key(Key::Enter)));
+    }
+
+    #[test]
+    fn navigation_is_a_boundary_and_not_part_of_a_character_run() {
+        let mut run = Characters::new('a', 16);
+
+        assert!(run.push(Pressed::Key(Key::Char('b'))));
+        assert!(!run.push(Pressed::Key(Key::Left)));
+
+        assert_eq!(
+            run.into_parts(),
+            ("ab".to_owned(), false, Some(Pressed::Key(Key::Left)))
+        );
     }
 }
