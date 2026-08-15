@@ -6,11 +6,12 @@ paths:
 # Changing crucible-session
 
 One append-only log per session. The line format, the claim that says a
-session is still open, and the platform code that holds the tree owner-only
-all live here, so the runner records through `Session` and holds none of
-them. Its `[dependencies]` names `crucible-core`, `serde_json` for the line
-format and `thiserror` for `SessionError` — plus `windows-sys` on Windows,
-where the access-list call is FFI.
+session is still open, the fixed index that names the recent ones, and the
+platform code that holds the tree owner-only all live here, so the runner
+records through `Session` and holds none of them. Its `[dependencies]` names
+`crucible-core`, `crucible-privacy` for the index's durable replacement,
+`serde_json` for the line format and `thiserror` for `SessionError` — plus
+`windows-sys` on Windows, where the access-list call is FFI.
 
 ## A format change is a format version change
 
@@ -26,6 +27,13 @@ directory, every log and every claim mark are owner-only: a file mode on
 Unix, an access list on Windows. The Windows side is FFI, and
 `privacy/windows.rs` is the one module in this crate that opts out of
 `unsafe_code` — precisely so that nothing else has to.
+
+## One bounded index names recent sessions
+
+The first migration may scan legacy logs, and it runs after the first frame.
+Ordinary startup reads the fixed-size index. A change must preserve both
+paths: old flat directories remain usable, while new sessions never make
+first-frame work proportional to the number of logs.
 
 ## A claim is how an open session says so
 

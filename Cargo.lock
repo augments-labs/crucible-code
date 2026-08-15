@@ -327,6 +327,7 @@ name = "crucible-session"
 version = "0.1.6"
 dependencies = [
  "crucible-core",
+ "crucible-privacy",
  "serde_json",
  "thiserror",
  "windows-sys 0.61.2",

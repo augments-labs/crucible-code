@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Session discovery uses a private fixed-size index.** The first frame no
+  longer enumerates the session directory, so startup stays flat as recordings
+  accumulate. A directory of logs written before this release is indexed once,
+  after the first frame of the first run that starts or continues a session —
+  until then its welcome list is empty; no log is moved or rewritten.
+
 ### Internal
 
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**
