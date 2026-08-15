@@ -112,7 +112,7 @@ impl Https {
                 status: response.status().as_u16(),
                 body: reader(response.into_body()),
             }),
-            Err(problem) => Err(TransportError::Unreachable(problem.to_string().into())),
+            Err(problem) => Err(request_problem(&problem)),
         }
     }
 }
@@ -161,9 +161,24 @@ impl Transport for Https {
                     body: Box::new(Waiting(reader(response.into_body()))),
                 })
             }
-            Err(problem) => Err(TransportError::Unreachable(problem.to_string().into())),
+            Err(problem) => Err(request_problem(&problem)),
         }
     }
+}
+
+/// Maps client errors without retaining or displaying a configured URL.
+fn request_problem(problem: &ureq::Error) -> TransportError {
+    let said = match problem {
+        ureq::Error::Timeout(_) => "request timed out",
+        ureq::Error::HostNotFound => "host was not found",
+        ureq::Error::ConnectionFailed => "connection failed",
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) => "TLS setup failed",
+        ureq::Error::Io(_) => "connection I/O failed",
+        ureq::Error::Protocol(_) => "HTTP protocol failed",
+        ureq::Error::BadUri(_) => "request URL was invalid",
+        _ => "HTTP request failed",
+    };
+    TransportError::Unreachable(said.into())
 }
 
 /// A body whose reads give up waiting instead of holding the thread.
@@ -384,6 +399,22 @@ mod tests {
             !reached.recv().unwrap(),
             "the redirect target was contacted"
         );
+    }
+
+    #[test]
+    fn a_failed_request_does_not_repeat_an_endpoints_query_secret() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || drop(listener.accept()));
+        let endpoint = crate::Endpoint::parse(&format!("http://{address}/v1?token=hunter2"))
+            .expect("the loopback endpoint to be accepted");
+
+        let problem = post(&Https::new(), endpoint.as_str(), &[], "{}")
+            .expect_err("the peer closed before a response");
+
+        server.join().unwrap();
+        assert!(!problem.to_string().contains("hunter2"), "{problem}");
+        assert!(!format!("{problem:?}").contains("hunter2"));
     }
 
     #[test]
