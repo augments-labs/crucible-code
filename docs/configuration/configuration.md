@@ -37,7 +37,9 @@ openai/gpt-5.6-terra` wins over anything a file says.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
-into settings that mysteriously stopped applying.
+into settings that mysteriously stopped applying. Each file is limited to 1
+MiB before JSON parsing, so a checkout cannot choose an unbounded startup
+allocation.
 
 ## What you can set
 

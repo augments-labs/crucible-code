@@ -37,6 +37,13 @@
 //! `0.x` is unstable: every key here may be renamed or removed in any `0.x`
 //! release with no deprecation period.
 
+/// The greatest one configuration document may be.
+///
+/// A MiB is far beyond the shape a human-maintained settings document needs,
+/// while preventing a planted project file from choosing startup memory. The
+/// binary uses the same boundary before handing a document back here to splice.
+pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
+
 mod document;
 mod env;
 mod error;
