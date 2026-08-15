@@ -38,6 +38,7 @@ pub(super) mod tests {
         Stream::new(
             Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
             cancel.clone(),
+            crucible_core::Redactions::default(),
         )
     }
 

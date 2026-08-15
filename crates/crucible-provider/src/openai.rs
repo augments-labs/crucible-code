@@ -146,7 +146,11 @@ impl Provider for OpenAi {
             ));
         }
 
-        Ok(Box::new(Stream::new(response.body, cancel.clone())))
+        Ok(Box::new(Stream::new(
+            response.body,
+            cancel.clone(),
+            redactions,
+        )))
     }
 }
 
@@ -294,6 +298,23 @@ mod tests {
         let (openai, _) = provider(401, &said);
 
         let problem = openai.stream(asking("hello"), &Cancel::new()).unwrap_err();
+        let displayed = problem.to_string();
+        let debugged = format!("{problem:?}");
+
+        assert!(!displayed.contains(SECRET));
+        assert!(!debugged.contains(SECRET));
+        assert!(displayed.contains("model remains useful"));
+    }
+
+    #[test]
+    fn a_stream_error_cannot_repeat_raw_or_bearer_credentials() {
+        let body = format!(
+            "data: {{\"type\":\"error\",\"code\":\"gateway\",\"message\":\"Bearer {SECRET}; raw {SECRET}; model remains useful\"}}\n\n"
+        );
+        let (openai, _) = provider(200, &body);
+
+        let mut stream = openai.stream(asking("hello"), &Cancel::new()).unwrap();
+        let problem = stream.next().unwrap().unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 

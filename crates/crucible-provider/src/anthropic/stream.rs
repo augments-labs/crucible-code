@@ -38,6 +38,7 @@ pub(super) mod tests {
         Stream::new(
             Box::new(std::io::Cursor::new(body.to_owned().into_bytes())),
             cancel.clone(),
+            crucible_core::Redactions::default(),
         )
     }
 
@@ -184,7 +185,11 @@ pub(super) mod tests {
             Said::Nothing,
         ])
         .meanwhile(move || raise.request());
-        let mut stream = Stream::new(Box::new(silent), cancel);
+        let mut stream = Stream::new(
+            Box::new(silent),
+            cancel,
+            crucible_core::Redactions::default(),
+        );
 
         assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
 
@@ -202,7 +207,11 @@ pub(super) mod tests {
         // expiring is read as a connection that broke: every pause in a long
         // answer becomes a failed turn. Nothing here fails, and this body
         // pauses between every five bytes of itself.
-        let mut stream = Stream::new(Box::new(Paused::dawdling(ANSWER, 5)), Cancel::new());
+        let mut stream = Stream::new(
+            Box::new(Paused::dawdling(ANSWER, 5)),
+            Cancel::new(),
+            crucible_core::Redactions::default(),
+        );
 
         assert_eq!(
             deltas(&mut stream),

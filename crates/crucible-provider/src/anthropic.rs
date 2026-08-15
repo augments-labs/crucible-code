@@ -126,7 +126,11 @@ impl Provider for Anthropic {
             ));
         }
 
-        Ok(Box::new(Stream::new(response.body, cancel.clone())))
+        Ok(Box::new(Stream::new(
+            response.body,
+            cancel.clone(),
+            redactions,
+        )))
     }
 }
 
@@ -291,6 +295,23 @@ mod tests {
         let problem = anthropic
             .stream(asking("hello"), &Cancel::new())
             .unwrap_err();
+        let displayed = problem.to_string();
+        let debugged = format!("{problem:?}");
+
+        assert!(!displayed.contains(SECRET));
+        assert!(!debugged.contains(SECRET));
+        assert!(displayed.contains("model remains useful"));
+    }
+
+    #[test]
+    fn a_stream_error_cannot_repeat_the_applied_credential() {
+        let body = format!(
+            "event: error\ndata: {{\"error\":{{\"type\":\"gateway\",\"message\":\"{SECRET}; model remains useful\"}}}}\n\n"
+        );
+        let (anthropic, _) = provider(200, &body);
+
+        let mut stream = anthropic.stream(asking("hello"), &Cancel::new()).unwrap();
+        let problem = stream.next().unwrap().unwrap_err();
         let displayed = problem.to_string();
         let debugged = format!("{problem:?}");
 

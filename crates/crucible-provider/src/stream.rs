@@ -12,6 +12,10 @@
 //! provider is a chance per provider to answer differently. What *is* a
 //! vendor's business is behind [`Wire`]: which events mean something, and what.
 //!
+//! The response also retains an opaque credential filter. A gateway already
+//! saw the applied header and may repeat it in an error event; every typed wire
+//! failure passes through that filter before it reaches formatting.
+//!
 //! A queue sits between the two because the parser answers with however many
 //! deltas an event meant and the caller asks for them one at a time. Everything
 //! an event yielded is delivered before another is read, including after the
@@ -29,7 +33,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::io::{BufReader, Read};
 
-use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason};
+use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Redactions, StopReason};
 
 use crate::sse::{Events, Framed, SseEvent};
 
@@ -66,6 +70,8 @@ pub(crate) trait Wire: Default + Send {
 pub(crate) struct Response<W: Wire> {
     events: Events<BufReader<Box<dyn Read + Send>>>,
     cancel: Cancel,
+    /// Exact credentials the gateway saw, available only as a filter.
+    redactions: Redactions,
     /// Deltas the last event yielded, not yet asked for.
     pending: VecDeque<Delta>,
     /// The vendor's parser, and whatever it remembers between events.
@@ -78,10 +84,11 @@ pub(crate) struct Response<W: Wire> {
 
 impl<W: Wire> Response<W> {
     /// Reads `body` until it ends or `cancel` is raised.
-    pub(crate) fn new(body: Box<dyn Read + Send>, cancel: Cancel) -> Self {
+    pub(crate) fn new(body: Box<dyn Read + Send>, cancel: Cancel, redactions: Redactions) -> Self {
         Self {
             events: Events::new(BufReader::new(body)),
             cancel,
+            redactions,
             pending: VecDeque::new(),
             wire: W::default(),
             stopped: false,
@@ -115,7 +122,7 @@ impl<W: Wire> Response<W> {
     fn fail(&mut self, problem: ProviderError) -> Result<Delta, ProviderError> {
         self.finished = true;
         self.pending.clear();
-        Err(problem)
+        Err(problem.redacted(&self.redactions))
     }
 }
 

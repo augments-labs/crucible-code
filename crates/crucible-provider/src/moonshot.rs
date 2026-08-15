@@ -148,7 +148,11 @@ impl Provider for Moonshot {
             ));
         }
 
-        Ok(Box::new(Stream::new(response.body, cancel.clone())))
+        Ok(Box::new(Stream::new(
+            response.body,
+            cancel.clone(),
+            redactions,
+        )))
     }
 }
 
