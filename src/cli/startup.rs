@@ -21,6 +21,7 @@ use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
 
 use super::standing;
+use super::subscription::Subscriptions;
 use super::{Fatal, NOTHING_TO_ASK, PROVIDERS, Served};
 
 /// Ceiling on one response, in tokens.
@@ -63,6 +64,10 @@ pub(super) struct Startup<'a> {
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
     pub(super) stored: &'a Keys,
+    /// The subscription logins compiled into this binary, which is what pairs
+    /// a stored account credential with the one address its tokens are issued
+    /// for.
+    pub(super) subscriptions: &'a Subscriptions,
 }
 
 /// The runner the loop drives, built from what the startup resolved.
@@ -79,7 +84,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
     // session writes a file, and one written for a run that never happened is
     // then the newest for this directory — which is what `--continue` would
     // offer instead of the last real session.
-    let provider = provider(startup.provider, settings, startup.from, startup.stored)?;
+    let provider = provider(
+        startup.provider,
+        settings,
+        startup.from,
+        startup.stored,
+        startup.subscriptions,
+    )?;
 
     let (session, earlier) = if startup.resuming {
         let (session, transcript) = Session::resume(sessions, workspace)?;
@@ -143,15 +154,17 @@ pub(super) fn served(named: &str) -> Result<Served, Fatal> {
 /// the vendor's usual name, written beside the provider in `PROVIDERS`. The
 /// *value* stays where it always was: read once, here, and applied to a header.
 ///
-/// `stored` is the other place a key can be, and the one `/login` writes to.
-/// Reachable from the wiring root for exactly that: a key written at the prompt
-/// is a provider this run can be handed, and building it anywhere else would put
+/// `stored` is the other place a credential can be, and the one `/login`
+/// writes to: an API key, or the renewable state of an account login. Reachable
+/// from the wiring root for exactly that: a credential written at the prompt is
+/// a provider this run can be handed, and building it anywhere else would put
 /// the names below in a second file.
 pub(super) fn provider(
     serving: Option<Served>,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
     stored: &Keys,
+    subscriptions: &Subscriptions,
 ) -> Result<Box<dyn Provider>, Fatal> {
     let Some(serving) = serving else {
         return Ok(Box::new(Unavailable::new(NOTHING_TO_ASK)));
@@ -177,21 +190,98 @@ pub(super) fn provider(
         // the coding console, which is the plan sold for what crucible does;
         // a key from the open platform sets `providers.moonshot.baseUrl` to
         // the other address, and that is what the help text and the docs say.
-        "moonshot" => Ok(Box::new(Moonshot::at(
-            sending.unwrap_or(Moonshot::CODING),
-            key(variable, Header::bearer(), from, written)?,
-            Box::new(Https::new()),
-        ))),
+        "moonshot" => {
+            let (endpoint, credential) = credential(
+                ApiAudience {
+                    provider: named,
+                    variable,
+                    vendor: Moonshot::CODING,
+                },
+                sending,
+                from,
+                stored,
+                subscriptions,
+            )?;
+            Ok(Box::new(Moonshot::at(
+                endpoint,
+                credential,
+                Box::new(Https::new()),
+            )))
+        }
 
-        "openai" => Ok(Box::new(OpenAi::at(
-            sending.unwrap_or(OpenAi::VENDOR),
-            key(variable, Header::bearer(), from, written)?,
-            Box::new(Https::new()),
-        ))),
+        "openai" => {
+            let (endpoint, credential) = credential(
+                ApiAudience {
+                    provider: named,
+                    variable,
+                    vendor: OpenAi::VENDOR,
+                },
+                sending,
+                from,
+                stored,
+                subscriptions,
+            )?;
+            Ok(Box::new(OpenAi::at(
+                endpoint,
+                credential,
+                Box::new(Https::new()),
+            )))
+        }
 
         named => Err(Fatal::Provider {
             named: named.into(),
         }),
+    }
+}
+
+/// The vendor audience a credential is issued against.
+///
+/// The provider's name, the variable its key is read from and the address its
+/// vendor signs at travel together because no call site may pair them by hand.
+struct ApiAudience<'a> {
+    provider: &'static str,
+    variable: &'a str,
+    vendor: Endpoint,
+}
+
+/// A credential for one provider, and the address it is issued against.
+///
+/// The two come back as one pair because they are one fact: a plan's token is
+/// issued against the vendor's fixed audience, and handing the halves back
+/// separately would let a later endpoint choice send it somewhere it was never
+/// meant to go.
+///
+/// The order is the one [`key`] keeps for every provider: the variable first,
+/// then the key `/login` wrote down. A stored subscription answers last, and
+/// only at the vendor's own address — `baseUrl` is set by somebody with a
+/// reason not to reach the vendor, and a plan's token is the vendor's, so one
+/// configured to go elsewhere is no credential at all.
+fn credential(
+    audience: ApiAudience<'_>,
+    sending: Option<Endpoint>,
+    from: &dyn Fn(&str) -> Option<String>,
+    stored: &Keys,
+    subscriptions: &Subscriptions,
+) -> Result<(Endpoint, Box<dyn Credential>), Fatal> {
+    match ApiKey::from_lookup(audience.variable, from) {
+        Ok(exported) => Ok((
+            sending.unwrap_or(audience.vendor),
+            Box::new(HeaderKey::new(exported, Header::bearer())),
+        )),
+        Err(absent) => {
+            if let Some(written) = stored.get(audience.provider) {
+                return Ok((
+                    sending.unwrap_or(audience.vendor),
+                    Box::new(HeaderKey::new(written, Header::bearer())),
+                ));
+            }
+            if sending.is_none()
+                && let Some(subscribed) = subscriptions.credential(audience.provider, stored)
+            {
+                return Ok((subscribed.endpoint, subscribed.credential));
+            }
+            Err(absent.into())
+        }
     }
 }
 

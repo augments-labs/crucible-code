@@ -34,6 +34,12 @@ Notable changes to crucible. Format follows
 
 ### Internal
 
+- **Subscription logins are registered at the wiring boundary.** The binary's
+  one closed list pairs each account login with the fixed audience its tokens
+  are issued for, and a stored subscription now resolves to that address when
+  a run names its provider and no key is set; nothing at the prompt writes one
+  yet.
+
 - **The smoke gate verifies checksums exactly and enforces the glibc floor.**
   `--offline` is renamed to `--no-provider`, a local tarball can be checked
   against `--checksum HEX`, a published artifact must match exactly one
