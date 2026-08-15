@@ -1,3 +1,5 @@
+//! Protocol, cancellation and secrecy tests for subscription login.
+
 use super::openai::{CLIENT_ID, Flow, VERIFY, now};
 use super::*;
 
@@ -170,6 +172,17 @@ fn authorization_uris_and_codes_are_redacted_from_debug_output() {
             !shown.contains(canary),
             "authorization material reached Debug: {shown}"
         );
+    }
+}
+
+#[test]
+fn tokens_are_redacted_in_debug_output() {
+    let tokens = Tokens::new("access-canary".into(), "refresh-canary".into(), 1, 1)
+        .with_detail("account_id", "account-canary");
+
+    let shown = format!("{tokens:?}");
+    for canary in ["access-canary", "refresh-canary", "account-canary"] {
+        assert!(!shown.contains(canary), "a token reached Debug: {shown}");
     }
 }
 
