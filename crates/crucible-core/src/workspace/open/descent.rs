@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
 
-use super::{Access, PathError, WorkspacePath};
+use super::{Access, PathError, WalkFiles, WorkspacePath};
 
 /// How every directory on the way down is opened.
 ///
@@ -76,6 +76,44 @@ pub(super) fn opened(path: &WorkspacePath, access: Access) -> Result<File, PathE
             .metadata()
             .map_err(|source| path.unopened(source))?
             .is_file()
+    {
+        return Err(path.not_file());
+    }
+    Ok(file)
+}
+
+/// Opens a regular file relative to the last directory this walk worker used.
+pub(super) fn walked_regular(
+    files: &mut WalkFiles,
+    path: &WorkspacePath,
+) -> Result<File, PathError> {
+    let parent = path.as_path().parent().unwrap_or(path.as_path());
+    let cached = files
+        .parent
+        .as_ref()
+        .is_some_and(|(cached, _)| cached == parent);
+    if !cached {
+        let Some(parent) = files.from.walked(parent) else {
+            return Err(path.swapped());
+        };
+        let directory = reached(&parent, DOWN, Mode::empty())?;
+        files.parent = Some((parent.as_path().to_owned(), directory));
+    }
+
+    let (_, directory) = files.parent.as_ref().ok_or_else(|| path.swapped())?;
+    let leaf = path.as_path().file_name().unwrap_or(OsStr::new("."));
+    let file = rustix::fs::openat(
+        directory,
+        leaf,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|errno| refused(path, errno))?;
+    if !file
+        .metadata()
+        .map_err(|source| path.unopened(source))?
+        .is_file()
     {
         return Err(path.not_file());
     }

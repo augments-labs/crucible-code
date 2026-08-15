@@ -36,7 +36,7 @@ mod spelling;
 mod tests;
 
 pub use error::PathError;
-pub use path::WorkspacePath;
+pub use path::{WalkFiles, WorkspacePath};
 pub use spelling::written;
 
 use roots::Roots;
