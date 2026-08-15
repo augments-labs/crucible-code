@@ -123,10 +123,6 @@ and every pull request has one.
 A change that does not fit is a sequence of pull requests that each stand on
 their own, not one larger one with a note about its size.
 
-Enforcement is suspended while the project is pre-1.0: CI still measures and
-reports the size, but the verdict does not block. It returns when the shape
-settles.
-
 Two diffs are measured wrongly, and no diff can prove either about itself, so
 each is a label — somebody saying so, left visible on the pull request
 afterwards:
