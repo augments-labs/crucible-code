@@ -41,6 +41,12 @@ pub enum EndpointError {
     /// No host at all — `https:///v1/messages`, or a bare path.
     #[error("{0} names no host to send to")]
     Hostless(Box<str>),
+
+    /// User information changes which part of an authority is the host, and a
+    /// fragment has no place in an HTTP request target. Neither is accepted or
+    /// repeated, because each is also a conventional place to put a secret.
+    #[error("the provider address contains user information or a fragment")]
+    Unsafe,
 }
 
 /// An address a provider posts to.
@@ -51,7 +57,7 @@ pub enum EndpointError {
 /// Borrowed for the address a provider ships with and owned for one somebody
 /// configured, so the ordinary run — nothing configured — allocates nothing and
 /// the constant can be built in a `const`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Endpoint(Cow<'static, str>);
 
 impl Endpoint {
@@ -70,21 +76,25 @@ impl Endpoint {
     pub fn parse(text: &str) -> Result<Self, EndpointError> {
         let text = text.trim_end_matches('/');
 
-        let host = if let Some(rest) = text.strip_prefix("https://") {
+        if text.contains('#') || user_information(text) {
+            return Err(EndpointError::Unsafe);
+        }
+
+        let rest = if let Some(rest) = text.strip_prefix("https://") {
             rest
         } else if let Some(rest) = text.strip_prefix("http://") {
-            if !loopback(rest) {
-                return Err(EndpointError::Insecure(text.into()));
-            }
             rest
         } else {
-            return Err(EndpointError::Insecure(text.into()));
+            return Err(EndpointError::Insecure(redacted(text).into()));
         };
 
-        // A host ends at the first `/`, `:` or `?`. Empty means the scheme was
-        // followed straight by the path, which is a URL with nowhere to go.
-        if host.split(['/', ':', '?']).next().unwrap_or("").is_empty() {
-            return Err(EndpointError::Hostless(text.into()));
+        let authority = authority(rest);
+        let Some(host) = host(authority) else {
+            return Err(EndpointError::Hostless(redacted(text).into()));
+        };
+
+        if text.starts_with("http://") && !loopback(host) {
+            return Err(EndpointError::Insecure(redacted(text).into()));
         }
 
         Ok(Self(Cow::Owned(text.to_owned())))
@@ -103,20 +113,85 @@ impl Endpoint {
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&redacted(&self.0))
     }
 }
 
-/// Whether what follows `http://` is this machine talking to itself.
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Endpoint").field(&redacted(&self.0)).finish()
+    }
+}
+
+/// The authority at the front of what follows a scheme.
+fn authority(rest: &str) -> &str {
+    rest.split(['/', '?', '#']).next().unwrap_or("")
+}
+
+/// The host inside an authority, if it is unambiguous and well formed.
+fn host(authority: &str) -> Option<&str> {
+    if authority.is_empty()
+        || authority.contains(['@', '\\'])
+        || authority.chars().any(char::is_whitespace)
+    {
+        return None;
+    }
+
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        let host = authority.get(..=end)?;
+        let after = authority.get(end + 1..)?;
+        return bracket_port(after).then_some(host);
+    }
+
+    let (host, port) = authority
+        .split_once(':')
+        .map_or((authority, None), |(host, port)| (host, Some(port)));
+    let port = port.is_none_or(|port| {
+        !port.is_empty() && !port.contains(':') && port.bytes().all(|byte| byte.is_ascii_digit())
+    });
+
+    (!host.is_empty() && port).then_some(host)
+}
+
+/// Whether the part after a bracketed host is absent or a numeric port.
+fn bracket_port(after: &str) -> bool {
+    after.is_empty()
+        || after
+            .strip_prefix(':')
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// Whether an address carries credentials before its host.
+fn user_information(text: &str) -> bool {
+    text.split_once("://")
+        .is_some_and(|(_, rest)| authority(rest).contains('@'))
+}
+
+/// An address safe to put in diagnostics.
+fn redacted(text: &str) -> String {
+    let Some((scheme, rest)) = text.split_once("://") else {
+        return "[redacted address]".to_owned();
+    };
+    let named = authority(rest);
+    let authority = named.rsplit_once('@').map_or(named, |(_, host)| host);
+    let mut shown = format!("{scheme}://{authority}");
+
+    // Gateway paths are commonly tenant- or token-bearing, just as queries
+    // are. Diagnostics therefore show the recipient but no request target.
+    if rest.len() > named.len() {
+        shown.push_str("/[redacted]");
+    }
+    shown
+}
+
+/// Whether a parsed host is this machine talking to itself.
 ///
 /// The three spellings the loader of a local server would use, and nothing
 /// clever: a name that merely *resolves* to a loopback address is not one of
 /// them, because what resolves it is DNS and what DNS answers can change
 /// between this check and the request.
-fn loopback(rest: &str) -> bool {
-    let host = rest.split(['/', '?']).next().unwrap_or("");
-    let host = host.rsplit_once(':').map_or(host, |(before, _)| before);
-
+fn loopback(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
@@ -176,6 +251,40 @@ mod tests {
     }
 
     #[test]
+    fn user_information_cannot_disguise_a_remote_host_as_loopback() {
+        for address in [
+            "http://localhost:8080@evil.example/v1",
+            "http://127.0.0.1:80@evil.example/v1",
+            "http://[::1]@evil.example/v1",
+        ] {
+            let problem = Endpoint::parse(address).expect_err("user information to be refused");
+            assert!(matches!(problem, EndpointError::Unsafe), "{problem:?}");
+        }
+    }
+
+    #[test]
+    fn secrets_in_an_address_never_reach_diagnostics() {
+        let accepted =
+            Endpoint::parse("https://gateway.example/tenant-hunter2/v1?token=query-hunter2")
+                .expect("an https address with a query");
+        for canary in ["tenant-hunter2", "query-hunter2"] {
+            assert!(!accepted.to_string().contains(canary));
+            assert!(!format!("{accepted:?}").contains(canary));
+        }
+        assert_eq!(accepted.to_string(), "https://gateway.example/[redacted]");
+
+        for address in [
+            "http://person:hunter2@evil.example/v1",
+            "https://gateway.example/v1#hunter2",
+            "ftp://gateway.example/v1?token=hunter2",
+        ] {
+            let problem = Endpoint::parse(address).expect_err("an unsafe address");
+            assert!(!problem.to_string().contains("hunter2"), "{problem}");
+            assert!(!format!("{problem:?}").contains("hunter2"));
+        }
+    }
+
+    #[test]
     fn a_scheme_crucible_does_not_speak_is_refused() {
         for address in ["ftp://gateway.example", "file:///etc/passwd", "gateway"] {
             assert!(
@@ -194,14 +303,14 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_says_what_was_written() {
-        // Somebody is looking at the file this came from, so the message has to
-        // name the value they wrote rather than describe it.
-        let problem = Endpoint::parse("http://gateway.example").expect_err("this to be refused");
+    fn a_refusal_names_the_recipient_without_repeating_the_target() {
+        let problem = Endpoint::parse("http://gateway.example/tenant-secret")
+            .expect_err("this to be refused");
 
         assert!(
             problem.to_string().contains("http://gateway.example"),
             "{problem}"
         );
+        assert!(!problem.to_string().contains("tenant-secret"), "{problem}");
     }
 }

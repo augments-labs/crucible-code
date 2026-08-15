@@ -218,6 +218,11 @@ a second key for the same vendor needs:
 That is a variable **name**, and pointing crucible at one points it away from
 the other: `ANTHROPIC_API_KEY` is then not read at all.
 
+A custom `baseUrl` must use HTTPS unless it is the exact loopback host
+`localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused,
+and diagnostics show the recipient but redact the path and query because those
+parts often contain tenant identifiers or tokens.
+
 A key never appears in a log line, an error message, a session file, or
 anything crucible prints. If you see one, that is a bug worth
 [reporting privately](../../SECURITY.md).
