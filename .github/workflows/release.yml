@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  BOOTSTRAP_RUSTUP_VERSION: "1.29.0"
+
 jobs:
   # Everything that can refuse a release happens once, here, before seven
   # machines spend a quarter of an hour building something that was never
@@ -29,7 +32,7 @@ jobs:
       # lies. Catch it before anything is built.
       - name: The tag and the manifest agree
         run: |
-          manifest=$(cargo metadata --no-deps --format-version 1 |
+          manifest=$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "crucible-code") | .version')
           if [[ "v$manifest" != "$GITHUB_REF_NAME" ]]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml $manifest"
@@ -52,32 +55,106 @@ jobs:
             exit 1
           fi
 
+      - name: Stage release metadata
+        run: |
+          mkdir release-metadata
+          cp NOTES.md scripts/install.sh scripts/uninstall.sh release-metadata/
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: notes
-          path: NOTES.md
+          path: release-metadata/
           if-no-files-found: error
 
-  # One job per target, and every runner here is the architecture it builds
-  # for. That is the whole reason the list is runners rather than a cross
-  # toolchain: a binary nobody could execute is one whose first run happens on
-  # a user's machine.
+  # Linux builds in a digest-pinned CentOS Stream 9 image. Its glibc is 2.34,
+  # which turns the compatibility floor promised in the getting-started page
+  # into a build input rather than a fact reported after publication. The image
+  # is multi-architecture, so each artifact still builds and runs natively.
+  build-linux:
+    name: ${{ matrix.stem }}
+    needs: gate
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: quay.io/centos/centos:stream9@sha256:04bad0b08ac68a63b1810ea78a9d2ed4fb431e11d9c4c3916418edd4932856bd
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stem: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            rustup_sha256: 4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
+            runner: ubuntu-22.04
+          - stem: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            rustup_sha256: 9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Build tools
+        run: dnf install -y binutils curl-minimal gcc git gzip tar
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The toolchain remains the exact one in rust-toolchain.toml. rustup is
+      # only the installer here, because the base image deliberately carries no
+      # compiler that could drift away from the other release jobs.
+      - name: Rust toolchain
+        run: |
+          url="https://static.rust-lang.org/rustup/archive/$BOOTSTRAP_RUSTUP_VERSION/${{ matrix.target }}/rustup-init"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent \
+            --show-error --output rustup-init "$url"
+          printf '%s  rustup-init\n' '${{ matrix.rustup_sha256 }}' |
+            sha256sum --check --strict -
+          chmod 755 rustup-init
+          ./rustup-init -y --no-modify-path --profile minimal \
+            --default-toolchain none
+          rm rustup-init
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: It runs, and says the version the tag claims
+        run: |
+          said=$(./target/${{ matrix.target }}/release/crucible --version)
+          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
+            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          mkdir -p "$name"
+          cp ./target/${{ matrix.target }}/release/crucible "$name/"
+          cp README.md LICENSE "$name/"
+          cp scripts/install.sh scripts/uninstall.sh "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" | awk '{ print $1 }' > "digest-${{ matrix.stem }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.stem }}
+          path: |
+            crucible-*.tar.gz
+            digest-*
+          if-no-files-found: error
+
+  # One job per non-Linux target, and every runner here is the architecture it
+  # builds for. A binary nobody could execute here is one whose first run would
+  # otherwise happen on a user's machine.
   build:
     name: ${{ matrix.stem }}
     needs: gate
     runs-on: ${{ matrix.runner }}
     strategy:
       # One target failing is not a reason to stop learning about the other
-      # five. A release is cancelled by hand either way.
+      # three. A release is cancelled by hand either way.
       fail-fast: false
       matrix:
         include:
-          - stem: linux-x86_64
-            target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-          - stem: linux-aarch64
-            target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
           - stem: macos-aarch64
             target: aarch64-apple-darwin
             runner: macos-latest
@@ -95,14 +172,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # --locked: the lockfile in the tag is the lockfile that gets built, so
-      # the artifact is reproducible from the tag alone.
+      # `--locked` makes dependency resolution reproduce the tag. Runner and
+      # linker inputs are native platform inputs, so byte-for-byte reproducible
+      # artifacts are not claimed here.
       - name: Build
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --release --locked --target ${{ matrix.target }}
 
-      # Git Bash ships on the Windows images, so one shell packages all six.
+      # Git Bash ships on the Windows images, so one shell packages all four.
       - name: It runs, and says the version the tag claims
         shell: bash
         run: |
@@ -119,6 +197,7 @@ jobs:
           mkdir -p "$name"
           cp ./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} "$name/"
           cp README.md LICENSE "$name/"
+          cp scripts/install.sh scripts/uninstall.sh "$name/"
           tar czf "$name.tar.gz" "$name"
 
           # Windows gets the bare executable beside the archive. Unpacking a
@@ -149,16 +228,31 @@ jobs:
 
       - uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1.5.3
         with:
-          release: "14.2"
+          release: "14.4"
           usesh: true
-          prepare: pkg install -y curl
+          prepare: pkg install -y bash curl
           # `--default-toolchain none` leaves the choice to
           # rust-toolchain.toml, so this guest compiles with the version every
           # other machine here does rather than whatever pkg happens to carry.
           run: |
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-              sh -s -- -y --profile minimal --default-toolchain none
+            rustup_sha256=c3fdfa4553e088edad701ea74776eb707644bed9f4a44f42a077e733201e966a
+            url="https://static.rust-lang.org/rustup/archive/${{ env.BOOTSTRAP_RUSTUP_VERSION }}/x86_64-unknown-freebsd/rustup-init"
+            curl --proto '=https' --tlsv1.2 --fail --location --silent \
+              --show-error --output rustup-init "$url"
+            if [ "$(sha256 -q rustup-init)" != "$rustup_sha256" ]; then
+              echo 'rustup-init checksum did not match'
+              exit 1
+            fi
+            chmod 755 rustup-init
+            ./rustup-init -y --no-modify-path --profile minimal \
+              --default-toolchain none
+            rm rustup-init
             . "$HOME/.cargo/env"
+
+            # FreeBSD's base tar and checksum implementations are distinct from
+            # the GNU tools in the gate, so exercise archive type preflight and
+            # replacement rollback in the guest that will ship the binary.
+            scripts/install-tests.sh
 
             cargo build --release --locked --target x86_64-unknown-freebsd
 
@@ -177,6 +271,7 @@ jobs:
             mkdir -p "$name"
             cp ./target/x86_64-unknown-freebsd/release/crucible "$name/"
             cp README.md LICENSE "$name/"
+            cp scripts/install.sh scripts/uninstall.sh "$name/"
             tar czf "$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -185,13 +280,71 @@ jobs:
           path: crucible-*.tar.gz
           if-no-files-found: error
 
+  # The release archive, not a local rebuild, runs in the stripped sandbox
+  # before publication. Its independently carried digest catches corruption in
+  # the artifact handoff, and smoke.sh also enforces the glibc 2.34 ceiling.
+  smoke-linux:
+    name: smoke linux-x86_64 artifact
+    needs: build-linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-x86_64
+          path: artifact
+
+      - name: Smoke the downloaded archive
+        run: |
+          archive=$(find artifact -maxdepth 1 -name 'crucible-*.tar.gz' -type f)
+          digest=$(<artifact/digest-linux-x86_64)
+          scripts/smoke.sh --no-provider --checksum "$digest" "$archive"
+
+  # Shared-runner numbers are trend data, not the quiet-machine release reading
+  # required by RELEASING.md. Keeping them with the release still makes a future
+  # comparison possible, and the environment file says what produced them.
+  budgets:
+    name: release budgets
+    needs: gate
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - run: scripts/bench.sh > budgets.json
+
+      - name: Measurement environment
+        run: |
+          {
+            echo 'measurement=shared-runner-trend'
+            uname -a
+            rustc -vV
+            rg --version | head -1
+            lscpu
+          } > budget-environment.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-budgets
+          path: |
+            budgets.json
+            budget-environment.txt
+          if-no-files-found: error
+
   # The release is opened once, with everything attached, so there is never a
   # window where it is public and half the platforms are missing.
   publish:
-    needs: [build, freebsd-x86_64]
+    needs: [build, build-linux, freebsd-x86_64, smoke-linux, budgets]
     runs-on: ubuntu-latest
     permissions:
       contents: write # creates the GitHub Release and uploads the archives
+      id-token: write # signs the artifact attestation
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -203,7 +356,16 @@ jobs:
       # takes the whole thing.
       - name: One checksum file for the release
         working-directory: assets
-        run: sha256sum crucible-* | tee SHA256SUMS
+        run: sha256sum crucible-* install.sh uninstall.sh | tee SHA256SUMS
+
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            assets/crucible-*.tar.gz
+            assets/crucible-*.exe
+            assets/install.sh
+            assets/uninstall.sh
 
       - name: Publish
         env:
@@ -213,4 +375,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "crucible ${GITHUB_REF_NAME#v}" \
             --notes-file assets/NOTES.md \
-            assets/crucible-* assets/SHA256SUMS
+            assets/crucible-* assets/install.sh assets/uninstall.sh \
+            assets/SHA256SUMS \
+            assets/budgets.json assets/budget-environment.txt

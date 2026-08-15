@@ -15,6 +15,14 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **Release builds are pinned, smoked and attested before publication.** Linux
+  artifacts now build in a digest-pinned CentOS Stream 9 image, making the
+  documented glibc 2.34 floor a build input rather than a property of
+  whichever runner image is current. rustup is bootstrapped from
+  a versioned, checksummed installer, the built archive passes the smoke gate
+  pre-publish, and the release attests its binaries and ships `install.sh`,
+  `uninstall.sh` and `budgets.json` as assets.
+
 - **Terminal paste input is bounded before parsing.** Bracketed-paste reporting
   is disabled; immediately ready plain characters are inserted and redrawn as
   one bounded run, while embedded newlines submit just as if they were typed.
