@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Terminal paste input is bounded before parsing.** Bracketed-paste reporting
+  is disabled; immediately ready plain characters are inserted and redrawn as
+  one bounded run, while embedded newlines submit just as if they were typed.
+  A prompt retains at most 1 MiB of text, and what would cross that is refused
+  with a note under the box rather than flooding the input path.
+
 ### Internal
 
 - **OpenAI account login joins Kimi at the provider-neutral boundary.**

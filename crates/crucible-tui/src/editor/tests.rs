@@ -47,6 +47,89 @@ fn typing_puts_characters_where_the_cursor_is() {
 }
 
 #[test]
+fn a_paste_is_inserted_whole_at_the_cursor() {
+    let mut editor = back("before after", 5);
+
+    assert_eq!(editor.paste("a large paste "), Typed::Changed);
+    assert_eq!(editor.text(), "before a large paste after");
+    assert_eq!(editor.column(), 21);
+}
+
+#[test]
+fn a_large_middle_paste_moves_each_side_once() {
+    const SIDE: usize = 256 * 1024;
+
+    let mut editor = Editor {
+        said: format!("{}{}", "a".repeat(SIDE), "z".repeat(SIDE)),
+        at: SIDE,
+    };
+    let pasted = "middle ".repeat(SIDE / 7);
+
+    assert_eq!(editor.paste(&pasted), Typed::Changed);
+    assert_eq!(editor.text().len(), SIDE * 2 + pasted.len());
+    assert!(editor.text().starts_with(&"a".repeat(SIDE)));
+    assert!(editor.text().ends_with(&"z".repeat(SIDE)));
+    assert_eq!(editor.at, SIDE + pasted.len());
+}
+
+#[test]
+fn a_paste_over_the_prompt_bound_is_refused_whole() {
+    let mut editor = back("before after", 5);
+    let before = editor.text().to_owned();
+    let at = editor.at;
+    let pasted = "x".repeat(Editor::MAX_BYTES + 1);
+
+    assert_eq!(editor.paste(&pasted), Typed::Refused);
+    assert_eq!(editor.text(), before);
+    assert_eq!(editor.at, at);
+}
+
+#[test]
+fn the_last_byte_fits_and_the_next_character_is_refused() {
+    let mut editor = Editor::new();
+
+    assert_eq!(editor.paste(&"x".repeat(Editor::MAX_BYTES)), Typed::Changed);
+    assert_eq!(editor.press(Key::Char('y')), Typed::Refused);
+    assert_eq!(editor.text().len(), Editor::MAX_BYTES);
+    assert_eq!(editor.press(Key::Backspace), Typed::Changed);
+    assert_eq!(editor.press(Key::Char('日')), Typed::Refused);
+    assert_eq!(editor.press(Key::Char('y')), Typed::Changed);
+}
+
+#[test]
+fn individually_applied_characters_never_retain_more_than_one_mib() {
+    let mut editor = Editor::new();
+    let mut changes = 0;
+    let mut refusals = 0;
+
+    // The terminal layer normally gathers an immediately-ready run before it
+    // reaches here. This is the lower-level guarantee: even a caller that
+    // applies ordinary characters one at a time cannot cross the retained
+    // boundary.
+    for _ in 0..Editor::MAX_BYTES + 1024 {
+        match editor.press(Key::Char('x')) {
+            Typed::Changed => changes += 1,
+            Typed::Refused => refusals += 1,
+            other => panic!("a character did {other:?}"),
+        }
+    }
+
+    assert_eq!(editor.text().len(), Editor::MAX_BYTES);
+    assert!(editor.said.capacity() <= Editor::MAX_BYTES);
+    assert_eq!(changes, Editor::MAX_BYTES);
+    assert_eq!(refusals, 1024);
+}
+
+#[test]
+fn paste_controls_cannot_move_the_terminal_cursor() {
+    let mut editor = typed("safe ");
+
+    assert_eq!(editor.paste("text\n\x1b[2J\tstill"), Typed::Changed);
+    assert_eq!(editor.text(), "safe text[2Jstill");
+    assert_eq!(editor.paste("\n\t\x07"), Typed::Ignored);
+}
+
+#[test]
 fn backspace_takes_the_character_behind_the_cursor_and_not_the_one_on_it() {
     let mut editor = back("count", 1);
 
