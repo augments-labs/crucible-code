@@ -242,6 +242,7 @@ dependencies = [
  "crucible-auth",
  "crucible-config",
  "crucible-core",
+ "crucible-privacy",
  "crucible-provider",
  "crucible-runner",
  "crucible-tools",

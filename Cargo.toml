@@ -22,7 +22,7 @@ authors = ["Peguy Njoyim"]
 #   tools      -> core
 #   runner     -> core            drives turns through traits only
 #   tui        -> core
-#   crucible-code (this package) -> all seven, and is the only place concrete
+#   crucible-code (this package) -> all eight, and is the only place concrete
 #                                   types are wired together
 #
 # `config` sits beside the others rather than above them: it reads files into
@@ -230,14 +230,15 @@ default-run = "crucible"
 name = "crucible"
 path = "src/main.rs"
 
-# All six, and only here. Every crate below reaches core and nothing else; the
-# arrows that make an Anthropic provider and a bash tool meet a runner are drawn
-# in this package or they are not drawn at all.
+# All eight, and only here. The binary uses the lower-level privacy boundary for
+# its user configuration; that crate knows nothing about settings. The arrows
+# that make a provider and a tool meet a runner are still drawn here or nowhere.
 [dependencies]
 clap.workspace = true
 crucible-auth.workspace = true
 crucible-config.workspace = true
 crucible-core.workspace = true
+crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
 crucible-tools.workspace = true
