@@ -46,3 +46,8 @@ provider stream cannot retain that borrowed request after `stream` returns.
 Nothing *else* here may become proportional to how long the session has run:
 what the loop holds besides it is what the current turn needs, and a `.clone()`
 of a transcript-sized value needs a comment saying why.
+
+One provider response is bounded before appending: 8 MiB of visible text,
+1 MiB of tool arguments, 128 tool calls, and explicit per-field and cumulative
+metadata ceilings. Stop is terminal; accepting anything after it would let a
+malformed stream keep growing a response the model already ended.

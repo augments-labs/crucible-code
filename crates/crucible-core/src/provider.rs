@@ -18,6 +18,17 @@ use crate::transcript::{StopReason, Transcript};
 /// Why a provider could not produce a response.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
+    /// A provider response exceeded a retained-resource bound.
+    #[error("{provider}: {limit} exceeded its limit of {maximum}")]
+    Limit {
+        /// Which provider produced the unbounded response.
+        provider: &'static str,
+        /// What grew too far.
+        limit: ProviderLimit,
+        /// The enforced maximum.
+        maximum: usize,
+    },
+
     /// The request never reached the provider, or the connection broke.
     #[error("{provider}: {problem}")]
     Transport {
@@ -87,6 +98,36 @@ pub enum ProviderError {
     /// there to set one up in.
     #[error("{0}")]
     Unconfigured(Box<str>),
+}
+
+/// Which bounded part of one provider response grew too far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderLimit {
+    /// Visible answer text, in bytes.
+    Text,
+    /// Tool argument text across the response, in bytes.
+    ToolArguments,
+    /// One provider-assigned tool call identifier, in bytes.
+    ToolCallId,
+    /// One provider-supplied tool name, in bytes.
+    ToolCallName,
+    /// Tool call identifiers and names across the response, in bytes.
+    ToolCallMetadata,
+    /// Tool calls across the response.
+    ToolCalls,
+}
+
+impl fmt::Display for ProviderLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Text => "response text",
+            Self::ToolArguments => "tool arguments",
+            Self::ToolCallId => "tool call identifier",
+            Self::ToolCallName => "tool call name",
+            Self::ToolCallMetadata => "tool call metadata",
+            Self::ToolCalls => "tool calls",
+        })
+    }
 }
 
 /// One turn's worth of input to a model.
@@ -344,6 +385,20 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "anthropic: HTTP 404: model: claude-nope not found"
+        );
+    }
+
+    #[test]
+    fn a_resource_failure_names_what_was_bounded() {
+        let err = ProviderError::Limit {
+            provider: "moonshot",
+            limit: ProviderLimit::ToolArguments,
+            maximum: 1024,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "moonshot: tool arguments exceeded its limit of 1024"
         );
     }
 

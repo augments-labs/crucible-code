@@ -495,12 +495,12 @@ impl Runner {
         while let Some(delta) = stream.next() {
             match delta? {
                 Delta::Text(text) => {
-                    answer.say(&text);
+                    answer.say(&text)?;
                     events.post(Event::Delta { text });
                 }
-                Delta::ToolStarted { id, name } => answer.calling(id, name),
+                Delta::ToolStarted { id, name } => answer.calling(id, name)?,
                 Delta::ToolArgs(fragment) => answer.arguments(&fragment)?,
-                Delta::Stopped(stop) => answer.stopped(stop),
+                Delta::Stopped(stop) => answer.stopped(stop)?,
             }
         }
 

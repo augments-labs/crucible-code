@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Provider responses are cumulatively bounded and stop is terminal.** One
+  response may retain at most 8 MiB of text, 1 MiB of tool arguments, 128 tool
+  calls and bounded call metadata; any delta after stop is a protocol failure.
+
 - **Provider events have a tighter allocation bound.** One malformed or
   oversized server-sent event is refused after 1 MiB instead of being allowed
   to retain 8 MiB before cumulative response checks can run.
