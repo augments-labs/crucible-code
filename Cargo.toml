@@ -19,8 +19,9 @@ authors = ["Peguy Njoyim"]
 #   auth       -> core            the keys `/login` wrote down
 #   config     -> core            where crucible's files are and what they say
 #   provider   -> core
+#   session    -> core            one append-only log per session
 #   tools      -> core
-#   runner     -> core            drives turns through traits only
+#   runner     -> core, session   drives turns through traits only
 #   tui        -> core
 #   crucible-code (this package) -> all eight, and is the only place concrete
 #                                   types are wired together
@@ -38,6 +39,7 @@ crucible-core = { path = "crates/crucible-core" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
 crucible-runner = { path = "crates/crucible-runner" }
+crucible-session = { path = "crates/crucible-session" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-tui = { path = "crates/crucible-tui" }
 
@@ -270,11 +272,12 @@ crucible-tui.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-# The same runner, with the seam that lets a test hand it a log which fails on
-# every write. Cargo does not resolve dev-dependencies for a build, so this
-# turns the feature on for `cargo test` and for nothing that ships.
+# The same session crate the runner re-exports, with the seam that lets a test
+# hand it a log which fails on every write. Cargo does not resolve
+# dev-dependencies for a build, so this turns the feature on for `cargo test`
+# and for nothing that ships.
 [dev-dependencies]
-crucible-runner = { workspace = true, features = ["proof"] }
+crucible-session = { workspace = true, features = ["proof"] }
 insta.workspace = true
 
 # The one test that runs crucible the way a person does. It opens a pseudo

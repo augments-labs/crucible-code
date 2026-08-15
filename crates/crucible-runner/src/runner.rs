@@ -12,7 +12,8 @@ use crucible_core::{
     ProviderError, ProviderLimit, Request, StopReason, ToolCall, Transcript, TurnError, TurnId,
 };
 
-use crate::session::Session;
+use crucible_session::Session;
+
 use crate::tools::Tools;
 
 mod answer;
