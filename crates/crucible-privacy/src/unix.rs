@@ -18,7 +18,7 @@ pub(super) fn directory(path: &Path) -> io::Result<()> {
     let directory = opened(
         path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        0,
+        Mode::empty(),
     )?;
     narrow(&directory, DIRECTORY).map(drop)
 }
@@ -27,14 +27,18 @@ pub(super) fn append(path: &Path) -> io::Result<File> {
     let file = opened(
         path,
         OFlags::WRONLY | OFlags::CREATE | OFlags::APPEND | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        FILE,
+        private_file(),
     )?;
     narrow(&file, FILE)?;
     Ok(file)
 }
 
 pub(super) fn open_read(path: &Path) -> io::Result<File> {
-    let file = opened(path, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, 0)?;
+    let file = opened(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
     ordinary(&file)?;
     Ok(file)
 }
@@ -43,7 +47,7 @@ pub(super) fn open_read_append(path: &Path) -> io::Result<File> {
     let file = opened(
         path,
         OFlags::RDWR | OFlags::APPEND | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        0,
+        Mode::empty(),
     )?;
     ordinary(&file)?;
     Ok(file)
@@ -58,7 +62,7 @@ pub(super) fn create_append(path: &Path) -> io::Result<File> {
             | OFlags::APPEND
             | OFlags::NOFOLLOW
             | OFlags::CLOEXEC,
-        FILE,
+        private_file(),
     )?;
     narrow(&file, FILE)?;
     Ok(file)
@@ -95,7 +99,7 @@ pub(super) fn create_write(path: &Path) -> io::Result<File> {
     let file = opened(
         path,
         OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        FILE,
+        private_file(),
     )?;
     narrow(&file, FILE)?;
     Ok(file)
@@ -105,14 +109,18 @@ pub(super) fn lock(path: &Path) -> io::Result<File> {
     let file = opened(
         path,
         OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        FILE,
+        private_file(),
     )?;
     narrow(&file, FILE)?;
     Ok(file)
 }
 
 pub(super) fn tighten(path: &Path) -> io::Result<bool> {
-    let file = opened(path, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, 0)?;
+    let file = opened(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -134,8 +142,8 @@ pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     sync_parent(destination)
 }
 
-fn opened(path: &Path, flags: OFlags, mode: u32) -> io::Result<File> {
-    rustix::fs::open(path, flags, Mode::from_raw_mode(mode))
+fn opened(path: &Path, flags: OFlags, mode: Mode) -> io::Result<File> {
+    rustix::fs::open(path, flags, mode)
         .map(File::from)
         .map_err(|problem| {
             if problem == rustix::io::Errno::LOOP {
@@ -147,6 +155,10 @@ fn opened(path: &Path, flags: OFlags, mode: u32) -> io::Result<File> {
                 problem.into()
             }
         })
+}
+
+fn private_file() -> Mode {
+    Mode::RUSR | Mode::WUSR
 }
 
 fn ordinary(file: &File) -> io::Result<()> {
