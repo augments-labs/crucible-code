@@ -10,129 +10,145 @@
 //! down.
 
 use crucible_core::{Message, Request, StopReason, ToolResult, ToolSchema, Transcript};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
-use crate::json::{described, object};
+use crate::json::{Array, Json, Object, described, object};
 
 /// The whole request body.
-pub(super) fn build(request: &Request<'_>) -> Value {
-    let mut body = Map::new();
-    body.insert("model".to_owned(), json!(request.model));
-    body.insert("max_tokens".to_owned(), json!(request.max_tokens));
-    body.insert("stream".to_owned(), json!(true));
-    body.insert("messages".to_owned(), json!(messages(request.transcript)));
+pub(super) fn serialize(request: &Request<'_>) -> String {
+    let mut json = Json::new();
+    json.object(|body| {
+        body.text("model", request.model);
+        body.number("max_tokens", request.max_tokens);
+        body.boolean("stream", true);
+        body.array("messages", |messages| {
+            write_messages(messages, request.transcript);
+        });
 
-    // Absent rather than null: the API rejects a null system prompt, and a
-    // session without one is the ordinary case.
-    if let Some(system) = &request.system {
-        body.insert("system".to_owned(), json!(&**system));
-    }
+        // Absent rather than null: the API rejects a null system prompt, and a
+        // session without one is the ordinary case.
+        if let Some(system) = request.system {
+            body.text("system", system);
+        }
 
-    // Only where somebody chose one. Anthropic's own default is what a model
-    // gets otherwise, and it is per-model — the field is served by the models
-    // that reason and refused by the ones that do not, so sending it unasked
-    // would turn "I never touched effort" into a 400 on whichever of them is
-    // not on the list this week.
-    if let Some(effort) = request.effort {
-        body.insert(
-            "output_config".to_owned(),
-            json!({ "effort": effort.as_str() }),
-        );
-    }
+        // Only where somebody chose one. Anthropic's own default is what a model
+        // gets otherwise, and it is per-model — the field is served by the models
+        // that reason and refused by the ones that do not, so sending it unasked
+        // would turn "I never touched effort" into a 400 on whichever of them is
+        // not on the list this week.
+        if let Some(effort) = request.effort {
+            body.object("output_config", |config| {
+                config.text("effort", effort.as_str());
+            });
+        }
 
-    if !request.tools.is_empty() {
-        let tools = request.tools.iter().map(tool).collect();
-        body.insert("tools".to_owned(), Value::Array(tools));
-    }
+        if !request.tools.is_empty() {
+            body.array("tools", |tools| {
+                for schema in request.tools {
+                    tools.object(|tool| write_tool(tool, schema));
+                }
+            });
+        }
+    });
+    json.finish()
+}
 
-    Value::Object(body)
+#[cfg(test)]
+fn build(request: &Request<'_>) -> Value {
+    serde_json::from_str(&serialize(request)).expect("request body is JSON")
 }
 
 /// Every message that has something in it, in order.
-fn messages(transcript: &Transcript) -> Vec<Value> {
-    transcript.messages().iter().filter_map(message).collect()
+fn write_messages(messages: &mut Array<'_>, transcript: &Transcript) {
+    for message in transcript.messages() {
+        write_message(messages, message);
+    }
 }
 
-/// One message, or nothing if it would carry no content.
+/// One message, unless it would carry no content.
 ///
 /// Empty is refused at both levels this wire has: an empty text block, and a
-/// message whose blocks all turned out to be empty ones. The second is why this
-/// returns an option — dropping the block but keeping the message that held it
-/// only moves the refusal up a level.
-fn message(message: &Message) -> Option<Value> {
+/// message whose blocks all turned out to be empty ones. Dropping the block but
+/// keeping the message that held it only moves the refusal up a level.
+fn write_message(messages: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => Some(json!({ "role": "user", "content": &**text })),
+        Message::User(text) => messages.object(|message| {
+            message.text("role", "user");
+            message.text("content", text);
+        }),
         Message::Agent { text, calls, stop } => {
-            let mut content = Vec::with_capacity(calls.len() + 2);
-
-            // An empty text block is refused by the API, and the model produces
-            // one every time it calls a tool without saying anything first.
-            if !text.is_empty() {
-                content.push(json!({ "type": "text", "text": &**text }));
-            }
-
-            for call in calls {
-                content.push(json!({
-                    "type": "tool_use",
-                    "id": call.id.as_str(),
-                    "name": &*call.name,
-                    "input": Value::Object(object(call.args.as_str())),
-                }));
-            }
-
             // Nothing said and nothing asked for: a turn cancelled or filtered
             // before the model's first word. It is recorded, so the message is
             // in the session file and would be sent on every turn after it —
             // one bad turn making the session refuse to continue at all.
-            if content.is_empty() {
-                return None;
+            if text.is_empty() && calls.is_empty() {
+                return;
             }
 
-            // A block of its own after the answer, and only where there is an
-            // answer for it to be about. Left off, the model reads its own
-            // half-sentence as a turn it chose to end — on the next turn of
-            // this session and on every turn of a continued one.
-            if let Some(said) = StopReason::cut(*stop) {
-                content.push(json!({ "type": "text", "text": said }));
-            }
+            messages.object(|message| {
+                message.text("role", "assistant");
+                message.array("content", |content| {
+                    // An empty text block is refused by the API, and the model
+                    // produces one when it calls a tool without speaking first.
+                    if !text.is_empty() {
+                        content.object(|block| {
+                            block.text("type", "text");
+                            block.text("text", text);
+                        });
+                    }
 
-            Some(json!({ "role": "assistant", "content": content }))
+                    for call in calls {
+                        let input = Value::Object(object(call.args.as_str()));
+                        content.object(|block| {
+                            block.text("type", "tool_use");
+                            block.text("id", call.id.as_str());
+                            block.text("name", &call.name);
+                            block.value("input", &input);
+                        });
+                    }
+
+                    // A block of its own after a cut answer. Left off, the model
+                    // reads its half-sentence as a turn it chose to end.
+                    if let Some(said) = StopReason::cut(*stop) {
+                        content.object(|block| {
+                            block.text("type", "text");
+                            block.text("text", said);
+                        });
+                    }
+                });
+            });
         }
         // Results are the user's turn as far as the API is concerned: the model
         // asked, and this is the answer coming back to it.
-        Message::ToolResults(results) => Some(json!({
-            "role": "user",
-            "content": results.iter().map(result).collect::<Vec<_>>(),
-        })),
+        Message::ToolResults(results) => messages.object(|message| {
+            message.text("role", "user");
+            message.array("content", |content| {
+                for result in results {
+                    content.object(|block| write_result(block, result));
+                }
+            });
+        }),
     }
 }
 
 /// One tool result.
-fn result(result: &ToolResult) -> Value {
-    let mut block = Map::new();
-    block.insert("type".to_owned(), json!("tool_result"));
-    block.insert("tool_use_id".to_owned(), json!(result.id.as_str()));
-    block.insert("content".to_owned(), json!(result.output.text()));
-
-    // Only when true. The field means "the model should treat this as having
-    // gone wrong", and sending it as false on every success is noise in a
-    // payload that is resent on every turn.
+fn write_result(block: &mut Object<'_>, result: &ToolResult) {
+    block.text("type", "tool_result");
+    block.text("tool_use_id", result.id.as_str());
+    block.text("content", result.output.text());
     if result.output.is_failed() {
-        block.insert("is_error".to_owned(), json!(true));
+        block.boolean("is_error", true);
     }
-
-    Value::Object(block)
 }
 
 /// One tool, as advertised.
-fn tool(schema: &ToolSchema) -> Value {
+fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
     let (input, description) = described(schema.schema);
-
-    json!({
-        "name": schema.name,
-        "description": description,
-        "input_schema": Value::Object(input),
-    })
+    tool.text("name", schema.name);
+    tool.text("description", &description);
+    tool.value("input_schema", &Value::Object(input));
 }
 
 #[cfg(test)]

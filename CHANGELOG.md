@@ -8,6 +8,10 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **Anthropic requests use one outbound JSON allocation.** Transcript messages
+  are written directly into the request body instead of first building an owned
+  JSON tree, reducing peak memory as sessions grow.
+
 - **Provider requests no longer clone the transcript.** The runner lends its
   transcript and cached tool schemas through the synchronous request boundary,
   removing one session-sized allocation from every provider pass.
