@@ -4,12 +4,34 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use super::{Sensitivity, Tool, ToolArgs, ToolOutput, Write};
+use crucible_core::Cancel;
+
+use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
 use crate::sample::{Sample, allowed, symlink};
 
+/// A call about a file nobody has read, which is what most of these are: a path
+/// that is not there yet, or one the refusal is the subject of.
 fn write(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Write::new(sample.workspace());
+    writing(sample, args, &Ledger::new())
+}
+
+/// A call against a record somebody else has already told about a file.
+fn writing(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
+    let tool = Write::new(sample.workspace(), seen.clone());
     tool.run(allowed(&tool, args)).unwrap()
+}
+
+/// Says a file was read, the way `read` does when it shows one.
+fn looked_at(sample: &Sample, at: &str) -> Ledger {
+    let seen = Ledger::new();
+    seen.record(
+        sample
+            .workspace()
+            .existing(at)
+            .expect("a file inside the sample workspace")
+            .as_path(),
+    );
+    seen
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -27,11 +49,72 @@ fn a_new_file_is_created_with_exactly_what_was_sent() {
 }
 
 #[test]
+fn replacing_a_file_nobody_looked_at_is_refused_rather_than_done() {
+    // The one call in this crate that can destroy work without anyone seeing
+    // it first. Every other way of changing a file either matches text that is
+    // already there or creates something new; this one replaces whatever is at
+    // the name, and a model that guessed the name has guessed away the
+    // contents. The refusal is a result rather than an error, so the turn
+    // continues and the model can go and read it.
+    let sample = Sample::new("write-unread");
+    sample.write("one.txt", "work nobody looked at\n");
+
+    let output = write(&sample, r#"{"path":"one.txt","content":"new\n"}"#);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "work nobody looked at\n");
+    assert_eq!(
+        output.text(),
+        "one.txt has not been read, so replacing it would discard what is in it: read it first"
+    );
+}
+
+#[test]
+fn a_file_the_read_tool_showed_may_be_replaced() {
+    // The pair, through the real tools rather than a record filled in by hand:
+    // one learns and the other asks, and what makes them agree is the value
+    // they were both handed. A test that only calls `write` would pass with the
+    // two halves speaking about different paths.
+    let sample = Sample::new("write-after-read");
+    sample.write("one.txt", "old\n");
+    let seen = crate::Ledger::new();
+
+    let reader = crate::Read::new(sample.workspace(), Cancel::new(), seen.clone());
+    let shown = reader
+        .run(allowed(&reader, r#"{"path":"one.txt"}"#))
+        .unwrap();
+    assert!(!shown.is_failed(), "{}", shown.text());
+
+    let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "new\n");
+}
+
+#[test]
+fn a_file_this_tool_put_down_itself_may_be_replaced_without_reading_it_back() {
+    // Otherwise correcting what the same turn just wrote costs a read of text
+    // the model already has, and the agent has to be told to do it.
+    let sample = Sample::new("write-twice");
+    let seen = crate::Ledger::new();
+
+    writing(&sample, r#"{"path":"one.txt","content":"first\n"}"#, &seen);
+    let output = writing(&sample, r#"{"path":"one.txt","content":"second\n"}"#, &seen);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "second\n");
+}
+
+#[test]
 fn an_existing_file_is_replaced_rather_than_appended_to() {
     let sample = Sample::new("write-replace");
     sample.write("one.txt", "old\n");
 
-    let output = write(&sample, r#"{"path":"one.txt","content":"new\n"}"#);
+    let output = writing(
+        &sample,
+        r#"{"path":"one.txt","content":"new\n"}"#,
+        &looked_at(&sample, "one.txt"),
+    );
 
     assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(read(&sample, "one.txt"), "new\n");
@@ -46,7 +129,11 @@ fn replacing_a_file_preserves_its_existing_mode() {
     sample.write("one.txt", "old\n");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
 
-    let output = write(&sample, r#"{"path":"one.txt","content":"new\n"}"#);
+    let output = writing(
+        &sample,
+        r#"{"path":"one.txt","content":"new\n"}"#,
+        &looked_at(&sample, "one.txt"),
+    );
 
     assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(
@@ -121,7 +208,7 @@ fn a_file_is_written_into_a_directory_the_workspace_reaches() {
     let sample = Sample::new("write-reaching");
     let beside = sample.beside("notes");
 
-    let tool = Write::new(sample.reaching(&beside));
+    let tool = Write::new(sample.reaching(&beside), Ledger::new());
     let output = tool
         .run(allowed(
             &tool,
@@ -220,7 +307,7 @@ fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
     // the second one — and this is what says the first is never trusted for it.
     let sample = Sample::new("write-planted");
     let outside = sample.outside("secret.txt", "original\n");
-    let tool = Write::new(sample.workspace());
+    let tool = Write::new(sample.workspace(), Ledger::new());
     let args = r#"{"path":"notes.txt","content":"stolen\n"}"#;
 
     assert_eq!(
@@ -250,7 +337,7 @@ fn a_directory_is_not_a_file_to_write_over() {
 fn a_call_with_no_content_says_what_is_missing() {
     let sample = Sample::new("write-nocontent");
 
-    let tool = Write::new(sample.workspace());
+    let tool = Write::new(sample.workspace(), Ledger::new());
     let problem = tool
         .run(allowed(&tool, r#"{"path":"one.txt"}"#))
         .unwrap_err();
@@ -263,7 +350,7 @@ fn writing_names_the_file_it_would_change() {
     // A rule can be about `one.txt`, so the sensitivity has to say which file
     // this is — and say it before the call runs, from the arguments alone.
     let sample = Sample::new("write-sensitivity");
-    let tool = Write::new(sample.workspace());
+    let tool = Write::new(sample.workspace(), Ledger::new());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
 
@@ -277,7 +364,7 @@ fn missing_directories_do_not_hide_the_permission_configuration() {
     // only a creatable leaf used to lose this target while `.crucible` was
     // absent, which let allow-edits mode reach the one file no mode may write.
     let sample = Sample::new("write-config-sensitivity");
-    let tool = Write::new(sample.workspace());
+    let tool = Write::new(sample.workspace(), Ledger::new());
 
     for path in [
         ".crucible/config.json",
@@ -297,7 +384,7 @@ fn a_path_that_does_not_resolve_still_says_a_file_is_about_to_change() {
     // No rule matches an unresolved target, so this is asked about rather than
     // waved through by a rule written about somewhere else.
     let sample = Sample::new("write-unresolved");
-    let tool = Write::new(sample.workspace());
+    let tool = Write::new(sample.workspace(), Ledger::new());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
 

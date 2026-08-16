@@ -8,6 +8,7 @@ use crucible_core::{
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
+use crate::ledger::Ledger;
 use crate::target;
 
 /// The name the model calls.
@@ -65,28 +66,39 @@ const SCHEMA: &str = r#"{
 pub struct Read {
     workspace: Workspace,
     cancel: Cancel,
+    seen: Ledger,
 }
 
 impl Read {
-    /// Reads inside `workspace`, and nowhere else.
+    /// Reads inside `workspace`, and nowhere else, telling `seen` about every
+    /// file it shows.
     #[must_use]
-    pub fn new(workspace: Workspace, cancel: Cancel) -> Self {
-        Self { workspace, cancel }
+    pub fn new(workspace: Workspace, cancel: Cancel, seen: Ledger) -> Self {
+        Self {
+            workspace,
+            cancel,
+            seen,
+        }
     }
 
-    /// Numbers the lines the call asked for.
+    /// Numbers the lines the call asked for, and says how many it showed.
     ///
     /// Reads one line past the limit rather than counting the file: knowing
     /// that more follows is what the model needs, and knowing how many more
     /// would mean reading a gigabyte to answer a question about its first
     /// page.
+    ///
+    /// The count comes back because `write` is downstream of it. An answer of
+    /// no lines at all is a file this call did not show the agent — an offset
+    /// past the end reads that way — and a file nobody was shown is not one
+    /// anybody may replace.
     fn numbered(
         &self,
         mut lines: impl BufRead,
         requested: &str,
         from: usize,
         limit: usize,
-    ) -> Result<ToolOutput, ToolError> {
+    ) -> Result<(ToolOutput, usize), ToolError> {
         let mut out = String::new();
         let mut shown = 0;
         let mut number = 0;
@@ -100,9 +112,10 @@ impl Read {
                 // Not text. That is an answer the model should have, not a
                 // breakdown of the mechanism.
                 Err(problem) if problem.kind() == ErrorKind::InvalidData => {
-                    return Ok(ToolOutput::failed(format!(
-                        "{requested} is not a text file"
-                    )));
+                    return Ok((
+                        ToolOutput::failed(format!("{requested} is not a text file")),
+                        0,
+                    ));
                 }
                 Err(source) => {
                     return Err(ToolError::Io {
@@ -134,14 +147,14 @@ impl Read {
         }
 
         if shown == 0 {
-            return Ok(ToolOutput::ok(format!("{requested} has no line {from}")));
+            return Ok((ToolOutput::ok(format!("{requested} has no line {from}")), 0));
         }
 
         let tail = more.map_or_else(String::new, |next| {
             format!("\n[more follows: call {NAME} again with offset {next}]")
         });
 
-        Ok(ToolOutput::ok(out + &tail))
+        Ok((ToolOutput::ok(out + &tail), shown))
     }
 }
 
@@ -186,7 +199,16 @@ impl Tool for Read {
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        self.numbered(BufReader::new(file), requested, from, limit)
+        let (output, shown) = self.numbered(BufReader::new(file), requested, from, limit)?;
+
+        // The resolved path rather than the requested one, because `write` asks
+        // with a resolved path too — otherwise `./one.txt` and `one.txt` would
+        // be two different files to a record that exists to say they are one.
+        if shown > 0 {
+            self.seen.record(path.as_path());
+        }
+
+        Ok(output)
     }
 }
 
@@ -312,7 +334,11 @@ mod tests {
     use crate::sample::{Sample, allowed};
 
     fn read(sample: &Sample, args: &str) -> ToolOutput {
-        let tool = Read::new(sample.workspace(), Cancel::new());
+        reading(sample, args, &Ledger::new())
+    }
+
+    fn reading(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
+        let tool = Read::new(sample.workspace(), Cancel::new(), seen.clone());
         tool.run(allowed(&tool, args)).unwrap()
     }
 
@@ -391,6 +417,24 @@ mod tests {
         let output = read(&sample, r#"{"path":"one.txt","offset":9}"#);
 
         assert_eq!(output.text(), "one.txt has no line 9");
+    }
+
+    #[test]
+    fn a_call_that_showed_no_lines_is_not_a_file_anybody_looked_at() {
+        // An offset past the end answers, and answers successfully — but the
+        // agent has been shown nothing, so `write` must still refuse to replace
+        // it. Otherwise `{"offset":999999}` is a one-call way past the refusal.
+        let sample = Sample::new("read-unseen");
+        sample.write("one.txt", "work nobody looked at\n");
+        let seen = Ledger::new();
+
+        let output = reading(&sample, r#"{"path":"one.txt","offset":9}"#, &seen);
+
+        assert!(!output.is_failed(), "{}", output.text());
+        assert!(
+            !seen.holds(sample.workspace().existing("one.txt").unwrap().as_path()),
+            "a call that showed nothing counted as a read"
+        );
     }
 
     #[test]
@@ -488,7 +532,7 @@ mod tests {
         let input = BufReader::new(Stops {
             cancel: cancel.clone(),
         });
-        let tool = Read::new(sample.workspace(), cancel);
+        let tool = Read::new(sample.workspace(), cancel, Ledger::new());
 
         let problem = tool
             .numbered(input, "huge.txt", usize::MAX, CEILING)
@@ -552,7 +596,7 @@ mod tests {
     fn a_call_with_no_path_says_what_is_missing() {
         let sample = Sample::new("read-nopath");
 
-        let tool = Read::new(sample.workspace(), Cancel::new());
+        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
         let problem = tool.run(allowed(&tool, "{}")).unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
@@ -564,7 +608,7 @@ mod tests {
         // it, and a rule is about a path.
         let sample = Sample::new("read-sensitivity");
         sample.write("one.txt", "alpha\n");
-        let tool = Read::new(sample.workspace(), Cancel::new());
+        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
 
         let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.txt"}"#));
 

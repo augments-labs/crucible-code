@@ -406,6 +406,12 @@ Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see
 [Permissions](../permissions/index.md).
 
+`write` puts down a whole file, so it refuses to overwrite one this session has
+not read or written itself, and says so rather than ending the turn. The model
+reads the file and writes it again. That covers the case a permission prompt
+cannot: a `write` you approve is one you agreed to, and neither of you can see
+that the file holds work nobody looked at.
+
 `bash` runs its command through a POSIX shell in the workspace root, and starts
 it with a short list of variables — `PATH`, `HOME`, the locale — rather than the
 environment crucible is running in. Your provider key is not on that list, so a

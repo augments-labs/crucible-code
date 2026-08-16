@@ -31,6 +31,12 @@
 //! the next request whole. The private `bound` module holds the one figure they
 //! share and says why that figure is in bytes rather than in lines.
 //!
+//! Two of these tools share one piece of knowledge and nothing else: which
+//! files have been read. `write` puts down a whole file, so it refuses to
+//! replace one nobody looked at, and neither tool can answer that alone. The
+//! record is handed to both when they are built rather than reached for by
+//! either, which keeps the binary the only place that knows they share it.
+//!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. What bounds that tool is the permission engine, which is
@@ -43,6 +49,7 @@ mod bound;
 mod edit;
 mod glob;
 mod grep;
+mod ledger;
 mod read;
 #[cfg(test)]
 mod sample;
@@ -54,5 +61,6 @@ pub use bash::Bash;
 pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;
+pub use ledger::Ledger;
 pub use read::Read;
 pub use write::Write;
