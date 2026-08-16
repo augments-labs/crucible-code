@@ -11,8 +11,9 @@
 //! both are handed when they are built, and the binary is the only place that
 //! knows they share it.
 //!
-//! It is a session's memory and a session has no end, so it is bounded like
-//! every other thing this program holds. Forgetting costs a read: a file
+//! It is a session's memory, so it starts again when the session does. Nothing
+//! bounds how long one runs, though, so it is bounded like every other thing
+//! this program holds. Forgetting costs a read: a file
 //! remembered long enough ago to have been evicted is refused and read again,
 //! which is a wasted call rather than a wrong answer. Forgetting in the other
 //! direction — claiming a file was seen when it was not — is the failure this
@@ -69,6 +70,22 @@ impl Ledger {
         }
     }
 
+    /// Forgets every file in it.
+    ///
+    /// What `/clear` and `/resume` run: the session those files were read in is
+    /// not the session the next `write` is in, and a record that outlived its
+    /// session would answer for one the agent has left.
+    ///
+    /// A poisoned lock is the same case as [`Ledger::record`]'s and is left the
+    /// same way. What it costs here is a read, and it cannot cost a file: a
+    /// record that failed to empty says a file was seen by a session that did
+    /// see it.
+    pub fn forget(&self) {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.clear();
+        }
+    }
+
     /// Whether `path` was read.
     pub(crate) fn holds(&self, path: &Path) -> bool {
         self.seen
@@ -118,6 +135,32 @@ mod tests {
         assert!(!ledger.holds(&at(0)), "it kept the oldest path");
         assert!(ledger.holds(&at(REMEMBERED * 2 - 1)));
         assert_eq!(ledger.seen.lock().unwrap().len(), REMEMBERED);
+    }
+
+    #[test]
+    fn forgetting_leaves_a_file_that_was_read_needing_to_be_read_again() {
+        // What `/clear` runs. The session the file was read in is over, so the
+        // record of having read it is over with it — and `write` asks for the
+        // read again rather than replacing a file this session never saw.
+        let ledger = Ledger::new();
+        ledger.record(&at(1));
+
+        ledger.forget();
+
+        assert!(!ledger.holds(&at(1)));
+    }
+
+    #[test]
+    fn forgetting_is_forgotten_by_every_clone() {
+        // The same reason the record is shared at all: the tool that asks is
+        // not the object the command reached.
+        let asks = Ledger::new();
+        let learns = asks.clone();
+        learns.record(&at(1));
+
+        asks.forget();
+
+        assert!(!learns.holds(&at(1)));
     }
 
     #[test]
