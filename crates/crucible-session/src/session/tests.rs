@@ -1,6 +1,7 @@
 //! What a session log keeps, and what it hands back.
 
 use std::fs;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
@@ -226,55 +227,48 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 }
 
 #[test]
-fn a_session_that_forgot_is_continued_from_where_it_started_again() {
-    // What `/clear` leaves in the log. The marker is a line like any other, so
-    // what was said before it is still on the disk — the log is the record of
-    // what happened, and forgetting happened at a point in it — and none of it
-    // comes back, because the model was never going to be told it again.
+fn a_log_that_says_it_forgot_is_continued_from_where_it_says_so() {
+    // A shape on somebody's disk rather than one this build can produce:
+    // `/clear` forgot in place once, and leaves a session of its own now, so
+    // nothing writes this line any more. That is exactly why it is spelled out
+    // here rather than produced by an API. The format is unchanged, so a log
+    // holding one is still a log this build continues — and a reader that
+    // stopped understanding the marker would replay a stretch the session it
+    // came from was told to drop.
+    //
+    // What is above the marker stays in the file. The log is the record of what
+    // happened, and cutting a stretch out of it is not something an append-only
+    // file can do safely while another line is on its way to the disk.
+    /// The line an earlier crucible wrote, exactly as it wrote it.
+    const FORGOTTEN: &str = r#"{"forgotten":true}"#;
+
     let sample = Sample::new("session-forgot");
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let path = session.path().to_owned();
 
     session.append(&said("what was said first"));
-    session.forgot();
+    drop(session);
+
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("the log this session wrote");
+    writeln!(log, "{FORGOTTEN}").expect("a writable log");
+    drop(log);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    assert_eq!(transcript.messages(), &[], "the marker started it again");
+
     session.append(&said("what was said after"));
     drop(session);
 
     let (_session, transcript) =
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-
     assert_eq!(transcript.messages(), &[said("what was said after")]);
-}
 
-#[test]
-fn what_a_session_forgot_is_still_in_the_file() {
-    // Written down rather than cut out. A log that quietly lost a stretch of
-    // what happened would be a worse record than one saying where the session
-    // started again — and cutting it is not something an append-only log can do
-    // safely while another line is on its way to the disk.
-    let sample = Sample::new("session-forgot-record");
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
-    let path = session.path().to_owned();
-
-    session.append(&said("what was said first"));
-    session.forgot();
-    drop(session);
-
-    let written = fs::read_to_string(path).expect("the log");
-    let lines: Vec<&str> = written.lines().collect();
-
-    assert_eq!(
-        lines.len(),
-        3,
-        "a header, a message and the marker: {written}"
-    );
-    assert!(
-        lines.get(1).is_some_and(|line| line.contains("first")),
-        "{written}"
-    );
-    assert!(
-        lines.get(2).is_some_and(|line| wire::forgets(line)),
-        "{written}"
-    );
+    let written = fs::read_to_string(&path).expect("the log");
+    assert!(written.contains("what was said first"), "{written}");
 }
 
 #[test]

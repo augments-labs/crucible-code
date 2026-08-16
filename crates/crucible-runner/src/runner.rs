@@ -194,27 +194,6 @@ impl Runner {
         self.permission.switch(mode);
     }
 
-    /// Forgets the transcript, and says how many messages that was.
-    ///
-    /// The session is the same session: the same log, the same file, the same
-    /// permission memory and the same mode. What changes is what the next turn
-    /// carries — nothing — and that is recorded in the log where it happened,
-    /// so continuing this session later picks it up from here rather than from
-    /// the top.
-    ///
-    /// The turn count goes back with it. The next turn is the first the model
-    /// will see, and numbering it otherwise would name a turn that is no longer
-    /// anywhere.
-    pub fn forget(&mut self) -> usize {
-        let held = self.transcript.len();
-
-        self.session.forgot();
-        self.transcript.forget();
-        self.turn = TurnId::FIRST;
-
-        held
-    }
-
     /// The model this session is asking, as the provider spells it.
     ///
     /// Empty where nothing has chosen one. That is a session that can do

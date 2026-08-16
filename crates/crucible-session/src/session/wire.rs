@@ -23,18 +23,15 @@ use serde_json::{Value, json};
 /// a different one.
 pub(crate) const FORMAT: u32 = 3;
 
-/// The line that says everything before it was forgotten.
+/// Whether this line says everything above it was forgotten.
 ///
-/// A marker rather than a rewrite. The log is append-only — it is written by a
-/// thread that never seeks, and it is what a crashed process leaves behind —
-/// so what a session forgets is recorded as something that happened at a point
-/// in it, the same as a message. Replay reads it and starts the transcript
-/// again from there.
-pub(crate) fn forgotten() -> String {
-    json!({ "forgotten": true }).to_string()
-}
-
-/// Whether this line is that marker.
+/// Read and never written. `/clear` forgot in place once, and a session that
+/// did could not rewrite its own log — it is append-only, written by a thread
+/// that never seeks and left behind by a process that may have crashed — so
+/// what it forgot was recorded as something that happened at a point in it,
+/// the same as a message. That command starts a session of its own now, but
+/// the logs holding the marker are still logs of this format, and replay
+/// starts the transcript again where it finds one.
 pub(crate) fn forgets(line: &str) -> bool {
     serde_json::from_str::<Value>(line)
         .ok()
