@@ -41,6 +41,13 @@ Notable changes to crucible. Format follows
   requires before it will replace one. Until now that surface was a six-row
   table in getting started and nothing else.
 
+- **The topic covers the two tree walkers and the shell.** What `grep` and
+  `glob` both skip and why they can never disagree about it, the two search
+  modes and the two listing orders including which paths a `limit` keeps under
+  each, and for `bash` the built environment a command starts with, the notes
+  that say how one ended, and why it is asked about in every mode but
+  `fullAccess`.
+
 ## [0.1.10] - 2026-08-16
 
 ### Internal
