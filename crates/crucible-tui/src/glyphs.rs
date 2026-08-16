@@ -10,6 +10,13 @@
 //! One set for every component, and that is the reason this sits beside them
 //! rather than inside one: the welcome and the prompt draw the same corner, and
 //! a terminal that shows a hollow square for it shows one in both places.
+//!
+//! The transcript is drawn outside this crate and out of the same set, which is
+//! why the marks that appear in a line of text are public where the frame parts
+//! are not. A caller composing its own row is the reason the setting exists at
+//! all — a font missing a corner is missing the one a tool call hangs its result
+//! off too — and the alternative is a second answer to a question the
+//! configuration asks in one word.
 
 /// The name, as letters.
 ///
@@ -93,10 +100,48 @@ impl Glyphs {
 
     /// The small mark that parts one thing on a row from the next, and that
     /// opens an item in a list.
-    pub(crate) fn dot(self) -> &'static str {
+    #[must_use]
+    pub fn dot(self) -> &'static str {
         match self {
             Self::Unicode => "·",
             Self::Ascii => "-",
+        }
+    }
+
+    /// The mark that opens the line for a tool call.
+    ///
+    /// Filled, where [`Glyphs::dot`] is not. The two sit within a row of each
+    /// other saying different things — this one opens a call and is the column
+    /// its result hangs off, and that one is punctuation — so they are drawn
+    /// apart in both sets rather than only in the one with the glyphs to spare.
+    #[must_use]
+    pub fn called(self) -> &'static str {
+        match self {
+            Self::Unicode => "●",
+            Self::Ascii => "*",
+        }
+    }
+
+    /// The corner a tool call's result hangs under.
+    ///
+    /// Square where a frame's corner is round, so a result row and the bottom
+    /// of the box never read as the same shape. The ascii set has one corner
+    /// for every purpose and this is it, which costs that distinction — but a
+    /// terminal drawing hollow squares has already lost more than that.
+    #[must_use]
+    pub fn hangs(self) -> &'static str {
+        match self {
+            Self::Unicode => "└",
+            Self::Ascii => "+",
+        }
+    }
+
+    /// The mark that says what came back was a failure.
+    #[must_use]
+    pub fn failed(self) -> &'static str {
+        match self {
+            Self::Unicode => "✗",
+            Self::Ascii => "x",
         }
     }
 
@@ -143,7 +188,13 @@ impl Glyphs {
     }
 
     /// What stands where something did not fit.
-    pub(crate) fn ellipsis(self) -> &'static str {
+    ///
+    /// Three columns in the ascii set against one in the other, and the only
+    /// mark here whose width is not the same in both. A caller clipping a line
+    /// to a width owes the room this takes rather than the one column the
+    /// unicode set happens to need.
+    #[must_use]
+    pub fn ellipsis(self) -> &'static str {
         match self {
             Self::Unicode => "…",
             Self::Ascii => "...",

@@ -34,7 +34,9 @@ Notable changes to crucible. Format follows
 - **A tool call reads as the tool and what the call is about.**
   `● Read(src/main.rs)` rather than `read {"path":"src/main.rs"}` — each tool
   names the one argument a person would recognise its call by, and the result
-  hangs under `└` off the mark that opened the call. What it costs: any other
+  hangs under `└` off the mark that opened the call. Both marks, the `✗` on a
+  failure and the `…` that says a line was cut come out of the `glyphs`
+  setting, so `ascii` draws the pair as `*` and `+`. What it costs: any other
   argument is no longer on the row, and a call nobody could read is drawn as
   the bare tool name.
 

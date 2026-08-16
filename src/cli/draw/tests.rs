@@ -21,6 +21,11 @@ fn shown() -> usize {
     Style::plain().output(WIDE)
 }
 
+/// The set every assertion that spells a mark out is written against.
+fn unicode() -> Glyphs {
+    Style::plain().glyphs()
+}
+
 fn call(name: &str, args: &str) -> ToolCall {
     ToolCall {
         id: ToolId::new("a"),
@@ -100,7 +105,12 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 fn a_long_summary_is_clipped_rather_than_wrapped() {
     let long = "x".repeat(200);
 
-    let line = requested(&call("bash", "{}"), &Summary::new(long), args());
+    let line = requested(
+        &call("bash", "{}"),
+        &Summary::new(long),
+        WIDE,
+        Style::plain(),
+    );
 
     assert!(line.ends_with('…'), "{line}");
     assert!(line.chars().count() <= args() + "● Bash(…".len(), "{line}");
@@ -112,7 +122,12 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
     // that is secretly two rows leaves it one row too high, and the next
     // frame erases something the user was meant to keep. The summary is made
     // out of the model's arguments, so it can hold one.
-    let line = requested(&call("bash", "{}"), &Summary::new("a\nb"), args());
+    let line = requested(
+        &call("bash", "{}"),
+        &Summary::new("a\nb"),
+        WIDE,
+        Style::plain(),
+    );
 
     assert!(!line.contains('\n'), "{line}");
 }
@@ -121,12 +136,15 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
 fn output_shows_its_first_line_and_says_how_much_more_there_was() {
     let output = ToolOutput::ok("one\ntwo\nthree");
 
-    assert_eq!(finished(&output, shown()), "  └ one (+2 lines)");
+    assert_eq!(finished(&output, shown(), unicode()), "  └ one (+2 lines)");
 }
 
 #[test]
 fn a_single_line_of_output_gets_no_count() {
-    assert_eq!(finished(&ToolOutput::ok("done"), shown()), "  └ done");
+    assert_eq!(
+        finished(&ToolOutput::ok("done"), shown(), unicode()),
+        "  └ done"
+    );
 }
 
 #[test]
@@ -135,7 +153,7 @@ fn a_failure_is_marked_as_one() {
     // and the user goes looking for the mistake in the wrong place. The mark
     // goes on the result rather than on the call above it: one thing says a
     // call failed, and it is the row that says what the failure was.
-    let line = finished(&ToolOutput::failed("no such file"), shown());
+    let line = finished(&ToolOutput::failed("no such file"), shown(), unicode());
 
     assert!(line.contains('✗'), "{line}");
     assert!(line.starts_with("  └ ✗ "), "{line}");
@@ -146,18 +164,63 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
     // Measured off the mark rather than counted out, so the two cannot drift:
     // a mark drawn in a different glyph moves the corner under it with it,
     // and a corner under the tool's name instead reads as a second call.
-    let opened = requested(&call("read", "{}"), &Summary::new("src/main.rs"), args());
-    let under = finished(&ToolOutput::ok("done"), shown());
+    // Both sets, because both draw the pair.
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mark = columns(glyphs.called());
+        let under = finished(&ToolOutput::ok("done"), shown(), glyphs);
+        let corner = under.find(glyphs.hangs()).unwrap_or_default();
 
-    let mark = columns(opened.split_whitespace().next().unwrap_or_default());
-    let corner = under.find('└').unwrap_or_default();
-
-    assert_eq!(corner, mark + 1, "{opened:?} then {under:?}");
+        assert_eq!(corner, mark + 1, "{glyphs:?}: {under:?}");
+    }
 }
 
 #[test]
 fn no_output_at_all_is_still_a_line() {
-    assert_eq!(finished(&ToolOutput::ok(""), shown()), "  └ ");
+    assert_eq!(finished(&ToolOutput::ok(""), shown(), unicode()), "  └ ");
+}
+
+#[test]
+fn a_clipped_line_stays_inside_the_window_in_both_glyph_sets() {
+    // The ascii ellipsis is `...`, three columns against one. A line that
+    // reserved a single column for it would be committed three columns wider
+    // than the window, and a committed line the terminal wraps itself is a row
+    // the live tail never counted -- so the cursor is a row off on every frame
+    // after it, and the next one erases something the reader was meant to keep.
+    let long = "x".repeat(200);
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for width in [1, 2, 3, 4, 8, 40] {
+            let line = clipped(&long, width, glyphs);
+
+            assert!(
+                crucible_tui::columns(&line) <= width,
+                "{glyphs:?} at {width}: {line:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_call_line_stays_inside_the_window_mark_and_all() {
+    // The mark and the space after it are columns of the row, so a line clipped
+    // to the whole window and then given a mark is two columns past it. Both
+    // sets and both marks, since the ascii one is a different width and the
+    // ellipsis behind it is three columns rather than one.
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for window in [1, 2, 3, 4, 8, 40, WIDE] {
+            let line = requested(
+                &call("read", "{}"),
+                &Summary::new("x".repeat(200)),
+                window,
+                Style::drawn(glyphs),
+            );
+
+            assert!(
+                crucible_tui::columns(&line) <= window,
+                "{glyphs:?} at {window}: {line:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -391,8 +454,8 @@ fn clipping_stops_at_a_character_not_a_byte() {
     // Five columns asked for and five come back. The ellipsis stands in the
     // row rather than beyond it, so the text it replaces gives one up — and a
     // line already short enough owes nothing and is handed back whole.
-    assert_eq!(clipped("héllo wörld", 5), "héll…");
-    assert_eq!(clipped("héllo", 5), "héllo");
+    assert_eq!(clipped("héllo wörld", 5, unicode()), "héll…");
+    assert_eq!(clipped("héllo", 5, unicode()), "héllo");
 }
 
 #[test]
@@ -402,14 +465,14 @@ fn a_line_is_clipped_to_the_columns_it_takes_not_the_characters_it_holds() {
     // the row in the first case and half of it in the second, while the tail
     // that wraps the result counts columns in both — which is the whole reason
     // the counting is the renderer's rather than this file's.
-    assert_eq!(clipped("日本語のテキスト", 5), "日本…");
+    assert_eq!(clipped("日本語のテキスト", 5, unicode()), "日本…");
 
     // One column as text, two once the selector follows it. Spelled out
     // because a selector is invisible in a source file.
     let warning = "\u{26A0}\u{FE0F}";
     let three = format!("{warning}{warning}{warning}");
 
-    assert_eq!(clipped(three, 5), format!("{warning}{warning}…"));
+    assert_eq!(clipped(three, 5, unicode()), format!("{warning}{warning}…"));
 }
 
 /// What a question about `sensitivity` leaves on the terminal.
