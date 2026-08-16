@@ -11,7 +11,7 @@
 //! Every event says its own `type`, so that is what is read rather than the SSE
 //! event name beside it. One name, one place it is spelled.
 
-use crucible_core::{Delta, ProviderError, StopReason, ToolId};
+use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::openai::NAME;
@@ -85,8 +85,8 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
         // The three ways a response ends. `completed` is the only one that is
         // not a failure, and which of the two finishes it is depends on what
         // the response turned out to hold.
-        "response.completed" => Ok(vec![Delta::Stopped(stop(&payload))]),
-        "response.incomplete" => Ok(vec![Delta::Stopped(cut(&payload))]),
+        "response.completed" => Ok(ended(&payload, stop(&payload))),
+        "response.incomplete" => Ok(ended(&payload, cut(&payload))),
         "response.failed" => Err(failed(&payload)),
 
         // A failure outside any response, which arrives flat rather than under
@@ -208,6 +208,35 @@ fn finished(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderErro
         Some(arguments) if !streamed => vec![Delta::ToolArgs(arguments.into())],
         _ => Vec::new(),
     })
+}
+
+/// What a response that has stopped says, in the order somebody reads it.
+///
+/// The cost first and the stop after it, because the stop is the thing a reader
+/// is entitled to treat as the last word. Both endings say it: tokens produced
+/// before a ceiling cut the answer short are tokens produced, and a turn that
+/// read the cost off a clean finish alone would report the truncated response
+/// as the one that cost nothing.
+fn ended(payload: &Value, stop: StopReason) -> Vec<Delta> {
+    spent(payload)
+        .into_iter()
+        .chain([Delta::Stopped(stop)])
+        .collect()
+}
+
+/// What the response cost, said once and under the response it belongs to.
+///
+/// Output tokens only. Absent rather than zero where the counts are missing: a
+/// response that produced nothing and a provider that never says are different
+/// facts, and only one of them is worth a number on the screen.
+fn spent(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("response")
+        .and_then(|response| response.get("usage"))
+        .and_then(|usage| usage.get("output_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Spent(Spend::new(tokens)))
 }
 
 /// Why a response that finished finished.

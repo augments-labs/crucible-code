@@ -13,7 +13,7 @@ pub(super) type Stream = Response<Messages>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId};
 
     use super::*;
     use crate::transport::{Paused, Said};
@@ -60,6 +60,7 @@ pub(super) mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
+                Delta::Spent(Spend::new(4)),
                 Delta::Stopped(StopReason::Yielded),
             ]
         );
@@ -102,6 +103,7 @@ pub(super) mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
+                Delta::Spent(Spend::new(4)),
                 Delta::Stopped(StopReason::Yielded),
             ]
         );
@@ -218,6 +220,7 @@ pub(super) mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
+                Delta::Spent(Spend::new(4)),
                 Delta::Stopped(StopReason::Yielded),
             ]
         );

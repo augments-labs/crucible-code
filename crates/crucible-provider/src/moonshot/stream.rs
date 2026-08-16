@@ -13,7 +13,7 @@ pub(super) type Stream = Response<Completions>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId};
 
     use super::*;
 
@@ -29,6 +29,8 @@ pub(super) mod tests {
         r#"data: {"id":"chat-1","choices":[{"index":0,"delta":{"content":", world"},"finish_reason":null}]}"#,
         "\n\n",
         r#"data: {"id":"chat-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        "\n\n",
+        r#"data: {"id":"chat-1","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":4}}"#,
         "\n\n",
         "data: [DONE]\n\n",
     );
@@ -59,7 +61,11 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn an_answer_arrives_as_text_and_a_stop() {
+    fn an_answer_arrives_as_text_a_stop_and_then_what_it_cost() {
+        // In that order, because that is the order this endpoint sends them.
+        // The counts come last, in a chunk with no choice in it at all — after
+        // the reason the model stopped, which is the one place a reader is
+        // tempted to stop reading.
         let mut stream = reading(ANSWER, &Cancel::new());
 
         assert_eq!(
@@ -68,6 +74,7 @@ pub(super) mod tests {
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
                 Delta::Stopped(StopReason::Yielded),
+                Delta::Spent(Spend::new(4)),
             ]
         );
     }

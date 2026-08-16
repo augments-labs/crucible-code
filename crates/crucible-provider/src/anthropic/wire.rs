@@ -1,15 +1,16 @@
 //! A response, from Anthropic's shape.
 //!
-//! One event in, at most one delta out. Most events are bookkeeping — a ping,
-//! the start of a block, the close of one — and produce nothing, so the caller
-//! keeps reading rather than deciding what to skip.
+//! One event in, however many deltas out. Zero for most of them: they are
+//! bookkeeping — a ping, the start of a block, the close of one — so the caller
+//! keeps reading rather than deciding what to skip. Two for the event that ends
+//! a response, which says what it cost and why the model stopped at once.
 //!
 //! Read by field lookup rather than into mirror structs. The payload is
 //! consumed once, here, and a struct per event type would be more code to say
 //! the same thing while still needing a fallback for the types this does not
 //! know.
 
-use crucible_core::{Delta, ProviderError, StopReason, ToolId};
+use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::anthropic::NAME;
@@ -30,7 +31,7 @@ impl Wire for Messages {
     const PROVIDER: &'static str = NAME;
 
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
-        Ok(delta(event)?.into_iter().collect())
+        deltas(event)
     }
 }
 
@@ -47,11 +48,11 @@ impl Wire for Messages {
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when an event that should carry a payload does
 /// not parse, or announces a tool call by half its identity.
-pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
+fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
     match event.name.as_str() {
-        "content_block_start" => started(&parse(&event.data)?),
-        "content_block_delta" => Ok(content(&parse(&event.data)?)),
-        "message_delta" => Ok(stopped(&parse(&event.data)?)),
+        "content_block_start" => Ok(started(&parse(&event.data)?)?.into_iter().collect()),
+        "content_block_delta" => Ok(content(&parse(&event.data)?).into_iter().collect()),
+        "message_delta" => Ok(ended(&parse(&event.data)?)),
         "error" => Err(upstream(&parse(&event.data)?)),
 
         // Everything else, and none of it parsed. `ping` is the keep-alive and
@@ -61,7 +62,7 @@ pub(super) fn delta(event: &SseEvent) -> Result<Option<Delta>, ProviderError> {
         // own heartbeat however it likes — which arrives with no data line at
         // all. Skipping the lot keeps the answer flowing; the alternative is
         // failing a turn over something that was additive.
-        _ => Ok(None),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -105,6 +106,34 @@ fn content(payload: &Value) -> Option<Delta> {
         // showing nothing.
         _ => None,
     }
+}
+
+/// What the event that closes a response says.
+///
+/// Two things, and either can be absent: this endpoint sends one of these for
+/// the counts alone while the answer is still arriving, and sends the last one
+/// with the reason beside them. The cost goes first, because the stop is the
+/// thing a reader is entitled to treat as the last word.
+fn ended(payload: &Value) -> Vec<Delta> {
+    spent(payload).into_iter().chain(stopped(payload)).collect()
+}
+
+/// What the response has cost so far.
+///
+/// Output tokens, which is this endpoint's `output_tokens`. Every reading is the
+/// whole of what the response has produced rather than what it produced since
+/// the last one, so a reading that arrives twice says the same thing twice.
+///
+/// Absent rather than zero where the counts are missing. A model that has
+/// produced nothing yet and a provider that never says are different facts, and
+/// only one of them is worth putting a number on the screen for.
+fn spent(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("usage")
+        .and_then(|usage| usage.get("output_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Spent(Spend::new(tokens)))
 }
 
 /// The model saying it has stopped, and why.
@@ -184,8 +213,12 @@ mod tests {
         }
     }
 
+    /// The one delta an event meant, for the events that mean at most one.
     fn of(name: &str, data: &str) -> Option<Delta> {
-        delta(&event(name, data)).unwrap()
+        let mut meant = deltas(&event(name, data)).unwrap();
+
+        assert!(meant.len() <= 1, "{name} meant more than one delta");
+        meant.pop()
     }
 
     #[test]
@@ -236,7 +269,7 @@ mod tests {
             r#"{"index":1,"content_block":{"type":"tool_use","id":"toolu_1"}}"#,
             r#"{"index":1,"content_block":{"type":"tool_use","name":"read"}}"#,
         ] {
-            let problem = delta(&event("content_block_start", half)).unwrap_err();
+            let problem = deltas(&event("content_block_start", half)).unwrap_err();
 
             assert!(
                 matches!(problem, ProviderError::Protocol { .. }),
@@ -328,12 +361,42 @@ mod tests {
     }
 
     #[test]
-    fn a_usage_only_message_delta_is_not_a_stop() {
-        // The final `message_delta` carries token counts alongside the reason,
-        // but an interim one carries counts alone.
+    fn what_a_response_has_cost_arrives_while_it_is_still_being_written() {
+        // This endpoint sends the counts more than once, and an interim reading
+        // carries no reason beside it. Read as a stop it would end the response
+        // in the middle of the answer; skipped, the number nobody is watching a
+        // long turn by only arrives once the turn is over.
         assert_eq!(
-            of("message_delta", r#"{"usage":{"output_tokens":12}}"#),
-            None
+            deltas(&event("message_delta", r#"{"usage":{"output_tokens":12}}"#)).unwrap(),
+            vec![Delta::Spent(Spend::new(12))]
+        );
+    }
+
+    #[test]
+    fn the_event_that_ends_a_response_says_what_it_cost_before_saying_it_ended() {
+        // Both in one event. The cost goes first because the stop is the thing a
+        // reader is entitled to treat as the last word.
+        assert_eq!(
+            deltas(&event(
+                "message_delta",
+                r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#,
+            ))
+            .unwrap(),
+            vec![
+                Delta::Spent(Spend::new(40)),
+                Delta::Stopped(StopReason::Yielded),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_response_that_says_nothing_about_what_it_cost_is_not_reported_as_free() {
+        // Nothing here invents a zero. A turn whose provider never sends the
+        // counts says nothing about them, which is what lets the row above the
+        // box leave the segment out rather than draw a number that is wrong.
+        assert_eq!(
+            of("message_delta", r#"{"delta":{"stop_reason":"end_turn"}}"#),
+            Some(Delta::Stopped(StopReason::Yielded))
         );
     }
 
@@ -391,7 +454,7 @@ mod tests {
     fn a_failure_inside_the_response_carries_what_the_provider_called_it() {
         // This arrives on a 200. Being overloaded is the usual cause, and the
         // kind is what tells a caller it is worth trying again.
-        let problem = delta(&event(
+        let problem = deltas(&event(
             "error",
             r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
         ))
@@ -407,7 +470,7 @@ mod tests {
     fn an_event_that_is_not_json_is_a_protocol_failure_that_does_not_quote_it() {
         // The payload can be an entire event long, and this message is shown to
         // a user.
-        let problem = delta(&event("content_block_delta", "not json at all")).unwrap_err();
+        let problem = deltas(&event("content_block_delta", "not json at all")).unwrap_err();
 
         assert!(
             matches!(problem, ProviderError::Protocol { .. }),
