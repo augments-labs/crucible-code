@@ -1,4 +1,10 @@
 //! Putting a whole file down.
+//!
+//! Whatever was at the name is gone afterwards, which makes this the one call
+//! here that can destroy work. So it refuses a file nobody has looked at: the
+//! agent may replace what it has read and what it wrote itself, and has to go
+//! and read anything else first. The refusal is a result rather than an error,
+//! so the turn continues and the model can do exactly that.
 
 use std::fs;
 
@@ -8,6 +14,7 @@ use crucible_core::{
 
 use crate::args::Args;
 use crate::atomic;
+use crate::ledger::Ledger;
 use crate::target;
 
 /// The name the model calls.
@@ -35,13 +42,15 @@ const SCHEMA: &str = r#"{
 #[derive(Debug)]
 pub struct Write {
     workspace: Workspace,
+    seen: Ledger,
 }
 
 impl Write {
-    /// Writes inside `workspace`, and nowhere else.
+    /// Writes inside `workspace`, and nowhere else, replacing only files `seen`
+    /// says have been looked at.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+    pub fn new(workspace: Workspace, seen: Ledger) -> Self {
+        Self { workspace, seen }
     }
 }
 
@@ -90,6 +99,18 @@ impl Tool for Write {
         }
 
         let replaced = already.is_ok();
+
+        // Asked before anything is opened, because the answer is about what is
+        // already there rather than about the write. A file the agent has not
+        // read is one it cannot know it is discarding — including one another
+        // program wrote a moment ago, which is the case a model has no way at
+        // all to see.
+        if replaced && !self.seen.holds(path.as_path()) {
+            return Ok(ToolOutput::failed(format!(
+                "{requested} has not been read, so replacing it would discard what is in it: read it first"
+            )));
+        }
+
         let original = if replaced {
             let file = match path.open_regular_to_change() {
                 Ok(file) => file,
@@ -120,6 +141,12 @@ impl Tool for Write {
         {
             return Ok(ToolOutput::failed(problem.to_string()));
         }
+
+        // What the agent just put down it has by definition seen, so the next
+        // call may replace it. Without this a file has to be created and then
+        // read back before it can be corrected, which is a round trip spent
+        // learning what the same turn wrote.
+        self.seen.record(path.as_path());
 
         let lines = content.lines().count();
         let what = if replaced { "replaced" } else { "created" };

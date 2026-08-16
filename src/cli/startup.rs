@@ -18,7 +18,7 @@ use crucible_core::{
 };
 use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
-use crucible_tools::{Bash, Edit, Glob, Grep, Read, Write};
+use crucible_tools::{Bash, Edit, Glob, Grep, Ledger, Read, Write};
 
 use super::standing;
 use super::subscription::Subscriptions;
@@ -368,11 +368,20 @@ fn key(
 fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
     let mut tools = Tools::new();
 
-    tools.add(Box::new(Read::new(workspace.clone(), cancel.clone())));
+    // Which files have been read, learned by one tool and asked by another. It
+    // is made here because this is the only place that may know two tools share
+    // anything; neither of them can reach the other to ask.
+    let seen = Ledger::new();
+
+    tools.add(Box::new(Read::new(
+        workspace.clone(),
+        cancel.clone(),
+        seen.clone(),
+    )));
     tools.add(Box::new(Grep::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Glob::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Edit::new(workspace.clone(), cancel.clone())));
-    tools.add(Box::new(Write::new(workspace.clone())));
+    tools.add(Box::new(Write::new(workspace.clone(), seen)));
 
     // The `env` block goes to the commands crucible runs and nowhere else.
     // crucible cannot put a variable in its own environment — writing to one is

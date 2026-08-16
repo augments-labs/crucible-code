@@ -23,6 +23,15 @@ Notable changes to crucible. Format follows
   matching file's modification time, which the default does not, and a `sort`
   outside the two words is refused rather than quietly read as the default.
 
+### Changed
+
+- **`write` refuses to overwrite a file the session has not read.** A file the
+  agent has read, or wrote itself, it may still replace; anything else comes
+  back as a failure telling it to read the file first, and the turn continues.
+  What it costs: a model that used to guess a path and replace whatever was
+  there now spends one `read` call first, and a file another program wrote
+  during the session is no longer silently discarded.
+
 ## [0.1.10] - 2026-08-16
 
 ### Internal
