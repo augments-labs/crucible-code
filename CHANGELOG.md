@@ -14,6 +14,12 @@ Notable changes to crucible. Format follows
   match carries colons, and `limit` still counts matches only. What it costs:
   nothing to a call that does not ask for it, and `mode: "files"` ignores the
   argument since a list of names has nowhere to put a line.
+- **`grep` can search for text rather than an expression.** `fixed: true` reads
+  `pattern` as the exact characters to find, so anything copied out of a file
+  goes straight into the call. `[dependencies]` is a character class to an
+  expression and `unwrap_or(` is not an expression at all; escaping either by
+  hand costs a turn whichever way it goes wrong. What it costs: nothing to a
+  call that does not ask for it.
 
 ## [0.1.12] - 2026-08-16
 

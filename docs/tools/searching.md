@@ -23,10 +23,11 @@ model can hand it straight to `read` and you can write a rule about it.
 
 | Argument | What it is |
 | --- | --- |
-| `pattern` | The regular expression to search for. Required. |
+| `pattern` | The regular expression to search for, or the exact text if `fixed` is true. Required. |
 | `path` | A file or directory to search under. Defaults to the whole workspace. |
 | `glob` | Only search files whose path matches this, for example `**/*.rs`. |
 | `ignore_case` | Match without regard to case. Defaults to false. |
+| `fixed` | Read `pattern` as the exact text to find rather than as an expression. Defaults to false. |
 | `mode` | `content` for the matching lines, `files` for their names. Defaults to `content`. |
 | `context` | How many lines either side of each match. Defaults to 0, never more than 20. |
 | `limit` | How many results. Defaults to 200, never more than 1000. |
@@ -34,6 +35,13 @@ model can hand it straight to `read` and you can write a rule about it.
 The walk and the search are ripgrep's own crates, which is a speed decision
 before it is a convenience one: the only way to search a real tree quickly is to
 skip what `rg` skips and read what it reads.
+
+`fixed` reads `pattern` as the exact text to find. It is what you want for
+anything copied out of a file: `[dependencies]` is a character class to an
+expression and matches every line holding one of those letters, and
+`unwrap_or(` is not an expression at all. Escaping such a pattern by hand costs
+a turn whichever way it goes wrong — a refused call, or an answer about
+something else with nothing in it saying so.
 
 `content` is the default answer and gives a line per match, `path:line:text`:
 
