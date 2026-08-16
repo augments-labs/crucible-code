@@ -10,6 +10,12 @@
 //! tool result hangs off as much as the one a box is drawn with, and a second
 //! set of marks in this file would be a second answer to a question the
 //! configuration asks in one word.
+//!
+//! A call's line is written when its tool answers rather than when the model
+//! asks for it, so it reaches scrollback with the result that hangs under it
+//! and nothing the turn did in between can come to stand between the two. It is
+//! [`returned`] that writes it, and whoever knows a tool has answered calls it —
+//! this file draws the events, and the request is not the moment.
 
 use std::fmt;
 
@@ -57,12 +63,11 @@ pub(crate) fn event<T: Terminal>(
 
         Event::Delta { text } => renderer.stream(&text),
 
-        Event::ToolRequested { call, summary } => {
-            // Whatever the model was saying is finished; it said it to explain
-            // the call that follows.
-            renderer.settle()?;
-            renderer.commit(&requested(&call, &summary, columns, style))
-        }
+        // Whatever the model was saying is finished; it said it to explain the
+        // call that follows. The line for the call itself is not written here:
+        // it is held until the tool answers and written through [`returned`],
+        // so that it and the result under it reach scrollback together.
+        Event::ToolRequested { .. } => renderer.settle(),
 
         Event::ToolFinished { output, .. } => {
             renderer.commit(&finished(&output, style.output(columns), style.glyphs()))
@@ -228,7 +233,7 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
     renderer.prompt(ending)
 }
 
-/// The line for a call about to run: the tool, and what the call is about.
+/// What a call's line says: the tool, and what the call is about.
 ///
 /// The words in the brackets arrive on the event, worked out by the tool that
 /// owns the arguments. Reading those here to pull out a path would be a second
@@ -236,18 +241,37 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
 /// nobody could read is drawn as the bare name, because empty brackets would
 /// claim it was about nothing.
 ///
+/// Whole, and without the mark or the window: this is what is held from the
+/// moment the model asks until the tool answers, and what the line is worth is
+/// not a thing that changes while the tool runs.
+pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
+    let name = pascal(&call.name);
+
+    if summary.is_empty() {
+        name
+    } else {
+        format!("{name}({})", summary.as_str())
+    }
+}
+
+/// Writes the line of a call whose tool has answered.
+///
 /// The mark and the space after it are the window's rather than the words', so
 /// they come off the room before the ceiling does. A line as wide as the window
 /// with a mark still in front of it is a row the terminal wraps and the live
 /// tail never counted, and the cursor is a row off on every frame after it.
-fn requested(call: &ToolCall, summary: &Summary, window: usize, style: Style) -> String {
-    let name = pascal(&call.name);
-    let said = if summary.is_empty() {
-        name
-    } else {
-        format!("{name}({})", summary.as_str())
-    };
-
+///
+/// A window with no room for the mark and a space beside it has none for what
+/// the call was about either, and the space is then a column spent saying
+/// nothing in the one window with none to spend. The mark is what is left: it
+/// still says a call was made, which is the half of this line that the result
+/// hanging under it cannot say for itself.
+pub(crate) fn returned<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: &str,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let window = renderer.columns();
     let glyphs = style.glyphs();
     let mark = glyphs.called();
     let room = style
@@ -255,16 +279,13 @@ fn requested(call: &ToolCall, summary: &Summary, window: usize, style: Style) ->
         .min(window.saturating_sub(columns(mark) + 1));
     let said = clipped(said, room, glyphs);
 
-    // A window with no room for the mark and a space beside it has none for
-    // what the call was about either, and the space is then a column spent
-    // saying nothing in the one window with none to spend. The mark is what is
-    // left: it still says a call was made, which is the half of this line that
-    // the result hanging under it cannot say for itself.
-    if said.is_empty() {
-        return mark.to_owned();
-    }
+    renderer.settle()?;
 
-    format!("{mark} {said}")
+    if said.is_empty() {
+        renderer.commit(mark)
+    } else {
+        renderer.commit(&format!("{mark} {said}"))
+    }
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.

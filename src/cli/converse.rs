@@ -425,8 +425,23 @@ fn take<T: Terminal>(
                 // Before it is drawn, because drawing consumes it. The row
                 // above the box says what the turn is doing, and this is the
                 // only place that can be read off.
+                let mut returned = None;
                 if let Seen::Turn(event) = &one {
-                    turning.saw(event);
+                    returned = turning.saw(event);
+                }
+
+                // And the line of a call whose tool has answered is written
+                // before the event that ended it is drawn, so that the result
+                // hangs under the call it answers. It goes out through its own
+                // door rather than through `shown`, which is already at the
+                // arguments this project allows one function.
+                if held.is_ok()
+                    && let Some(said) = returned
+                {
+                    held = stop_if_failed(
+                        draw::returned(renderer, &said, terms.style).map_err(Fatal::from),
+                        &terms.cancel,
+                    );
                 }
 
                 if held.is_ok() {

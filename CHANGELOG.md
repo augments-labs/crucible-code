@@ -40,6 +40,13 @@ Notable changes to crucible. Format follows
   argument is no longer on the row, and a call nobody could read is drawn as
   the bare tool name.
 
+- **A call's line is written when its tool answers.** The line and the result
+  hanging under it reach your scrollback one after the other, so nothing the
+  turn did in between can come to stand between the two. What it costs: nothing
+  about a call is written until it has finished, so a slow tool leaves the
+  transcript still while it runs — the row above the box is what says a call is
+  out.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**

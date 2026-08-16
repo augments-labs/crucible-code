@@ -57,10 +57,9 @@ fn drawn(problem: &str) -> String {
     renderer.terminal().written().to_string()
 }
 
-/// What the terminal ends up with when the model asks for `name` and the tool
-/// that owns it says the call is about `summary`. Through `event` for the
-/// reason `drawn` is: a test that rebuilt the line here would not notice the
-/// arguments starting to arrive whole again.
+/// What the terminal ends up with when the model asks for `name`. Through
+/// `event` for the reason `drawn` is: a test that rebuilt the line here would
+/// not notice the arguments starting to arrive whole again.
 fn announced(name: &str, args: &str, summary: &str) -> String {
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
 
@@ -77,9 +76,40 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
     renderer.terminal().written().to_string()
 }
 
+/// What the terminal ends up with once the call whose line reads `said` has
+/// answered and its line has been written.
+fn committed(said: &str, window: usize, style: Style) -> String {
+    let mut renderer = Renderer::new(Recording::new(window, 24));
+
+    returned(&mut renderer, said, style).expect("the call to commit");
+
+    renderer.terminal().written().to_string()
+}
+
 #[test]
 fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
+    assert_eq!(
+        called(
+            &call("read", r#"{"path":"src/main.rs"}"#),
+            &Summary::new("src/main.rs")
+        ),
+        "Read(src/main.rs)"
+    );
+}
+
+#[test]
+fn asking_for_a_call_writes_no_line_for_it() {
+    // The line is written when the tool answers, so that it and the result
+    // hanging under it reach scrollback together. Written here, anything the
+    // turn did in between would come to stand between the two.
     let written = announced("read", r#"{"path":"src/main.rs"}"#, "src/main.rs");
+
+    assert!(!written.contains("Read"), "{written}");
+}
+
+#[test]
+fn a_call_that_answered_is_written_with_the_mark_that_opens_one() {
+    let written = committed("Read(src/main.rs)", WIDE, Style::plain());
 
     assert!(written.contains("● Read(src/main.rs)"), "{written}");
 }
@@ -89,10 +119,10 @@ fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
     // Empty brackets would say the call was about nothing, when what happened
     // is that its arguments could not be read at all. The tool refuses it a
     // moment later and says so properly.
-    let written = announced("bash", "not json", "");
+    let said = called(&call("bash", "not json"), &Summary::new(""));
 
-    assert!(written.contains("● Bash"), "{written}");
-    assert!(!written.contains("()"), "{written}");
+    assert_eq!(said, "Bash");
+    assert!(!said.contains("()"), "{said}");
 }
 
 #[test]
@@ -103,17 +133,17 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 
 #[test]
 fn a_long_summary_is_clipped_rather_than_wrapped() {
-    let long = "x".repeat(200);
+    let written = committed(&"x".repeat(200), WIDE, Style::plain());
+    let line = written
+        .lines()
+        .map(|row| row.trim_end_matches('\r'))
+        .find(|row| row.contains('…'))
+        .expect("a line that was cut");
 
-    let line = requested(
-        &call("bash", "{}"),
-        &Summary::new(long),
-        WIDE,
-        Style::plain(),
-    );
-
-    assert!(line.ends_with('…'), "{line}");
-    assert!(line.chars().count() <= args() + "● Bash(…".len(), "{line}");
+    // Against the compact ceiling rather than the window: on a terminal this
+    // wide it is `toolDetail` that bounds how much of a call a line shows, and
+    // the two columns are the mark and the space after it.
+    assert!(crucible_tui::columns(line) <= args() + 2, "{line:?}");
 }
 
 #[test]
@@ -122,14 +152,14 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
     // that is secretly two rows leaves it one row too high, and the next
     // frame erases something the user was meant to keep. The summary is made
     // out of the model's arguments, so it can hold one.
-    let line = requested(
-        &call("bash", "{}"),
-        &Summary::new("a\nb"),
-        WIDE,
-        Style::plain(),
-    );
+    let written = committed("Bash(a\nb)", WIDE, Style::plain());
 
-    assert!(!line.contains('\n'), "{line}");
+    assert_eq!(
+        written.matches('\n').count(),
+        committed("Bash(ab)", WIDE, Style::plain())
+            .matches('\n')
+            .count()
+    );
 }
 
 #[test]
@@ -206,19 +236,18 @@ fn a_call_line_stays_inside_the_window_mark_and_all() {
     // to the whole window and then given a mark is two columns past it. Both
     // sets and both marks, since the ascii one is a different width and the
     // ellipsis behind it is three columns rather than one.
+    let long = format!("Read({})", "x".repeat(200));
+
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         for window in [1, 2, 3, 4, 8, 40, WIDE] {
-            let line = requested(
-                &call("read", "{}"),
-                &Summary::new("x".repeat(200)),
-                window,
-                Style::drawn(glyphs),
-            );
+            let written = committed(&long, window, Style::drawn(glyphs));
 
-            assert!(
-                crucible_tui::columns(&line) <= window,
-                "{glyphs:?} at {window}: {line:?}"
-            );
+            for row in written.lines().map(|row| row.trim_end_matches('\r')) {
+                assert!(
+                    crucible_tui::columns(row) <= window,
+                    "{glyphs:?} at {window}: {row:?}"
+                );
+            }
         }
     }
 }
