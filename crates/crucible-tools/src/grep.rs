@@ -23,7 +23,9 @@ use crucible_core::{
     Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkMatch};
+use grep_searcher::{
+    BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,
+};
 use ignore::WalkState;
 use ignore::overrides::{Override, OverrideBuilder};
 
@@ -57,6 +59,16 @@ const CEILING: usize = 1_000;
 /// Where a matching line is cut. A match inside a minified bundle is worth
 /// reporting; the bundle is not worth sending.
 const WIDTH: usize = 400;
+
+/// The most lines either side of a match a call can ask for.
+///
+/// Capped the way `limit` is and for the same reason: the number arrives from
+/// the model. Twenty is where the answer stops being about the match — a call
+/// asking for forty lines around each of two hundred hits has asked for the
+/// files themselves, and `read` is the tool that hands over a file. The bytes
+/// bound the answer either way, so a larger number here would buy the walk the
+/// work of collecting lines the answer then cuts.
+const REACH: usize = 20;
 
 /// How many files the answer names before it starts counting them instead.
 const NAMED: usize = 5;
@@ -114,6 +126,11 @@ const SCHEMA: &str = r#"{
       "enum": ["content", "files"],
       "description": "What to answer with: content for the matching lines themselves, files for the name of every file holding one. Defaults to content."
     },
+    "context": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many lines to return either side of each match, the way grep -C does. Context lines are marked with dashes instead of colons and do not count towards limit. Defaults to 0, and never more than 20 however large a number is sent. Only content mode has lines to surround, so files mode ignores it."
+    },
     "limit": {
       "type": "integer",
       "minimum": 1,
@@ -136,6 +153,8 @@ struct Query {
     matcher: RegexMatcher,
     only: Option<Override>,
     mode: Mode,
+    /// Lines either side of each match. Zero is the plain search.
+    context: usize,
     limit: usize,
 }
 
@@ -165,40 +184,108 @@ impl Mode {
     }
 }
 
-/// One matching line.
+/// One line of the answer: a matching line, or one the call asked for around
+/// it.
+///
+/// Ordered by path and then line, which is the order the answer is read in and
+/// the order it has to come back in twice. `matched` sits last and decides
+/// nothing: the searcher reports a line once, as a match or as context, so no
+/// two hits ever share a path and a line.
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct Hit {
     /// Relative to the workspace root, so the model can pass it back to `read`.
     path: String,
     line: u64,
     text: String,
+    /// Whether the pattern hit this line, as against this being one of the
+    /// lines around one it hit. The bound is on matches, and the answer marks
+    /// the two differently.
+    matched: bool,
 }
 
-/// The lowest matching lines and the total seen, both globally bounded.
+/// The lowest matching lines with whatever a call asked for around them, and
+/// the total seen. All of it globally bounded.
 ///
 /// Workers add directly here instead of building one `limit`-sized vector per
 /// thread. Keeping the lowest ordered set while a complete walk searches every
 /// file makes that result independent of worker scheduling without retaining
 /// the tree. A cancelled walk reports only what it reached.
 struct Top {
+    /// The matching lines, and the lines around them where a call asked for
+    /// those.
     hits: BTreeSet<Hit>,
+    /// Matching lines kept. Counted rather than read off `hits.len()`, which
+    /// is the two together.
+    kept: usize,
+    /// Matching lines seen, which is what says whether more matched than the
+    /// answer carries.
     total: usize,
     limit: usize,
+    /// How far a match reaches, so a context line above the highest match kept
+    /// can be told from one the answer still holds.
+    context: u64,
 }
 
 impl Top {
-    fn new(limit: usize) -> Self {
+    fn new(limit: usize, context: u64) -> Self {
         Self {
             hits: BTreeSet::new(),
+            kept: 0,
             total: 0,
             limit,
+            context,
         }
     }
 
     fn add(&mut self, hit: Hit) {
-        self.total = self.total.saturating_add(1);
-        self.hits.insert(hit);
-        if self.hits.len() > self.limit {
+        let matched = hit.matched;
+        if matched {
+            self.total = self.total.saturating_add(1);
+        }
+        if self.hits.insert(hit) && matched {
+            self.kept = self.kept.saturating_add(1);
+        }
+
+        while self.kept > self.limit {
+            let Some(gone) = self.hits.pop_last() else {
+                break;
+            };
+            if gone.matched {
+                self.kept -= 1;
+            }
+        }
+
+        // Only once the set is full. Below that every context line is one this
+        // is going to keep, and the match it belongs to may not have arrived
+        // yet — the searcher reports the lines before a match before the match
+        // itself.
+        if self.kept >= self.limit {
+            self.trim();
+        }
+    }
+
+    /// Drops the context left above the highest match kept.
+    ///
+    /// A context line is only ever reported beside a match, so one no kept
+    /// match reaches belonged to a match the bound cut. They can only be at the
+    /// top: nothing below the highest match is ever dropped, so what is left
+    /// there stays whole.
+    fn trim(&mut self) {
+        let over = {
+            let Some(top) = self.hits.iter().rev().find(|hit| hit.matched) else {
+                // Nothing matched, so nothing here has anything to be beside.
+                self.hits.clear();
+                return;
+            };
+            let reach = top.line.saturating_add(self.context);
+            self.hits
+                .iter()
+                .rev()
+                .take_while(|hit| !hit.matched && (hit.path != top.path || hit.line > reach))
+                .count()
+        };
+
+        for _ in 0..over {
             self.hits.pop_last();
         }
     }
@@ -253,9 +340,9 @@ struct Searched {
 /// Where one file's lines go as the searcher reports them.
 ///
 /// `grep-searcher` offers a sink that wraps a closure over matching lines and
-/// leaves the rest of what a search reports at a default that drops it. Which
-/// of those reports an answer is made of is this tool's decision rather than
-/// one it inherited, so the sink is written out and the decision sits in it.
+/// leaves the rest of what a search reports at a default that drops it. The
+/// lines around a match are that rest: they arrive by their own method, and
+/// which of the two a line arrived by is what the answer marks.
 struct Kept<'a> {
     /// The file's name as the answer gives it.
     shown: &'a str,
@@ -267,10 +354,9 @@ struct Kept<'a> {
     halted: &'a Cell<bool>,
 }
 
-impl Sink for Kept<'_> {
-    type Error = io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, hit: &SinkMatch<'_>) -> Result<bool, io::Error> {
+impl Kept<'_> {
+    /// One line, whichever of the two ways it arrived.
+    fn take(&self, line: Option<u64>, bytes: &[u8], matched: bool) -> Result<bool, io::Error> {
         if self.cancel.requested() {
             self.halted.set(true);
             return Ok(false);
@@ -279,8 +365,8 @@ impl Sink for Kept<'_> {
         // Decoded before anything is kept: a line the matcher hit is not
         // necessarily text, and the file it came from is named rather than
         // reported as searched.
-        let text = str::from_utf8(hit.bytes()).map_err(io::Error::other)?;
-        let Some(line) = hit.line_number() else {
+        let text = str::from_utf8(bytes).map_err(io::Error::other)?;
+        let Some(line) = line else {
             // The searcher is built to count lines, so this does not happen. A
             // hit with no number is one the model cannot hand back to `read`,
             // which is worth ending the file over rather than guessing at.
@@ -294,10 +380,27 @@ impl Sink for Kept<'_> {
                 path: self.shown.to_owned(),
                 line,
                 text: cut(text.trim_end()),
+                matched,
             });
         }
 
         Ok(self.mode == Mode::Content)
+    }
+}
+
+impl Sink for Kept<'_> {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, hit: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        self.take(hit.line_number(), hit.bytes(), true)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &Searcher,
+        around: &SinkContext<'_>,
+    ) -> Result<bool, io::Error> {
+        self.take(around.line_number(), around.bytes(), false)
     }
 }
 
@@ -339,12 +442,21 @@ impl Grep {
         }
 
         let (matcher, mode, limit) = (&query.matcher, query.mode, query.limit);
-        let hits = Mutex::new(Top::new(limit));
+        // A files answer is a list of names, which has nothing for a line
+        // beside a match to go next to. So the searcher is not asked for them,
+        // and the walk does not read what the answer could not carry.
+        let context = match mode {
+            Mode::Content => query.context,
+            Mode::Files => 0,
+        };
+        let hits = Mutex::new(Top::new(limit, reach(context)));
         let partly = Mutex::new(Partial::default());
 
         walk.build_parallel().run(|| {
             let mut searcher = SearcherBuilder::new()
                 .line_number(true)
+                .before_context(context)
+                .after_context(context)
                 // What `rg` does by default, and the budget is measured against
                 // `rg`. A checked-in font, `.so` or fixture that happens to be
                 // valid UTF-8 is otherwise searched byte for byte, and its
@@ -406,7 +518,12 @@ impl Grep {
             })
         });
 
-        let top = hits.into_inner().unwrap_or_else(|_| Top::new(limit));
+        let mut top = hits
+            .into_inner()
+            .unwrap_or_else(|_| Top::new(limit, reach(context)));
+        // Once more with the walk over, because a match no later match can
+        // arrive above is the last word on which context lines anything holds.
+        top.trim();
         let partly = partly.into_inner().unwrap_or_default();
         Found {
             more: top.total > limit,
@@ -542,6 +659,7 @@ impl Tool for Grep {
             matcher,
             only,
             mode,
+            context: args.whole("context", 0)?.min(REACH),
             limit,
         };
         let found = self.hunt(&from, query, &approved);
@@ -566,6 +684,10 @@ fn report(found: &Found, pattern: &str, answer: (Mode, usize)) -> ToolOutput {
     // count a call sets says how many lines come back and nothing about how
     // much text that is.
     let (lines, over) = crate::bound::within(found.hits.iter().map(|hit| match mode {
+        // Dashes where a match has colons, which is how `grep -C` has told the
+        // two apart since before there were models to read it. The line number
+        // is on both, so a gap between groups is visible in the numbers.
+        Mode::Content if !hit.matched => format!("{}-{}-{}\n", hit.path, hit.line, hit.text),
         Mode::Content => format!("{}:{}:{}\n", hit.path, hit.line, hit.text),
         Mode::Files => format!("{}\n", hit.path),
     }));
@@ -573,10 +695,11 @@ fn report(found: &Found, pattern: &str, answer: (Mode, usize)) -> ToolOutput {
     let counted = mode.counted();
     let tail = if over > 0 {
         // Raising the limit would not help: what filled up is the answer, not
-        // the list.
+        // the list. Counted in matches rather than in lines, because that is
+        // what the number beside it means and context lines are neither.
         format!(
             "\n[stopped at {} {counted}: the answer was full at {} bytes, narrow the pattern]",
-            found.hits.len().saturating_sub(over),
+            matches(&found.hits, found.hits.len().saturating_sub(over)),
             crate::bound::OUTPUT
         )
     } else if found.more {
@@ -586,6 +709,12 @@ fn report(found: &Found, pattern: &str, answer: (Mode, usize)) -> ToolOutput {
     };
 
     ToolOutput::ok(lines + &tail + &note)
+}
+
+/// How many of the first `shown` hits matched, as against surrounding one that
+/// did.
+fn matches(hits: &[Hit], shown: usize) -> usize {
+    hits.iter().take(shown).filter(|hit| hit.matched).count()
 }
 
 /// What a search the user stopped says about itself.
@@ -626,6 +755,15 @@ fn unread(partly: &Partial) -> String {
         format!(" and {rest} more")
     };
     format!("\n[stopped partway through {named}{more}: a match below that point is not here]")
+}
+
+/// How far a match reaches, counted the way a line number is.
+///
+/// [`REACH`] caps the argument well below where this could saturate; it is
+/// written as a conversion rather than a cast because the two types are the
+/// walk's and the searcher's, and neither is free to change the other.
+fn reach(context: usize) -> u64 {
+    u64::try_from(context).unwrap_or(u64::MAX)
 }
 
 /// A line, cut on a character boundary if it is longer than anything worth

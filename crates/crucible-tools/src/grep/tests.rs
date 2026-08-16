@@ -5,7 +5,7 @@ use std::path::Path;
 use crucible_core::Disposition;
 
 use super::{
-    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, Mode, NAMED, Partial, RegexMatcherBuilder,
+    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, Mode, NAMED, Partial, REACH, RegexMatcherBuilder,
     SearcherBuilder, Sensitivity, Stopping, Tool, ToolArgs, ToolOutput, Top, WIDTH, report, unread,
 };
 use crate::sample::{Sample, allowed, under};
@@ -142,6 +142,110 @@ fn case_can_be_ignored_when_the_call_asks_for_it() {
 }
 
 #[test]
+fn a_call_that_asks_for_context_gets_the_lines_around_the_match() {
+    // Without this the model re-reads the whole file to see the three lines
+    // around a hit, which costs a call and sends far more than three lines.
+    let sample = Sample::new("grep-context");
+    sample.write("src/main.rs", "one\ntwo\nneedle\nfour\nfive\n");
+
+    let output = grep(&sample, r#"{"pattern":"needle","context":1}"#);
+
+    assert_eq!(
+        output.text(),
+        "src/main.rs-2-two\nsrc/main.rs:3:needle\nsrc/main.rs-4-four\n"
+    );
+}
+
+#[test]
+fn a_limit_counts_matches_and_the_context_around_them_is_extra() {
+    // Otherwise a call asking for two lines of context gets two thirds of the
+    // matches it asked for, which is a number the model has no way to work out.
+    // The match the limit cut takes its own context with it: a line kept beside
+    // nothing reads as a hit that lost its colon.
+    let sample = Sample::new("grep-context-limit");
+    sample.write(
+        "src/main.rs",
+        "one\ntwo\nneedle\nfour\nneedle\nsix\nneedle\neight\n",
+    );
+
+    let output = grep(&sample, r#"{"pattern":"needle","context":1,"limit":2}"#);
+
+    assert_eq!(
+        output.text(),
+        "src/main.rs-2-two\n\
+         src/main.rs:3:needle\n\
+         src/main.rs-4-four\n\
+         src/main.rs:5:needle\n\
+         src/main.rs-6-six\n\
+         \n[showing first 2 matches: narrow the pattern or raise limit]"
+    );
+}
+
+#[test]
+fn a_files_search_has_nowhere_to_put_context_and_asks_for_none() {
+    // A list of names has no line for one to sit beside. Left switched on, the
+    // first line the searcher reports is the one above the match, and a files
+    // answer is finished with a file after one line — so the file would be
+    // dropped for the context of a match nobody ever saw.
+    let sample = Sample::new("grep-context-files");
+    sample.write("src/main.rs", "one\nneedle\nthree\n");
+
+    let output = grep(
+        &sample,
+        r#"{"pattern":"needle","mode":"files","context":2}"#,
+    );
+
+    assert_eq!(output.text(), "src/main.rs\n");
+}
+
+#[test]
+fn context_past_the_ceiling_is_the_ceiling() {
+    // The number arrives from the model like every other argument, and a call
+    // asking for a hundred lines around each hit has asked for the file itself.
+    let sample = Sample::new("grep-reach");
+    let lines: Vec<&str> = (1..=61)
+        .map(|line| if line == 31 { "needle" } else { "pad" })
+        .collect();
+    sample.write("wide.rs", &(lines.join("\n") + "\n"));
+
+    let output = grep(&sample, r#"{"pattern":"needle","context":100}"#);
+
+    let shown: Vec<&str> = output.text().lines().collect();
+    assert_eq!(shown.len(), REACH * 2 + 1, "{}", output.text());
+    assert_eq!(shown.first(), Some(&"wide.rs-11-pad"));
+    assert_eq!(shown.last(), Some(&"wide.rs-51-pad"));
+}
+
+#[test]
+fn a_full_answer_counts_the_matches_it_carries_and_not_the_lines() {
+    // The number beside "stopped at" is in matches, which is what the limit is
+    // in. Counting lines instead would tell a model asking for one line either
+    // side that it had seen three times the matches it has.
+    let sample = Sample::new("grep-context-bytes");
+    let wide = "x".repeat(WIDTH);
+    sample.write(
+        "wide.txt",
+        &format!("needle{wide}\npad{wide}\n").repeat(200),
+    );
+
+    let output = grep(&sample, r#"{"pattern":"needle","context":1}"#);
+
+    let carried = output
+        .text()
+        .lines()
+        .filter(|line| line.starts_with("wide.txt:"))
+        .count();
+    assert!(carried < 200, "the answer was not full: {carried} matches");
+    assert!(
+        output
+            .text()
+            .contains(&format!("[stopped at {carried} matches")),
+        "{}",
+        output.text()
+    );
+}
+
+#[test]
 fn a_limit_stops_and_says_that_it_did() {
     let sample = Sample::new("grep-limit");
     sample.write("many.txt", &"needle\n".repeat(20));
@@ -247,6 +351,7 @@ fn a_search_the_user_stopped_answers_with_what_it_had() {
             path: "src/main.rs".to_owned(),
             line: 2,
             text: "let needle = 1;".to_owned(),
+            matched: true,
         }],
         more: false,
         partly: Partial::default(),
@@ -305,7 +410,7 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     let tool = Grep::new(workspace.clone(), cancel);
     let mut searcher = SearcherBuilder::new().line_number(true).build();
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
-    let hits = std::sync::Mutex::new(Top::new(1_000));
+    let hits = std::sync::Mutex::new(Top::new(1_000, 0));
     let file = reached.open_regular().unwrap();
     let found = tool.lines(
         &mut searcher,
@@ -690,12 +795,13 @@ fn parallel_search_keeps_the_same_lowest_hits_past_the_limit() {
 
 #[test]
 fn global_hit_retention_never_grows_past_the_requested_limit() {
-    let mut top = Top::new(3);
+    let mut top = Top::new(3, 0);
     for number in (0..10_000).rev() {
         top.add(Hit {
             path: format!("{number:05}.txt"),
             line: 1,
             text: "needle".into(),
+            matched: true,
         });
     }
 
