@@ -61,6 +61,9 @@ pub(super) struct Startup<'a> {
     pub(super) workspace: &'a Workspace,
     /// What stops a turn.
     pub(super) cancel: &'a Cancel,
+    /// Which files have been read. Made by the caller for the same reason the
+    /// cancel is: the loop holds one too, and `/resume` empties it.
+    pub(super) ledger: &'a Ledger,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
@@ -108,7 +111,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(
         provider,
-        tools(workspace, startup.cancel, settings),
+        tools(workspace, startup.cancel, startup.ledger, settings),
         model(startup.model, startup.effort, workspace),
         session,
     )
@@ -365,14 +368,14 @@ fn key(
 ///
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either.
-fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
+fn tools(workspace: &Workspace, cancel: &Cancel, seen: &Ledger, settings: &Settings) -> Tools {
     let mut tools = Tools::new();
 
-    // Which files have been read, learned by one tool and asked by another. It
-    // is made here because this is the only place that may know two tools share
-    // anything; neither of them can reach the other to ask.
-    let seen = Ledger::new();
-
+    // Which files have been read is learned by one tool and asked by another,
+    // and this is the only place that may know they share it. The record itself
+    // comes from the caller, the same as the cancel: `/resume` empties it when
+    // it leaves the session those files were read in, and neither tool can
+    // reach the other to be told.
     tools.add(Box::new(Read::new(
         workspace.clone(),
         cancel.clone(),
@@ -381,7 +384,7 @@ fn tools(workspace: &Workspace, cancel: &Cancel, settings: &Settings) -> Tools {
     tools.add(Box::new(Grep::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Glob::new(workspace.clone(), cancel.clone())));
     tools.add(Box::new(Edit::new(workspace.clone(), cancel.clone())));
-    tools.add(Box::new(Write::new(workspace.clone(), seen)));
+    tools.add(Box::new(Write::new(workspace.clone(), seen.clone())));
 
     // The `env` block goes to the commands crucible runs and nowhere else.
     // crucible cannot put a variable in its own environment — writing to one is

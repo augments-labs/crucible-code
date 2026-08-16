@@ -38,6 +38,7 @@ use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
+use crucible_tools::Ledger;
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
@@ -517,6 +518,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
+
+    // Made here rather than beside the tools that share it, because a third
+    // thing holds one: `/resume` empties it when it leaves the session those
+    // files were read in.
+    let ledger = Ledger::new();
     let from = |name: &str| std::env::var(name).ok();
 
     // Where crucible keeps its own files, read from the environment here and
@@ -592,6 +598,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             &from,
         ),
         cancel: cancel.clone(),
+        ledger: ledger.clone(),
 
         // Who `/model` is choosing for, and where it writes the choice down.
         // The second is a fact about how this run was set up and the prompt is
@@ -672,6 +679,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         sessions: home.sessions(),
         workspace: &workspace,
         cancel: &cancel,
+        ledger: &ledger,
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,

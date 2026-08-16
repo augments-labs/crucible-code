@@ -11,7 +11,8 @@
 //! Picking one up leaves nothing behind. The session being left is closed here,
 //! which is the last chance to say that its log stopped being written, and what
 //! it was allowed for the rest of *its* run is forgotten by the runner — see
-//! [`Runner::pick_up`].
+//! [`Runner::pick_up`]. The record of what has been read is emptied with it,
+//! because it answers for the session being left rather than for this run.
 
 use std::time::SystemTime;
 
@@ -97,6 +98,12 @@ fn picking<T: Terminal>(
 
     let held = transcript.len();
     let left = runner.pick_up(session, transcript);
+
+    // The files remembered were read by the session just left, and `write`
+    // replaces a file on the strength of that record. The session picked up saw
+    // none of them, however much of it comes back off the disk: what a log holds
+    // is what was said, not what the tools of that run had looked at.
+    terms.ledger.forget();
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.

@@ -72,9 +72,9 @@ impl Ledger {
 
     /// Forgets every file in it.
     ///
-    /// What `/clear` and `/resume` run: the session those files were read in is
-    /// not the session the next `write` is in, and a record that outlived its
-    /// session would answer for one the agent has left.
+    /// What `/resume` runs: the session those files were read in is not the
+    /// session the next `write` is in, and a record that outlived its session
+    /// would answer for one the agent has left.
     ///
     /// A poisoned lock is the same case as [`Ledger::record`]'s and is left the
     /// same way. What it costs here is a read, and it cannot cost a file: a
@@ -139,9 +139,9 @@ mod tests {
 
     #[test]
     fn forgetting_leaves_a_file_that_was_read_needing_to_be_read_again() {
-        // What `/clear` runs. The session the file was read in is over, so the
-        // record of having read it is over with it — and `write` asks for the
-        // read again rather than replacing a file this session never saw.
+        // What `/resume` runs. The session the file was read in is over, so
+        // the record of having read it is over with it — and `write` asks for
+        // the read again rather than replacing a file this session never saw.
         let ledger = Ledger::new();
         ledger.record(&at(1));
 
