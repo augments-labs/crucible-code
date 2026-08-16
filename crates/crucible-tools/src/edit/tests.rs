@@ -4,12 +4,18 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolOutput};
+use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
 use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Edit::new(sample.workspace(), Cancel::new());
     tool.run(allowed(&tool, args)).unwrap()
+}
+
+/// A call the tool cannot read, which ends the turn rather than answering.
+fn refuse(sample: &Sample, args: &str) -> ToolError {
+    let tool = Edit::new(sample.workspace(), Cancel::new());
+    tool.run(allowed(&tool, args)).unwrap_err()
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -63,6 +69,113 @@ fn every_occurrence_goes_when_the_call_asks_for_it() {
 
     assert_eq!(read(&sample, "one.rs"), "x = 2;\nx = 2;\n");
     assert_eq!(output.text(), "changed one.rs, 2 replacements");
+}
+
+#[test]
+fn a_list_of_changes_is_made_in_one_call() {
+    // Ten changes to one file are ten turns when each is its own call, and the
+    // model has already read the file once for all of them.
+    let sample = Sample::new("edit-list");
+    sample.write("one.rs", "let a = 1;\nlet b = 2;\nlet b = 2;\n");
+
+    let output = edit(
+        &sample,
+        r#"{"path":"one.rs","edits":[
+             {"find":"let a = 1;","replace":"let a = 9;"},
+             {"find":"let b = 2;","replace":"let b = 7;","all":true}
+           ]}"#,
+    );
+
+    assert_eq!(
+        read(&sample, "one.rs"),
+        "let a = 9;\nlet b = 7;\nlet b = 7;\n"
+    );
+    assert_eq!(output.text(), "changed one.rs, 3 replacements");
+}
+
+#[test]
+fn each_change_looks_at_what_the_one_before_it_left() {
+    let sample = Sample::new("edit-in-order");
+    sample.write("one.rs", "old\n");
+
+    let output = edit(
+        &sample,
+        r#"{"path":"one.rs","edits":[
+             {"find":"old","replace":"middle"},
+             {"find":"middle","replace":"new"}
+           ]}"#,
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.rs"), "new\n");
+}
+
+#[test]
+fn one_change_that_cannot_be_made_leaves_the_whole_file_as_it_was() {
+    // A file half changed is a state nobody asked for, and the model cannot see
+    // which half it got without reading the file back.
+    let sample = Sample::new("edit-all-or-nothing");
+    sample.write("one.rs", "let a = 1;\nlet b = 2;\n");
+
+    let output = edit(
+        &sample,
+        r#"{"path":"one.rs","edits":[
+             {"find":"let a = 1;","replace":"let a = 9;"},
+             {"find":"let z = 9;","replace":"x"}
+           ]}"#,
+    );
+
+    assert!(output.is_failed());
+    assert_eq!(
+        output.text(),
+        "edit 2 of 2 could not be made, so nothing was changed: \
+         that text does not appear in one.rs"
+    );
+    assert_eq!(read(&sample, "one.rs"), "let a = 1;\nlet b = 2;\n");
+}
+
+#[test]
+fn a_call_that_sends_both_shapes_is_asked_to_pick_one() {
+    // Taking one and dropping the other would do half of what the call said,
+    // and say it succeeded.
+    let sample = Sample::new("edit-both-shapes");
+    sample.write("one.rs", "a\n");
+
+    let problem = refuse(
+        &sample,
+        r#"{"path":"one.rs","find":"a","replace":"b","edits":[{"find":"a","replace":"c"}]}"#,
+    );
+
+    assert_eq!(
+        problem.to_string(),
+        "edit: send find and replace, or edits, but not both"
+    );
+    assert_eq!(read(&sample, "one.rs"), "a\n");
+}
+
+#[test]
+fn a_list_that_is_not_a_list_of_changes_says_what_it_should_be() {
+    let sample = Sample::new("edit-list-shape");
+
+    let empty = refuse(&sample, r#"{"path":"one.rs","edits":[]}"#);
+    let text = refuse(&sample, r#"{"path":"one.rs","edits":"find a, replace b"}"#);
+    let element = refuse(&sample, r#"{"path":"one.rs","edits":["a"]}"#);
+
+    assert_eq!(empty.to_string(), "edit: edits is empty");
+    assert_eq!(text.to_string(), "edit: edits must be a list");
+    assert_eq!(element.to_string(), "edit: edits[0] must be a JSON object");
+}
+
+#[test]
+fn a_change_in_the_list_missing_a_field_says_which_one_it_was() {
+    let sample = Sample::new("edit-list-nofind");
+
+    let problem = refuse(
+        &sample,
+        r#"{"path":"one.rs","edits":[{"find":"a","replace":"b"},{"replace":"c"}]}"#,
+    );
+
+    assert_eq!(problem.to_string(), "edit: edits[1] find is required");
 }
 
 #[test]

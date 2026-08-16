@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **`edit` can make several changes to a file in one call.** `edits` takes a
+  list of `find`/`replace`/`all`, made in order, each looking at what the one
+  before it left — ten changes to one file were ten turns. If any of them
+  cannot be made, none is, and the answer says which one stopped the call.
+  What it costs: nothing to a call that sends `find` and `replace` as before,
+  and sending both shapes at once is now refused rather than half-read.
 - **`grep` can return the lines around each match.** `context: n` gives up to
   twenty either side, the way `grep -C` does, so reading what surrounds a hit no
   longer costs a whole file through `read`. Context lines carry dashes where a
