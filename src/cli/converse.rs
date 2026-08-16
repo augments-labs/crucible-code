@@ -12,11 +12,12 @@
 //! at whatever the keyboard already has, round and round — and a permission
 //! question is answered by a key rather than by a line the terminal collected.
 //!
-//! Two things follow from holding it. Ctrl-C is a key here rather than a signal
-//! the terminal raises, so this loop is the only thing that can act on it: mid
-//! turn it asks the turn to stop, which is what it always meant. And a session
-//! with no terminal at either end holds nothing at all and reads whole lines,
-//! which is the path every test drives.
+//! Two things follow from holding it. The keys that would otherwise be the
+//! terminal's arrive here as keys, so this loop is the only thing that can act
+//! on them: Esc asks a running turn to stop, and Ctrl-C throws away the line and
+//! offers to leave an empty one, mid turn exactly as between turns. And a
+//! session with no terminal at either end holds nothing at all and reads whole
+//! lines, which is the path every test drives.
 //!
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
@@ -180,7 +181,7 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = queued.pop() {
             draw::queued(renderer, &said, style)?;
 
-            runner = take(
+            let took = take(
                 runner,
                 renderer,
                 terms,
@@ -191,10 +192,18 @@ pub(crate) fn converse<T: Terminal>(
                     answers: Answers { input, keys },
                 },
             )?;
+            runner = took.runner;
 
             if !told && let Some(problem) = runner.session().trouble() {
                 draw::trouble(renderer, &problem, style)?;
                 told = true;
+            }
+
+            // Said after the trouble above rather than instead of it: a log
+            // that stopped recording is worth hearing about on the way out as
+            // much as on the way through.
+            if matches!(took.meanwhile, typing::Meanwhile::Leaving) {
+                break;
             }
             continue;
         }
@@ -266,7 +275,7 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        runner = take(
+        let took = take(
             runner,
             renderer,
             terms,
@@ -277,10 +286,15 @@ pub(crate) fn converse<T: Terminal>(
                 answers: Answers { input, keys },
             },
         )?;
+        runner = took.runner;
 
         if !told && let Some(problem) = runner.session().trouble() {
             draw::trouble(renderer, &problem, style)?;
             told = true;
+        }
+
+        if matches!(took.meanwhile, typing::Meanwhile::Leaving) {
+            break;
         }
     }
 
@@ -319,7 +333,7 @@ fn take<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     mut taking: Taking<'_>,
-) -> Result<Runner, Fatal> {
+) -> Result<Took, Fatal> {
     // Both channels are made fresh for this turn. A reply channel that outlived
     // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = sync_channel(CAPACITY);
@@ -387,6 +401,12 @@ fn take<T: Terminal>(
         &terms.cancel,
     );
 
+    // Both of these outlive one look at the keyboard because the gesture they
+    // belong to does: the offer to leave is made on one press and taken on the
+    // next, and the two can land either side of a delta arriving.
+    let mut leaving = None;
+    let mut meanwhile = typing::Meanwhile::Nothing;
+
     // Ends when the worker drops both senders, which happens when the turn is
     // over. The wait is bounded rather than blocking so that the keyboard is
     // looked at between deltas. The queue itself is bounded too: adjacent
@@ -418,9 +438,11 @@ fn take<T: Terminal>(
         // screen before the box is drawn back underneath it. A line finished
         // here is kept for the loop above: running it now would start a second
         // turn inside this one.
-        if held.is_ok()
-            && taking.answers.keys
-            && let Err(problem) = typing::during(
+        // Not read once the session is leaving. The turn is still stopping and
+        // this loop still has to drain it, but nothing typed into a box on its
+        // way off the screen can change where the session goes.
+        if held.is_ok() && taking.answers.keys && matches!(meanwhile, typing::Meanwhile::Nothing) {
+            match typing::during(
                 renderer,
                 typing::During {
                     editor: taking.editor,
@@ -428,10 +450,16 @@ fn take<T: Terminal>(
                     says: &says,
                     style: terms.style,
                     cancel: &terms.cancel,
+                    leaving: &mut leaving,
                 },
-            )
-        {
-            held = stop_if_failed(Err(problem), &terms.cancel);
+            ) {
+                // Kept rather than acted on. The turn has been asked to stop
+                // and this loop is what notices it has: leaving here would drop
+                // the join handle below and take the process out over a session
+                // log still being written.
+                Ok(asked) => meanwhile = asked,
+                Err(problem) => held = stop_if_failed(Err(problem), &terms.cancel),
+            }
         }
     }
 
@@ -445,7 +473,15 @@ fn take<T: Terminal>(
     }
 
     let runner = working.join().map_err(|_| Fatal::Lost)?;
-    held.map(|()| runner)
+    held.map(|()| Took { runner, meanwhile })
+}
+
+/// A turn, and what the keyboard asked for while it ran.
+struct Took {
+    /// The runner, back from the worker that held it for the turn.
+    runner: Runner,
+    /// Whether anything pressed during the turn ends the session with it.
+    meanwhile: typing::Meanwhile,
 }
 
 /// Raises cancellation the first time the drawing side can no longer proceed.

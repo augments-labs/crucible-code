@@ -186,9 +186,9 @@ You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
 queues what you wrote as the next prompt, and it is run the moment the turn
 ends. Up to 64 finished prompts and 1 MiB of their text can wait; when either
 bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
-it says why. <kbd>Ctrl-C</kbd> asks the turn to stop. The key that steps the
-mode is not offered there, because the mode is away with the turn until it
-finishes.
+it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode is
+not offered there, because the mode is away with the turn until it finishes, and
+neither is <kbd>Ctrl-C</kbd>, which means the same thing there as at the prompt.
 
 Tool calls appear as they run:
 
@@ -224,11 +224,11 @@ put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taki
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
-<kbd>Ctrl-C</kbd> throws away a line you are part-way through. Against an empty box
-it offers to leave — `press ctrl-c again to leave`, under the mode — and a second
-press within two seconds takes the offer. Any other key first takes it back, so a
-session is never ended by one stray keystroke. <kbd>Ctrl-D</kbd> on an empty box
-leaves at once.
+<kbd>Ctrl-C</kbd> throws away a line you are part-way through, and does it whether
+or not a turn is running. Against an empty box it offers to leave — `press ctrl-c
+again to leave`, under the mode — and a second press within two seconds takes the
+offer. Any other key first takes it back, so a session is never ended by one
+stray keystroke. <kbd>Ctrl-D</kbd> on an empty box leaves at once.
 
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them
@@ -386,7 +386,7 @@ A turn that ended normally says nothing at all. There is a fourth line,
 ! stopped
 ```
 
-<kbd>Ctrl-C</kbd> during a turn asks that turn to stop, and leaves the session
+<kbd>Esc</kbd> during a turn asks that turn to stop, and leaves the session
 where it was. Nothing is killed: the provider stops between reads and a command
 stops between the steps it takes, so a file a tool was writing is either
 untouched or finished. What was on screen stays on screen, what you had typed

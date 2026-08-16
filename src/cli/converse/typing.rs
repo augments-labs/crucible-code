@@ -11,8 +11,15 @@
 //! between turns could not do that. The rest follows from holding it: a
 //! permission question is answered by a key rather than by a line the terminal
 //! collected, and Ctrl-C arrives as a byte for this side to act on rather than
-//! as a signal the terminal sends — against an empty line [`ask`] offers to
-//! leave, and mid turn [`during`] asks the turn to stop.
+//! as a signal the terminal sends.
+//!
+//! Which leaves two keys with two jobs, and each of them keeps its job in both
+//! loops. Ctrl-C belongs to the line: it throws away what is typed, and against
+//! an empty one it offers to leave and leaves on a second press soon after —
+//! the same in [`ask`] as in [`during`], because a key that meant one thing
+//! between turns and another during one would have to be relearned at exactly
+//! the moment there is something to lose. Esc belongs to whatever is standing:
+//! nothing, between turns, and the turn itself while one runs.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
 //! is why the runner is a parameter here. The mode is a fact about the session
@@ -65,15 +72,30 @@ const LIMITED: &str = "prompt is limited to 1 MiB";
 /// What the row under the box says while a turn is running.
 ///
 /// Two keys, both of which do something at that moment. The one that steps the
-/// mode is left off, because the runner holding the mode is away with the turn.
-const WORKING: &str = "(enter queues it · ctrl-c stops the turn)";
+/// mode is left off, because the runner holding the mode is away with the turn;
+/// so is Ctrl-C, which does here what it does at the prompt and so needs no
+/// second teaching.
+///
+/// Esc is named twice on screen while a turn runs — here and in the third
+/// segment of the row above the box — and the repetition is the point. That
+/// segment is the first thing dropped on a narrow window, and the key that
+/// stops a turn is the wrong thing for a narrow window to take away.
+const WORKING: &str = "(enter queues it · esc to interrupt)";
 
 /// How long the second press has to arrive in.
 ///
 /// Long enough to be a pair of presses somebody meant and short enough that it
-/// cannot span a thought. What it is defending against is a Ctrl-C aimed at a
-/// turn that had already finished: the terminal sends the key here instead, and
-/// a session ended by it is one nobody asked to end.
+/// cannot span a thought. It is the whole of what separates leaving from
+/// clearing a line, so it is the window rather than a debounce: a first press
+/// says what a second would do, and a second that arrives after this says it
+/// again instead of acting on the first.
+///
+/// It used to be aimed at a Ctrl-C meant for a turn that had already finished,
+/// which was a real hazard while that key stopped turns. It stops none now, so
+/// the hazard points the other way: somebody reaching twice for the key that
+/// used to stop a turn ends the session instead. This window is the whole of
+/// what keeps that a pair of presses rather than any two, which is why it is
+/// short and why every other key takes the offer back.
 const TOGETHER: Duration = Duration::from_secs(2);
 
 /// What reading a prompt produced.
@@ -353,22 +375,24 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
-/// finishes a line, Ctrl-C asks the turn to stop — in raw mode the terminal
-/// sends it rather than raising a signal, so this is the only thing that could
-/// — and the rest edit the line. Stepping the mode is not among them: the
-/// runner that holds it is on the worker thread for the length of the turn, and
-/// a key that moved the row on screen and nothing else would be a lie about
-/// what the next tool call costs.
+/// finishes a line, Esc asks the turn to stop, Ctrl-C is the line's own — in
+/// raw mode the terminal sends it rather than raising a signal, so it reaches
+/// the editor here exactly as it does at the prompt — and the rest edit the
+/// line. Stepping the mode is not among them: the runner that holds it is on
+/// the worker thread for the length of the turn, and a key that moved the row
+/// on screen and nothing else would be a lie about what the next tool call
+/// costs.
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
     during: During<'_>,
-) -> Result<(), Fatal> {
+) -> Result<Meanwhile, Fatal> {
     let During {
         editor,
         queued,
         says,
         style,
         cancel,
+        leaving,
     } = during;
     let mut moved = false;
     let mut notice = None;
@@ -380,16 +404,28 @@ pub(super) fn during<T: Terminal>(
             None => pressed()?,
         };
 
-        match arrived {
+        // Whatever arrived, the offer to leave was made to the key after the
+        // one that made it, and this is that key. Taken here rather than in the
+        // arm that reads it, so that every other key takes it back — including
+        // the ones this loop does nothing else with.
+        let offered = leaving.take();
+        moved |= offered.is_some();
+
+        match meant(arrived) {
             // The rows on screen were laid out for a width the window no longer
             // has. The renderer takes them back; the redraw below puts the box
             // down again at the new one.
-            Pressed::Resized => {
+            Meant::Resized => {
                 renderer.resized()?;
                 moved = true;
             }
 
-            Pressed::Key(Key::Enter) => {
+            Meant::Interrupt => {
+                cancel.request();
+                moved = true;
+            }
+
+            Meant::Queue => {
                 if !editor.is_empty() {
                     match queued.accept(editor) {
                         Retained::Accepted => notice = None,
@@ -399,15 +435,7 @@ pub(super) fn during<T: Terminal>(
                 }
             }
 
-            // Not the end of the process any more. Raw mode is held for the
-            // whole session now, so this key arrives here instead of becoming a
-            // signal — and asking the turn to stop is what it always meant.
-            Pressed::Key(Key::Interrupt) => {
-                cancel.request();
-                moved = true;
-            }
-
-            Pressed::Key(Key::Char(first)) => {
+            Meant::Typing(first) => {
                 let inserted = insert(editor, first)?;
                 following = inserted.following;
                 moved |= inserted.redraw;
@@ -418,7 +446,7 @@ pub(super) fn during<T: Terminal>(
                 }
             }
 
-            Pressed::Key(key) => match editor.press(key) {
+            Meant::Editing(key) => match editor.press(key) {
                 Typed::Changed => {
                     moved = true;
                     notice = None;
@@ -427,17 +455,28 @@ pub(super) fn during<T: Terminal>(
                     moved = true;
                     notice = Some(LIMITED);
                 }
-                Typed::Ignored | Typed::Submitted | Typed::Interrupted | Typed::Ended => {}
+
+                // Ctrl-C against a line with nothing on it, which means here
+                // what it means at the prompt. The turn is asked to stop on the
+                // way out rather than left running: the loop above is still
+                // waiting on the worker, and a session that ended over a turn
+                // nobody stopped would be one waiting on a provider it has no
+                // reader for.
+                Typed::Interrupted => {
+                    if together(offered, Instant::now()) {
+                        cancel.request();
+                        return Ok(Meanwhile::Leaving);
+                    }
+
+                    *leaving = Some(Instant::now());
+                    notice = Some(LEAVING);
+                    moved = true;
+                }
+
+                Typed::Ignored | Typed::Submitted | Typed::Ended => {}
             },
 
-            // A click, an arrow through a list there is none of, a mode step.
-            // None of them has anything to act on while a turn is running.
-            Pressed::Clicked { .. }
-            | Pressed::Cycle
-            | Pressed::Escape
-            | Pressed::Up
-            | Pressed::Down
-            | Pressed::Ignored => {}
+            Meant::Ignored => {}
         }
     }
 
@@ -451,7 +490,77 @@ pub(super) fn during<T: Terminal>(
         }
     }
 
-    Ok(())
+    Ok(Meanwhile::Nothing)
+}
+
+/// What the keys read while a turn ran asked for.
+///
+/// Two answers rather than a flag, for the reason every closed set in this
+/// program is one: the loop above has to say which it got, and a new third
+/// thing a key could ask for should stop the build rather than fall in with
+/// whichever of these it least resembles.
+pub(super) enum Meanwhile {
+    /// Nothing past the line in the box. The session goes on, and so does the
+    /// turn.
+    Nothing,
+    /// Ctrl-C twice against an empty box. The turn has been asked to stop and
+    /// the session ends once it has, which is why this is reported rather than
+    /// acted on here: the worker still holds the runner, and the session's log
+    /// is finished by a thread its `Drop` waits for.
+    Leaving,
+}
+
+/// What one key pressed while a turn is running means.
+///
+/// Written apart from the loop above for the reason [`super::super::heard`] is:
+/// that loop reads the process's own keyboard and cannot be driven from a test,
+/// and this much of the reading can be.
+///
+/// Every key is named rather than caught by a rest arm. One arriving mid turn
+/// either belongs to the turn, to the line in the box, or to nothing — and a
+/// variant added to `Pressed` later has to be decided about here rather than
+/// silently join the third group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Meant {
+    /// The window changed under the box.
+    Resized,
+    /// The turn is asked to stop.
+    Interrupt,
+    /// Return: the finished line joins the queue the next turn is read from.
+    Queue,
+    /// A run of characters beginning here, taken into the line in one edit.
+    Typing(char),
+    /// The line's own key — a cursor move, a delete, Ctrl-C against it, Ctrl-D.
+    Editing(Key),
+    /// An arrow through a list there is none of, a click, a mode step. None of
+    /// them has anything to act on while a turn is running.
+    Ignored,
+}
+
+/// Reads one key as the turn's, as the line's, or as neither.
+fn meant(arrived: Pressed) -> Meant {
+    match arrived {
+        Pressed::Resized => Meant::Resized,
+
+        // Esc means back out of the thing in front of you everywhere else in a
+        // session — a login, a secret, a list being picked from — and while a
+        // turn is running the turn is the thing in front of you.
+        Pressed::Escape => Meant::Interrupt,
+
+        Pressed::Key(Key::Enter) => Meant::Queue,
+        Pressed::Key(Key::Char(first)) => Meant::Typing(first),
+
+        // Ctrl-C among them, which is the point: it reaches the editor here the
+        // same way it does between turns, so it throws away the line rather
+        // than meaning something a running turn taught it to mean.
+        Pressed::Key(key) => Meant::Editing(key),
+
+        Pressed::Clicked { .. }
+        | Pressed::Cycle
+        | Pressed::Up
+        | Pressed::Down
+        | Pressed::Ignored => Meant::Ignored,
+    }
 }
 
 /// What can change while one turn is running.
@@ -461,6 +570,14 @@ pub(super) struct During<'a> {
     pub(super) says: &'a Says,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
+    /// When Ctrl-C was last pressed against an empty line, if it is still the
+    /// last key pressed.
+    ///
+    /// Owned by the loop above rather than by [`during`], which is called once
+    /// per look at the channel the turn reports on: an offer made on one call
+    /// is answered on a later one, and a clock that started again each time
+    /// would be an offer nothing could ever take.
+    pub(super) leaving: &'a mut Option<Instant>,
 }
 
 /// Puts the box under the turn, with the cursor in it.

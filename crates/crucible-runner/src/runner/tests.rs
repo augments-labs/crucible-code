@@ -524,7 +524,7 @@ fn the_tools_a_runner_offers_are_advertised_on_every_request() {
 fn a_turn_that_finds_the_flag_raised_stops_without_sending_anything() {
     // The press arrived after the caller cleared the flag and before this
     // thread reached its first instruction. Clearing it here instead would wipe
-    // it: the user would have pressed Ctrl-C and watched the turn carry on.
+    // it: the user would have pressed Esc and watched the turn carry on.
     let script = Script::new(vec![saying("done")]);
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
     scripted.cancel.request();

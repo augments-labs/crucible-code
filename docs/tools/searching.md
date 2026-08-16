@@ -129,7 +129,7 @@ leaving it out would be a file the model is told does not exist.
 
 ## Stopping one
 
-<kbd>Ctrl-C</kbd> during a search or a walk answers with what it had rather than
+<kbd>Esc</kbd> during a search or a walk answers with what it had rather than
 failing. Half a tree searched is half a tree searched, and the lines it found
 are what the turn was spent on — but an answer that stopped early looks exactly
 like one that finished, so the difference is written into it:

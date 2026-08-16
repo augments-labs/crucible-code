@@ -674,7 +674,7 @@ mod tests {
     fn a_walk_the_user_stopped_never_reaches_the_files() {
         // The walk deliberately runs to the end even once the answer is full,
         // so that it can report the lowest paths rather than the first ones
-        // reached — which made it the one thing here Ctrl-C could not stop.
+        // reached — which made it the one thing here Esc could not stop.
         let sample = tree("glob-stopped");
         let cancel = Cancel::new();
         cancel.request();

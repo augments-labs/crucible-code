@@ -74,7 +74,7 @@ than filling it with bytes that were always going to be thrown away.
 
 ## When it stops
 
-`timeout` seconds, or <kbd>Ctrl-C</kbd>, or the command finishing. The shell and
+`timeout` seconds, or <kbd>Esc</kbd>, or the command finishing. The shell and
 its descendants are one scope — a process group on Unix, a kill-on-close job on
 Windows — and that scope is ended on every one of those paths, then given a
 fifth of a second to let go of its pipes.
