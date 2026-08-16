@@ -57,13 +57,13 @@ on its own, and the loop it redraws on looks at the keyboard sixty times a
 second.
 
 So the row is a function of a small value, and that value is what the loop asks
-about. `Turning::moved` holds the pair the row is drawn from and answers whether
-it has changed since the last frame; a redraw with no cause behind it happens
-only when the answer is yes. That is what keeps an animated row four frames a
+about. `Turning::moved` holds the `Drawn` the row is drawn from and answers
+whether it has changed since the last frame; a redraw with no cause behind it
+happens only when the answer is yes. That is what keeps an animated row four frames a
 second rather than sixty, and the box under it laid out four times rather than
 sixty.
 
-Which makes the pair the thing to check when the row gains a segment. Anything
+Which makes `Drawn` the thing to check when the row gains a segment. Anything
 the row says and that value does not carry is a segment that changes on screen
 only when something *else* on the row happens to change with it — a stale
 number, arriving late, on the row somebody is reading to find out what is going
