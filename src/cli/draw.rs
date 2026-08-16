@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use crucible_core::{Event, Sensitivity, StopReason, ToolCall, ToolOutput};
+use crucible_core::{Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
 use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, cut, fold};
 
 use super::style::Style;
@@ -51,11 +51,11 @@ pub(crate) fn event<T: Terminal>(
 
         Event::Delta { text } => renderer.stream(&text),
 
-        Event::ToolRequested { call } => {
+        Event::ToolRequested { call, summary } => {
             // Whatever the model was saying is finished; it said it to explain
             // the call that follows.
             renderer.settle()?;
-            renderer.commit(&requested(&call, style.args(columns)))
+            renderer.commit(&requested(&call, &summary, style.args(columns)))
         }
 
         Event::ToolFinished { output, .. } => {
@@ -219,13 +219,41 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
     renderer.prompt(ending)
 }
 
-/// The line for a call about to run.
+/// The line for a call about to run: the tool, and what the call is about.
 ///
-/// The arguments are shown as the model wrote them. Parsing them again here to
-/// pull out a path would be a second reading of a schema the tool already owns,
-/// and the two would drift.
-fn requested(call: &ToolCall, width: usize) -> String {
-    format!("· {} {}", call.name, clipped(call.args.as_str(), width))
+/// The words in the brackets arrive on the event, worked out by the tool that
+/// owns the arguments. Reading those here to pull out a path would be a second
+/// reading of a schema the tool already owns, and the two would drift. A call
+/// nobody could read is drawn as the bare name, because empty brackets would
+/// claim it was about nothing.
+fn requested(call: &ToolCall, summary: &Summary, width: usize) -> String {
+    let name = pascal(&call.name);
+    let said = if summary.is_empty() {
+        name
+    } else {
+        format!("{name}({})", summary.as_str())
+    };
+
+    format!("· {}", clipped(said, width))
+}
+
+/// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.
+///
+/// The model's name for a tool is the wire's, chosen so a schema can carry it.
+/// A row is read by a person, and the capital is what separates the name from
+/// the words beside it at a glance.
+fn pascal(name: &str) -> String {
+    let mut written = String::with_capacity(name.len());
+
+    for word in name.split('_') {
+        let mut letters = word.chars();
+        if let Some(first) = letters.next() {
+            written.extend(first.to_uppercase());
+            written.push_str(letters.as_str());
+        }
+    }
+
+    written
 }
 
 /// The line for a call that finished.

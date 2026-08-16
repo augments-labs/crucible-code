@@ -53,6 +53,7 @@ mod ledger;
 mod read;
 #[cfg(test)]
 mod sample;
+mod summary;
 mod target;
 mod tree;
 mod write;

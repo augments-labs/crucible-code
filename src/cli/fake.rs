@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
-    Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -206,6 +206,13 @@ impl Tool for Fixed {
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         self.sensitivity.clone()
+    }
+
+    /// The arguments as they arrived. A real tool names one field of them; what
+    /// a test needs is to see that whatever the tool said reached the row, so
+    /// this says something no other value could be mistaken for.
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        Summary::new(args.as_str())
     }
 
     fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {

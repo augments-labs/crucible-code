@@ -10,7 +10,7 @@
 
 use crate::ids::{ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
-use crate::tool::{ToolCall, ToolError, ToolOutput};
+use crate::tool::{Summary, ToolCall, ToolError, ToolOutput};
 use crate::transcript::StopReason;
 
 /// Why a turn ended badly.
@@ -80,6 +80,10 @@ pub enum Event {
     ToolRequested {
         /// The assembled call.
         call: ToolCall,
+        /// What the tool that owns those arguments says the call is about —
+        /// asked where the tools are in reach, since the arguments are opaque
+        /// to whatever draws the row.
+        summary: Summary,
     },
 
     /// A tool finished.

@@ -30,6 +30,12 @@ Notable changes to crucible. Format follows
   empty one ends the session. The row under the box now reads
   `(enter queues it · esc to interrupt)`.
 
+- **A tool call reads as the tool and what the call is about.**
+  `Read(src/main.rs)` rather than `read {"path":"src/main.rs"}` — each tool
+  names the one argument a person would recognise its call by. What it costs:
+  any other argument is no longer on the row, and a call nobody could read is
+  drawn as the bare tool name.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**

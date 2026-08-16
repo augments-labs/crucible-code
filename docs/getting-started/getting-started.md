@@ -218,7 +218,7 @@ Tool calls appear as they run:
 ```
 › what does the runner do when a tool fails?
 
-· read {"path":"crates/crucible-runner/src/runner.rs"}
+· Read(crates/crucible-runner/src/runner.rs)
        1	//! The turn loop. (+238 lines)
 
 A failed tool is not a failed turn: the failure goes back to the model as the
@@ -229,6 +229,12 @@ result of that call, and the model decides what to do about it.
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
 ```
+
+A call is the tool's name and, in brackets, the one thing the call is about: the
+path for `read`, `write` and `edit`, the pattern for `grep` and `glob`, the
+command line for `bash`. Each tool answers that for itself, because each knows
+which of its arguments a person would recognise the call by. A call whose
+arguments could not be read is just the name, and the tool says why next.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
