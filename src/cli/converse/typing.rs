@@ -81,7 +81,13 @@ const LIMITED: &str = "prompt is limited to 1 MiB";
 /// segment of the row above the box — and the repetition is the point. That
 /// segment is the first thing dropped on a narrow window, and the key that
 /// stops a turn is the wrong thing for a narrow window to take away.
-const WORKING: &str = "(enter queues it · esc to interrupt)";
+///
+/// Built rather than written down, because the mark parting the two keys is
+/// the setting's — the same one the row above the box parts its segments with,
+/// two rows away.
+fn interrupting(glyphs: Glyphs) -> String {
+    format!("(enter queues it {} esc to interrupt)", glyphs.dot())
+}
 
 /// How long the second press has to arrive in.
 ///
@@ -318,7 +324,7 @@ pub(super) struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
     mode: Cow<'static, str>,
     /// The keys that act on it, said quietly after.
-    keys: &'static str,
+    keys: Cow<'static, str>,
     /// Which model the next turn goes to, at the other end of the row.
     model: String,
     /// The vendor it is asked of, drawn before it.
@@ -373,9 +379,9 @@ pub(super) fn working<T: Terminal>(
 /// can ask it anything while it is away — and nothing needs to: `/mode`,
 /// `/model` and `/effort` are all lines typed between turns, so none of the
 /// three facts here can change while the turn they describe is the one running.
-pub(super) fn under(runner: &Runner) -> Says {
+pub(super) fn under(runner: &Runner, glyphs: Glyphs) -> Says {
     Says {
-        keys: WORKING,
+        keys: Cow::Owned(interrupting(glyphs)),
         ..saying(runner)
     }
 }
@@ -626,7 +632,7 @@ fn saying(runner: &Runner) -> Says {
 
     Says {
         mode: Cow::Borrowed(mode.sentence()),
-        keys: CYCLE,
+        keys: Cow::Borrowed(CYCLE),
         model: runner.model().to_owned(),
         provider: runner.serving(),
         effort: runner.effort().map(Effort::as_str),
@@ -678,7 +684,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         column: editor.column(),
         mode: says.mode.as_ref(),
         tone: says.tone,
-        hint: says.keys,
+        hint: &says.keys,
         model: says.model.as_str(),
         provider: says.provider,
         effort: says.effort,

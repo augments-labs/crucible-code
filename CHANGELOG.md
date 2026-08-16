@@ -83,6 +83,16 @@ Notable changes to crucible. Format follows
   the worst one to be drawing two hollow squares on. What it costs: it reads
   differently under `ascii` than it did.
 
+- **The last four marks drawn outside the setting now come out of it.** The `›`
+  a permission answer is typed after, the `›` a piped run's prompt is typed
+  after, the `·` in `(enter queues it · esc to interrupt)` under the box, and
+  the `·` between a provider and where its key came from on the opening screen
+  are `>`, `>`, `-` and `-` under `ascii`. Two of those are the prompt itself,
+  on the rows a session stops at until somebody answers. Every mark crucible
+  draws now comes out of the same set as the border, and
+  `docs/configuration/configuration.md` lists them. What it costs: those rows
+  read differently under `ascii` than they did.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**

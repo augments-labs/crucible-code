@@ -389,11 +389,24 @@ fn a_question_about_a_path_that_did_not_resolve_says_so_rather_than_naming_one()
 fn a_question_offers_no_durable_yes_until_there_is_a_trusted_store() {
     // Project files can arrive with a checkout, including ignored ones. Both
     // answers whose lifetime crucible can honour are still there.
-    let offered = answers();
+    let offered = answers(Glyphs::Unicode);
 
     assert!(!offered.contains("[a]lways"), "{offered}");
     assert!(offered.contains("[y]es"), "{offered}");
     assert!(offered.contains("[s]ession"), "{offered}");
+}
+
+#[test]
+fn the_mark_an_answer_is_typed_after_comes_out_of_the_glyph_set() {
+    // The same mark the prompt is typed after, because this is the prompt for
+    // as long as the question stands. A hollow square where it should be would
+    // land on the one row a session stops at until somebody decides whether a
+    // tool may run.
+    for (glyphs, mark) in [(Glyphs::Unicode, "› "), (Glyphs::Ascii, "> ")] {
+        let offered = answers(glyphs);
+
+        assert!(offered.ends_with(mark), "{glyphs:?}: {offered}");
+    }
 }
 
 #[test]

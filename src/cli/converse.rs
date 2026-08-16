@@ -53,9 +53,6 @@ mod secret;
 mod turning;
 mod typing;
 
-/// What the user types after, where there is no box to type into.
-const MARK: &str = "› ";
-
 /// How long the loop waits on the turn before looking at the keyboard.
 ///
 /// A wake-up rate rather than a spin: the thread is parked in `recv_timeout`
@@ -224,7 +221,12 @@ pub(crate) fn converse<T: Terminal>(
                 // has scrolled away — a `fullAccess` session must not be
                 // distinguishable from an `ask` one only by what the user
                 // remembers starting.
-                draw::mark(renderer, &format!("{} {MARK}", runner.mode()), style)?;
+                //
+                // The mark after it is the one a line is typed after
+                // everywhere else, taken from the same setting: this is the
+                // prompt on a run that has no box to draw one in.
+                let mark = style.glyphs().caret();
+                draw::mark(renderer, &format!("{} {mark} ", runner.mode()), style)?;
 
                 let Some(said) = read(input)? else {
                     // The mark is still the last thing on its row, and nothing
@@ -360,7 +362,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let says = typing::under(&runner);
+    let says = typing::under(&runner, terms.style.glyphs());
     let prompt = taking.prompt;
 
     // Read here for the same reason and at the same moment: half of what a turn

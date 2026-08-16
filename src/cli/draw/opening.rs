@@ -103,7 +103,12 @@ pub(crate) fn opening<T: Terminal>(
     renderer.commit("")?;
 
     if let (Some(provider), Some(credential)) = (opening.provider, opening.credential) {
-        let said = format!("authentication: {provider} · {credential}");
+        // The mark is the whole of what says the provider and the place its
+        // key came from are two facts rather than one long name.
+        let said = format!(
+            "authentication: {provider} {} {credential}",
+            style.glyphs().dot()
+        );
         let row = Row::new().then(Slot::Quiet, clip(&said, columns));
         renderer.present(&[row], style.palette())?;
         renderer.commit("")?;
@@ -154,7 +159,7 @@ mod tests {
     use crucible_runner::Session;
 
     use crate::cli::NOTHING_TO_ASK;
-    use crucible_tui::Recording;
+    use crucible_tui::{Glyphs, Recording};
 
     use super::*;
 
@@ -359,6 +364,40 @@ mod tests {
             screen.contains("authentication: openai · environment variable OPENAI_API_KEY"),
             "{screen}"
         );
+    }
+
+    #[test]
+    fn what_parts_a_provider_from_where_its_key_came_from_comes_out_of_the_glyph_set() {
+        // The one row of the opening that is a sentence rather than a frame,
+        // and the mark in it is the only thing saying the provider and the
+        // place its key was found are two facts. The rest of the opening is
+        // drawn from the setting already, so this was the row that would come
+        // out with a hollow square in the middle of an otherwise clean screen.
+        let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        let source = CredentialSource::Environment("OPENAI_API_KEY".into());
+
+        for (glyphs, said) in [
+            (Glyphs::Unicode, "authentication: openai · environment"),
+            (Glyphs::Ascii, "authentication: openai - environment"),
+        ] {
+            let screen = shown(
+                80,
+                false,
+                &Opening {
+                    credential: Some(&source),
+                    model: Some("gpt-5.6-sol"),
+                    provider: Some("openai"),
+                    unasked: NOTHING_TO_ASK,
+                    workspace: &workspace,
+                    sessions: &[],
+                    trouble: None,
+                    update: None,
+                    style: Style::drawn(glyphs),
+                },
+            );
+
+            assert!(screen.contains(said), "{glyphs:?}: {screen}");
+        }
     }
 
     #[test]
