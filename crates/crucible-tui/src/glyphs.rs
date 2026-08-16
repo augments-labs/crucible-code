@@ -112,6 +112,25 @@ impl Glyphs {
         }
     }
 
+    /// The face the mark on a running turn wears on `beat`.
+    ///
+    /// Four of them, turned through in order and back to the first. Every face
+    /// is one column wide in both sets, and none of them is a character a
+    /// terminal is entitled to draw two columns wide — which is what makes this
+    /// a mark changing rather than a row changing width four times a second.
+    pub(crate) fn turning(self, beat: u64) -> &'static str {
+        match (self, beat % 4) {
+            (Self::Unicode, 0) => "\u{2733}",
+            (Self::Unicode, 1) => "\u{273b}",
+            (Self::Unicode, 2) => "\u{273a}",
+            (Self::Unicode, _) => "\u{2731}",
+            (Self::Ascii, 0) => "|",
+            (Self::Ascii, 1) => "/",
+            (Self::Ascii, 2) => "-",
+            (Self::Ascii, _) => "\\",
+        }
+    }
+
     /// What stands where something did not fit.
     pub(crate) fn ellipsis(self) -> &'static str {
         match self {

@@ -36,6 +36,7 @@ mod terminal;
 mod title;
 mod welcome;
 mod width;
+mod working;
 
 pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
@@ -56,3 +57,4 @@ pub use terminal::{Recording, Size, Terminal, TerminalError};
 pub use title::{TITLE, Title, TitleError};
 pub use welcome::{Recent, Welcome};
 pub use width::{clip, columns, cut, fold};
+pub use working::Working;
