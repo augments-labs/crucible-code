@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-08-16
+
 ### Changed
 
 - **`/clear` starts a new session instead of emptying the one in hand.** The
@@ -1663,7 +1665,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/augments-labs/crucible-code/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/augments-labs/crucible-code/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/augments-labs/crucible-code/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/augments-labs/crucible-code/compare/v0.1.8...v0.1.9
