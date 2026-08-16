@@ -437,9 +437,23 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
 
     let written = renderer.terminal().written();
     assert!(written.contains("full access mode on"), "{written}");
+
+    // The rhythm above the box: the answer, a blank, the row that says the turn
+    // is running, a blank, the box. The blanks are the whole of what stops that
+    // row reading as the last line of the answer or the first line of the box,
+    // and they are asserted here rather than in the component because neither
+    // of the two things they separate is the component's to know about.
     assert!(
-        written.contains("hello\r\n\u{256d}"),
-        "the box did not stand under the answer: {written}"
+        written.contains("hello\r\n\r\n"),
+        "the row did not stand clear of the answer: {written}"
+    );
+    assert!(
+        written.contains("thinking"),
+        "the row did not say what the turn was doing: {written}"
+    );
+    assert!(
+        written.contains("esc to interrupt)\r\n\r\n\u{256d}"),
+        "the box did not stand clear under the row: {written}"
     );
     assert!(
         written.contains("\x1b[2A\x1b[5G"),

@@ -44,6 +44,7 @@ use crate::cli::style::Style;
 
 use super::command;
 use super::mode::tone;
+use super::turning::Turning;
 use super::{Prompts, Retained};
 
 /// What the row under the box says after the mode, when pressing the key again
@@ -341,16 +342,29 @@ pub(super) struct Says {
 ///
 /// It is not a picture of a box: the keys below are read while the turn runs,
 /// so what is typed goes in and the cursor is where it is going.
+///
+/// Above it, the row that says the turn is running. Laid out after the box
+/// rather than before it, because the box takes its share of the window first
+/// and what is left is what decides whether that row is drawn at all.
 pub(super) fn working<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
+    turning: &Turning,
     says: &Says,
     style: Style,
 ) -> (Vec<Row>, Caret) {
     let columns = renderer.columns();
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
-    (prompt.rows(columns, style.glyphs()), prompt.caret(columns))
+    let mut boxed = prompt.rows(columns, style.glyphs());
+    let mut caret = prompt.caret(columns);
+    let room = renderer.rows().saturating_sub(boxed.len());
+
+    let mut rows = turning.rows(columns, style.glyphs(), room);
+    caret.row += rows.len();
+    rows.append(&mut boxed);
+
+    (rows, caret)
 }
 
 /// What the row under a running turn says.
@@ -389,6 +403,7 @@ pub(super) fn during<T: Terminal>(
     let During {
         editor,
         queued,
+        turning,
         says,
         style,
         cancel,
@@ -422,6 +437,7 @@ pub(super) fn during<T: Terminal>(
 
             Meant::Interrupt => {
                 cancel.request();
+                turning.interrupting();
                 moved = true;
             }
 
@@ -465,6 +481,7 @@ pub(super) fn during<T: Terminal>(
                 Typed::Interrupted => {
                     if together(offered, Instant::now()) {
                         cancel.request();
+                        turning.interrupting();
                         return Ok(Meanwhile::Leaving);
                     }
 
@@ -480,13 +497,19 @@ pub(super) fn during<T: Terminal>(
         }
     }
 
+    // Asked last and folded in rather than checked first, so that a key and a
+    // beat that landed in the same look at the keyboard are one frame. It is
+    // also what redraws a row nobody touched: the clock counts and the mark
+    // turns whether anything is typed or not.
+    moved |= turning.moved();
+
     if moved {
         if let Some(notice) = notice {
             let mut says = says.clone();
             says.asking = Some(notice);
-            stand(renderer, editor, &says, style)?;
+            stand(renderer, editor, turning, &says, style)?;
         } else {
-            stand(renderer, editor, says, style)?;
+            stand(renderer, editor, turning, says, style)?;
         }
     }
 
@@ -567,6 +590,9 @@ fn meant(arrived: Pressed) -> Meant {
 pub(super) struct During<'a> {
     pub(super) editor: &'a mut Editor,
     pub(super) queued: &'a mut Prompts,
+    /// The row above the box, which is the one thing on screen that changes
+    /// without anybody pressing anything.
+    pub(super) turning: &'a mut Turning,
     pub(super) says: &'a Says,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
@@ -584,10 +610,11 @@ pub(super) struct During<'a> {
 pub(super) fn stand<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
+    turning: &Turning,
     says: &Says,
     style: Style,
 ) -> Result<(), Fatal> {
-    let (rows, caret) = working(renderer, editor, says, style);
+    let (rows, caret) = working(renderer, editor, turning, says, style);
 
     renderer.under(&rows, Some(caret), style.palette())?;
     Ok(())

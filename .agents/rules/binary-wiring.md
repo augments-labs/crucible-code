@@ -48,6 +48,27 @@ lock appears on the render path. Anything new that wants to write to the
 terminal arrives as an `Event` on that channel instead — a second writer is a
 corrupted transcript, and it will not look like a locking bug when it happens.
 
+## A redraw nobody asked for draws only when the picture has changed
+
+Most frames are caused by something — a key, an event — and end when the thing
+that caused them has been drawn. The row above the box is the exception: the
+clock counts and the mark turns while nothing arrives, so the loop has to redraw
+on its own, and the loop it redraws on looks at the keyboard sixty times a
+second.
+
+So the row is a function of a small value, and that value is what the loop asks
+about. `Turning::moved` holds the pair the row is drawn from and answers whether
+it has changed since the last frame; a redraw with no cause behind it happens
+only when the answer is yes. That is what keeps an animated row four frames a
+second rather than sixty, and the box under it laid out four times rather than
+sixty.
+
+Which makes the pair the thing to check when the row gains a segment. Anything
+the row says and that value does not carry is a segment that changes on screen
+only when something *else* on the row happens to change with it — a stale
+number, arriving late, on the row somebody is reading to find out what is going
+on.
+
 ## `src/bin/` is not shipped
 
 Those are bench probes: they exist so `scripts/bench.sh` has something to

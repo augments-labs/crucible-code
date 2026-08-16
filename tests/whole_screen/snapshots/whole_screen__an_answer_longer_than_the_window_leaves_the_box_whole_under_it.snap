@@ -2,10 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,4 scrolled 28
-| over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown|
-| fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the q|
-|uick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy |
+80x16 cursor 10,4 scrolled 31
 |dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
 | the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox |
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
@@ -19,3 +16,6 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
+|                                                                                |
+|                                                                                |
