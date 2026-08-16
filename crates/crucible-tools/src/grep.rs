@@ -32,8 +32,13 @@ use crate::target;
 /// The name the model calls.
 const NAME: &str = "grep";
 
-/// How many matching lines one call answers with when it does not say.
+/// How many results one call answers with when it does not say — matching
+/// lines, or matching files where that is what was asked for.
 const MATCHES: usize = 200;
+
+/// The two answers a call can ask for, spelled as the model sends them.
+const CONTENT: &str = "content";
+const FILES: &str = "files";
 
 /// The most lines a call can ask for, however large a number it sends.
 ///
@@ -104,10 +109,15 @@ const SCHEMA: &str = r#"{
       "type": "boolean",
       "description": "Match without regard to case. Defaults to false."
     },
+    "mode": {
+      "type": "string",
+      "enum": ["content", "files"],
+      "description": "What to answer with: content for the matching lines themselves, files for the name of every file holding one. Defaults to content."
+    },
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many matching lines to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
+      "description": "How many results to return, counting matching lines in content mode and matching files in files mode. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
     }
   },
   "required": ["pattern"]
@@ -121,11 +131,38 @@ pub struct Grep {
 }
 
 /// What one call is looking for: the expression, the files it restricts itself
-/// to, and how many lines are wanted back.
+/// to, what shape of answer it wants and how much of it.
 struct Query {
     matcher: RegexMatcher,
     only: Option<Override>,
+    mode: Mode,
     limit: usize,
+}
+
+/// What a call wants back.
+///
+/// The difference is not only in the formatting. A files answer is complete
+/// once a file has matched at all, so the search of that file stops there —
+/// which makes this the cheaper of the two on exactly the searches where a
+/// pattern is common enough that reading every line of every hit would be the
+/// expensive part.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Mode {
+    /// The matching lines themselves.
+    Content,
+    /// The name of every file holding one.
+    Files,
+}
+
+impl Mode {
+    /// What this mode's answer is counted in, for the notes that say it was
+    /// cut. The bound is one number and it bounds two different things.
+    fn counted(self) -> &'static str {
+        match self {
+            Self::Content => "matches",
+            Self::Files => "files",
+        }
+    }
 }
 
 /// One matching line.
@@ -250,7 +287,7 @@ impl Grep {
             walk.overrides(only);
         }
 
-        let (matcher, limit) = (&query.matcher, query.limit);
+        let (matcher, mode, limit) = (&query.matcher, query.mode, query.limit);
         let hits = Mutex::new(Top::new(limit));
         let partly = Mutex::new(Partial::default());
 
@@ -308,7 +345,7 @@ impl Grep {
                 let Ok(Some((path, file))) = files.open_regular(entry.path()) else {
                     return WalkState::Continue;
                 };
-                let mine = self.lines(&mut searcher, matcher, (&path, &file), hits);
+                let mine = self.lines(&mut searcher, matcher, (&path, &file), (mode, hits));
                 if let Some(name) = mine.partly
                     && let Ok(mut partly) = partly.lock()
                 {
@@ -318,13 +355,11 @@ impl Grep {
             })
         });
 
-        let hits = hits.into_inner().unwrap_or_else(|_| Top::new(limit));
-        let more = hits.total > limit;
-        let hits = hits.hits.into_iter().collect();
+        let top = hits.into_inner().unwrap_or_else(|_| Top::new(limit));
         let partly = partly.into_inner().unwrap_or_default();
         Found {
-            hits,
-            more,
+            more: top.total > limit,
+            hits: top.hits.into_iter().collect(),
             partly,
             // Read after the walk rather than recorded inside it: a request that
             // arrived is what makes this answer a prefix, whether the walk was
@@ -349,14 +384,21 @@ impl Grep {
     /// Either way what came back before that point is real and is kept, and the
     /// name goes back with it. Dropping the lot is what makes a file holding a
     /// match on its first line answer as a file holding none.
+    ///
+    /// A fifth thing stops it early and is none of those: a files answer is
+    /// finished with a file once it has matched, so [`Mode::Files`] leaves after
+    /// the first line. That one is not an unfinished search and is not reported
+    /// as one — the file is already in the answer, and nothing further down it
+    /// could be missing from a list of names.
     fn lines(
         &self,
         searcher: &mut Searcher,
         matcher: &RegexMatcher,
         opened: (&WorkspacePath, &std::fs::File),
-        hits: &Mutex<Top>,
+        wanted: (Mode, &Mutex<Top>),
     ) -> Searched {
         let (path, file) = opened;
+        let (mode, hits) = wanted;
         // Spelled by the module that owns the walk, so `glob` cannot name the
         // same file a second way.
         let shown = crate::tree::named(&self.workspace, path.as_path());
@@ -382,7 +424,7 @@ impl Grep {
                         text: cut(text.trim_end()),
                     });
                 }
-                Ok(true)
+                Ok(mode == Mode::Content)
             }),
         );
 
@@ -447,17 +489,25 @@ impl Tool for Grep {
             )));
         };
 
+        let mode = match args.choice("mode", CONTENT, &[CONTENT, FILES])? {
+            FILES => Mode::Files,
+            _ => Mode::Content,
+        };
+
         let query = Query {
             matcher,
             only,
+            mode,
             limit,
         };
-        Ok(report(&self.hunt(&from, query, &approved), pattern, limit))
+        let found = self.hunt(&from, query, &approved);
+        Ok(report(&found, pattern, (mode, limit)))
     }
 }
 
 /// The hits, as lines the model can hand straight back to `read`.
-fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
+fn report(found: &Found, pattern: &str, answer: (Mode, usize)) -> ToolOutput {
+    let (mode, limit) = answer;
     let note = unread(&found.partly) + halted(found.stopped);
 
     if found.hits.is_empty() {
@@ -471,23 +521,22 @@ fn report(found: &Found, pattern: &str, limit: usize) -> ToolOutput {
     // the same promise: the lines are cut at `WIDTH` characters each, so the
     // count a call sets says how many lines come back and nothing about how
     // much text that is.
-    let (lines, over) = crate::bound::within(
-        found
-            .hits
-            .iter()
-            .map(|hit| format!("{}:{}:{}\n", hit.path, hit.line, hit.text)),
-    );
+    let (lines, over) = crate::bound::within(found.hits.iter().map(|hit| match mode {
+        Mode::Content => format!("{}:{}:{}\n", hit.path, hit.line, hit.text),
+        Mode::Files => format!("{}\n", hit.path),
+    }));
 
+    let counted = mode.counted();
     let tail = if over > 0 {
         // Raising the limit would not help: what filled up is the answer, not
         // the list.
         format!(
-            "\n[stopped at {} matches: the answer was full at {} bytes, narrow the pattern]",
+            "\n[stopped at {} {counted}: the answer was full at {} bytes, narrow the pattern]",
             found.hits.len().saturating_sub(over),
             crate::bound::OUTPUT
         )
     } else if found.more {
-        format!("\n[showing first {limit} matches: narrow the pattern or raise limit]")
+        format!("\n[showing first {limit} {counted}: narrow the pattern or raise limit]")
     } else {
         String::new()
     };

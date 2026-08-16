@@ -107,6 +107,39 @@ impl Args {
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
+    /// A field whose value is one of a fixed set of words, absent meaning
+    /// `default`.
+    ///
+    /// What comes back is the entry from `allowed`, not the text the model
+    /// sent, so the caller matches on words it wrote itself and a borrow of the
+    /// arguments does not travel with the answer.
+    ///
+    /// A word outside the set is refused here rather than quietly read as the
+    /// default. The set is small and named in the schema, so a call that missed
+    /// it asked for something this tool does not do — and silently doing the
+    /// other thing is the failure the model cannot see.
+    pub(crate) fn choice(
+        &self,
+        field: &str,
+        default: &'static str,
+        allowed: &[&'static str],
+    ) -> Result<&'static str, ToolError> {
+        let Some(sent) = self.optional_text(field)? else {
+            return Ok(default);
+        };
+
+        allowed
+            .iter()
+            .copied()
+            .find(|word| *word == sent)
+            .ok_or_else(|| {
+                Self::wrong(
+                    self.tool,
+                    format!("{field} must be one of {}", allowed.join(", ")),
+                )
+            })
+    }
+
     /// A flag, absent meaning `default`.
     pub(crate) fn flag(&self, field: &str, default: bool) -> Result<bool, ToolError> {
         let Some(found) = self.value.get(field) else {
@@ -228,6 +261,41 @@ mod tests {
         assert!(args(r#"{"limit":0}"#).unwrap().count("limit", 1).is_err());
         assert!(args(r#"{"limit":-3}"#).unwrap().count("limit", 1).is_err());
         assert!(args(r#"{"limit":"5"}"#).unwrap().count("limit", 1).is_err());
+    }
+
+    #[test]
+    fn a_choice_is_one_of_its_words_or_a_rejection_naming_them_all() {
+        let words = ["content", "files"];
+
+        assert_eq!(
+            args(r#"{"mode":"files"}"#)
+                .unwrap()
+                .choice("mode", "content", &words)
+                .unwrap(),
+            "files"
+        );
+        assert_eq!(
+            args("{}")
+                .unwrap()
+                .choice("mode", "content", &words)
+                .unwrap(),
+            "content"
+        );
+        assert_eq!(
+            args(r#"{"mode":null}"#)
+                .unwrap()
+                .choice("mode", "content", &words)
+                .unwrap(),
+            "content"
+        );
+        assert_eq!(
+            args(r#"{"mode":"paths"}"#)
+                .unwrap()
+                .choice("mode", "content", &words)
+                .unwrap_err()
+                .to_string(),
+            "test: mode must be one of content, files"
+        );
     }
 
     #[test]
