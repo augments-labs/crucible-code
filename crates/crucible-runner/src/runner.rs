@@ -9,7 +9,8 @@
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
-    ProviderError, ProviderLimit, Request, StopReason, ToolCall, Transcript, TurnError, TurnId,
+    ProviderError, ProviderLimit, Request, Spend, StopReason, ToolCall, Transcript, TurnError,
+    TurnId,
 };
 
 use crucible_session::Session;
@@ -402,10 +403,15 @@ impl Runner {
         tool_output_maximum: usize,
     ) -> Result<StopReason, TurnError> {
         let mut bounds = TurnBounds::default();
+
+        // The turn's own running total, not a bound: nothing here refuses a
+        // response for having cost too much, and the number exists to be read
+        // rather than to be checked against anything.
+        let mut spent = Spend::NONE;
+
         loop {
             bounds.before_response(self.provider.name())?;
-            let (answer, said) =
-                self.listen(events, cancel, bounds.retained, MAX_TURN_RESPONSE_BYTES)?;
+            let (answer, said) = self.listen(events, cancel, &bounds, &mut spent)?;
             bounds.heard(&answer);
             let (text, calls) = answer.finish();
 
@@ -511,13 +517,17 @@ impl Runner {
         &mut self,
         events: &dyn Post,
         cancel: &Cancel,
-        held: usize,
-        maximum: usize,
+        bounds: &TurnBounds,
+        spent: &mut Spend,
     ) -> Result<(Answer, StopReason), TurnError> {
         let mut stream = self.provider.stream(self.request(), cancel)?;
-        let mut answer = Answer::within(self.provider.name(), held, maximum);
+        let mut answer = Answer::within(
+            self.provider.name(),
+            bounds.retained,
+            MAX_TURN_RESPONSE_BYTES,
+        );
 
-        let heard = Self::hear(stream.as_mut(), &mut answer, events)
+        let heard = Self::hear(stream.as_mut(), &mut answer, events, spent)
             .and_then(|()| answer.reached().map_err(TurnError::from));
 
         match heard {
@@ -541,7 +551,15 @@ impl Runner {
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
         events: &dyn Post,
+        spent: &mut Spend,
     ) -> Result<(), TurnError> {
+        // What the turn had spent before this response opened. Each reading a
+        // provider sends is this response's total rather than an increment, so
+        // it is added to that fixed number and not to the last reading — which
+        // is also what makes a provider that sends one final figure and one
+        // that counts up as it goes come out the same.
+        let before = *spent;
+
         while let Some(delta) = stream.next() {
             match delta? {
                 Delta::Text(text) => {
@@ -550,6 +568,10 @@ impl Runner {
                 }
                 Delta::ToolStarted { id, name } => answer.calling(id, name)?,
                 Delta::ToolArgs(fragment) => answer.arguments(&fragment)?,
+                Delta::Spent(said) => {
+                    *spent = before.and(said);
+                    events.post(Event::Spent { spend: *spent });
+                }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
             }
         }

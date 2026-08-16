@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, ProviderError, Sensitivity, SessionId, Target, Tool, ToolArgs, ToolError, ToolId,
-    ToolOutput, Verdict,
+    Approved, ProviderError, Sensitivity, SessionId, Spend, Target, Tool, ToolArgs, ToolError,
+    ToolId, ToolOutput, Verdict,
 };
 
 use super::*;
@@ -70,6 +70,7 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::TurnFinished { .. }
+                | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
             .collect()
@@ -85,6 +86,7 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::TurnFinished { .. }
+                | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
             .collect()
@@ -100,6 +102,23 @@ impl Scripted {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Spent { .. }
+                | Event::Failed { .. } => None,
+            })
+            .collect()
+    }
+
+    /// What the turn had spent at each reading, in order.
+    fn spent(&self) -> Vec<u64> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Spent { spend } => Some(spend.tokens()),
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
             })
             .collect()
@@ -163,6 +182,50 @@ fn saying(text: &str) -> Vec<Delta> {
         Delta::Text(text.into()),
         Delta::Stopped(StopReason::Yielded),
     ]
+}
+
+#[test]
+fn what_a_turn_has_spent_is_every_response_of_it_added_up() {
+    // Two responses, because that is where the two readings have to be told
+    // apart: within one response the number is that response's total so far and
+    // replaces the one before it, and across responses they add. Reading either
+    // as the other gives a count that stalls or one that doubles, and on a row
+    // watched while it moves both look like the truth.
+    let script = Script::new(vec![
+        vec![
+            Delta::Spent(Spend::new(40)),
+            Delta::ToolStarted {
+                id: ToolId::new("a"),
+                name: "read".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::Spent(Spend::new(90)),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        vec![
+            Delta::Text("found it".into()),
+            Delta::Spent(Spend::new(30)),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    assert_eq!(scripted.spent(), [40, 90, 120]);
+}
+
+#[test]
+fn a_turn_that_is_never_told_what_it_spent_says_nothing_about_it() {
+    // Every provider reports this differently and one of them may not report it
+    // at all. Nothing here invents a number for that case: no reading, no
+    // event, and the row above the box has one segment fewer.
+    let script = Script::new(vec![saying("done")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    assert!(scripted.spent().is_empty());
 }
 
 #[test]
@@ -767,6 +830,7 @@ fn a_call_is_announced_before_it_runs() {
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
             | Event::TurnFinished { .. }
+            | Event::Spent { .. }
             | Event::Failed { .. } => None,
         })
         .collect();

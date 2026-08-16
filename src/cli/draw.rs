@@ -42,7 +42,12 @@ pub(crate) fn event<T: Terminal>(
     match event {
         // The turn number is in the title bar, not in the transcript: a line
         // per turn saying which turn it is crowds out the turn itself.
-        Event::TurnStarted { .. } => Ok(()),
+        //
+        // What a turn spent is on the row above the box, which is drawn from the
+        // footing rather than committed here — a running total committed to
+        // scrollback would be one line per reading, each of them wrong the
+        // moment the next arrived.
+        Event::TurnStarted { .. } | Event::Spent { .. } => Ok(()),
 
         Event::Delta { text } => renderer.stream(&text),
 

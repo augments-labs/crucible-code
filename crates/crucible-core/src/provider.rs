@@ -316,6 +316,47 @@ pub struct ToolSchema {
     pub schema: &'static str,
 }
 
+/// What a response has cost, counted in the tokens the model produced.
+///
+/// Output only. What a request carries is settled before it is sent and is the
+/// same however long the answer takes, so it says nothing about the answer
+/// somebody is currently waiting on — and one number that goes up while you
+/// watch it is worth more than two that need adding.
+///
+/// A provider says this about the response it is in the middle of, as often as
+/// it likes, each reading replacing the last. What a whole turn spent is the
+/// sum over its responses, which is the runner's to add because the turn is
+/// the runner's: a provider is asked several times and is told nothing about
+/// the turn around those requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spend(u64);
+
+impl Spend {
+    /// Nothing spent yet.
+    pub const NONE: Self = Self(0);
+
+    /// A reading of `tokens` produced.
+    #[must_use]
+    pub const fn new(tokens: u64) -> Self {
+        Self(tokens)
+    }
+
+    /// How many tokens that is.
+    #[must_use]
+    pub const fn tokens(self) -> u64 {
+        self.0
+    }
+
+    /// This and `other` together.
+    ///
+    /// Saturating, because a count that wrapped would read as a turn that spent
+    /// nothing at the moment it spent the most.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+}
+
 /// One piece of streamed output.
 ///
 /// A tool call arrives across several: the name comes first, then the arguments
@@ -335,6 +376,8 @@ pub enum Delta {
     },
     /// More of the current tool call's argument JSON.
     ToolArgs(Box<str>),
+    /// What this response has cost so far, replacing whatever it last said.
+    Spent(Spend),
     /// The model stopped, and why.
     Stopped(StopReason),
 }

@@ -90,9 +90,10 @@ impl Turning {
             Event::Delta { .. } => Doing::Writing,
             Event::ToolRequested { .. } => Doing::Running,
             Event::ToolFinished { .. } => Doing::Thinking,
-            Event::TurnStarted { .. } | Event::TurnFinished { .. } | Event::Failed { .. } => {
-                self.doing
-            }
+            Event::TurnStarted { .. }
+            | Event::Spent { .. }
+            | Event::TurnFinished { .. }
+            | Event::Failed { .. } => self.doing,
         };
     }
 

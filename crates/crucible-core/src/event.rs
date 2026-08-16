@@ -9,7 +9,7 @@
 //! decides how to draw one.
 
 use crate::ids::{ToolId, TurnId};
-use crate::provider::ProviderError;
+use crate::provider::{ProviderError, Spend};
 use crate::tool::{ToolCall, ToolError, ToolOutput};
 use crate::transcript::StopReason;
 
@@ -88,6 +88,12 @@ pub enum Event {
         call: ToolId,
         /// What it produced.
         output: ToolOutput,
+    },
+
+    /// What the turn has spent so far, every response of it added up.
+    Spent {
+        /// The running total, not the reading that moved it.
+        spend: Spend,
     },
 
     /// A turn ended.

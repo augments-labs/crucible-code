@@ -147,6 +147,7 @@ column gets sent back in review.
 | What drives turns to completion | **runner** | engine, orchestrator, driver, executor |
 | One thing that happened, reported as it happens | **event** | entry, record, item |
 | One prompt, answer or tool result in a transcript, and one line of the session log | **message** | entry, record, item |
+| What a response or a turn has cost, counted in tokens produced | **spend** | usage, cost, consumption, spending |
 
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.

@@ -399,6 +399,7 @@ mod tests {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::TurnFinished { .. }
+                | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
             .collect();
