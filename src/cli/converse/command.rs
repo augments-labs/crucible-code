@@ -345,6 +345,16 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Re
     Ok(renderer.present(&[row], terms.style.palette())?)
 }
 
+/// One row of the listing a run with no keyboard is given in place of a panel:
+/// the line that would take the row, and what taking it would reach.
+///
+/// The three listings share this because they are read the same way — a command
+/// down the left and a sentence about it after the mark — and a mark that
+/// differed between them would say the three lists were three kinds of thing.
+fn about(said: &str, reaches: &str, glyphs: Glyphs) -> String {
+    format!("{said} {} {reaches}", glyphs.dash())
+}
+
 /// The row that says which mode is in force, in the colour that mode is drawn
 /// in.
 fn sentence(mode: Mode, columns: usize) -> Row {

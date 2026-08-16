@@ -47,7 +47,7 @@ use crate::cli::converse::secret;
 use crate::cli::subscription::{Account, Route};
 use crate::cli::{Fatal, PROVIDERS, Served, remember};
 
-use super::{Terms, say};
+use super::{Terms, about, say};
 
 /// One way Crucible can receive a credential.
 #[derive(Clone, Copy)]
@@ -123,7 +123,11 @@ pub(super) fn run<T: Terminal>(
         .into_iter()
         .filter(|one| named.is_none_or(|only| only.name == one.name))
         .map(|one| {
-            let said = format!("/login {} — a key from {}", one.name, one.key);
+            let said = about(
+                &format!("/login {}", one.name),
+                &format!("a key from {}", one.key),
+                terms.style.glyphs(),
+            );
 
             Row::new().then(Slot::Quiet, clip(&said, columns))
         })

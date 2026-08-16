@@ -22,7 +22,7 @@ use crate::cli::choice::Choice;
 use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{Fatal, Model, NO_MODEL_CHOSEN, PROVIDERS, Served, remember, served};
 
-use super::{Terms, say};
+use super::{Terms, about, say};
 
 /// The sentence under the panel's title: what standing there cannot show, which
 /// is that this outlives the session it was chosen in.
@@ -299,7 +299,11 @@ fn listed<T: Terminal>(
             let named = if model.shown == model.name {
                 format!("/model {}/{}", provider.name, model.name)
             } else {
-                format!("/model {}/{} — {}", provider.name, model.name, model.shown)
+                about(
+                    &format!("/model {}/{}", provider.name, model.name),
+                    model.shown,
+                    terms.style.glyphs(),
+                )
             };
             Row::new().then(Slot::Quiet, clip(&named, columns))
         })
