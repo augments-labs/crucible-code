@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Removed
+
+- **A release no longer carries `budgets.json` or `budget-environment.txt`.**
+  Those are shared-runner trend numbers rather than the quiet-machine reading a
+  release is decided on, and they stay on the workflow run that produced them,
+  where that is plain. The bench still runs on the release path and a probe
+  over its limit still stops the tag. What it costs: anything fetching either
+  file by name from a release finds nothing. The archives, `install.sh`,
+  `uninstall.sh` and `SHA256SUMS` are unchanged.
+
 ## [0.1.13] - 2026-08-16
 
 ### Added

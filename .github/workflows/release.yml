@@ -303,9 +303,15 @@ jobs:
           digest=$(<artifact/digest-linux-x86_64)
           scripts/smoke.sh --no-provider --checksum "$digest" "$archive"
 
-  # Shared-runner numbers are trend data, not the quiet-machine release reading
-  # required by RELEASING.md. Keeping them with the release still makes a future
-  # comparison possible, and the environment file says what produced them.
+  # What stops a tag whose build got slower: every probe carries its own limit
+  # and exits non-zero when it is over, so this job failing is the release not
+  # happening.
+  #
+  # The numbers stay on the run rather than on the release. They are
+  # shared-runner trend data, not the quiet-machine reading RELEASING.md
+  # requires, and a reading nobody should compare against is worse sitting
+  # beside the downloads than absent from them. The environment file says what
+  # produced them, for whoever goes to the run to read the trend.
   budgets:
     name: release budgets
     needs: gate
@@ -376,5 +382,4 @@ jobs:
             --title "crucible ${GITHUB_REF_NAME#v}" \
             --notes-file assets/NOTES.md \
             assets/crucible-* assets/install.sh assets/uninstall.sh \
-            assets/SHA256SUMS \
-            assets/budgets.json assets/budget-environment.txt
+            assets/SHA256SUMS
