@@ -8,11 +8,12 @@
 //! half-written file cannot happen: the write either did not start or ran to
 //! completion.
 //!
-//! What raises it is Ctrl-C during a turn. Raw mode is held for the whole
-//! session, so that key arrives at the loop reading the keyboard rather than
-//! becoming a signal the terminal sends, and [`Cancel::request`] is what the
-//! loop does with it. One producer, on the thread that draws; the consumers are
-//! all on the thread the turn runs on.
+//! What raises it is Esc during a turn — the key that backs out of whatever is
+//! standing in front of the reader, which while a turn runs is the turn. Raw
+//! mode is held for the whole session, so it arrives at the loop reading the
+//! keyboard rather than being swallowed as the start of an escape sequence, and
+//! [`Cancel::request`] is what the loop does with it. One producer, on the
+//! thread that draws; the consumers are all on the thread the turn runs on.
 //!
 //! The producer clears it too, and that is what keeps a press from being lost
 //! rather than merely tidy — see [`Cancel::reset`]. One thread raises the flag
@@ -61,10 +62,10 @@ impl Cancel {
     /// then clears.
     ///
     /// Cleared inside the turn instead — by the turn, on the turn's own thread
-    /// — it would leave a window as wide as a thread takes to start, in which a
-    /// Ctrl-C is raised by the loop and then wiped by the very turn it was
-    /// pressed to stop. A turn that finds the flag raised is a turn somebody
-    /// stopped, and it stops.
+    /// — it would leave a window as wide as a thread takes to start, in which an
+    /// Esc is raised by the loop and then wiped by the very turn it was pressed
+    /// to stop. A turn that finds the flag raised is a turn somebody stopped,
+    /// and it stops.
     pub fn reset(&self) {
         self.0.store(false, Ordering::Release);
     }

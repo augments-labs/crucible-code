@@ -309,7 +309,7 @@ impl Runner {
     ///
     /// `cancel` arrives cleared: [`Cancel::reset`] is the caller's to call, on
     /// the thread that reads the keyboard, before the thread this runs on
-    /// exists. Clearing it here would clear a Ctrl-C pressed in between, so a
+    /// exists. Clearing it here would clear a key pressed in between, so a
     /// flag found raised belongs to this turn and stops it — before the prompt
     /// is recorded and before a request goes out, whatever a given provider
     /// makes of being handed a cancel that is already up.

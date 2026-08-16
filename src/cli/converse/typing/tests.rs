@@ -518,6 +518,59 @@ fn the_row_return_would_run_is_the_marked_one_in_the_list_on_screen() {
 }
 
 #[test]
+fn esc_is_what_stops_a_turn_and_ctrl_c_is_the_line_s_own_in_both_loops() {
+    // The two halves of one change. Esc was a key with nothing to act on while
+    // a turn ran, which is what made it the free slot; Ctrl-C was caught here
+    // before the editor saw it, which is what made it mean one thing at the
+    // prompt and another mid turn. Swapping them is what leaves it meaning the
+    // same thing in both loops.
+    assert_eq!(meant(Pressed::Escape), Meant::Interrupt);
+    assert_eq!(
+        meant(Pressed::Key(Key::Interrupt)),
+        Meant::Editing(Key::Interrupt)
+    );
+}
+
+#[test]
+fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
+    // The rest of the table, pinned so that the swap above is the whole change.
+    // Return still queues rather than submits, because a line finished under a
+    // turn belongs above the turn it starts; Ctrl-D still reaches the editor.
+    assert_eq!(meant(Pressed::Resized), Meant::Resized);
+    assert_eq!(meant(Pressed::Key(Key::Enter)), Meant::Queue);
+    assert_eq!(meant(Pressed::Key(Key::Char('a'))), Meant::Typing('a'));
+    assert_eq!(meant(Pressed::Key(Key::Eof)), Meant::Editing(Key::Eof));
+    assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
+
+    for arrived in [
+        Pressed::Up,
+        Pressed::Down,
+        Pressed::Cycle,
+        Pressed::Clicked { row: 4, column: 2 },
+        Pressed::Ignored,
+    ] {
+        assert_eq!(meant(arrived), Meant::Ignored, "{arrived:?}");
+    }
+}
+
+#[test]
+fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
+    // The one place the key is printed beside the thing it acts on while a turn
+    // is the thing on screen. It earns the room the same way the mode's key
+    // does: nothing else says the row is a control at all.
+    let says = under(&engine(Mode::Ask));
+
+    assert_eq!(says.keys, WORKING);
+    assert!(says.keys.contains("esc"), "{:?}", says.keys);
+
+    // And says nothing about the key that no longer stops a turn. Naming it
+    // here is what would teach it twice: it does the same thing under a turn
+    // that it does at the prompt, and a row that mentions it mid turn is a row
+    // claiming otherwise.
+    assert!(!says.keys.contains("ctrl"), "{:?}", says.keys);
+}
+
+#[test]
 fn no_two_modes_are_drawn_in_the_same_colour() {
     // The colour is the part read before the sentence is, and two modes
     // sharing one would make the border say less than nothing — it would say

@@ -350,7 +350,7 @@ fn an_answer_is_bounded_in_bytes_as_well_as_in_lines() {
 
 #[test]
 fn a_search_the_user_stopped_never_reaches_the_files() {
-    // A walk is the slowest thing this crate does and the one place Ctrl-C had
+    // A walk is the slowest thing this crate does and the one place Esc had
     // nothing to stop: the tree here holds two matches, and a search that
     // answers with neither of them is one that stopped before it opened
     // anything.

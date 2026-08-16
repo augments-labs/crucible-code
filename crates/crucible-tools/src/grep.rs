@@ -488,7 +488,7 @@ impl Grep {
                 // Nothing below notices a flag on its own, and a walk is the
                 // slowest thing this crate does: a tree with a million files in
                 // it, or one somebody wrote to be walked slowly, is exactly
-                // where Ctrl-C has to arrive. What was found before this point
+                // where Esc has to arrive. What was found before this point
                 // is real and is reported, so stopping costs the turn nothing
                 // it had already paid for.
                 if self.cancel.requested() {

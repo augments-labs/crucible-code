@@ -6,6 +6,17 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Esc stops a running turn, and Ctrl-C belongs to the prompt in both loops.**
+  Ctrl-C throws away the line typed so far and, against an empty box, offers to
+  leave on a second press within two seconds — the same while a turn runs as
+  between turns, rather than a key that had to be relearned at the moment there
+  was something to lose. What it costs: Ctrl-C no longer stops a turn, so
+  reaching for it out of habit clears the line instead, and twice against an
+  empty one ends the session. The row under the box now reads
+  `(enter queues it · esc to interrupt)`.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**
