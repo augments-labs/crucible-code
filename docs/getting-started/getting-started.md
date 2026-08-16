@@ -404,7 +404,8 @@ Six tools, advertised in the order a model tends to reach for them:
 
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see
-[Permissions](../permissions/index.md).
+[Permissions](../permissions/index.md). [Tools](../tools/index.md) is what each
+one takes, what bounds its answer, and what it says when it hits that bound.
 
 `write` puts down a whole file, so it refuses to overwrite one this session has
 not read or written itself, and says so rather than ending the turn. The model

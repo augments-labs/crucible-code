@@ -32,6 +32,15 @@ Notable changes to crucible. Format follows
   there now spends one `read` call first, and a file another program wrote
   during the session is no longer silently discarded.
 
+### Documentation
+
+- **The tools have a topic of their own.** `docs/tools/` says what all six hold
+  themselves to — the workspace boundary, the 30000-byte answer and what each
+  tool prints when it reaches it, and why a failed tool is not a failed turn —
+  then covers the three that name a file, including the read `write` now
+  requires before it will replace one. Until now that surface was a six-row
+  table in getting started and nothing else.
+
 ## [0.1.10] - 2026-08-16
 
 ### Internal

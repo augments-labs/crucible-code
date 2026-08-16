@@ -1,0 +1,120 @@
+# Reading and changing a file
+
+Three tools name one file and work on it: `read` looks, `edit` replaces part of
+it, `write` puts down the whole thing. All three take a path relative to the
+workspace root and refuse one that leads outside it.
+
+## `read`
+
+| Argument | What it is |
+| --- | --- |
+| `path` | The file to read. Required. |
+| `offset` | The first line to return, counting from 1. Defaults to the start. |
+| `limit` | How many lines. Defaults to 2000, never more than 10000. |
+
+The answer is the file's lines with their numbers in front, the way `cat -n`
+writes them:
+
+```
+     1	//! The client and its retry policy.
+     2	
+     3	use std::time::Duration;
+```
+
+The numbers are the file's own, so an `offset` of 500 answers with line 500
+numbered 500 — which is what lets the model quote a line to `edit` and talk
+about it to you.
+
+Three things end an answer early, and each says so. A `limit` reached leaves
+`[more follows: call read again with offset 501]`. The 30000-byte bound does the
+same, at whatever line filled it. And a single line longer than 2000 characters
+is cut there and marked `[line cut at 2000 characters]` — one minified bundle on
+one line would otherwise be the whole answer.
+
+An `offset` past the end of the file is not a failure: the answer is
+`one.txt has no line 900`, which tells the model it walked off the end rather
+than that something is wrong. A file that is not text says so too, rather than
+putting its bytes in the transcript.
+
+Reading is never asked about. It is allowed, or refused by a `deny`
+[rule](../permissions/rules.md), and the question is answered without being put
+to you.
+
+## `edit`
+
+| Argument | What it is |
+| --- | --- |
+| `path` | The file to change. Required. |
+| `find` | The exact text to replace, indentation included. Required. |
+| `replace` | What to put in its place. Empty deletes. Required. |
+| `all` | Replace every occurrence instead of requiring exactly one. |
+
+Exact text in, exact text out — no patch format and no line numbers. A model
+that has just read a file can quote from it, and quoting is the one thing it can
+do without counting.
+
+`find` must appear exactly once unless `all` is true. Where it appears more
+often, the call comes back as
+`that text appears 3 times in src/main.rs: include more of the surrounding
+lines, or pass all`, and the model picks one of those two. Where it appears not
+at all, `that text does not appear in src/main.rs`. Neither ends the turn.
+
+The file and its result are each capped at 1000000 bytes: an exact whole-file
+transformation needs both in memory at once, and something larger wants a
+different tool rather than a bigger number.
+
+The replacement is prepared beside the file, flushed, and only then renamed over
+it. Nothing ever observes the half-written interval that changing a file in
+place creates, and a failure part-way through leaves the original whole.
+
+## `write`
+
+| Argument | What it is |
+| --- | --- |
+| `path` | The file to write. Required. |
+| `content` | The complete new contents. Required. |
+
+A path whose parent directories are missing gets them, one checked level at a
+time, on Linux, macOS and FreeBSD. On Windows the parent directory has to be
+there already.
+
+The answer is `created src/main.rs, 41 lines` or `replaced src/main.rs, 41
+lines`. The file is put down the same way `edit` puts one down: written beside
+its destination and renamed over it, so it is either the old file or the new one.
+
+### It refuses to replace a file nobody has looked at
+
+`write` names a file and discards whatever is in it, which makes it the one tool
+here that can destroy work. So it will only replace a file this run has read or
+written itself. Anything else comes back as
+
+```
+notes.md has not been read, so replacing it would discard what is in it: read it first
+```
+
+and the turn continues — the model reads the file and writes it again, which
+costs one call and is the whole remedy.
+
+This is the case a permission question cannot cover. A `write` you approve is
+one you agreed to; what neither of you can see at that moment is that the file
+holds a paragraph somebody wrote an hour ago, or a change another program made
+while the turn was running. The refusal is about what is already there rather
+than about the write, which is why it is decided before anything is opened.
+
+What counts as having looked:
+
+- A `read` call that showed at least one line of that file. A call that
+  answered `has no line 900` showed nothing, so it is not one — otherwise a
+  single offset past the end would be a way past this.
+- A `write` call that created or replaced it. What the agent just put down it
+  has by definition seen, so correcting it does not cost a round trip spent
+  learning what the same turn wrote.
+
+Files are remembered by their resolved path, so `./notes.md` and `notes.md` are
+one file rather than two. The last 1024 of them are kept and reading one again
+moves it back to the front, which is enough for any real session; past that the
+least recently read is forgotten and a `write` to it asks for a read first.
+
+The record belongs to the run rather than to the transcript. `/clear` empties
+what the model remembers and leaves it standing; leaving crucible drops it, so a
+fresh run refuses a file the last one read. Nothing about it is written to disk.

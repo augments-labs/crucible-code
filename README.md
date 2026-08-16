@@ -75,7 +75,8 @@ cargo build --release
 
 Anything past this point —
 [getting started](docs/getting-started/index.md),
-[providers](docs/providers/index.md), [configuration](docs/configuration/index.md),
+[tools](docs/tools/index.md), [providers](docs/providers/index.md),
+[configuration](docs/configuration/index.md),
 [permissions](docs/permissions/index.md), [sessions](docs/sessions/index.md) — lives in
 `docs/` rather than here, so there is one copy of it to keep true.
 
