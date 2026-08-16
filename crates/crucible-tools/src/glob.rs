@@ -1,6 +1,8 @@
 //! Finding files by the shape of their path.
 
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::time::SystemTime;
 
 use crucible_core::{
     Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
@@ -12,6 +14,10 @@ use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "glob";
+
+/// The two orders a call can ask for, spelled as the model sends them.
+const PATH: &str = "path";
+const MODIFIED: &str = "modified";
 
 /// How many paths one call answers with when it does not say.
 const PATHS: usize = 200;
@@ -48,6 +54,11 @@ const SCHEMA: &str = r#"{
       "type": "integer",
       "minimum": 1,
       "description": "How many paths to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
+    },
+    "sort": {
+      "type": "string",
+      "enum": ["path", "modified"],
+      "description": "What order to answer in, and therefore which paths a limit keeps. path is alphabetical and the default; modified is most recently changed first, for finding what a project has been working on."
     }
   },
   "required": ["pattern"]
@@ -60,7 +71,63 @@ pub struct Glob {
     cancel: Cancel,
 }
 
-/// What one walk came back with: the lowest paths it matched, and how many it
+/// What order an answer is in, and therefore which paths a limit keeps.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Sort {
+    /// Alphabetical, and what a call gets when it does not say.
+    Path,
+    /// Most recently changed first.
+    Modified,
+}
+
+impl Sort {
+    /// What the walk has to learn about a file to place it.
+    ///
+    /// Under [`Sort::Path`] nothing: the name is already in hand and the
+    /// modification time would be a `stat` per match spent on a figure that
+    /// decides nothing. So the cost of the second order is paid only by the
+    /// calls that ask for it.
+    ///
+    /// A file whose time cannot be read is dated to the epoch rather than
+    /// dropped, which places it last among files that have one. That is the
+    /// safe direction: it is a file that vanished mid-walk or one on a
+    /// filesystem that keeps no times, and either way putting it at the top of
+    /// an answer about recent work would be the wrong claim.
+    fn aged(self, entry: &ignore::DirEntry) -> SystemTime {
+        match self {
+            Self::Path => SystemTime::UNIX_EPOCH,
+            Self::Modified => entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        }
+    }
+
+    /// What a walk the user stopped no longer promises about its answer.
+    fn lowest(self) -> &'static str {
+        match self {
+            Self::Path => "the lowest paths it reached, not the lowest there are",
+            Self::Modified => "the newest paths it reached, not the newest there are",
+        }
+    }
+}
+
+/// One matched path and what places it, ordered worst first.
+///
+/// Worst first is what lets one heap serve both orders: the top is always the
+/// entry the next match displaces, and `into_sorted_vec` hands them back in the
+/// order they are reported. `age` is reversed so that an older file sorts
+/// greater — the oldest is the one a newer match pushes out — and under
+/// [`Sort::Path`] every entry carries the same epoch, where it decides nothing
+/// and the path below it is the whole order.
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct Ranked {
+    age: Reverse<SystemTime>,
+    path: String,
+}
+
+/// What one walk came back with: the best paths it matched, and how many it
 /// matched in all.
 ///
 /// Bounded while the walk is still running, because a limit applied afterwards
@@ -73,14 +140,14 @@ pub struct Glob {
 /// there were, and a `usize` is what it costs to keep saying it exactly rather
 /// than saying "some".
 struct Found {
-    /// The lowest paths matched so far, largest at the top — the next one to
-    /// fall out when a lower one arrives. Never longer than `limit`.
-    kept: BinaryHeap<String>,
+    /// The best paths matched so far, worst at the top — the next one to fall
+    /// out when a better one arrives. Never longer than `limit`.
+    kept: BinaryHeap<Ranked>,
     limit: usize,
     seen: usize,
     /// Whether the user stopped the turn while the walk was running, which
     /// costs the answer the one property it is otherwise sorted for: these are
-    /// then the lowest paths reached rather than the lowest in the tree.
+    /// then the best paths reached rather than the best in the tree.
     stopped: bool,
 }
 
@@ -96,26 +163,30 @@ impl Found {
     }
 
     /// Takes one matched path, keeping it only if it belongs in the answer.
-    fn keep(&mut self, path: String) {
+    fn keep(&mut self, ranked: Ranked) {
         self.seen += 1;
 
         if self.kept.len() < self.limit {
-            self.kept.push(path);
+            self.kept.push(ranked);
             return;
         }
 
-        // The top is the highest path in hand, so it is the one this displaces.
+        // The top is the worst entry in hand, so it is the one this displaces.
         // `pop` before `push` is what holds the heap at `limit` rather than
         // letting it grow by one on every match after the first `limit`.
-        if self.kept.peek().is_some_and(|highest| *highest > path) {
+        if self.kept.peek().is_some_and(|worst| *worst > ranked) {
             self.kept.pop();
-            self.kept.push(path);
+            self.kept.push(ranked);
         }
     }
 
-    /// The paths, in the order they are reported: lowest first.
+    /// The paths, in the order they are reported: best first.
     fn sorted(self) -> Vec<String> {
-        self.kept.into_sorted_vec()
+        self.kept
+            .into_sorted_vec()
+            .into_iter()
+            .map(|ranked| ranked.path)
+            .collect()
     }
 
     /// How many matched that the answer does not carry.
@@ -152,6 +223,10 @@ impl Tool for Glob {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
         let limit = args.count("limit", PATHS)?.min(CEILING);
+        let sort = match args.choice("sort", PATH, &[PATH, MODIFIED])? {
+            MODIFIED => Sort::Modified,
+            _ => Sort::Path,
+        };
 
         // `literal_separator` is what makes `*` stop at a directory boundary,
         // so `src/*.rs` means the files in `src` and `**/*.rs` means the ones
@@ -203,20 +278,23 @@ impl Tool for Glob {
             // workspace was widened to reach and `grep` searched happily.
             let shown = crate::tree::named(&self.workspace, entry.path());
             if glob.is_match(&shown) {
-                found.keep(shown);
+                found.keep(Ranked {
+                    age: Reverse(sort.aged(&entry)),
+                    path: shown,
+                });
             }
         }
 
-        Ok(report(found, pattern))
+        Ok(report(found, pattern, sort))
     }
 }
 
 /// The paths, one per line.
-fn report(found: Found, pattern: &str) -> ToolOutput {
+fn report(found: Found, pattern: &str, sort: Sort) -> ToolOutput {
     // Read before the paths are taken out of it, while it can still tell a
     // walk that matched nothing from one whose answer is full.
     let matched = found.more();
-    let note = halted(found.stopped);
+    let note = halted(found.stopped, sort);
     let shown = found.sorted();
 
     if shown.is_empty() {
@@ -245,20 +323,25 @@ fn report(found: Found, pattern: &str) -> ToolOutput {
         format!("\n[{more} more: narrow the pattern or raise limit]")
     };
 
-    ToolOutput::ok(lines + &tail + note)
+    ToolOutput::ok(lines + &tail + &note)
 }
 
 /// What a walk the user stopped says about itself.
 ///
 /// It answers rather than failing: the paths it had are paths, and they are
 /// what the turn was spent on. What goes with them is the property they lost —
-/// the answer is sorted, so it reads as the lowest paths in the tree, and a
-/// walk that stopped short only reached some of the tree to be lowest in.
-fn halted(stopped: bool) -> &'static str {
+/// the answer is sorted, so it reads as the best paths in the tree, and a walk
+/// that stopped short only reached some of the tree to be best in. Which
+/// property that is depends on what was asked for, which is why the sentence
+/// comes from the sort rather than being written here.
+fn halted(stopped: bool, sort: Sort) -> String {
     if stopped {
-        "\n[stopped before the walk finished: these are the lowest paths it reached, not the lowest there are]"
+        format!(
+            "\n[stopped before the walk finished: these are {}]",
+            sort.lowest()
+        )
     } else {
-        ""
+        String::new()
     }
 }
 
@@ -272,6 +355,23 @@ mod tests {
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
         let tool = Glob::new(sample.workspace(), Cancel::new());
         tool.run(allowed(&tool, args)).unwrap()
+    }
+
+    /// One entry the way `Sort::Path` makes them: every age the same, so the
+    /// path below it is the whole order.
+    fn ranked(path: &str) -> Ranked {
+        Ranked {
+            age: Reverse(SystemTime::UNIX_EPOCH),
+            path: path.to_owned(),
+        }
+    }
+
+    /// One entry the way `Sort::Modified` makes them.
+    fn dated(path: &str, seconds: u64) -> Ranked {
+        Ranked {
+            age: Reverse(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
+            path: path.to_owned(),
+        }
     }
 
     /// A tree with files at two depths.
@@ -301,6 +401,38 @@ mod tests {
         let output = glob(&sample, r#"{"pattern":"src/*.rs"}"#);
 
         assert_eq!(output.text(), "src/main.rs\n");
+    }
+
+    /// Gives a file a modification time, so a test can say what order the tree
+    /// is in rather than hoping the filesystem's clock separated three writes.
+    fn aged(sample: &Sample, at: &str, seconds: u64) {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(sample.root().join(at))
+            .expect("a file the sample wrote");
+        file.set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+        )
+        .expect("a filesystem that keeps modification times");
+    }
+
+    #[test]
+    fn asking_for_modified_answers_newest_first() {
+        // The order a model wants when it is looking for what changed, and the
+        // one it cannot get by asking for paths and reading them.
+        let sample = tree("glob-modified");
+        aged(&sample, "src/main.rs", 3_000);
+        aged(&sample, "src/cli/parse.rs", 1_000);
+        aged(&sample, "README.md", 2_000);
+
+        let output = glob(&sample, r#"{"pattern":"**/*","sort":"modified"}"#);
+
+        assert_eq!(
+            output.text(),
+            "src/main.rs\nREADME.md\nsrc/cli/parse.rs\n",
+            "{}",
+            output.text()
+        );
     }
 
     #[test]
@@ -367,7 +499,7 @@ mod tests {
         let mut found = Found::new(5);
 
         for n in 0..2_000 {
-            found.keep(format!("src/file{n:04}.rs"));
+            found.keep(ranked(&format!("src/file{n:04}.rs")));
             assert!(
                 found.kept.len() <= 5,
                 "the walk was holding {} paths at file {n}",
@@ -389,6 +521,75 @@ mod tests {
     }
 
     #[test]
+    fn keeping_the_newest_files_answers_the_same_as_sorting_all_of_them_by_time() {
+        // The same promise the path order owes, under the order that reverses
+        // the key: a bounded heap that displaces the wrong end keeps the oldest
+        // files and still looks like a sorted answer.
+        let dates: Vec<(String, u64)> = (0..500)
+            .map(|n| (format!("f{n:03}.rs"), (n * 37) % 500))
+            .collect();
+
+        let mut found = Found::new(7);
+        for (path, seconds) in dates.clone() {
+            found.keep(dated(&path, seconds));
+        }
+
+        let mut newest = dates;
+        newest.sort_unstable_by(|(left, one), (right, two)| two.cmp(one).then(left.cmp(right)));
+        newest.truncate(7);
+        assert_eq!(
+            found.sorted(),
+            newest.into_iter().map(|(path, _)| path).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn two_files_changed_at_the_same_moment_still_come_back_in_a_settled_order() {
+        // A tree checked out in one go has one timestamp on every file, which
+        // is the common case rather than a corner: without a tiebreak the
+        // answer would depend on the order the walk reached them.
+        let mut found = Found::new(3);
+        for path in ["c.rs", "a.rs", "b.rs"] {
+            found.keep(dated(path, 1_000));
+        }
+
+        assert_eq!(found.sorted(), vec!["a.rs", "b.rs", "c.rs"]);
+    }
+
+    #[test]
+    fn a_stopped_walk_says_what_the_order_it_was_asked_for_no_longer_promises() {
+        // The sentence is about the property the answer lost, so an answer
+        // sorted by time that says "not the lowest there are" is describing a
+        // walk somebody else ran.
+        let mut found = Found::new(5);
+        found.keep(dated("src/main.rs", 1_000));
+        found.stopped = true;
+
+        let output = report(found, "**/*.rs", Sort::Modified);
+
+        assert!(
+            output.text().contains("not the newest there are"),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn a_sort_nobody_offers_is_refused_and_the_words_that_are_offered_are_named() {
+        let sample = tree("glob-sort-unknown");
+        let tool = Glob::new(sample.workspace(), Cancel::new());
+
+        let problem = tool
+            .run(allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#))
+            .unwrap_err();
+
+        assert_eq!(
+            problem.to_string(),
+            "glob: sort must be one of path, modified"
+        );
+    }
+
+    #[test]
     fn keeping_the_lowest_paths_answers_the_same_as_sorting_all_of_them() {
         // The bounded structure replaced a sort of the whole vector, so what it
         // owes is that answer and not merely a bounded one.
@@ -398,7 +599,7 @@ mod tests {
 
         let mut found = Found::new(7);
         for path in paths.clone() {
-            found.keep(path);
+            found.keep(ranked(&path));
         }
 
         let mut sorted = paths;
@@ -502,10 +703,10 @@ mod tests {
         // What goes with them is the property they lost: they are the lowest
         // paths the walk reached rather than the lowest in the tree.
         let mut found = Found::new(5);
-        found.keep("src/main.rs".to_owned());
+        found.keep(ranked("src/main.rs"));
         found.stopped = true;
 
-        let output = report(found, "**/*.rs");
+        let output = report(found, "**/*.rs", Sort::Path);
 
         assert!(!output.is_failed());
         assert!(

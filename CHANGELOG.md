@@ -15,6 +15,14 @@ Notable changes to crucible. Format follows
   files rather than matching lines, and a `mode` outside the two words is
   refused rather than quietly read as the default.
 
+- **`glob` can answer newest first.** `sort: "modified"` orders the listing by
+  modification time instead of by path, which is what finds the files a project
+  has been working on rather than the ones whose names sort first. The order
+  also decides which paths a `limit` keeps, so a capped call returns the newest
+  matches rather than the lowest ones. What it costs: that mode reads each
+  matching file's modification time, which the default does not, and a `sort`
+  outside the two words is refused rather than quietly read as the default.
+
 ## [0.1.10] - 2026-08-16
 
 ### Internal
