@@ -148,7 +148,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/logout   remove a stored account or API key",
             "/mode     ask · allowEdits · fullAccess",
             "/resume   pick up an earlier session here",
-            "/clear    forget what has been said",
+            "/clear    start a new session, leaving this one",
             "/exit     leave",
         ]
     );
@@ -166,7 +166,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/logout   remove a stored account or API key",
             "/mode     ask, allowEdits, fullAccess",
             "/resume   pick up an earlier session here",
-            "/clear    forget what has been said",
+            "/clear    start a new session, leaving this one",
             "/exit     leave",
         ]
     );

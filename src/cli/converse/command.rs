@@ -55,7 +55,7 @@ pub(super) enum Command {
     Mode,
     /// The sessions recorded here, and picking one of them up.
     Resume,
-    /// Forget the transcript, keeping the session.
+    /// A new session with nothing said in it, this one left on `/resume`.
     Clear,
     /// End the session.
     Exit,
@@ -133,7 +133,10 @@ impl Command {
             // are the useful half of what there is to say.
             Self::Mode => mode::ring(glyphs),
             Self::Resume => "pick up an earlier session here",
-            Self::Clear => "forget what has been said",
+            // What it is for rather than what it does to the session: the
+            // row is read by somebody who wants the context empty, and
+            // "leaving this one" is what they need warning of.
+            Self::Clear => "start a new session, leaving this one",
             Self::Exit => "leave",
         }
     }
