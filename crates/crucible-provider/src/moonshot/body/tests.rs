@@ -44,6 +44,16 @@ fn a_request_streams_and_names_its_model() {
 }
 
 #[test]
+fn a_streaming_request_asks_for_the_counts_that_say_what_it_cost() {
+    // This endpoint sends them only when asked for, and sends them after the
+    // answer in a chunk of its own. Left out of the request, a turn runs and
+    // the row above the box has nothing to say about what it has spent.
+    let body = build(&request(said("hello")));
+
+    assert_eq!(at(&body, "/stream_options/include_usage"), &json!(true));
+}
+
+#[test]
 fn a_session_nobody_told_how_hard_to_think_says_nothing_about_it() {
     // Kimi's own default is what a model gets otherwise, and this vendor serves
     // three of the five rungs — so a request nobody had an opinion about is one

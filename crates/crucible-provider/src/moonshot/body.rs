@@ -25,6 +25,14 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
         body.boolean("stream", true);
+
+        // What a response cost, which this endpoint sends only when it is asked
+        // to. It arrives after the answer in a chunk of its own, so asking for
+        // it costs nothing but the field.
+        body.object("stream_options", |options| {
+            options.boolean("include_usage", true);
+        });
+
         body.array("messages", |messages| write_messages(messages, request));
 
         // Beside `model` rather than nested, which is where this older wire

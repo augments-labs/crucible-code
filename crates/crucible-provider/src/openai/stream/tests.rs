@@ -3,7 +3,7 @@
 //! Separate from the stream next door only because it reached the per-file cap.
 //! Everything here is about `Stream` and the queue under it.
 
-use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, StopReason, ToolId};
+use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId};
 
 use super::*;
 use crate::transport::{Paused, Said};
@@ -23,7 +23,7 @@ pub(in crate::openai) const ANSWER: &str = concat!(
     "event: response.output_text.delta\n",
     "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\", world\"}\n\n",
     "event: response.completed\n",
-    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello, world\"}]}]}}\n\n",
+    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello, world\"}]}],\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n\n",
 );
 
 /// One tool call, opened and filled in and finished.
@@ -63,6 +63,7 @@ fn an_answer_arrives_as_text_and_a_stop() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );
@@ -167,6 +168,7 @@ fn a_heartbeat_with_no_payload_does_not_end_the_turn() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );
@@ -337,6 +339,7 @@ fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]
     );

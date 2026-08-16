@@ -309,6 +309,40 @@ fn a_reason_this_build_has_not_heard_of_is_still_not_a_finish() {
 }
 
 #[test]
+fn what_a_response_cost_arrives_under_the_response_that_finished() {
+    // Once, at the end, and inside the response rather than beside it. The cost
+    // goes first because the stop is the thing a reader is entitled to treat as
+    // the last word.
+    let done = r#"{"type":"response.completed","response":
+        {"output":[],"usage":{"input_tokens":900,"output_tokens":58}}}"#;
+
+    assert_eq!(
+        out(done),
+        vec![
+            Delta::Spent(Spend::new(58)),
+            Delta::Stopped(StopReason::Yielded),
+        ]
+    );
+}
+
+#[test]
+fn a_response_cut_short_still_says_what_it_cost() {
+    // Tokens produced before a ceiling stopped the answer are tokens produced.
+    // Read only off a clean finish, the truncated turn is the one that reports
+    // having cost nothing.
+    let cut = r#"{"type":"response.incomplete","response":
+        {"incomplete_details":{"reason":"max_output_tokens"},"usage":{"output_tokens":4096}}}"#;
+
+    assert_eq!(
+        out(cut),
+        vec![
+            Delta::Spent(Spend::new(4096)),
+            Delta::Stopped(StopReason::OutOfTokens),
+        ]
+    );
+}
+
+#[test]
 fn a_response_that_failed_carries_what_the_provider_said() {
     let said = r#"{"type":"response.failed","response":{"error":
         {"code":"server_error","message":"the model is overloaded"}}}"#;

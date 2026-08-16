@@ -1,8 +1,10 @@
 //! A response, from `MoonshotAI`'s shape.
 //!
 //! One event in, however many deltas out. Unlike the newer protocol this
-//! endpoint narrates nothing: every event is a piece of the answer, and one of
-//! them can carry text, a tool call and the reason the model stopped at once.
+//! endpoint narrates almost nothing: nearly every event is a piece of the
+//! answer, and one of them can carry text, a tool call and the reason the model
+//! stopped at once. The exception is the last one, which carries what the
+//! response cost and no piece of the answer at all.
 //!
 //! Read by field lookup rather than into mirror structs. The payload is
 //! consumed once, here, and a struct per shape would be more code to say the
@@ -11,7 +13,7 @@
 //! Events are unnamed — the SSE `event:` line is never sent — so what an event
 //! is is decided by what its payload holds rather than by a word beside it.
 
-use crucible_core::{Delta, ProviderError, StopReason, ToolId};
+use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::moonshot::NAME;
@@ -76,16 +78,24 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
         return Err(upstream(error));
     }
 
+    let mut deltas = Vec::new();
+
+    // Read before the choices rather than after them, because the chunk that
+    // carries this has none: on this endpoint the counts arrive on their own,
+    // after the answer and after the reason the model stopped.
+    if let Some(spent) = spent(&payload) {
+        deltas.push(spent);
+    }
+
     let choice = payload
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first());
     let Some(choice) = choice else {
-        // Usage, and whatever else this endpoint sends without a choice in it.
-        return Ok(Vec::new());
+        // The usage chunk above, and whatever else this endpoint sends without
+        // a choice in it.
+        return Ok(deltas);
     };
-
-    let mut deltas = Vec::new();
 
     if let Some(delta) = choice.get("delta") {
         // `reasoning_content` sits beside this on a model that thinks first.
@@ -103,6 +113,22 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
     }
 
     Ok(deltas)
+}
+
+/// What the response has cost, where this chunk says.
+///
+/// `completion_tokens` is this endpoint's name for what the model produced, and
+/// it is sent only because the request asked for it. Absent rather than zero
+/// where it is missing — every chunk before the last one carries the field as
+/// null — because a response that produced nothing and a provider that never
+/// says are different facts, and only one is worth a number on the screen.
+fn spent(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("usage")
+        .and_then(|usage| usage.get("completion_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Spent(Spend::new(tokens)))
 }
 
 /// The tool calls one event carries, opened or continued.
