@@ -17,7 +17,7 @@
 
 use crucible_core::Transcript;
 use crucible_runner::{Runner, Session};
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 
@@ -62,7 +62,10 @@ pub(super) fn run<T: Terminal>(
         renderer.commit(&format!("! {problem}"))?;
     }
 
-    renderer.present(&started(held, columns), terms.style.palette())?;
+    renderer.present(
+        &started(held, columns, terms.style.glyphs()),
+        terms.style.palette(),
+    )?;
     Ok(())
 }
 
@@ -74,7 +77,7 @@ pub(super) fn run<T: Terminal>(
 /// what is above the box is the terminal's scrollback and stays exactly where
 /// it is: this program never took that screen and is not about to hand it back
 /// empty.
-fn started(held: usize, columns: usize) -> Vec<Row> {
+fn started(held: usize, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let said = match held {
         1 => "1 message".to_owned(),
         _ => format!("{held} messages"),
@@ -85,7 +88,10 @@ fn started(held: usize, columns: usize) -> Vec<Row> {
         Row::new().then(
             Slot::Quiet,
             clip(
-                &format!("{said} left behind · /resume picks that session up again"),
+                &format!(
+                    "{said} left behind {} /resume picks that session up again",
+                    glyphs.dot()
+                ),
                 columns,
             ),
         ),
@@ -104,7 +110,7 @@ mod tests {
     use crucible_core::{Cancel, Message, StopReason, Transcript};
     use crucible_runner::{Model, Runner, Session, Tools, recent};
     use crucible_tools::Ledger;
-    use crucible_tui::{Recording, Renderer};
+    use crucible_tui::{Glyphs, Recording, Renderer};
 
     use crate::cli::Fatal;
     use crate::cli::fake::Script;
@@ -309,7 +315,7 @@ mod tests {
     #[test]
     fn what_it_says_is_that_a_session_started_and_where_the_last_one_went() {
         assert_eq!(
-            art(&started(12, 70)),
+            art(&started(12, 70, Glyphs::Unicode)),
             [
                 "started a new session",
                 "12 messages left behind · /resume picks that session up again",
@@ -321,8 +327,24 @@ mod tests {
         // `1 messages` reads as a program that did not expect the number it
         // printed.
         assert_eq!(
-            art(&started(1, 70)).get(1).map(String::as_str),
+            art(&started(1, 70, Glyphs::Unicode))
+                .get(1)
+                .map(String::as_str),
             Some("1 message left behind · /resume picks that session up again")
+        );
+    }
+
+    #[test]
+    fn what_stands_between_the_two_halves_comes_out_of_the_glyph_set() {
+        // The row is one sentence and a second beside it, and what says they
+        // are two is the mark between them. A terminal that cannot draw that
+        // mark gets the one the setting names in its place rather than a
+        // question mark in the middle of the sentence it was separating.
+        assert_eq!(
+            art(&started(12, 70, Glyphs::Ascii))
+                .get(1)
+                .map(String::as_str),
+            Some("12 messages left behind - /resume picks that session up again")
         );
     }
 
@@ -331,7 +353,7 @@ mod tests {
         // A row over the width would wrap, and a wrapped row leaves the cursor
         // a row below where the next frame expects it.
         for columns in 1..=70 {
-            for row in started(12, columns) {
+            for row in started(12, columns, Glyphs::Unicode) {
                 assert!(row.columns() <= columns, "at {columns}: {row:?}");
             }
         }
