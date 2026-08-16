@@ -37,7 +37,7 @@ pub use permission::{
 };
 pub use provider::{
     Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
-    ToolSchema,
+    Spend, ToolSchema,
 };
 pub use tool::{Tool, ToolArgs, ToolCall, ToolError, ToolOutput};
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
