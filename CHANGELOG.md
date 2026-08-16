@@ -8,13 +8,16 @@ Notable changes to crucible. Format follows
 
 ### Added
 
-- **A running turn says so, and says how long it has been running.** One row
-  between the answer and the box — a mark that turns, the word for what is being
-  waited on (`thinking`, `writing`, `running`, `interrupting`), and a clock
-  counting from the moment the prompt was sent. A still screen and a hung one no
-  longer look alike. What it costs: three rows of the window while a turn runs,
-  given up by the turn's own output, and dropped whole on a window with no room
-  for them.
+- **A running turn says so, says how long it has been running, and says what it
+  has cost.** One row between the answer and the box — a mark that turns, the
+  word for what is being waited on (`thinking`, `writing`, `running`,
+  `interrupting`), a clock counting from the moment the prompt was sent, and
+  `↓` with the tokens the model has produced so far, added up across the turn.
+  A still screen and a hung one no longer look alike, and a turn that is getting
+  expensive says so while there is still time to stop it. What it costs: three
+  rows of the window while a turn runs, given up by the turn's own output, and
+  dropped whole on a window with no room for them. The count appears only once
+  the provider has reported one, so the first response of a turn shows none.
 
 ### Changed
 

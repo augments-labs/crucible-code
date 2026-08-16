@@ -192,7 +192,7 @@ neither is <kbd>Ctrl-C</kbd>, which means the same thing there as at the prompt.
 One row stands between the answer and the box for as long as the turn runs:
 
 ```
-✳ thinking (2m 56s · esc to interrupt)
+✳ thinking (2m 56s · ↓ 12.8k · esc to interrupt)
 ```
 
 The mark turns four times a second, and that is the part that says the program
@@ -202,8 +202,16 @@ model, `writing` while prose is arriving, `running` while a tool has not
 answered, and `interrupting` once <kbd>Esc</kbd> has been pressed and the turn
 has not stopped yet. The clock counts from the moment the prompt was sent and
 never pauses — not for a permission question, which is time spent waiting just
-as much. On a window too narrow for all of it the key goes first and the clock
-next, since both are said again elsewhere; the word is the last thing left.
+as much.
+
+`↓` is what the turn has spent so far, counted in the tokens the model has
+produced and added up across every response of the turn. It appears once the
+provider has said and not before, so a turn shows no count for its first
+response — a provider that never reports and a model that has produced nothing
+are different things, and only one of them is worth a number. On a window too
+narrow for all of it the key goes first, the count next and the clock after
+that, since all three are recoverable — the key is named under the box, and the
+other two will be back next second; the word is the last thing left.
 
 Tool calls appear as they run:
 

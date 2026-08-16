@@ -1,11 +1,12 @@
 //! What stands above the box while a turn is running.
 //!
-//! The component draws a mark, a word and a clock; this is where all three come
-//! from. The clock starts as the turn leaves for its own thread and never
-//! pauses — not for a permission question, which is time somebody is waiting
-//! just as much. The word is read off the events the turn reports as they go
-//! past, which is why it is read here rather than by the component: the events
-//! are this program's, and the component knows nothing about them.
+//! The component draws a mark, a word, a clock and a count; this is where all
+//! four come from. The clock starts as the turn leaves for its own thread and
+//! never pauses — not for a permission question, which is time somebody is
+//! waiting just as much. The word and the count are read off the events the
+//! turn reports as they go past, which is why they are read here rather than by
+//! the component: the events are this program's, and the component knows
+//! nothing about them.
 //!
 //! The key is named here for the second time on the screen — the row under the
 //! box names it too — and that is deliberate. It is the third segment of this
@@ -58,10 +59,21 @@ pub(super) struct Turning {
     since: Instant,
     /// What it is doing now.
     doing: Doing,
-    /// The word and the beat the row was last drawn at, so a redraw that would
-    /// draw the same row again can be skipped. `None` before the first.
-    drawn: Option<(Doing, u64)>,
+    /// What it has spent so far, or `None` until the provider says.
+    spent: Option<u64>,
+    /// What the row was last drawn from, so a redraw that would draw the same
+    /// row again can be skipped. `None` before the first.
+    drawn: Option<Drawn>,
 }
+
+/// Everything the row is drawn from, coarsened to what it is drawn *by*.
+///
+/// The clock counts and the mark turns while nothing arrives, so the loop above
+/// redraws on its own — and this is what it asks about first. A value that has
+/// not moved is a frame nobody would be able to tell from the last, so anything
+/// the row says has to be in here: a segment left out is one that changes on
+/// screen only when something else on the row happens to change with it.
+type Drawn = (Doing, Option<u64>, u64);
 
 impl Turning {
     /// A turn that starts now.
@@ -69,6 +81,7 @@ impl Turning {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
+            spent: None,
             drawn: None,
         }
     }
@@ -79,6 +92,14 @@ impl Turning {
     /// later either changes what the turn is doing or does not, and that is a
     /// decision to make here rather than one to inherit.
     pub(super) fn saw(&mut self, event: &Event) {
+        // Before the guard below, because what a turn spent is true whether it
+        // is stopping or not — and a turn asked to stop goes on spending until
+        // the response in flight has finished arriving. That is the stretch
+        // somebody is most likely to be watching the number.
+        if let Event::Spent { spend } = event {
+            self.spent = Some(spend.tokens());
+        }
+
         // A turn that has been asked to stop is stopping whatever else it is
         // still reporting. The deltas already in flight arrive after the key,
         // and a row that went back to `writing` would be saying the key missed.
@@ -105,12 +126,12 @@ impl Turning {
     /// Whether the row would now be drawn differently from the last one drawn,
     /// recording this one as drawn.
     ///
-    /// What the loop above redraws on between events. Everything on the row is
-    /// read from the word and the clock, and the beat is the coarsest thing the
-    /// clock is read by — so these two together are the row, and a pair that
-    /// has not moved is a frame nobody would be able to tell from the last.
+    /// What the loop above redraws on between events. The beat is the coarsest
+    /// thing the clock is read by, so it stands in for the clock and for the
+    /// face the mark is wearing; the other two are what the row says beside
+    /// them.
     pub(super) fn moved(&mut self) -> bool {
-        let now = (self.doing, Working::beat(self.running()));
+        let now: Drawn = (self.doing, self.spent, Working::beat(self.running()));
         let moved = self.drawn != Some(now);
 
         self.drawn = Some(now);
@@ -132,6 +153,7 @@ impl Turning {
         let working = Working {
             doing: self.doing.word(),
             running: self.running(),
+            spent: self.spent,
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
         };
 
@@ -146,7 +168,7 @@ impl Turning {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
+    use crucible_core::{Spend, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
 
     use super::*;
 
@@ -210,6 +232,43 @@ mod tests {
     }
 
     #[test]
+    fn the_row_says_what_the_turn_has_spent_once_the_provider_has_said() {
+        // And says nothing in its place until then, which is what every turn
+        // looks like until its first response comes back.
+        let mut turning = Turning::started();
+        let said = |turning: &Turning| {
+            turning
+                .rows(80, Glyphs::Unicode, 24)
+                .iter()
+                .map(Row::text)
+                .collect::<String>()
+        };
+
+        assert!(!said(&turning).contains('↓'), "{:?}", said(&turning));
+
+        turning.saw(&Event::Spent {
+            spend: Spend::new(12_800),
+        });
+
+        assert!(said(&turning).contains("↓ 12.8k"), "{:?}", said(&turning));
+    }
+
+    #[test]
+    fn a_turn_asked_to_stop_goes_on_counting_what_it_spends() {
+        // The word stops moving when the key is pressed; the count does not.
+        // The response already in flight goes on arriving and goes on costing,
+        // and that stretch is the one somebody is most likely to be watching
+        // the number through.
+        let mut turning = Turning::started();
+        turning.interrupting();
+        turning.saw(&Event::Spent {
+            spend: Spend::new(2_900),
+        });
+
+        assert_eq!(turning.spent, Some(2_900));
+    }
+
+    #[test]
     fn a_row_that_would_be_drawn_the_same_again_is_not_drawn_again() {
         // The whole cost of an animated row on a sixty-times-a-second tick.
         // Without this the box under it is laid out and written on every one of
@@ -221,6 +280,15 @@ mod tests {
 
         turning.saw(&Event::Delta { text: "hi".into() });
         assert!(turning.moved(), "the word changed and the row did not");
+
+        // And the count is on the row, so it is on the value the loop keys on.
+        // Left off, it would reach the screen only on the beat some other
+        // segment happened to change — a stale number, arriving late, on the
+        // row somebody is reading to find out what is going on.
+        turning.saw(&Event::Spent {
+            spend: Spend::new(1_400),
+        });
+        assert!(turning.moved(), "the count changed and the row did not");
     }
 
     #[test]

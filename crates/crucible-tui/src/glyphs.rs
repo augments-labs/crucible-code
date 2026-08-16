@@ -131,6 +131,17 @@ impl Glyphs {
         }
     }
 
+    /// The mark that says a number is what came back rather than what went out.
+    ///
+    /// It stands in for the word, which is the only reason the count fits on a
+    /// row that already has three other things to say.
+    pub(crate) fn down(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{2193}",
+            Self::Ascii => "v",
+        }
+    }
+
     /// What stands where something did not fit.
     pub(crate) fn ellipsis(self) -> &'static str {
         match self {
