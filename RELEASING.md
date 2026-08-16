@@ -80,6 +80,12 @@ was until it was added to that list.
 git switch -c release/v0.0.1
 $EDITOR Cargo.toml CHANGELOG.md
 cargo build                     # refresh Cargo.lock with the new version
+
+# The version is drawn in the session box, so the whole-screen snapshots hold
+# it and five of them fail until they are told the new one.
+INSTA_UPDATE=always cargo test -p crucible-code --test whole_screen
+git diff --stat tests/whole_screen/snapshots
+
 scripts/check.sh
 
 git commit -am "chore(release): 0.0.1"
@@ -95,6 +101,11 @@ git switch main && git pull
 git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
 ```
+
+Read that snapshot diff rather than accepting it blind. One changed line per
+file, the one with the version in it, is what a version bump costs; anything
+else on it is a rendering change that arrived with the release and belongs in
+the changelog rather than in a snapshot nobody looked at.
 
 `cargo deny` is not a required check, and must not become one. It runs only when
 the dependency set changes, so on a release that touches no dependency it never

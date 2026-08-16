@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-08-16
+
 ### Added
 
 - **`grep` can answer with the names of the matching files.** `mode: "files"`
@@ -1642,7 +1644,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/augments-labs/crucible-code/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/augments-labs/crucible-code/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/augments-labs/crucible-code/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/augments-labs/crucible-code/compare/v0.1.7...v0.1.8
