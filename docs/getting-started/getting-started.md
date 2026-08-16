@@ -249,7 +249,7 @@ session.
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
-| `/clear` | Forgets what has been said, keeping the session |
+| `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
 
 `/model` on its own stands a panel where the prompt box was, holding every
@@ -310,12 +310,15 @@ directly, and a name with no key here says so and lists the ones that have. It
 reaches `~/.crucible/auth.json` and only that — a key exported into your shell is
 untouched and goes on winning — which is what the line under the answer says.
 
-`/clear` empties the transcript: the next prompt is the first one the model
-sees, and the turns before it are neither sent nor paid for again. It is the
-same session either way — the same log, the same permission answers, the same
-mode — and the screen is left alone, because what is above the box is the
-terminal's scrollback rather than crucible's. Continuing that session later
-picks it up from where it started again.
+`/clear` starts a new session with nothing said in it: the next prompt is the
+first one the model sees, and the turns before it are neither sent nor paid for
+again. The session you were in is finished rather than dropped — its log is
+complete and it is on `/resume`'s list, so everything said in it can be picked
+up whole. What does not come across is what that session allowed for the rest of
+itself, which belonged to it; the mode does not move, because it is where you
+are running crucible rather than something a session decided. The screen is left
+alone, because what is above the box is the terminal's scrollback rather than
+crucible's.
 
 `/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
 newest first, each numbered and shown with when it started and what it was first

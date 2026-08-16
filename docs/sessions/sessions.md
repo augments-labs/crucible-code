@@ -213,16 +213,18 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":2,"session":"…","workspace":"/home/you/code/my-project"}
+{"format":3,"session":"…","workspace":"/home/you/code/my-project"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to
 run, and what the tools returned.
 
-`/clear` is written down rather than cut out: it appends a line saying the
-session forgot what it had said, and everything above that line stays in the
-file. `--continue` replays from there, so a cleared session comes back as what
-was said after it and nothing before.
+`/clear` writes nothing here. It closes this log and opens another, so the
+session it left is complete and replays whole, the same as any other on
+`/resume`'s list. A log written by an earlier crucible can hold a line saying
+the session forgot what it had said, with everything above that line still in
+the file; `--continue` replays such a log from that line rather than from the
+top.
 
 The `workspace` in that header is what `--continue` matches against, and
 `format` is what makes a file from a build that spelled things differently a

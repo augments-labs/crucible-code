@@ -582,14 +582,21 @@ fn a_word_that_names_no_mode_leaves_the_session_where_it_was() {
 }
 
 #[test]
-fn forgetting_says_how_much_it_forgot_and_leaves_the_session_running() {
-    // The turn before it is what there is to forget: a prompt and the answer to
+fn clearing_starts_a_session_and_leaves_the_loop_running() {
+    // The turn before it is what gets left behind: a prompt and the answer to
     // it. The line after it is answered as normal, which is the difference
-    // between forgetting a session and ending one.
-    let (written, asked) = commanding("hello\n/clear\nhello again\n");
+    // between starting a session and ending one.
+    let sample = Sample::new("clear-in-the-loop");
+    let (written, asked) = reaching(
+        &recording(&sample, &Ledger::new()),
+        Tools::new(),
+        vec![saying("answered"), saying("answered again")],
+        "hello\n/clear\nhello again\n",
+    );
 
     assert_eq!(asked, 2, "{written}");
-    assert!(written.contains("forgotten: 2 messages"), "{written}");
+    assert!(written.contains("started a new session"), "{written}");
+    assert!(written.contains("2 messages left behind"), "{written}");
     assert!(
         written.contains("what is on screen stays where it is"),
         "{written}"
@@ -597,7 +604,7 @@ fn forgetting_says_how_much_it_forgot_and_leaves_the_session_running() {
 }
 
 #[test]
-fn forgetting_before_anything_was_said_says_there_was_nothing_to_forget() {
+fn clearing_before_anything_was_said_says_there_was_nothing_to_leave() {
     let (written, asked) = commanding("/clear\n");
 
     assert_eq!(asked, 0, "{written}");
