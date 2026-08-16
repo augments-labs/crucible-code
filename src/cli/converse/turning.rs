@@ -168,7 +168,7 @@ impl Turning {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Spend, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
+    use crucible_core::{Spend, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
 
     use super::*;
 
@@ -186,6 +186,7 @@ mod tests {
                 name: "read".into(),
                 args: ToolArgs::new("{}"),
             },
+            summary: Summary::new("src/main.rs"),
         }
     }
 

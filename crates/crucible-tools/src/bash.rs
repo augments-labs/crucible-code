@@ -36,10 +36,11 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
 };
 
 use crate::args::Args;
+use crate::summary;
 
 /// The name the model calls.
 const NAME: &str = "bash";
@@ -193,6 +194,10 @@ impl Tool for Bash {
         };
 
         Sensitivity::SpawnsProcess { command }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        summary::field(NAME, args, "command")
     }
 
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {

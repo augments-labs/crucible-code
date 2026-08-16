@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, ProviderError, Sensitivity, SessionId, Spend, Target, Tool, ToolArgs, ToolError,
-    ToolId, ToolOutput, Verdict,
+    Approved, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs,
+    ToolError, ToolId, ToolOutput, Verdict,
 };
 
 use super::*;
@@ -754,6 +754,10 @@ impl Tool for Watching {
         }
     }
 
+    fn summary(&self, _args: &ToolArgs) -> Summary {
+        Summary::new("")
+    }
+
     fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
         let deadline = Instant::now() + SETTLE;
 
@@ -814,18 +818,22 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
 }
 
 #[test]
-fn a_call_is_announced_before_it_runs() {
-    // The renderer draws the line for a running tool from this.
-    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
+    // The renderer draws the line for a running tool from this, and the words
+    // beside the name come from the tool rather than from the renderer: only
+    // the tool knows which of its arguments the call is about. `Fixed` answers
+    // with the whole of them, which is a value nothing else here produces.
+    let asked = r#"{"path":"src/main.rs"}"#;
+    let script = Script::new(vec![calling("a", "read", asked), saying("done")]);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
 
     scripted.turn("go").unwrap();
 
-    let requested: Vec<ToolCall> = scripted
+    let requested: Vec<(ToolCall, Summary)> = scripted
         .seen
         .try_iter()
         .filter_map(|event| match event {
-            Event::ToolRequested { call } => Some(call),
+            Event::ToolRequested { call, summary } => Some((call, summary)),
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
@@ -836,7 +844,9 @@ fn a_call_is_announced_before_it_runs() {
         .collect();
 
     assert_eq!(requested.len(), 1);
-    assert_eq!(requested.first().map(|call| &*call.name), Some("read"));
+    let (call, summary) = requested.first().expect("the call to have been announced");
+    assert_eq!(&*call.name, "read");
+    assert_eq!(summary.as_str(), asked);
 }
 
 #[test]

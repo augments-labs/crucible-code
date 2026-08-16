@@ -9,8 +9,8 @@
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
-    ProviderError, ProviderLimit, Request, Spend, StopReason, ToolCall, Transcript, TurnError,
-    TurnId,
+    ProviderError, ProviderLimit, Request, Spend, StopReason, Summary, ToolCall, Transcript,
+    TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -435,7 +435,17 @@ impl Runner {
             bounds.accept_calls(self.provider.name(), calls.len())?;
 
             for call in &calls {
-                events.post(Event::ToolRequested { call: call.clone() });
+                // A name no tool answers to is a call `Work` refuses a moment
+                // later, and it has nothing to say about itself first.
+                let summary = self
+                    .tools
+                    .find(&call.name)
+                    .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args));
+
+                events.post(Event::ToolRequested {
+                    call: call.clone(),
+                    summary,
+                });
             }
 
             // Recorded before they run, because running them is what changes

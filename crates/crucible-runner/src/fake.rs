@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use crucible_core::{
     Approved, Ask, Cancel, Delta, DeltaStream, Effort, Message, Provider, ProviderError, Remember,
-    Request, Sensitivity, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, ToolSchema,
-    Verdict,
+    Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput,
+    ToolSchema, Verdict,
 };
 
 /// The name a scripted provider answers to.
@@ -215,6 +215,13 @@ impl Tool for Fixed {
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         self.sensitivity.clone()
+    }
+
+    /// The arguments as they arrived. A real tool names one field of them;
+    /// what a test needs is to see that whatever the tool said reached the
+    /// other end, so this says something no other value could be mistaken for.
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        Summary::new(args.as_str())
     }
 
     fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {

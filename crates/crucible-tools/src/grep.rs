@@ -20,7 +20,8 @@ use std::str;
 use std::sync::Mutex;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -29,6 +30,7 @@ use grep_searcher::{
 use ignore::WalkState;
 use ignore::overrides::{Override, OverrideBuilder};
 
+use crate::summary;
 use crate::target;
 
 /// The name the model calls.
@@ -625,6 +627,10 @@ impl Tool for Grep {
         Sensitivity::ReadOnly {
             target: target::searched(&self.workspace, NAME, args, "path"),
         }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        summary::field(NAME, args, "pattern")
     }
 
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {

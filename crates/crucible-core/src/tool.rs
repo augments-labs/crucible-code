@@ -97,6 +97,43 @@ impl fmt::Debug for ToolArgs {
     }
 }
 
+/// What a call is about, in the words the transcript shows beside the tool's
+/// name.
+///
+/// A type of its own rather than a `String`, for the reason [`ToolArgs`] is
+/// one: it is made out of a call's arguments, and a `bash` call's arguments are
+/// a command line somebody may have typed a token into. Redacting the arguments
+/// and then carrying a copy of part of them under another name would be no
+/// redaction at all.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Summary(Box<str>);
+
+impl Summary {
+    /// Takes the words a tool worked out from its own arguments.
+    #[must_use]
+    pub fn new(said: impl Into<Box<str>>) -> Self {
+        Self(said.into())
+    }
+
+    /// The words, for whatever is drawing the row.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether the call said nothing that could be summarised.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for Summary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Summary([redacted])")
+    }
+}
+
 /// What a tool produced, on its way back to the model.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
@@ -159,6 +196,25 @@ pub trait Tool: Send + Sync {
     /// Takes the arguments because it is not a property of the tool: `bash`
     /// running `ls` and `bash` running `rm -rf` are the same tool.
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity;
+
+    /// What this call is about — the [`Summary`] a transcript row shows.
+    ///
+    /// A different question from [`Tool::sensitivity`], asked of the same
+    /// arguments: that one answers what is at risk, this one answers what the
+    /// reader is looking at. `grep` is where the two come apart — what is at
+    /// risk is the directory about to be walked, and what the call is about is
+    /// the pattern.
+    ///
+    /// Owned by the tool for the reason the arguments are text everywhere else
+    /// in this crate: the tool is the only code that knows which field carries
+    /// the answer. Read anywhere else, that field name would be a second reading
+    /// of a schema this trait keeps opaque on purpose, and the two would drift
+    /// apart the first time one of them was renamed.
+    ///
+    /// Empty where the arguments cannot be read at all: that call is refused by
+    /// [`Tool::run`] a moment later, and words invented for it would describe
+    /// something that never happened.
+    fn summary(&self, args: &ToolArgs) -> Summary;
 
     /// Runs the call.
     ///

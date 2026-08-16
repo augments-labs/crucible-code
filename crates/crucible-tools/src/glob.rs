@@ -5,11 +5,12 @@ use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
 };
 use globset::GlobBuilder;
 
 use crate::args::Args;
+use crate::summary;
 use crate::target;
 
 /// The name the model calls.
@@ -217,6 +218,10 @@ impl Tool for Glob {
         Sensitivity::ReadOnly {
             target: target::searched(&self.workspace, NAME, args, "path"),
         }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        summary::field(NAME, args, "pattern")
     }
 
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {

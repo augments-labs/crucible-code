@@ -9,12 +9,13 @@
 use std::fs;
 
 use crucible_core::{
-    Approved, PathError, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, PathError, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
 };
 
 use crate::args::Args;
 use crate::atomic;
 use crate::ledger::Ledger;
+use crate::summary;
 use crate::target;
 
 /// The name the model calls.
@@ -67,6 +68,10 @@ impl Tool for Write {
         Sensitivity::MutatesFile {
             target: target::creatable(&self.workspace, NAME, args, "path"),
         }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        summary::field(NAME, args, "path")
     }
 
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {

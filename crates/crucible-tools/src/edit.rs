@@ -15,11 +15,12 @@
 use std::io::{self, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
 };
 
 use crate::args::Args;
 use crate::atomic;
+use crate::summary;
 use crate::target;
 
 /// The name the model calls.
@@ -104,6 +105,10 @@ impl Tool for Edit {
         Sensitivity::MutatesFile {
             target: target::existing(&self.workspace, NAME, args, "path"),
         }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> Summary {
+        summary::field(NAME, args, "path")
     }
 
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {

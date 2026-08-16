@@ -1,6 +1,8 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
-use crucible_core::{Command, ProviderError, Target, ToolArgs, ToolId, TurnError, Workspace};
+use crucible_core::{
+    Command, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError, Workspace,
+};
 use crucible_tui::Recording;
 
 use super::*;
@@ -50,29 +52,67 @@ fn drawn(problem: &str) -> String {
     renderer.terminal().written().to_string()
 }
 
-#[test]
-fn a_requested_call_shows_the_arguments_the_model_wrote() {
-    let line = requested(&call("read", r#"{"path":"src/main.rs"}"#), args());
+/// What the terminal ends up with when the model asks for `name` and the tool
+/// that owns it says the call is about `summary`. Through `event` for the
+/// reason `drawn` is: a test that rebuilt the line here would not notice the
+/// arguments starting to arrive whole again.
+fn announced(name: &str, args: &str, summary: &str) -> String {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
 
-    assert_eq!(line, r#"· read {"path":"src/main.rs"}"#);
+    event(
+        &mut renderer,
+        Event::ToolRequested {
+            call: call(name, args),
+            summary: Summary::new(summary),
+        },
+        Style::plain(),
+    )
+    .expect("the call to draw");
+
+    renderer.terminal().written().to_string()
 }
 
 #[test]
-fn long_arguments_are_clipped_rather_than_wrapped() {
-    let long = format!(r#"{{"command":"{}"}}"#, "x".repeat(200));
+fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
+    let written = announced("read", r#"{"path":"src/main.rs"}"#, "src/main.rs");
 
-    let line = requested(&call("bash", &long), args());
+    assert!(written.contains("· Read(src/main.rs)"), "{written}");
+}
+
+#[test]
+fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
+    // Empty brackets would say the call was about nothing, when what happened
+    // is that its arguments could not be read at all. The tool refuses it a
+    // moment later and says so properly.
+    let written = announced("bash", "not json", "");
+
+    assert!(written.contains("· Bash"), "{written}");
+    assert!(!written.contains("()"), "{written}");
+}
+
+#[test]
+fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
+    assert_eq!(pascal("web_fetch"), "WebFetch");
+    assert_eq!(pascal("read"), "Read");
+}
+
+#[test]
+fn a_long_summary_is_clipped_rather_than_wrapped() {
+    let long = "x".repeat(200);
+
+    let line = requested(&call("bash", "{}"), &Summary::new(long), args());
 
     assert!(line.ends_with('…'), "{line}");
-    assert!(line.chars().count() <= args() + "· bash …".len(), "{line}");
+    assert!(line.chars().count() <= args() + "· Bash(…".len(), "{line}");
 }
 
 #[test]
-fn a_newline_in_arguments_does_not_become_a_second_line() {
+fn a_newline_in_a_summary_does_not_become_a_second_line() {
     // The tail counts rows to know where to put the cursor back. A line
     // that is secretly two rows leaves it one row too high, and the next
-    // frame erases something the user was meant to keep.
-    let line = requested(&call("write", "{\"text\":\"a\nb\"}"), args());
+    // frame erases something the user was meant to keep. The summary is made
+    // out of the model's arguments, so it can hold one.
+    let line = requested(&call("bash", "{}"), &Summary::new("a\nb"), args());
 
     assert!(!line.contains('\n'), "{line}");
 }
