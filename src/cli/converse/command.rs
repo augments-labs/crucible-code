@@ -28,6 +28,7 @@ use crate::cli::style::Style;
 
 use super::{Terms, mode};
 
+mod clear;
 mod effort;
 mod login;
 mod logout;
@@ -283,7 +284,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Clear,
             ..
-        } => renderer.present(&forgotten(runner.forget(), columns), style.palette())?,
+        } => clear::run(renderer, runner, terms)?,
 
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;
@@ -329,32 +330,6 @@ fn moded<T: Terminal>(
     runner.switch(asked);
     renderer.present(&[sentence(asked, columns)], style.palette())?;
     Ok(())
-}
-
-/// What `/clear` says, having forgotten `held` messages.
-///
-/// The second row is the one worth drawing every time. What is above the box is
-/// the terminal's scrollback and stays exactly where it is — this program never
-/// took that screen and is not about to hand it back empty — so the difference
-/// between a session that forgot and one that did not is invisible without a
-/// line saying which happened.
-fn forgotten(held: usize, columns: usize) -> Vec<Row> {
-    if held == 0 {
-        return vec![Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
-    }
-
-    let said = match held {
-        1 => "forgotten: 1 message".to_owned(),
-        _ => format!("forgotten: {held} messages"),
-    };
-
-    vec![
-        Row::new().then(Slot::Plain, clip(&said, columns)),
-        Row::new().then(
-            Slot::Quiet,
-            clip("what is on screen stays where it is", columns),
-        ),
-    ]
 }
 
 /// Says one line back, quietly, clipped to the window it is said in.
