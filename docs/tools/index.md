@@ -7,3 +7,5 @@ for you.
 
 - [What all six hold themselves to](tools.md)
 - [Reading and changing a file](files.md) — `read`, `edit`, `write`
+- [Searching the tree](searching.md) — `grep`, `glob`
+- [Running a command](commands.md) — `bash`
