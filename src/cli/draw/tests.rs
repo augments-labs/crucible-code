@@ -76,7 +76,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
 fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
     let written = announced("read", r#"{"path":"src/main.rs"}"#, "src/main.rs");
 
-    assert!(written.contains("· Read(src/main.rs)"), "{written}");
+    assert!(written.contains("● Read(src/main.rs)"), "{written}");
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
     // moment later and says so properly.
     let written = announced("bash", "not json", "");
 
-    assert!(written.contains("· Bash"), "{written}");
+    assert!(written.contains("● Bash"), "{written}");
     assert!(!written.contains("()"), "{written}");
 }
 
@@ -103,7 +103,7 @@ fn a_long_summary_is_clipped_rather_than_wrapped() {
     let line = requested(&call("bash", "{}"), &Summary::new(long), args());
 
     assert!(line.ends_with('…'), "{line}");
-    assert!(line.chars().count() <= args() + "· Bash(…".len(), "{line}");
+    assert!(line.chars().count() <= args() + "● Bash(…".len(), "{line}");
 }
 
 #[test]
@@ -121,26 +121,43 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
 fn output_shows_its_first_line_and_says_how_much_more_there_was() {
     let output = ToolOutput::ok("one\ntwo\nthree");
 
-    assert_eq!(finished(&output, shown()), "  one (+2 lines)");
+    assert_eq!(finished(&output, shown()), "  └ one (+2 lines)");
 }
 
 #[test]
 fn a_single_line_of_output_gets_no_count() {
-    assert_eq!(finished(&ToolOutput::ok("done"), shown()), "  done");
+    assert_eq!(finished(&ToolOutput::ok("done"), shown()), "  └ done");
 }
 
 #[test]
 fn a_failure_is_marked_as_one() {
     // Without this a tool that failed reads exactly like one that worked,
-    // and the user goes looking for the mistake in the wrong place.
+    // and the user goes looking for the mistake in the wrong place. The mark
+    // goes on the result rather than on the call above it: one thing says a
+    // call failed, and it is the row that says what the failure was.
     let line = finished(&ToolOutput::failed("no such file"), shown());
 
     assert!(line.contains('✗'), "{line}");
+    assert!(line.starts_with("  └ ✗ "), "{line}");
+}
+
+#[test]
+fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
+    // Measured off the mark rather than counted out, so the two cannot drift:
+    // a mark drawn in a different glyph moves the corner under it with it,
+    // and a corner under the tool's name instead reads as a second call.
+    let opened = requested(&call("read", "{}"), &Summary::new("src/main.rs"), args());
+    let under = finished(&ToolOutput::ok("done"), shown());
+
+    let mark = columns(opened.split_whitespace().next().unwrap_or_default());
+    let corner = under.find('└').unwrap_or_default();
+
+    assert_eq!(corner, mark + 1, "{opened:?} then {under:?}");
 }
 
 #[test]
 fn no_output_at_all_is_still_a_line() {
-    assert_eq!(finished(&ToolOutput::ok(""), shown()), "  ");
+    assert_eq!(finished(&ToolOutput::ok(""), shown()), "  └ ");
 }
 
 #[test]

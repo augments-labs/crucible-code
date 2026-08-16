@@ -218,8 +218,8 @@ Tool calls appear as they run:
 ```
 › what does the runner do when a tool fails?
 
-· Read(crates/crucible-runner/src/runner.rs)
-       1	//! The turn loop. (+238 lines)
+● Read(crates/crucible-runner/src/runner.rs)
+  └      1	//! The turn loop. (+238 lines)
 
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
@@ -238,7 +238,10 @@ arguments could not be read is just the name, and the tool says why next.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
-A call that failed is marked `✗`.
+It hangs under `└`, one column past the `●` that opened the call, so a result
+belongs to the call above it at a glance rather than by being next to it. A call
+that failed is marked `✗` there and only there — the call line stands as it was,
+since a call that was made is a call that was made whatever came back.
 
 The answer itself is read as markdown rather than printed with the markers still
 in it. A heading loses its hashes and stands out, `**` or `_` around a phrase
