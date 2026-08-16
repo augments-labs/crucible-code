@@ -5,7 +5,7 @@ use std::path::Path;
 use crucible_core::Disposition;
 
 use super::{
-    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, NAMED, Partial, RegexMatcherBuilder,
+    CEILING, Cancel, Found, Grep, Hit, MAX_LINE, Mode, NAMED, Partial, RegexMatcherBuilder,
     SearcherBuilder, Sensitivity, Stopping, Tool, ToolArgs, ToolOutput, Top, WIDTH, report, unread,
 };
 use crate::sample::{Sample, allowed, under};
@@ -52,6 +52,39 @@ fn the_same_search_answers_the_same_way_twice() {
     let again = grep(&sample, r#"{"pattern":"needle"}"#);
 
     assert_eq!(first.text(), again.text());
+}
+
+#[test]
+fn a_files_search_names_each_matching_file_once() {
+    // Asked where to look rather than what is there, the answer is a list of
+    // places: a file matching on every line is one entry, and the lines
+    // themselves — the whole of what makes a wide search expensive to read —
+    // never arrive.
+    let sample = Sample::new("grep-files");
+    sample.write("src/main.rs", "needle\nneedle\nneedle\n");
+    sample.write("src/lib.rs", "// needle in a comment\n");
+    sample.write("notes.md", "no match here\n");
+
+    let output = grep(&sample, r#"{"pattern":"needle","mode":"files"}"#);
+
+    assert_eq!(output.text(), "src/lib.rs\nsrc/main.rs\n");
+}
+
+#[test]
+fn a_mode_this_tool_does_not_have_is_refused_rather_than_guessed_at() {
+    // Falling back to the default would answer a question nobody asked, in a
+    // shape indistinguishable from the search the model thought it wrote. The
+    // set is two words long and named in the schema, so a word outside it is
+    // a call to correct rather than one to reinterpret.
+    let sample = tree("grep-mode-unknown");
+    let tool = Grep::new(sample.workspace(), Cancel::new());
+
+    let problem = tool
+        .run(allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#))
+        .unwrap_err()
+        .to_string();
+
+    assert_eq!(problem, "grep: mode must be one of content, files");
 }
 
 #[test]
@@ -220,7 +253,7 @@ fn a_search_the_user_stopped_answers_with_what_it_had() {
         stopped: true,
     };
 
-    let output = report(&found, "needle", 200);
+    let output = report(&found, "needle", (Mode::Content, 200));
 
     assert!(!output.is_failed());
     assert!(
@@ -274,7 +307,12 @@ fn a_search_stopped_inside_one_file_keeps_what_it_read_and_names_the_file() {
     let matcher = RegexMatcherBuilder::new().build("needle").unwrap();
     let hits = std::sync::Mutex::new(Top::new(1_000));
     let file = reached.open_regular().unwrap();
-    let found = tool.lines(&mut searcher, &matcher, (&reached, &file), &hits);
+    let found = tool.lines(
+        &mut searcher,
+        &matcher,
+        (&reached, &file),
+        (Mode::Content, &hits),
+    );
     let hits = hits.into_inner().unwrap();
 
     assert!(hits.hits.is_empty(), "it read after cancellation");

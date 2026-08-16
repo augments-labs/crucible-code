@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`grep` can answer with the names of the matching files.** `mode: "files"`
+  names each file holding a match once and stops reading that file there, so
+  asking where something lives no longer costs a wall of lines — and is faster
+  than the search that returns them. What it costs: in that mode `limit` bounds
+  files rather than matching lines, and a `mode` outside the two words is
+  refused rather than quietly read as the default.
+
 ## [0.1.10] - 2026-08-16
 
 ### Internal
