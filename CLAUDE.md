@@ -85,7 +85,7 @@ naming no concrete provider or tool is deliberate — the loop drives
    copy it.
 6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
    RSS ≤35 MB after a 20-turn session, grep's worst paired median ≤1.25× `rg`
-   with p95 and dispersion as evidence, and ≥30 render commits/s under burst.
+   with p95 and dispersion as evidence, and ≥30 rendered frames/s under burst.
    No blocking I/O on the startup path or the render
    path. The transcript is held whole and is what that RSS figure bounds;
    nothing *else* may grow with it, and a `.clone()` of a transcript-sized

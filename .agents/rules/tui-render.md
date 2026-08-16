@@ -61,8 +61,10 @@ screen rather than merely looking off.
 ## The render path
 
 No blocking I/O, no allocation that can be hoisted, no formatting that runs per
-frame when it could run per change. The budget is ≥30 render commits/s under
-token burst, and `scripts/bench.sh` measures it.
+frame when it could run per change. The budget is ≥30 rendered frames/s under
+token burst, and `scripts/bench.sh` measures it. A frame is one `stream` call —
+writing a finished line to scrollback is the renderer's other job and is not
+what the burst budget bounds.
 
 Never `print!`/`println!` — `print_stdout` and `print_stderr` are denied by lint
 for this crate's sake. Output goes through the `Terminal` seam so the tests can
