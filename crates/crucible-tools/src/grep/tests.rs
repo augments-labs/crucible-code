@@ -142,6 +142,39 @@ fn case_can_be_ignored_when_the_call_asks_for_it() {
 }
 
 #[test]
+fn a_fixed_search_takes_the_pattern_as_the_text_to_find() {
+    // `[dependencies]` is a character class, so as an expression it matches
+    // every line holding one of those letters. The model gets an answer, it is
+    // wrong, and nothing in it says the pattern was read as something else.
+    let sample = Sample::new("grep-fixed");
+    sample.write("Cargo.toml", "[dependencies]\nserde = \"1\"\n");
+
+    assert_eq!(
+        grep(&sample, r#"{"pattern":"[dependencies]"}"#).text(),
+        "Cargo.toml:1:[dependencies]\nCargo.toml:2:serde = \"1\"\n"
+    );
+    assert_eq!(
+        grep(&sample, r#"{"pattern":"[dependencies]","fixed":true}"#).text(),
+        "Cargo.toml:1:[dependencies]\n"
+    );
+}
+
+#[test]
+fn a_fixed_search_finds_text_no_expression_would_accept() {
+    // Escaping is work the model has to get exactly right for text it did not
+    // write, and getting it wrong costs a turn either way: an unclosed group is
+    // a refused call, and one escape too few is a search of something else.
+    let sample = Sample::new("grep-fixed-refused");
+    sample.write("src/main.rs", "    let x = value.unwrap_or(0);\n");
+
+    assert!(grep(&sample, r#"{"pattern":"unwrap_or("}"#).is_failed());
+    assert_eq!(
+        grep(&sample, r#"{"pattern":"unwrap_or(","fixed":true}"#).text(),
+        "src/main.rs:1:    let x = value.unwrap_or(0);\n"
+    );
+}
+
+#[test]
 fn a_call_that_asks_for_context_gets_the_lines_around_the_match() {
     // Without this the model re-reads the whole file to see the three lines
     // around a hit, which costs a call and sends far more than three lines.

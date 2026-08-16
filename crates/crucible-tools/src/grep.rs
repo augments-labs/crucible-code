@@ -102,12 +102,12 @@ const MAX_LINE: usize = 256 * 1024;
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 const SCHEMA: &str = r#"{
-  "description": "Searches the contents of files in the workspace for a regular expression. Skips anything gitignored.",
+  "description": "Searches the contents of files in the workspace for a regular expression, or for exact text with fixed. Skips anything gitignored.",
   "type": "object",
   "properties": {
     "pattern": {
       "type": "string",
-      "description": "The regular expression to search for."
+      "description": "The regular expression to search for, or the exact text to find if fixed is true."
     },
     "path": {
       "type": "string",
@@ -120,6 +120,10 @@ const SCHEMA: &str = r#"{
     "ignore_case": {
       "type": "boolean",
       "description": "Match without regard to case. Defaults to false."
+    },
+    "fixed": {
+      "type": "boolean",
+      "description": "Read pattern as the exact text to find rather than as a regular expression, so characters like . ( [ * ? and | stand for themselves. Use this for anything copied out of a file. Defaults to false."
     },
     "mode": {
       "type": "string",
@@ -147,7 +151,7 @@ pub struct Grep {
     cancel: Cancel,
 }
 
-/// What one call is looking for: the expression, the files it restricts itself
+/// What one call is looking for: the pattern, the files it restricts itself
 /// to, what shape of answer it wants and how much of it.
 struct Query {
     matcher: RegexMatcher,
@@ -630,6 +634,7 @@ impl Tool for Grep {
 
         let matcher = RegexMatcherBuilder::new()
             .case_insensitive(args.flag("ignore_case", false)?)
+            .fixed_strings(args.flag("fixed", false)?)
             .build(pattern);
         let Ok(matcher) = matcher else {
             return Ok(ToolOutput::failed(format!(
