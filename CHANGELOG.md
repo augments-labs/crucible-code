@@ -11,10 +11,11 @@ Notable changes to crucible. Format follows
 - **`/clear` starts a new session instead of emptying the one in hand.** The
   session you were in is finished and stays on `/resume`'s list, so what was
   said in it can be picked up whole rather than coming back with a hole where
-  the clear was. What was allowed for the rest of the session goes with it,
-  since it was allowed for the session left behind. What it costs: a `/clear`
-  leaves a second log in the session directory rather than none, and a call
-  allowed for the rest of the session is asked about again after one.
+  the clear was. What was allowed for the rest of the session goes with it, and
+  so does the record of what has been read, since both belonged to the session
+  left behind. What it costs: a `/clear` leaves a second log in the session
+  directory rather than none, a call allowed for the rest of the session is
+  asked about again after one, and so is a `write` to a file already read.
 
 - **`/resume` empties the record of what has been read.** The files remembered
   were read in the session being left, and the one picked up saw none of them,

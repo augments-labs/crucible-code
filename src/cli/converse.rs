@@ -96,9 +96,9 @@ pub(crate) struct Terms {
     ///
     /// Held for the same reason the cancel is: it is made once, beside the
     /// tools that share it, and a command reaches for the same value they were
-    /// built with. `/resume` leaves the session those files were read in, and a
-    /// record that outlived its session would let `write` replace a file the
-    /// session in hand never saw.
+    /// built with. `/clear` and `/resume` both leave the session those files
+    /// were read in, and a record that outlived its session would let `write`
+    /// replace a file the session in hand never saw.
     pub(crate) ledger: Ledger,
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
