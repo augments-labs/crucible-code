@@ -75,6 +75,14 @@ Notable changes to crucible. Format follows
   ones still drawn from characters chosen once and left. What it costs: those
   rows read differently under `ascii` than they did.
 
+- **The effort ladder names its keys out of the same setting.** The row under
+  the track reads `←/→ to adjust · enter to confirm · esc to cancel` where the
+  terminal draws it and `</> to adjust - enter to confirm - esc to cancel` under
+  `ascii`, and the mark between `Effort` and the model above it goes the same
+  way. That row is the whole of what says which keys work at a ladder, so it was
+  the worst one to be drawing two hollow squares on. What it costs: it reads
+  differently under `ascii` than it did.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**
