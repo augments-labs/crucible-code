@@ -179,8 +179,7 @@ you type, and the row and the colour of the box both follow it.
 Type a prompt and press enter. The line stays where it was and the answer
 streams in under it, with the box and the mode still standing at the bottom of
 the screen — so a tool call arriving ten minutes into a turn is read beside the
-mode that let it through, and the screen looks the same whether or not crucible
-happens to be working.
+mode that let it through.
 
 You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
 queues what you wrote as the next prompt, and it is run the moment the turn
@@ -189,6 +188,22 @@ bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
 it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode is
 not offered there, because the mode is away with the turn until it finishes, and
 neither is <kbd>Ctrl-C</kbd>, which means the same thing there as at the prompt.
+
+One row stands between the answer and the box for as long as the turn runs:
+
+```
+✳ thinking (2m 56s · esc to interrupt)
+```
+
+The mark turns four times a second, and that is the part that says the program
+is busy rather than stuck — a screen that has been still for a minute looks the
+same either way. The word says what is being waited on: `thinking` for the
+model, `writing` while prose is arriving, `running` while a tool has not
+answered, and `interrupting` once <kbd>Esc</kbd> has been pressed and the turn
+has not stopped yet. The clock counts from the moment the prompt was sent and
+never pauses — not for a permission question, which is time spent waiting just
+as much. On a window too narrow for all of it the key goes first and the clock
+next, since both are said again elsewhere; the word is the last thing left.
 
 Tool calls appear as they run:
 

@@ -43,12 +43,14 @@ use super::subscription::Subscriptions;
 use super::unasked;
 use super::{Fatal, Serving, standing};
 use command::Ran;
+use turning::Turning;
 use typing::Asked;
 
 mod command;
 mod mode;
 mod picking;
 mod secret;
+mod turning;
 mod typing;
 
 /// What the user types after, where there is no box to type into.
@@ -379,6 +381,11 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
+    // Started before the worker rather than on the first thing it reports, so
+    // that what the clock measures is what somebody is waiting for. A turn that
+    // spends its first ten seconds connecting has spent them.
+    let mut turning = Turning::started();
+
     let working = thread::Builder::new()
         .name("turn".to_owned())
         .spawn(move || {
@@ -397,7 +404,7 @@ fn take<T: Terminal>(
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
     let mut held = stop_if_failed(
-        typing::stand(renderer, taking.editor, &says, terms.style),
+        typing::stand(renderer, taking.editor, &turning, &says, terms.style),
         &terms.cancel,
     );
 
@@ -415,6 +422,13 @@ fn take<T: Terminal>(
     loop {
         match seen.recv_timeout(TICK) {
             Ok(one) => {
+                // Before it is drawn, because drawing consumes it. The row
+                // above the box says what the turn is doing, and this is the
+                // only place that can be read off.
+                if let Seen::Turn(event) = &one {
+                    turning.saw(event);
+                }
+
                 if held.is_ok() {
                     held = stop_if_failed(
                         shown(one, renderer, terms, &mut taking.answers, &reply),
@@ -447,6 +461,7 @@ fn take<T: Terminal>(
                 typing::During {
                     editor: taking.editor,
                     queued: taking.queued,
+                    turning: &mut turning,
                     says: &says,
                     style: terms.style,
                     cancel: &terms.cancel,

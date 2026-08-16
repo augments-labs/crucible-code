@@ -134,7 +134,9 @@ fn a_slash_opens_the_command_list_above_the_box() {
 fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     // The first case here that takes a turn. What it watches is the handover:
     // the answer becomes rows the terminal owns, and the box and its footing
-    // are drawn again underneath, once, at the bottom of the screen.
+    // are drawn again underneath, once. The blank rows below them are the three
+    // the running turn had and has handed back: a live region that grew scrolled
+    // the terminal to make room, and shrinking it again cannot scroll back.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Window::answering("answered", 80, 24, &vendor);
 
@@ -144,7 +146,7 @@ fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
 }
 
 #[test]
-fn an_answer_longer_than_the_window_leaves_the_box_whole_at_the_foot_of_it() {
+fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     // The defect this whole file was written for, and the one no component test
     // could reach: the live tail was bounded by the window rather than by the
     // rows left under it, so an answer this long ate the box from the top as it
