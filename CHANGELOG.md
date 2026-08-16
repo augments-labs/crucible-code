@@ -15,7 +15,9 @@ Notable changes to crucible. Format follows
   so does the record of what has been read, since both belonged to the session
   left behind. What it costs: a `/clear` leaves a second log in the session
   directory rather than none, a call allowed for the rest of the session is
-  asked about again after one, and so is a `write` to a file already read.
+  asked about again after one, and so is a `write` to a file already read. No
+  session log holds a line saying it forgot any more; one written by an earlier
+  crucible still replays from that line rather than from the top.
 
 - **`/resume` empties the record of what has been read.** The files remembered
   were read in the session being left, and the one picked up saw none of them,

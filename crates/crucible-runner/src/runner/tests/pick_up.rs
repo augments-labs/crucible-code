@@ -88,6 +88,33 @@ fn the_turn_count_carries_on_from_the_session_picked_up() {
 }
 
 #[test]
+fn a_session_picked_up_with_nothing_in_it_is_asked_at_turn_one_and_carries_nothing() {
+    // The shape `/clear` uses: a session that has just been started, and a
+    // transcript with nothing in it. What is being watched is the pair. A
+    // request still carrying the last session's turn is the same session under
+    // a new name, and a turn counted after the one before it names a turn
+    // nothing on screen or in either log has any record of.
+    let sample = Sample::new("runner-picked-empty");
+
+    let script = Script::new(vec![saying("here"), saying("and now")]);
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let mut scripted = Scripted::recording(script, Tools::new(), Verdict::Allow, session);
+
+    scripted.turn("what is in main.rs?").unwrap();
+
+    let fresh = Session::start(&sample.logs(), &sample.workspace()).expect("a second session");
+    drop(scripted.runner.pick_up(fresh, Transcript::new()));
+    scripted.turn("and now?").unwrap();
+
+    assert_eq!(
+        scripted.asked(),
+        [1, 1],
+        "one prompt each: the second request carried nothing of the first turn"
+    );
+    assert_eq!(scripted.started(), [1, 1]);
+}
+
+#[test]
 fn the_session_left_behind_is_handed_back_rather_than_dropped() {
     // Closing one means consuming it, and the first write that failed is worth
     // saying while there is still a session on screen it belongs to.

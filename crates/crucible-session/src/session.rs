@@ -376,16 +376,6 @@ impl Session {
         drop(to.send(wire::line(message).into()));
     }
 
-    /// Records that everything said so far has been forgotten.
-    ///
-    /// Written down rather than cut out. What was said still happened, and a
-    /// log that quietly lost a stretch of it would be a worse record than one
-    /// that says where the session started again.
-    pub fn forgot(&self) {
-        let Some(to) = &self.to else { return };
-        drop(to.send(wire::forgotten().into()));
-    }
-
     /// The first write that failed, if one has.
     ///
     /// A log that has quietly stopped recording is worse than no log, because
