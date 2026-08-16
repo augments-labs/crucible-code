@@ -34,7 +34,9 @@ pub(crate) struct Account {
     provider: &'static str,
     /// The provider name at the left of the picker.
     pub(crate) shown: &'static str,
-    /// The account product at the right.
+    /// The plan the account is billed under, at the right.
+    pub(crate) plan: &'static str,
+    /// What taking the row does, after the plan.
     pub(crate) says: &'static str,
 }
 
@@ -79,12 +81,14 @@ impl Subscriptions {
                 Account {
                     provider: "openai",
                     shown: "OpenAI",
-                    says: "ChatGPT plan — authorize an account",
+                    plan: "ChatGPT plan",
+                    says: "authorize an account",
                 },
                 Account {
                     provider: "moonshot",
                     shown: "MoonshotAI",
-                    says: "Kimi Code plan — authorize an account",
+                    plan: "Kimi Code plan",
+                    says: "authorize an account",
                 },
             ]),
             routes: Arc::new([

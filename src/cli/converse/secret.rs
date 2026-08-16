@@ -1,10 +1,10 @@
 //! A line typed where the screen says how much of it there is and nothing else.
 //!
-//! The box is the one the prompt uses, given dots instead of what was typed.
-//! That is deliberate: what somebody is looking at while they paste a key is
-//! the same shape as what they were looking at a moment before, so the one
-//! thing that changed is the one thing that matters — the characters are not
-//! coming back.
+//! The box is the one the prompt uses, given one mark per character instead of
+//! what was typed. That is deliberate: what somebody is looking at while they
+//! paste a key is the same shape as what they were looking at a moment before,
+//! so the one thing that changed is the one thing that matters — the characters
+//! are not coming back.
 //!
 //! There is no cursor to move, so the keys that move one do nothing. A secret
 //! is a value being handed over rather than a sentence being composed, and an
@@ -13,7 +13,7 @@
 //! one edit that needs no sight of the line.
 //!
 //! What is typed lives in a `String` for as long as it takes to reach the store
-//! and is never drawn, committed or put in an error. The dots are counted from
+//! and is never drawn, committed or put in an error. The marks are counted from
 //! it and are the only thing about it that reaches the terminal. At sixteen KiB
 //! the box refuses another character and says why beneath itself; no supported
 //! credential is close to that boundary.
@@ -22,9 +22,6 @@ use crucible_tui::{Key, Pressed, Prompt, Renderer, Slot, Terminal, characters, p
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
-
-/// What stands in for one character.
-const DOT: &str = "•";
 
 /// The row under the box, which says the one key that is not Enter.
 const CANCEL: &str = "esc to cancel";
@@ -39,7 +36,7 @@ const MAX_BYTES: usize = 16 * 1024;
 /// What one key does to a secret being typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Typing {
-    /// The dots no longer match what is held.
+    /// What is drawn no longer matches what is held.
     Redraw,
     /// Nothing changed, so nothing is drawn.
     Still,
@@ -51,7 +48,7 @@ enum Typing {
     Left,
 }
 
-/// Reads one, drawing dots where the prompt draws a line.
+/// Reads one, drawing a mark per character where the prompt draws a line.
 ///
 /// `asking` stands where the mode stands on the prompt, because it is the same
 /// kind of fact: what this box is for, true until it closes. `None` comes back
@@ -120,21 +117,22 @@ pub(super) fn ask<T: Terminal>(
     }
 }
 
-/// Draws the box with `dots` characters accounted for.
+/// Draws the box with `hidden` characters accounted for.
 fn standing<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     asking: &str,
-    dots: usize,
+    hidden: usize,
     limited: bool,
 ) -> Result<(), Fatal> {
-    let said = DOT.repeat(dots);
+    let glyphs = style.glyphs();
+    let said = glyphs.hidden().repeat(hidden);
     let prompt = Prompt {
         said: &said,
-        // A dot is one column wide, so the cursor sits after as many columns as
-        // there are characters — which is the one thing the box knows about the
-        // line and the only thing it is allowed to know.
-        column: dots,
+        // The mark is one column wide in either set, so the cursor sits after
+        // as many columns as there are characters — which is the one thing the
+        // box knows about the line and the only thing it is allowed to know.
+        column: hidden,
         mode: asking,
         // The border says what the box is for. Not a mode's colour: no mode is
         // in force in here, and borrowing one would say a permission had
@@ -152,7 +150,7 @@ fn standing<T: Terminal>(
         room: Prompt::room(renderer.rows()),
     };
 
-    let rows = prompt.rows(renderer.columns(), style.glyphs());
+    let rows = prompt.rows(renderer.columns(), glyphs);
 
     renderer.live(&rows, prompt.caret(renderer.columns()), style.palette())?;
     Ok(())

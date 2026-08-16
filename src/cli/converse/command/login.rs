@@ -38,8 +38,8 @@ use std::time::Duration;
 use crucible_auth::{LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
 use crucible_tui::{
-    Caret, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip, pressed,
-    waiting,
+    Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
+    pressed, waiting,
 };
 
 use crate::cli::converse::picking::{self, Picked, Taken};
@@ -53,6 +53,7 @@ use super::{Terms, about, say};
 #[derive(Clone, Copy)]
 struct Way {
     shown: &'static str,
+    plan: &'static str,
     says: &'static str,
     reaches: Reaches,
 }
@@ -199,16 +200,31 @@ fn ways(terms: &Terms) -> Vec<Way> {
         .iter()
         .map(|account| Way {
             shown: account.shown,
+            plan: account.plan,
             says: account.says,
             reaches: Reaches::Account(*account),
         })
         .collect();
     ways.push(Way {
         shown: "Console account",
-        says: "API usage billing — enter a provider API key",
+        plan: "API usage billing",
+        says: "enter a provider API key",
         reaches: Reaches::Console,
     });
     ways
+}
+
+/// What each way says at the right of its row: the plan the account is billed
+/// under, and what taking the row does.
+///
+/// Joined here rather than written out whole, so the mark between the two
+/// halves is the one the setting names — the same mark that stands between a
+/// command and the sentence about it in the listing a run with no keyboard is
+/// given.
+fn sentences(ways: &[Way], glyphs: Glyphs) -> Vec<String> {
+    ways.iter()
+        .map(|way| about(way.plan, way.says, glyphs))
+        .collect()
 }
 
 /// Stands the account-kind panel.
@@ -217,11 +233,13 @@ fn asked<T: Terminal>(
     terms: &Terms,
     ways: &[Way],
 ) -> Result<Picked, Fatal> {
+    let says = sentences(ways, terms.style.glyphs());
     let shown: Vec<_> = ways
         .iter()
-        .map(|way| Offered {
+        .zip(&says)
+        .map(|(way, says)| Offered {
             name: way.shown,
-            says: way.says,
+            says,
         })
         .collect();
     picking::pick(
@@ -313,7 +331,7 @@ fn subscribed<T: Terminal>(
         Err(problem) => return say(renderer, terms, &format!("! {problem}")),
     };
 
-    let mut view = LoginView::new();
+    let mut view = LoginView::new(terms.style.glyphs());
     view.show(renderer, terms, route.title())?;
     loop {
         match attempt.wait(Duration::from_millis(50)) {
@@ -360,10 +378,10 @@ struct LoginView {
 }
 
 impl LoginView {
-    fn new() -> Self {
+    fn new(glyphs: Glyphs) -> Self {
         Self {
             page: None,
-            status: Cow::Borrowed("waiting — esc to cancel"),
+            status: Cow::Owned(about("waiting", CANCEL, glyphs)),
             browser_failed: false,
             accepts_manual: false,
             manual: String::new(),
@@ -438,12 +456,12 @@ impl LoginView {
         terms: &Terms,
         title: &str,
     ) -> Result<(), Fatal> {
-        let (rows, caret) = self.frame(renderer.columns(), title);
+        let (rows, caret) = self.frame(renderer.columns(), title, terms.style.glyphs());
         renderer.live(&rows, caret, terms.style.palette())?;
         Ok(())
     }
 
-    fn frame(&self, columns: usize, title: &str) -> (Vec<Row>, Caret) {
+    fn frame(&self, columns: usize, title: &str, glyphs: Glyphs) -> (Vec<Row>, Caret) {
         let mut rows = Vec::with_capacity(7);
         rows.push(Row::new().then(Slot::Strong, clip(title, columns)));
         if let Some((url, code)) = &self.page {
@@ -475,11 +493,17 @@ impl LoginView {
             Slot::Quiet,
             clip("Paste the callback URL or code, then press Enter.", columns),
         ));
+        // Both marks are one column in either set, so the mark and the space
+        // after it take two columns wherever this is drawn, and the caret below
+        // sits one column past as many of them as there are characters.
+        let mark = format!("{} ", glyphs.caret());
         let room = columns.saturating_sub(2);
-        let dots = "•".repeat(self.manual.chars().count().min(room));
+        let dots = glyphs
+            .hidden()
+            .repeat(self.manual.chars().count().min(room));
         rows.push(
             Row::new()
-                .then(Slot::Accent, clip("> ", columns))
+                .then(Slot::Accent, clip(&mark, columns))
                 .then(Slot::Plain, &dots),
         );
         let hint = if self.limited {
@@ -580,17 +604,17 @@ mod tests {
 
     #[test]
     fn browser_login_shows_the_short_page_and_masks_manual_input() {
-        let mut view = LoginView::new();
+        let mut view = LoginView::new(Glyphs::Unicode);
         view.page = Some(("http://localhost:1455/launch".into(), None));
         view.status = Cow::Borrowed("a browser should open; waiting for authorization…");
         view.accepts_manual = true;
         view.manual = "secret-callback".to_owned();
-        let (rows, caret) = view.frame(80, "Log in to ChatGPT");
+        let (rows, caret) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
         let text: Vec<_> = rows.iter().map(Row::text).collect();
 
         assert_eq!(text.first().map(String::as_str), Some("Log in to ChatGPT"));
         assert!(text.iter().any(|row| row.contains("localhost:1455/launch")));
-        let input = text.iter().find(|row| row.starts_with("> ")).unwrap();
+        let input = text.iter().find(|row| row.starts_with("› ")).unwrap();
         assert_eq!(input.chars().skip(2).count(), "secret-callback".len());
         assert!(input.chars().skip(2).all(|character| character == '•'));
         assert!(!text.iter().any(|row| row.contains("secret-callback")));
@@ -599,8 +623,78 @@ mod tests {
     }
 
     #[test]
+    fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
+        // A second box a line is typed into, so it takes the same mark the
+        // prompt takes and hides what is typed with the same one the key box
+        // hides a key with. A terminal whose font has neither would otherwise
+        // get hollow squares on the row where the sign-in is asking for the one
+        // thing it will not show back.
+        for (glyphs, mark, hidden) in [(Glyphs::Unicode, "› ", '•'), (Glyphs::Ascii, "> ", '*')]
+        {
+            let mut view = LoginView::new(glyphs);
+            view.page = Some(("http://localhost:1455/launch".into(), None));
+            view.accepts_manual = true;
+            view.manual = "pasted".to_owned();
+
+            let (rows, caret) = view.frame(80, "Log in to ChatGPT", glyphs);
+            let text: Vec<_> = rows.iter().map(Row::text).collect();
+            let input = text
+                .iter()
+                .find(|row| row.starts_with(mark))
+                .unwrap_or_else(|| panic!("{glyphs:?}: {text:?}"));
+
+            assert!(
+                input.chars().skip(2).all(|character| character == hidden),
+                "{glyphs:?}: {input}"
+            );
+            assert_eq!(caret.column, 2 + "pasted".len(), "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn what_parts_the_plan_from_what_taking_a_row_does_comes_out_of_the_glyph_set() {
+        // The row names the plan the account is billed under and what taking it
+        // does, and the mark is what says they are two. A terminal that cannot
+        // draw it gets a question mark in the middle of the sentence somebody
+        // is reading to decide how they are about to sign in.
+        let ways = [Way {
+            shown: "Console account",
+            plan: "API usage billing",
+            says: "enter a provider API key",
+            reaches: Reaches::Console,
+        }];
+
+        assert_eq!(
+            sentences(&ways, Glyphs::Unicode),
+            ["API usage billing — enter a provider API key"]
+        );
+        assert_eq!(
+            sentences(&ways, Glyphs::Ascii),
+            ["API usage billing -- enter a provider API key"]
+        );
+    }
+
+    #[test]
+    fn the_row_saying_the_sign_in_is_waiting_takes_its_mark_from_the_set() {
+        // The row under a sign-in that has not finished is a state and the key
+        // that leaves it, parted by the same mark. It is the row somebody looks
+        // at while nothing is happening, so it is the one that would sit there
+        // with a hollow square in it the longest.
+        for (glyphs, said) in [
+            (Glyphs::Unicode, "waiting — esc to cancel"),
+            (Glyphs::Ascii, "waiting -- esc to cancel"),
+        ] {
+            let view = LoginView::new(glyphs);
+            let (rows, _) = view.frame(80, "Log in to ChatGPT", glyphs);
+            let text: Vec<String> = rows.iter().map(Row::text).collect();
+
+            assert!(text.iter().any(|row| row == said), "{glyphs:?}: {text:?}");
+        }
+    }
+
+    #[test]
     fn every_login_row_and_its_caret_fit_a_narrow_terminal() {
-        let mut view = LoginView::new();
+        let mut view = LoginView::new(Glyphs::Unicode);
         view.page = Some((
             "http://localhost:1455/launch".into(),
             Some("ABCD-EFGH".into()),
@@ -611,7 +705,7 @@ mod tests {
         view.manual = "pasted-code".to_owned();
         view.limited = true;
         for columns in 0..=32 {
-            let (rows, caret) = view.frame(columns, "Log in to ChatGPT");
+            let (rows, caret) = view.frame(columns, "Log in to ChatGPT", Glyphs::Unicode);
             assert!(rows.iter().all(|row| row.columns() <= columns));
             assert!(caret.column <= columns.saturating_sub(1));
             assert!(caret.row < rows.len());

@@ -66,6 +66,15 @@ Notable changes to crucible. Format follows
   A piped run is the one most likely to have the setting turned down, and it
   was the one being handed a character its terminal had no glyph for.
 
+- **The sign-in draws every mark out of the `glyphs` setting.** The box a key is
+  pasted into stands one `•` per character where `ascii` now stands a `*`, the
+  sign-in's own paste box takes the prompt's `›` and hides behind the same mark,
+  and the `—` between an account's plan and what taking that row does is `--`
+  under `ascii` — as is the one on the row that says a sign-in is waiting. These
+  are the rows somebody reads while handing over a credential, and they were the
+  ones still drawn from characters chosen once and left. What it costs: those
+  rows read differently under `ascii` than they did.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**
