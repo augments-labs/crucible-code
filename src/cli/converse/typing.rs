@@ -360,7 +360,7 @@ pub(super) fn working<T: Terminal>(
     let mut caret = prompt.caret(columns);
     let room = renderer.rows().saturating_sub(boxed.len());
 
-    let mut rows = turning.rows(columns, style.glyphs(), room);
+    let mut rows = turning.rows(columns, style, room);
     caret.row += rows.len();
     rows.append(&mut boxed);
 

@@ -47,6 +47,13 @@ Notable changes to crucible. Format follows
   transcript still while it runs — the row above the box is what says a call is
   out.
 
+- **A call stands above the box while its tool is out.** Its line waits there
+  with the mark pulsing and lands in the transcript the moment the tool answers
+  — the same words in the same columns, with the motion gone — so a call still
+  running is told from one that has finished without reading the clock. What it
+  costs: two more rows of the window while a tool is out, given up before the
+  working row on a window too short for both.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**
