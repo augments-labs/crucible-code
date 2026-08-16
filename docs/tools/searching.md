@@ -28,6 +28,7 @@ model can hand it straight to `read` and you can write a rule about it.
 | `glob` | Only search files whose path matches this, for example `**/*.rs`. |
 | `ignore_case` | Match without regard to case. Defaults to false. |
 | `mode` | `content` for the matching lines, `files` for their names. Defaults to `content`. |
+| `context` | How many lines either side of each match. Defaults to 0, never more than 20. |
 | `limit` | How many results. Defaults to 200, never more than 1000. |
 
 The walk and the search are ripgrep's own crates, which is a speed decision
@@ -43,6 +44,23 @@ src/server.rs:118:        let timeout = settings.timeout.unwrap_or(DEFAULT);
 
 A matching line longer than 400 characters is cut there — a match inside a
 minified bundle is worth reporting and the bundle is not worth sending.
+
+`context` asks for the lines around each match, the way `grep -C` does. They
+carry dashes where a match carries colons, and the line number is on both, so a
+gap between groups is visible in the numbers:
+
+```
+src/client.rs-41-    /// How long to wait for the server.
+src/client.rs:42:    pub fn timeout(&self) -> Duration {
+src/client.rs-43-        self.timeout
+```
+
+Two matches close enough to share lines share them: a line is reported once,
+whichever match it belongs to. `limit` counts matches and never the lines around
+them, so a search asking for three either side comes back with as many matches as
+it would without — and a match the limit cut takes its own context with it,
+rather than leaving lines standing beside nothing. `files` is a list of names,
+which has nowhere to put a line, so it ignores the argument.
 
 `files` answers with the name of every file holding a match, once each:
 

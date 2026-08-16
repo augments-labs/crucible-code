@@ -107,6 +107,27 @@ impl Args {
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
+    /// A count that may be none, absent meaning `default`.
+    ///
+    /// [`Args::count`] refuses zero because a limit of nothing asks for no work
+    /// to be done. Zero is an answer rather than a mistake where the field asks
+    /// for something extra: `"context": 0` is the plain search, and a model that
+    /// worked the number out rather than writing it down sends it.
+    pub(crate) fn whole(&self, field: &str, default: usize) -> Result<usize, ToolError> {
+        let Some(found) = self.value.get(field) else {
+            return Ok(default);
+        };
+        if found.is_null() {
+            return Ok(default);
+        }
+
+        let count = found
+            .as_u64()
+            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be a whole number")))?;
+
+        Ok(usize::try_from(count).unwrap_or(usize::MAX))
+    }
+
     /// A field whose value is one of a fixed set of words, absent meaning
     /// `default`.
     ///
@@ -261,6 +282,41 @@ mod tests {
         assert!(args(r#"{"limit":0}"#).unwrap().count("limit", 1).is_err());
         assert!(args(r#"{"limit":-3}"#).unwrap().count("limit", 1).is_err());
         assert!(args(r#"{"limit":"5"}"#).unwrap().count("limit", 1).is_err());
+    }
+
+    #[test]
+    fn a_whole_number_may_be_none_of_something_but_never_less() {
+        // Asking for no context is asking for the plain search, which is a
+        // thing to do rather than a mistake to report.
+        assert_eq!(
+            args(r#"{"context":0}"#)
+                .unwrap()
+                .whole("context", 2)
+                .unwrap(),
+            0
+        );
+        assert_eq!(args("{}").unwrap().whole("context", 2).unwrap(), 2);
+        assert_eq!(
+            args(r#"{"context":null}"#)
+                .unwrap()
+                .whole("context", 2)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            args(r#"{"context":-1}"#)
+                .unwrap()
+                .whole("context", 2)
+                .unwrap_err()
+                .to_string(),
+            "test: context must be a whole number"
+        );
+        assert!(
+            args(r#"{"context":"3"}"#)
+                .unwrap()
+                .whole("context", 2)
+                .is_err()
+        );
     }
 
     #[test]

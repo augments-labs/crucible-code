@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`grep` can return the lines around each match.** `context: n` gives up to
+  twenty either side, the way `grep -C` does, so reading what surrounds a hit no
+  longer costs a whole file through `read`. Context lines carry dashes where a
+  match carries colons, and `limit` still counts matches only. What it costs:
+  nothing to a call that does not ask for it, and `mode: "files"` ignores the
+  argument since a list of names has nowhere to put a line.
+
 ## [0.1.12] - 2026-08-16
 
 ### Changed
