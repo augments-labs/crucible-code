@@ -42,7 +42,10 @@ impl Args {
         if value.is_object() {
             Ok(Self { tool, value })
         } else {
-            Err(Self::wrong(tool, "arguments must be a JSON object"))
+            Err(ToolError::Arguments {
+                tool,
+                problem: "arguments must be a JSON object".into(),
+            })
         }
     }
 
@@ -50,7 +53,7 @@ impl Args {
     pub(crate) fn text(&self, field: &str) -> Result<&str, ToolError> {
         match self.optional_text(field)? {
             Some(text) => Ok(text),
-            None => Err(Self::wrong(self.tool, format!("{field} is required"))),
+            None => Err(self.wrong(format!("{field} is required"))),
         }
     }
 
@@ -61,12 +64,12 @@ impl Args {
     /// nothing are both things a model asks for on purpose.
     pub(crate) fn exact(&self, field: &str) -> Result<&str, ToolError> {
         let Some(found) = self.value.get(field) else {
-            return Err(Self::wrong(self.tool, format!("{field} is required")));
+            return Err(self.wrong(format!("{field} is required")));
         };
 
         found
             .as_str()
-            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be a string")))
+            .ok_or_else(|| self.wrong(format!("{field} must be a string")))
     }
 
     /// A field that may be absent. Present-but-blank counts as absent, because
@@ -81,7 +84,7 @@ impl Args {
 
         let text = found
             .as_str()
-            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be a string")))?;
+            .ok_or_else(|| self.wrong(format!("{field} must be a string")))?;
 
         Ok(Some(text).filter(|text: &&str| !text.is_empty()))
     }
@@ -97,12 +100,10 @@ impl Args {
             return Ok(default);
         }
 
-        let count = found.as_u64().filter(|count| *count > 0).ok_or_else(|| {
-            Self::wrong(
-                self.tool,
-                format!("{field} must be a positive whole number"),
-            )
-        })?;
+        let count = found
+            .as_u64()
+            .filter(|count| *count > 0)
+            .ok_or_else(|| self.wrong(format!("{field} must be a positive whole number")))?;
 
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
@@ -123,7 +124,7 @@ impl Args {
 
         let count = found
             .as_u64()
-            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be a whole number")))?;
+            .ok_or_else(|| self.wrong(format!("{field} must be a whole number")))?;
 
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
@@ -153,12 +154,7 @@ impl Args {
             .iter()
             .copied()
             .find(|word| *word == sent)
-            .ok_or_else(|| {
-                Self::wrong(
-                    self.tool,
-                    format!("{field} must be one of {}", allowed.join(", ")),
-                )
-            })
+            .ok_or_else(|| self.wrong(format!("{field} must be one of {}", allowed.join(", "))))
     }
 
     /// A flag, absent meaning `default`.
@@ -172,13 +168,17 @@ impl Args {
 
         found
             .as_bool()
-            .ok_or_else(|| Self::wrong(self.tool, format!("{field} must be true or false")))
+            .ok_or_else(|| self.wrong(format!("{field} must be true or false")))
     }
 
     /// A rejection the model can act on.
-    fn wrong(tool: &'static str, problem: impl Into<Box<str>>) -> ToolError {
+    ///
+    /// The arguments phrase it themselves. Which tool is rejecting the call is
+    /// something they already know, and handing it back at every rejection is
+    /// the sort of repetition one wrong argument hides in.
+    fn wrong(&self, problem: impl Into<Box<str>>) -> ToolError {
         ToolError::Arguments {
-            tool,
+            tool: self.tool,
             problem: problem.into(),
         }
     }
