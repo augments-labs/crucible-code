@@ -16,14 +16,14 @@
 use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io;
+use std::str;
 use std::sync::Mutex;
 
 use crucible_core::{
     Approved, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::sinks::UTF8;
-use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder};
+use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::WalkState;
 use ignore::overrides::{Override, OverrideBuilder};
 
@@ -250,6 +250,57 @@ struct Searched {
     partly: Option<String>,
 }
 
+/// Where one file's lines go as the searcher reports them.
+///
+/// `grep-searcher` offers a sink that wraps a closure over matching lines and
+/// leaves the rest of what a search reports at a default that drops it. Which
+/// of those reports an answer is made of is this tool's decision rather than
+/// one it inherited, so the sink is written out and the decision sits in it.
+struct Kept<'a> {
+    /// The file's name as the answer gives it.
+    shown: &'a str,
+    mode: Mode,
+    hits: &'a Mutex<Top>,
+    cancel: &'a Cancel,
+    /// Set when cancellation ended this file, so it is named as one the search
+    /// did not reach the end of.
+    halted: &'a Cell<bool>,
+}
+
+impl Sink for Kept<'_> {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, hit: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        if self.cancel.requested() {
+            self.halted.set(true);
+            return Ok(false);
+        }
+
+        // Decoded before anything is kept: a line the matcher hit is not
+        // necessarily text, and the file it came from is named rather than
+        // reported as searched.
+        let text = str::from_utf8(hit.bytes()).map_err(io::Error::other)?;
+        let Some(line) = hit.line_number() else {
+            // The searcher is built to count lines, so this does not happen. A
+            // hit with no number is one the model cannot hand back to `read`,
+            // which is worth ending the file over rather than guessing at.
+            return Err(io::Error::other(
+                "the search reported a line with no number",
+            ));
+        };
+
+        if let Ok(mut hits) = self.hits.lock() {
+            hits.add(Hit {
+                path: self.shown.to_owned(),
+                line,
+                text: cut(text.trim_end()),
+            });
+        }
+
+        Ok(self.mode == Mode::Content)
+    }
+}
+
 /// A file reader that turns cancellation into a clean, marked end of input.
 struct Stopping<'a> {
     file: &'a std::fs::File,
@@ -376,7 +427,7 @@ impl Grep {
     /// the size of a tree, and a search of it is the wait a stopped turn would
     /// otherwise sit through. The file cannot be read — no permission, a
     /// device, gone since the walk saw it. A line the matcher hit is not text,
-    /// because `UTF8` decodes before it hands anything over and only a NUL byte
+    /// because [`Kept`] decodes before it keeps anything and only a NUL byte
     /// quits the searcher, so a Latin-1 file is searched as the text it nearly
     /// is until one of its bytes is not. Or a line is longer than [`MAX_LINE`],
     /// which the searcher reports as the allocation it was refused.
@@ -412,20 +463,13 @@ impl Grep {
         let found = searcher.search_reader(
             matcher,
             reader,
-            UTF8(|line, text| {
-                if self.cancel.requested() {
-                    halted.set(true);
-                    return Ok(false);
-                }
-                if let Ok(mut hits) = hits.lock() {
-                    hits.add(Hit {
-                        path: shown.clone(),
-                        line,
-                        text: cut(text.trim_end()),
-                    });
-                }
-                Ok(mode == Mode::Content)
-            }),
+            Kept {
+                shown: &shown,
+                mode,
+                hits,
+                cancel: &self.cancel,
+                halted: &halted,
+            },
         );
 
         Searched {
