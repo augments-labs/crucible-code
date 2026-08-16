@@ -45,13 +45,24 @@ to you.
 | Argument | What it is |
 | --- | --- |
 | `path` | The file to change. Required. |
-| `find` | The exact text to replace, indentation included. Required. |
-| `replace` | What to put in its place. Empty deletes. Required. |
+| `find` | The exact text to replace, indentation included. Required unless `edits` is sent. |
+| `replace` | What to put in its place. Empty deletes. Required unless `edits` is sent. |
 | `all` | Replace every occurrence instead of requiring exactly one. |
+| `edits` | Several changes — `find`, `replace` and `all` each — instead of one. |
 
 Exact text in, exact text out — no patch format and no line numbers. A model
 that has just read a file can quote from it, and quoting is the one thing it can
 do without counting.
+
+A call carries either one change or a list of them, and sending both shapes is
+refused rather than half-read. `edits` is what turns ten changes to one file
+from ten turns into one: they are made in order, each looking at what the one
+before it left, so a change can find text an earlier one wrote. If any of them
+cannot be made the file is left exactly as it was, and the answer says which:
+`edit 2 of 4 could not be made, so nothing was changed: that text does not
+appear in src/main.rs`. A file holding half of what was asked for is a state
+nobody chose, and the model cannot see which half it got without reading the
+file back.
 
 `find` must appear exactly once unless `all` is true. Where it appears more
 often, the call comes back as

@@ -16,6 +16,10 @@ use serde_json::Value;
 pub(crate) struct Args {
     /// Named so every rejection says which tool rejected it.
     tool: &'static str,
+    /// Where these arguments sit in the call, for one element of a list. A
+    /// rejection carries it, because `find is required` about the second of
+    /// four edits does not say which one to fix.
+    within: Option<Box<str>>,
     value: Value,
 }
 
@@ -27,11 +31,13 @@ impl Args {
     /// several ways.
     pub(crate) fn parse(tool: &'static str, args: &ToolArgs) -> Result<Self, ToolError> {
         let text = args.as_str().trim();
+        let whole = |value| Self {
+            tool,
+            within: None,
+            value,
+        };
         if text.is_empty() {
-            return Ok(Self {
-                tool,
-                value: Value::Object(serde_json::Map::new()),
-            });
+            return Ok(whole(Value::Object(serde_json::Map::new())));
         }
 
         let value: Value = serde_json::from_str(text).map_err(|problem| ToolError::Arguments {
@@ -40,13 +46,61 @@ impl Args {
         })?;
 
         if value.is_object() {
-            Ok(Self { tool, value })
+            Ok(whole(value))
         } else {
             Err(ToolError::Arguments {
                 tool,
                 problem: "arguments must be a JSON object".into(),
             })
         }
+    }
+
+    /// Whether the call mentions a field at all, however it filled it.
+    ///
+    /// For a tool that takes one of two shapes and has to say so rather than
+    /// quietly read one of them.
+    pub(crate) fn holds(&self, field: &str) -> bool {
+        self.value.get(field).is_some_and(|found| !found.is_null())
+    }
+
+    /// The elements of a list field, each read as arguments of its own.
+    ///
+    /// An element is an object like the call itself, so the same helpers read
+    /// it and its rejections read the same way — with `within` set, so one says
+    /// which element it came from.
+    ///
+    /// Each element is copied out. The arguments are already held twice, as the
+    /// text the model sent and as this tree, and one element is a fraction of
+    /// either; what a borrow would buy is not worth a lifetime on every tool's
+    /// arguments.
+    pub(crate) fn list(&self, field: &str) -> Result<Option<Vec<Self>>, ToolError> {
+        let Some(found) = self.value.get(field) else {
+            return Ok(None);
+        };
+        if found.is_null() {
+            return Ok(None);
+        }
+
+        let items = found
+            .as_array()
+            .ok_or_else(|| self.wrong(format!("{field} must be a list")))?;
+
+        items
+            .iter()
+            .enumerate()
+            .map(|(at, item)| {
+                if item.is_object() {
+                    Ok(Self {
+                        tool: self.tool,
+                        within: Some(format!("{field}[{at}]").into()),
+                        value: item.clone(),
+                    })
+                } else {
+                    Err(self.wrong(format!("{field}[{at}] must be a JSON object")))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
     }
 
     /// A field that must be there and must not be blank.
@@ -175,11 +229,15 @@ impl Args {
     ///
     /// The arguments phrase it themselves. Which tool is rejecting the call is
     /// something they already know, and handing it back at every rejection is
-    /// the sort of repetition one wrong argument hides in.
-    fn wrong(&self, problem: impl Into<Box<str>>) -> ToolError {
+    /// the sort of repetition one wrong argument hides in. Where in the call
+    /// they sit is the other half of that, and it comes from the same place.
+    pub(crate) fn wrong(&self, problem: impl std::fmt::Display) -> ToolError {
         ToolError::Arguments {
             tool: self.tool,
-            problem: problem.into(),
+            problem: match &self.within {
+                Some(within) => format!("{within} {problem}").into(),
+                None => problem.to_string().into(),
+            },
         }
     }
 }

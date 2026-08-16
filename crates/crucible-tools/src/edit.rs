@@ -5,6 +5,12 @@
 //! can do without counting. The file and its replacement are each capped at
 //! one megabyte: an exact whole-file transformation needs both in memory, so a
 //! larger file belongs in a streaming tool rather than in this one.
+//!
+//! A call carries one replacement or a list of them. The list is read once,
+//! applied in order in memory, and written once, and any one of them that
+//! cannot be made leaves the file exactly as it was — a file holding half of
+//! what was asked for is a state nobody chose, and the model cannot see which
+//! half it got without reading the file back.
 
 use std::io::{self, Read as _};
 
@@ -25,7 +31,7 @@ const FILE_LIMIT: usize = 1_000_000;
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 const SCHEMA: &str = r#"{
-  "description": "Replaces exact text in a file in the workspace. The text to find must appear exactly once unless all is true. Source and result must each be no larger than 1000000 bytes.",
+  "description": "Replaces exact text in a file in the workspace, either once or several times in one call. The text to find must appear exactly once unless all is true. Source and result must each be no larger than 1000000 bytes.",
   "type": "object",
   "properties": {
     "path": {
@@ -34,7 +40,7 @@ const SCHEMA: &str = r#"{
     },
     "find": {
       "type": "string",
-      "description": "The exact text to replace, copied from the file including its indentation."
+      "description": "The exact text to replace, copied from the file including its indentation. Send this and replace for a single change, or edits for several."
     },
     "replace": {
       "type": "string",
@@ -43,9 +49,31 @@ const SCHEMA: &str = r#"{
     "all": {
       "type": "boolean",
       "description": "Replace every occurrence instead of requiring exactly one. Defaults to false."
+    },
+    "edits": {
+      "type": "array",
+      "description": "Several changes to make to the file in one call, instead of find and replace. They are made in order, each one looking at what the one before it left. If any of them cannot be made, none of them is made and the file is left as it was.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "find": {
+            "type": "string",
+            "description": "The exact text to replace, copied from the file including its indentation."
+          },
+          "replace": {
+            "type": "string",
+            "description": "The text to put in its place. Empty to delete the text found."
+          },
+          "all": {
+            "type": "boolean",
+            "description": "Replace every occurrence instead of requiring exactly one. Defaults to false."
+          }
+        },
+        "required": ["find", "replace"]
+      }
     }
   },
-  "required": ["path", "find", "replace"]
+  "required": ["path"]
 }"#;
 
 /// Replaces exact text in a file inside the workspace.
@@ -81,12 +109,16 @@ impl Tool for Edit {
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
-        let find = args.text("find")?;
-        let replace = args.exact("replace")?;
-        let all = args.flag("all", false)?;
+        let listed = args.list("edits")?;
+        let wanted = changes(&args, listed.as_deref())?;
 
-        if find == replace {
-            return Ok(ToolOutput::failed(
+        if let Some(at) = wanted
+            .iter()
+            .position(|change| change.find == change.replace)
+        {
+            return Ok(refused(
+                at,
+                wanted.len(),
                 "find and replace are the same text, so there is nothing to change",
             ));
         }
@@ -128,29 +160,33 @@ impl Tool for Edit {
             }
         };
 
-        let found = before.matches(find).count();
-        if let Some(problem) = trouble(found, all, requested) {
-            return Ok(problem);
-        }
+        // Every change is made to the text in memory, and the file is written
+        // only once they all have been. A list that fails part-way through has
+        // touched nothing.
+        let mut after = before;
+        let mut changed = 0_usize;
+        for (at, change) in wanted.iter().enumerate() {
+            if self.cancel.requested() {
+                return Err(ToolError::Cancelled(NAME));
+            }
 
-        let changed = if all { found } else { 1 };
-        let after_len = changed
-            .checked_mul(find.len())
-            .and_then(|removed| before.len().checked_sub(removed))
-            .and_then(|without| {
-                changed
-                    .checked_mul(replace.len())
-                    .and_then(|added| without.checked_add(added))
-            });
-        if after_len.is_none_or(|length| length > FILE_LIMIT) {
-            return Ok(too_large(requested));
-        }
+            let found = after.matches(change.find).count();
+            if let Some(problem) = trouble(found, change.all, requested) {
+                return Ok(refused(at, wanted.len(), &problem));
+            }
 
-        let after = if all {
-            before.replace(find, replace)
-        } else {
-            before.replacen(find, replace, 1)
-        };
+            let made = if change.all { found } else { 1 };
+            if grown(after.len(), made, change).is_none_or(|length| length > FILE_LIMIT) {
+                return Ok(too_large(requested));
+            }
+
+            after = if change.all {
+                after.replace(change.find, change.replace)
+            } else {
+                after.replacen(change.find, change.replace, 1)
+            };
+            changed = changed.saturating_add(made);
+        }
 
         let permissions = file
             .metadata()
@@ -178,6 +214,69 @@ impl Tool for Edit {
             "changed {requested}, {changed} replacements"
         )))
     }
+}
+
+/// One replacement a call asks for.
+struct Change<'a> {
+    find: &'a str,
+    replace: &'a str,
+    all: bool,
+}
+
+/// The replacements a call asks for, in whichever of the two shapes it sent.
+///
+/// A call that sent both is refused rather than read as one of them: taking
+/// `edits` and dropping `find` would do half of what the call said and report
+/// that it worked.
+fn changes<'a>(args: &'a Args, listed: Option<&'a [Args]>) -> Result<Vec<Change<'a>>, ToolError> {
+    let Some(each) = listed else {
+        return Ok(vec![Change {
+            find: args.text("find")?,
+            replace: args.exact("replace")?,
+            all: args.flag("all", false)?,
+        }]);
+    };
+
+    if args.holds("find") || args.holds("replace") || args.holds("all") {
+        return Err(args.wrong("send find and replace, or edits, but not both"));
+    }
+    if each.is_empty() {
+        return Err(args.wrong("edits is empty"));
+    }
+
+    each.iter()
+        .map(|one| {
+            Ok(Change {
+                find: one.text("find")?,
+                replace: one.exact("replace")?,
+                all: one.flag("all", false)?,
+            })
+        })
+        .collect()
+}
+
+/// How long the text is once a change has been made to it, or `None` where the
+/// arithmetic leaves what a `usize` can hold.
+fn grown(length: usize, made: usize, change: &Change<'_>) -> Option<usize> {
+    let removed = made.checked_mul(change.find.len())?;
+    let added = made.checked_mul(change.replace.len())?;
+    length.checked_sub(removed)?.checked_add(added)
+}
+
+/// A failure naming which of several changes stopped the call.
+///
+/// The position is what the model needs to fix the call, and the rest of the
+/// sentence is what it needs in order not to re-read the file first: a list is
+/// made whole or not at all.
+fn refused(at: usize, total: usize, problem: &str) -> ToolOutput {
+    if total == 1 {
+        return ToolOutput::failed(problem.to_owned());
+    }
+
+    ToolOutput::failed(format!(
+        "edit {} of {total} could not be made, so nothing was changed: {problem}",
+        at.saturating_add(1)
+    ))
 }
 
 /// The bounded outcomes of reading a source file.
@@ -231,17 +330,15 @@ fn too_large(requested: &str) -> ToolOutput {
 /// Ambiguity is a failure rather than a guess. Replacing the first of several
 /// identical fragments changes a line the model did not look at, and it has no
 /// way to find out which one it got.
-fn trouble(found: usize, all: bool, requested: &str) -> Option<ToolOutput> {
+fn trouble(found: usize, all: bool, requested: &str) -> Option<String> {
     match found {
-        0 => Some(ToolOutput::failed(format!(
-            "that text does not appear in {requested}"
-        ))),
+        0 => Some(format!("that text does not appear in {requested}")),
         1 => None,
         _ if all => None,
-        many => Some(ToolOutput::failed(format!(
+        many => Some(format!(
             "that text appears {many} times in {requested}: \
              include more of the surrounding lines, or pass all"
-        ))),
+        )),
     }
 }
 
