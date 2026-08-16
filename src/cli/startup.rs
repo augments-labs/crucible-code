@@ -62,7 +62,8 @@ pub(super) struct Startup<'a> {
     /// What stops a turn.
     pub(super) cancel: &'a Cancel,
     /// Which files have been read. Made by the caller for the same reason the
-    /// cancel is: the loop holds one too, and `/resume` empties it.
+    /// cancel is: the loop holds one too, and the commands that leave a
+    /// session empty it.
     pub(super) ledger: &'a Ledger,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
@@ -373,9 +374,9 @@ fn tools(workspace: &Workspace, cancel: &Cancel, seen: &Ledger, settings: &Setti
 
     // Which files have been read is learned by one tool and asked by another,
     // and this is the only place that may know they share it. The record itself
-    // comes from the caller, the same as the cancel: `/resume` empties it when
-    // it leaves the session those files were read in, and neither tool can
-    // reach the other to be told.
+    // comes from the caller, the same as the cancel: `/clear` and `/resume`
+    // empty it when they leave the session those files were read in, and
+    // neither tool can reach the other to be told.
     tools.add(Box::new(Read::new(
         workspace.clone(),
         cancel.clone(),

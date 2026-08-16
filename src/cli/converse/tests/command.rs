@@ -612,6 +612,28 @@ fn clearing_before_anything_was_said_says_there_was_nothing_to_leave() {
 }
 
 #[test]
+fn a_file_read_before_a_clear_has_to_be_read_again_after_one() {
+    // Both ends real, which is what makes this the proof: the `read` that
+    // learns and the `write` that asks are the shipped tools over the record
+    // the wiring hands them, and `/clear` is reached by typing it. A record
+    // left standing across the command would let the session it started
+    // replace a file that session has never seen.
+    let sample = Sample::new("clear-forgets-reads");
+    let ledger = Ledger::new();
+    let offered = untouched(&sample, &ledger);
+
+    let (written, _) = reaching(
+        &recording(&sample, &ledger),
+        offered,
+        looking_then_replacing(),
+        "look at it\n/clear\nreplace it\n",
+    );
+
+    let held = std::fs::read_to_string(sample.root().join("one.txt")).expect("the file");
+    assert_eq!(held, "work nobody looked at\n", "{written}");
+}
+
+#[test]
 fn a_file_read_before_a_resume_has_to_be_read_again_after_one() {
     // The record answers for a session, and `/resume` leaves the one those
     // files were read in. The session picked up saw none of them, however much

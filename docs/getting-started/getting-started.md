@@ -315,10 +315,10 @@ first one the model sees, and the turns before it are neither sent nor paid for
 again. The session you were in is finished rather than dropped — its log is
 complete and it is on `/resume`'s list, so everything said in it can be picked
 up whole. What does not come across is what that session allowed for the rest of
-itself, which belonged to it; the mode does not move, because it is where you
-are running crucible rather than something a session decided. The screen is left
-alone, because what is above the box is the terminal's scrollback rather than
-crucible's.
+itself, or the record of which files it read, both of which belonged to it; the
+mode does not move, because it is where you are running crucible rather than
+something a session decided. The screen is left alone, because what is above the
+box is the terminal's scrollback rather than crucible's.
 
 `/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
 newest first, each numbered and shown with when it started and what it was first

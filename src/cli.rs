@@ -520,8 +520,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let cancel = Cancel::new();
 
     // Made here rather than beside the tools that share it, because a third
-    // thing holds one: `/resume` empties it when it leaves the session those
-    // files were read in.
+    // thing holds one: `/clear` and `/resume` empty it when they leave the
+    // session those files were read in.
     let ledger = Ledger::new();
     let from = |name: &str| std::env::var(name).ok();
 

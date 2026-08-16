@@ -5,7 +5,8 @@
 //! session that has said nothing yet. So this is [`resume`] with the session
 //! swapped: a fresh log rather than a reopened one, handed to the same
 //! [`Runner::pick_up`], which is also what drops the permission answers given
-//! for the rest of a session that is now over.
+//! for the rest of a session that is now over. The record of what has been read
+//! is emptied here for the same reason, exactly as `/resume` empties it.
 //!
 //! What was said is not deleted. The log it was written to is closed and stays
 //! on the disk, so the session is on `/resume`'s list like any other and
@@ -49,6 +50,11 @@ pub(super) fn run<T: Terminal>(
     };
 
     let left = runner.pick_up(session, Transcript::new());
+
+    // The files remembered were read by a session this is no longer in, and
+    // `write` replaces a file on the strength of that record. Emptying it costs
+    // a read; leaving it standing would cost the file.
+    terms.ledger.forget();
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
