@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`/resume` empties the record of what has been read.** The files remembered
+  were read in the session being left, and the one picked up saw none of them,
+  so `write` asks for the read again rather than replacing a file on another
+  session's word. What it costs: the first `write` to a file after a `/resume`
+  spends one `read` call, even if the session picked up is the one that read it.
+
 ## [0.1.11] - 2026-08-16
 
 ### Added

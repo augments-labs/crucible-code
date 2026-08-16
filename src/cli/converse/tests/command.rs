@@ -9,9 +9,14 @@
 
 use std::cell::Cell;
 use std::io::Cursor;
+use std::sync::atomic::Ordering;
 
 use crucible_auth::StoredCredentials;
-use crucible_runner::Tools;
+use crucible_core::{
+    Cancel, Delta, Message, Mode, Permission, Rules, StopReason, ToolId, Workspace,
+};
+use crucible_runner::{Session, Tools};
+use crucible_tools::Ledger;
 use crucible_tui::{Recording, Renderer};
 
 use crate::cli::converse::{Terms, converse};
@@ -19,6 +24,94 @@ use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
 use super::{over, plain, saying, scripted};
+
+/// Terms recording to a tree of `sample`'s own, so a command that starts or
+/// picks up a session has somewhere to do it — over the record the tools of
+/// such a run were built with.
+fn recording(sample: &Sample, ledger: &Ledger) -> Terms {
+    Terms {
+        ledger: ledger.clone(),
+        sessions: sample.logs(),
+        workspace: sample.workspace(),
+        ..plain()
+    }
+}
+
+/// One tool call, with the arguments written out.
+///
+/// [`super::calling`] sends none, because what it drives are tools that answer
+/// from a field. These are the shipped ones and read what they were sent.
+fn call(name: &str, args: &str) -> Vec<Delta> {
+    vec![
+        Delta::ToolStarted {
+            id: ToolId::new("a"),
+            name: name.into(),
+        },
+        Delta::ToolArgs(args.into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ]
+}
+
+/// The whole loop over `offered`, in full access so a tool runs without a
+/// question drawn: what the terminal ended up with, and how many requests the
+/// script was given.
+fn reaching(
+    terms: &Terms,
+    offered: Tools,
+    rounds: Vec<Vec<Delta>>,
+    typed: &str,
+) -> (String, usize) {
+    let script = Script::new(rounds);
+    let asked = script.asked();
+    let runner =
+        scripted(script, offered).permitting(Permission::with(Mode::FullAccess, Rules::new()));
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(runner, &mut renderer, terms, &mut input).expect("the loop to finish");
+
+    (
+        renderer.terminal().written().to_string(),
+        asked.load(Ordering::Relaxed),
+    )
+}
+
+/// A workspace holding one file nobody has looked at, and the record the pair
+/// that could replace it share.
+///
+/// The pair is the shipped `read` and `write` rather than anything written for
+/// a test: what is being watched is the record the wiring hands them, and a
+/// stand-in for either half would be a second opinion about the thing in
+/// question. The concrete types are named here and go no further — this builds
+/// a `Tools` and hands that over.
+fn untouched(sample: &Sample, ledger: &Ledger) -> Tools {
+    std::fs::write(sample.root().join("one.txt"), "work nobody looked at\n")
+        .expect("a file in the workspace");
+
+    let workspace: Workspace = sample.workspace();
+    let mut offered = Tools::new();
+    offered.add(Box::new(crucible_tools::Read::new(
+        workspace.clone(),
+        Cancel::new(),
+        ledger.clone(),
+    )));
+    offered.add(Box::new(crucible_tools::Write::new(
+        workspace,
+        ledger.clone(),
+    )));
+    offered
+}
+
+/// The rounds that read that file and then replace it, one prompt each.
+fn looking_then_replacing() -> Vec<Vec<Delta>> {
+    vec![
+        call("read", r#"{"path":"one.txt"}"#),
+        saying("looked at it"),
+        call("write", r#"{"path":"one.txt","content":"replaced\n"}"#),
+        saying("replaced it"),
+    ]
+}
 
 fn commanding(typed: &str) -> (String, usize) {
     over(Script::new(vec![saying("answered")]), Tools::new(), typed)
@@ -509,6 +602,33 @@ fn forgetting_before_anything_was_said_says_there_was_nothing_to_forget() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("nothing had been said"), "{written}");
+}
+
+#[test]
+fn a_file_read_before_a_resume_has_to_be_read_again_after_one() {
+    // The record answers for a session, and `/resume` leaves the one those
+    // files were read in. The session picked up saw none of them, however much
+    // of it comes back off the disk — what a log holds is what was said, not
+    // what the tools of that run had looked at.
+    let sample = Sample::new("resume-forgets-reads");
+    let ledger = Ledger::new();
+    let offered = untouched(&sample, &ledger);
+
+    // Closed before the loop starts, so the list has one row and `/resume 1`
+    // names it.
+    let earlier = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    earlier.append(&Message::User("what was asked before".into()));
+    drop(earlier);
+
+    let (written, _) = reaching(
+        &recording(&sample, &ledger),
+        offered,
+        looking_then_replacing(),
+        "look at it\n/resume 1\nreplace it\n",
+    );
+
+    let held = std::fs::read_to_string(sample.root().join("one.txt")).expect("the file");
+    assert_eq!(held, "work nobody looked at\n", "{written}");
 }
 
 #[test]

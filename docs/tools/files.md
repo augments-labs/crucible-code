@@ -116,5 +116,7 @@ moves it back to the front, which is enough for any real session; past that the
 least recently read is forgotten and a `write` to it asks for a read first.
 
 The record belongs to the run rather than to the transcript. `/clear` empties
-what the model remembers and leaves it standing; leaving crucible drops it, so a
-fresh run refuses a file the last one read. Nothing about it is written to disk.
+what the model remembers and leaves it standing. `/resume` leaves the session
+those files were read in, so it empties the record, and a `write` in the session
+picked up asks for the read again. Leaving crucible drops it, so a fresh run
+refuses a file the last one read. Nothing about it is written to disk.
