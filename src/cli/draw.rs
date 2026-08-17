@@ -188,7 +188,7 @@ pub(crate) fn question<T: Terminal>(
         renderer.commit(&row)?;
     }
 
-    mark(renderer, answers(), style)
+    mark(renderer, &answers(style.glyphs()), style)
 }
 
 /// Writes something the user is expected to type after.
@@ -456,8 +456,13 @@ fn wrapped(said: &str, columns: usize) -> Vec<String> {
 ///
 /// Durable rules have no trusted per-workspace store yet. The prompt therefore
 /// offers only answers whose lifetime it can honour.
-fn answers() -> &'static str {
-    "  [y]es  [s]ession  [n]o › "
+///
+/// The mark is the one the prompt is typed after, because this is the prompt:
+/// a question with a line typed under it, standing where no box could — the
+/// answer decides whether a tool runs, so it is asked on the thread the tool
+/// would run on.
+fn answers(glyphs: Glyphs) -> String {
+    format!("  [y]es  [s]ession  [n]o {} ", glyphs.caret())
 }
 
 /// One line, at most `width` display columns of it.

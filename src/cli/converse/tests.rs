@@ -418,6 +418,32 @@ fn the_prompt_line_names_the_mode_in_force() {
 }
 
 #[test]
+fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
+    // Down a pipe there is no box, so the mode and this mark are the whole of
+    // the prompt. A piped run is also the one most likely to have the setting
+    // turned down, and a hollow square is a poor thing to leave somebody
+    // waiting behind.
+    for (glyphs, said) in [
+        (crucible_tui::Glyphs::Unicode, "fullAccess › "),
+        (crucible_tui::Glyphs::Ascii, "fullAccess > "),
+    ] {
+        let runner = scripted(Script::new(vec![]), Tools::new())
+            .permitting(Permission::with(Mode::FullAccess, Rules::new()));
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        let mut input = Cursor::new(Vec::new());
+        let terms = Terms {
+            style: Style::drawn(glyphs),
+            ..plain()
+        };
+
+        converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+        let written = renderer.terminal().written();
+        assert!(written.contains(said), "{glyphs:?}: {written}");
+    }
+}
+
+#[test]
 fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     // A turn is the longest a session goes without a prompt on screen, and it
     // is the stretch the mode is deciding things over -- both used to leave

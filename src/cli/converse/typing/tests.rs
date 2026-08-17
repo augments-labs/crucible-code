@@ -258,14 +258,19 @@ fn the_row_names_the_key_that_steps_the_mode_in_every_mode_alike() {
 
 #[test]
 fn the_row_under_the_box_is_drawn_from_characters_every_terminal_has() {
-    // The glyph set does not reach this row, so what it says has to be legible
-    // in both: a mark added to the sentence or to the key beside it would show
-    // as a hollow square on a terminal that asked for `ascii`.
+    // The words are the same in both sets — only the marks between them come
+    // out of the setting — so what a run that asked for `ascii` is left with
+    // has to be drawable there. A word added to the sentence or to the keys
+    // beside it would show as a hollow square on the terminal least able to
+    // spare one.
     for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
         let says = settled(mode);
 
         assert!(says.mode.is_ascii(), "{:?}", says.mode);
         assert!(says.keys.is_ascii(), "{:?}", says.keys);
+
+        let running = under(&engine(mode), Glyphs::Ascii);
+        assert!(running.keys.is_ascii(), "{:?}", running.keys);
     }
 }
 
@@ -558,9 +563,9 @@ fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
     // The one place the key is printed beside the thing it acts on while a turn
     // is the thing on screen. It earns the room the same way the mode's key
     // does: nothing else says the row is a control at all.
-    let says = under(&engine(Mode::Ask));
+    let says = under(&engine(Mode::Ask), Glyphs::Unicode);
 
-    assert_eq!(says.keys, WORKING);
+    assert_eq!(says.keys, interrupting(Glyphs::Unicode));
     assert!(says.keys.contains("esc"), "{:?}", says.keys);
 
     // And says nothing about the key that no longer stops a turn. Naming it
@@ -568,6 +573,20 @@ fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
     // that it does at the prompt, and a row that mentions it mid turn is a row
     // claiming otherwise.
     assert!(!says.keys.contains("ctrl"), "{:?}", says.keys);
+}
+
+#[test]
+fn what_parts_the_two_keys_under_a_running_turn_comes_out_of_the_glyph_set() {
+    // The row above the box parts its own segments with this mark, two rows
+    // away and out of the setting already. One of the two drawn from the
+    // setting and one written down would show as a hollow square beside a mark
+    // that came out right, on a screen where they are meant to read as a pair.
+    for (glyphs, said) in [
+        (Glyphs::Unicode, "(enter queues it · esc to interrupt)"),
+        (Glyphs::Ascii, "(enter queues it - esc to interrupt)"),
+    ] {
+        assert_eq!(under(&engine(Mode::Ask), glyphs).keys, said, "{glyphs:?}");
+    }
 }
 
 #[test]

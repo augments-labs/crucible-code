@@ -162,10 +162,23 @@ bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
 
-It is one answer for the whole interface rather than one for the box: the mark
-that opens a tool call, the corner its result hangs off, the cross on a failure
-and the `…` that says a line was cut all come out of the same set as the border.
-Under `ascii` those are `*`, `+`, `x` and `...`.
+It is one answer for the whole interface rather than one for the box. Every mark
+crucible draws comes out of the same set as the border:
+
+| Drawn | `unicode` | `ascii` |
+| --- | --- | --- |
+| The mark a line is typed after | `›` | `>` |
+| One character of a key being pasted | `•` | `*` |
+| The mark a tool call opens with | `●` | `*` |
+| The corner its result hangs under | `└` | `+` |
+| A call that failed | `✗` | `x` |
+| A line that was cut | `…` | `...` |
+| The keys that walk the effort ladder | `←` `→` | `<` `>` |
+| Between two things on one row | `·` | `-` |
+| Between a thing and what is said about it | `—` | `--` |
+
+The name at the top of a session goes the same way: `unicode` draws it from half
+blocks and `ascii` writes it as letters.
 
 `mouse` is one trade with two ends rather than a preference. Left `off`, the
 terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
