@@ -32,6 +32,13 @@ const FILE_LIMIT: usize = 1_000_000;
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
+///
+/// The `description` and `explanation` under `properties` are not for this tool
+/// and are never read here. They are drawn on the panel where somebody decides
+/// whether this call may run, and they arrive with the call because the thread
+/// holding the terminal has no provider to ask when the panel opens. Neither is
+/// required: a call that says nothing about itself gets the panel it would have
+/// got before either existed. [`crate::account`] is what reads them.
 const SCHEMA: &str = r#"{
   "description": "Replaces exact text in a file in the workspace, either once or several times in one call. The text to find must appear exactly once unless all is true. Source and result must each be no larger than 1000000 bytes.",
   "type": "object",
@@ -73,6 +80,17 @@ const SCHEMA: &str = r#"{
         },
         "required": ["find", "replace"]
       }
+    },
+    "description": {
+      "type": "string",
+      "description": "One short line saying what this call is for, shown under the path to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
+    },
+    "explanation": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the change does, why you want it, and what it costs if it is wrong. One string per paragraph, opened with a key by the same person, so write it for them rather than for yourself and do not restate the path: it is already on screen above this. Where the call makes several changes, or replaces every occurrence, account for each place it lands."
     }
   },
   "required": ["path"]

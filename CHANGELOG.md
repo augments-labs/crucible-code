@@ -8,14 +8,15 @@ Notable changes to crucible. Format follows
 
 ### Added
 
-- **A command can say what it is for, and the question shows it.** `bash` takes
-  an optional `description`, and it appears as a caption under the command on
-  the panel where you decide. What it costs: one row, and only where the call
-  gave one. It is the model's own sentence, so it sits under what would actually
-  run rather than beside it — the tool never reads it, and no rule weighs it.
+- **A call can say what it is for, and the question shows it.** `bash`, `write`
+  and `edit` take an optional `description`, and it appears as a caption under
+  the command or the path on the panel where you decide. What it costs: one row,
+  and only where the call gave one. It is the model's own sentence, so it sits
+  under what would actually happen rather than beside it — no tool reads it, and
+  no rule weighs it.
 
-- **A call can make its case at length, and `ctrl+e` opens it.** `bash` takes an
-  optional `explanation`, a list of paragraphs, and the permission panel shows
+- **A call can make its case at length, and `ctrl+e` opens it.** The same three
+  tools take an optional `explanation`, a list of paragraphs, and the panel shows
   them under one row saying they are the model's words rather than crucible's.
   What it costs: nothing until you press the key, and the paragraphs are the
   first thing given up where the window is short. `↑` and `↓` read them where

@@ -4,11 +4,19 @@ use crucible_core::{Cancel, Tool, ToolArgs, Workspace};
 
 use super::of;
 use crate::sample::Sample;
-use crate::{Bash, Ledger, Read};
+use crate::{Bash, Edit, Ledger, Read, Write};
 
 /// The tools whose schemas invite an account, built against a scratch tree.
+///
+/// Which is the tools whose calls stop at a panel: a command and the two ways
+/// to change a file. A read is allowed or refused without being asked about, so
+/// prose sent with one would be paid for and never drawn.
 fn inviting(workspace: &Workspace) -> Vec<Box<dyn Tool>> {
-    vec![Box::new(Bash::new(workspace.clone(), Cancel::new()))]
+    vec![
+        Box::new(Bash::new(workspace.clone(), Cancel::new())),
+        Box::new(Write::new(workspace.clone(), Ledger::new())),
+        Box::new(Edit::new(workspace.clone(), Cancel::new())),
+    ]
 }
 
 #[test]

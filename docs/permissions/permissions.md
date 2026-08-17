@@ -66,8 +66,10 @@ Read it as what the model *says* it is doing; what it *would* do is the line
 above, and that one was read out of the arguments rather than written. The
 caption is cut to one row however much arrived, so nothing off-screen decides
 how tall this panel is, and a call that offered none leaves the row out
-entirely. `bash` is the tool that invites one today,
-[`description`](../tools/commands.md).
+entirely. It is spelled `description`, and the tools that invite one are the
+three whose calls stop here: [`bash`](../tools/commands.md),
+[`write` and `edit`](../tools/files.md). A read is allowed or refused without
+being asked about, so there would be nowhere to draw one.
 
 `↑` and `↓` move the mark, and stop at each end rather than wrapping. `enter`
 takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.
@@ -90,9 +92,9 @@ consent read twice.
 
 ## The long version
 
-A call can also arrive with paragraphs, in
-[`explanation`](../tools/commands.md). The footer names the key where it did,
-and `ctrl+e` opens them under the command:
+The same three tools invite paragraphs as well, in `explanation`. The footer
+names the key where a call sent them, and `ctrl+e` opens them under the command
+or the path:
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮

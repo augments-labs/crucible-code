@@ -49,6 +49,8 @@ to you.
 | `replace` | What to put in its place. Empty deletes. Required unless `edits` is sent. |
 | `all` | Replace every occurrence instead of requiring exactly one. |
 | `edits` | Several changes — `find`, `replace` and `all` each — instead of one. |
+| `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question). Optional, and the tool never reads it. |
+| `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
 Exact text in, exact text out — no patch format and no line numbers. A model
 that has just read a file can quote from it, and quoting is the one thing it can
@@ -84,6 +86,8 @@ place creates, and a failure part-way through leaves the original whole.
 | --- | --- |
 | `path` | The file to write. Required. |
 | `content` | The complete new contents. Required. |
+| `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question). Optional, and the tool never reads it. |
+| `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
 A path whose parent directories are missing gets them, one checked level at a
 time, on Linux, macOS and FreeBSD. On Windows the parent directory has to be
