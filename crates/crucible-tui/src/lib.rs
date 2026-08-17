@@ -17,6 +17,7 @@
 //! text, so it never names a domain type, calls a tool or asks a provider for
 //! anything.
 
+mod asking;
 mod clear;
 mod color;
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod welcome;
 mod width;
 mod working;
 
+pub use asking::Question;
 pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};
 pub use editor::{Editor, Key, Typed};
