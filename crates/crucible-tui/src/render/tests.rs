@@ -712,3 +712,90 @@ fn a_fence_the_model_never_closed_does_not_reach_the_next_message() {
         "the fence ended with the message: {tail:?}"
     );
 }
+
+#[test]
+fn nothing_is_parted_from_the_start_of_the_session() {
+    // The top of the transcript is already a boundary. A blank row spent here
+    // is one the shell's own last line is pushed away by, for nothing.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.apart().unwrap();
+    render.commit("the first line").unwrap();
+
+    assert_eq!(render.terminal.written(), "the first line\n");
+}
+
+#[test]
+fn one_blank_row_stands_between_two_blocks() {
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.commit("what was answered").unwrap();
+    render.apart().unwrap();
+    render.commit("● Read(src/main.rs)").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "what was answered\n\n● Read(src/main.rs)\n"
+    );
+}
+
+#[test]
+fn blank_rows_do_not_accumulate() {
+    // Two blocks in a row each ask on their way in, and what separates them is
+    // still one row. Asking is how a block says it is a block, not how many
+    // rows it wants.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.commit("what was answered").unwrap();
+    render.apart().unwrap();
+    render.apart().unwrap();
+    render.apart().unwrap();
+    render.commit("● Read(src/main.rs)").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "what was answered\n\n● Read(src/main.rs)\n"
+    );
+}
+
+#[test]
+fn a_row_is_never_parted_into_a_line_that_is_still_arriving() {
+    // The caller cannot tell the first delta of an answer from the tenth, so it
+    // asks on every one. What comes next while the tail holds something is the
+    // rest of that line, and a row put there would cut the answer in half.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.commit("  └ 128 lines").unwrap();
+    for delta in ["Which ", "means ", "the file ", "is short."] {
+        render.apart().unwrap();
+        render.stream(delta).unwrap();
+    }
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "  └ 128 lines\n\nWhich means the file is short.\n"
+    );
+}
+
+#[test]
+fn rows_this_program_composed_settle_the_question_too() {
+    // `present` is the other way into the record, and a component that ends on
+    // a blank row -- which several do, to keep what follows off them -- has
+    // already parted itself.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render
+        .present(
+            &[Row::new().then(Slot::Plain, "› what is 2+2"), Row::new()],
+            Palette::plain(),
+        )
+        .unwrap();
+    render.apart().unwrap();
+    render.commit("Two plus two is four.").unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "› what is 2+2\n\nTwo plus two is four.\n"
+    );
+}

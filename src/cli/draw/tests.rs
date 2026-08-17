@@ -1,7 +1,7 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
 use crucible_core::{
-    Command, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError, Workspace,
+    Command, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError, TurnId, Workspace,
 };
 use crucible_tui::Recording;
 
@@ -557,4 +557,99 @@ fn a_reason_this_build_does_not_know_is_reported_as_unfinished() {
     let said = notice(StopReason::Unknown).expect("a reason nobody knows still says something");
 
     assert!(said.starts_with("! unfinished"), "{said}");
+}
+
+/// A whole turn, drawn into a pipe so the record is exactly its lines.
+///
+/// Through `event` and `returned` in the order the loop calls them: the call
+/// line commits when its tool answers, and the row hanging under it is drawn
+/// from the event that carried the answer.
+fn transcript(turn: Vec<Beat>) -> String {
+    let mut renderer = Renderer::new(Recording::redirected(WIDE, 24));
+    let style = Style::plain();
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, drawing, style),
+            Beat::Answered(said) => returned(&mut renderer, said, style),
+        }
+        .expect("the turn to draw");
+    }
+
+    renderer.terminal().written().to_string()
+}
+
+/// One step of a turn, as the loop above `draw` performs it.
+enum Beat {
+    /// An event, drawn where it arrived.
+    Draw(Event),
+    /// A tool answered, so the line that was live commits.
+    Answered(&'static str),
+}
+
+fn delta(text: &str) -> Beat {
+    Beat::Draw(Event::Delta { text: text.into() })
+}
+
+fn answered(said: &'static str, text: &str) -> [Beat; 2] {
+    [
+        Beat::Answered(said),
+        Beat::Draw(Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok(text),
+        }),
+    ]
+}
+
+#[test]
+fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
+    // The rhythm the whole transcript is read by. What is asked, what is
+    // answered, each call and the line under it: every one of them a block, and
+    // what separates two blocks is a row of nothing. A result hangs directly
+    // under the call it answers, because the two are one block.
+    let mut turn = vec![
+        Beat::Draw(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Looking at both.\n"),
+    ];
+    turn.extend(answered("Read(src/main.rs)", "128 lines"));
+    turn.extend(answered("Read(src/lib.rs)", "60 lines"));
+    turn.push(delta("Neither imports the other.\n"));
+    turn.push(Beat::Draw(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    assert_eq!(
+        transcript(turn),
+        concat!(
+            "Looking at both.\n",
+            "\n",
+            "● Read(src/main.rs)\n",
+            "  └ 128 lines\n",
+            "\n",
+            "● Read(src/lib.rs)\n",
+            "  └ 60 lines\n",
+            "\n",
+            "Neither imports the other.\n",
+        )
+    );
+}
+
+#[test]
+fn an_answer_arriving_in_pieces_is_one_block() {
+    // A delta is a piece of the wire rather than a paragraph, so the row is
+    // owed before the first of them and never between two.
+    let turn = [
+        delta("Two plus "),
+        delta("two is "),
+        delta("four."),
+        Beat::Draw(Event::TurnFinished {
+            turn: TurnId::FIRST,
+            stop: StopReason::Yielded,
+        }),
+    ];
+
+    assert_eq!(transcript(turn.into()), "Two plus two is four.\n");
 }

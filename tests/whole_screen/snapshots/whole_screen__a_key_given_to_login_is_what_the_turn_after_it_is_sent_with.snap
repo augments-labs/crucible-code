@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 18,4 scrolled 11
-|│                                  │ · ctrl-c     clears the line typed so far │|
+80x24 cursor 19,4 scrolled 12
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -19,11 +18,12 @@ expression: window.picture()
 |anthropic/claude-test-1                                                         |
 |                                                                                |
 |› what is 2+2                                                                   |
+|                                                                                |
 |Two plus two is four.                                                           |
+|                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
 |                                                                                |
 |                                                                                |
