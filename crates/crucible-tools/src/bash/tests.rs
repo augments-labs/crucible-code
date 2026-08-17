@@ -333,6 +333,7 @@ fn the_sensitivity_carries_what_the_call_will_run() {
         sensitivity,
         Sensitivity::SpawnsProcess {
             command: Command::Understood {
+                sent: "/usr/bin/git status".into(),
                 parts: Box::from([Box::from("/usr/bin/git status")]),
             }
         }

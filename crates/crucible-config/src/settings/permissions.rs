@@ -101,6 +101,7 @@ mod tests {
         };
         let sensitivity = Sensitivity::SpawnsProcess {
             command: Command::Understood {
+                sent: command.into(),
                 parts: Box::from([Box::from(command)]),
             },
         };

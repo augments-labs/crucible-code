@@ -194,6 +194,7 @@ mod tests {
     fn running() -> Sensitivity {
         Sensitivity::SpawnsProcess {
             command: Command::Understood {
+                sent: "ls".into(),
                 parts: Box::from([Box::from("ls")]),
             },
         }

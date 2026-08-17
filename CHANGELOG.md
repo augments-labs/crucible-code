@@ -39,6 +39,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A question about several commands shows the line that was sent.** Asked
+  about `cargo fmt --all && cargo test`, the prompt said
+  `cargo fmt --all, then cargo test` — a paraphrase, and one that reads as two
+  commands where `&&` runs the second only if the first worked. It now shows the
+  line as it arrived, operators and all. What it costs: nothing to a rule, which
+  is still matched against each command on the line rather than against the line.
+
 - **OpenAI on a ChatGPT plan answers again.** Every turn signed in with a
   subscription rather than an API key was refused with
   `HTTP 400: Unsupported parameter: max_output_tokens` — the backend a plan is

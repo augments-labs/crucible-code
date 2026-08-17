@@ -591,8 +591,13 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<Stri
 
         Sensitivity::MutatesFile { target } => format!("? {} wants to change: {target}", call.name),
 
+        // The line as it was sent, never the spelling a rule is matched
+        // against. That one names the commands and drops the operators between
+        // them, and the operators are the question: `a && b` is two commands if
+        // the first worked, and consent to a list is consent to something
+        // nobody sent.
         Sensitivity::SpawnsProcess { command } => {
-            format!("? {} wants to run: {command}", call.name)
+            format!("? {} wants to run: {}", call.name, command.sent())
         }
     };
 
