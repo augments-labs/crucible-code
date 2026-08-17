@@ -53,7 +53,7 @@ scripts/check.sh
 
 That is the whole gate, and CI runs exactly the same script — a green run here
 is a green run there. It covers formatting, clippy with `-D warnings`, tests,
-the 1000-line-per-file cap, leftover merge conflict markers, and dependency
+the 2000-line-per-file cap, leftover merge conflict markers, and dependency
 pinning and justification.
 
 One check deliberately sits outside it. The advisory scan runs on a schedule in
