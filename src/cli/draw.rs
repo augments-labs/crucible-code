@@ -8,7 +8,7 @@
 use std::fmt;
 
 use crucible_core::{Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
-use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, cut, fold};
+use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
 use super::style::Style;
 
@@ -20,6 +20,20 @@ pub(crate) use opening::{Opening, opening};
 /// Dim, then back. Only for text that is written once and never redrawn.
 const DIM: &str = "\x1b[2m";
 const PLAIN: &str = "\x1b[0m";
+
+/// The mark that opens the line for a tool call.
+///
+/// Filled, where the small mark that parts one thing on a row from the next is
+/// not. The two would otherwise sit within a row of each other saying different
+/// things — this one opens a call and is the column its result hangs off, and
+/// that one is punctuation.
+const CALLED: &str = "●";
+
+/// The corner a call's result hangs under.
+///
+/// Square where the prompt frame's corner is round, so a result row and the
+/// bottom of the box never read as the same shape.
+const HANGS: &str = "└";
 
 /// What every row of a question after the first is written behind.
 ///
@@ -234,7 +248,7 @@ fn requested(call: &ToolCall, summary: &Summary, width: usize) -> String {
         format!("{name}({})", summary.as_str())
     };
 
-    format!("· {}", clipped(said, width))
+    format!("{CALLED} {}", clipped(said, width))
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.
@@ -256,18 +270,36 @@ fn pascal(name: &str) -> String {
     written
 }
 
-/// The line for a call that finished.
+/// The line for a call that finished, hung under the call it answers.
 fn finished(output: &ToolOutput, width: usize) -> String {
     let text = output.text();
     let mut lines = text.lines();
     let first = clipped(lines.next().unwrap_or_default(), width);
     let rest = lines.count();
 
-    let mark = if output.is_failed() { "  ✗ " } else { "  " };
+    let under = gutter(output.is_failed());
     match rest {
-        0 => format!("{mark}{first}"),
-        more => format!("{mark}{first} (+{more} lines)"),
+        0 => format!("{under}{first}"),
+        more => format!("{under}{first} (+{more} lines)"),
     }
+}
+
+/// What a result row opens with, before whatever the tool said.
+///
+/// The corner sits one column past the mark that opened the call, and where
+/// that column is is measured off the mark rather than counted out: the two are
+/// then one decision instead of two that agree until somebody changes the mark.
+/// A corner under the tool's name rather than under its mark reads as a second
+/// call rather than as the first one's answer.
+///
+/// A failure is marked here and nowhere else. The call line above it stands as
+/// it was — a call that was made is a call that was made, whatever came back —
+/// and one thing says the answer was a failure: the row that says what it was.
+fn gutter(failed: bool) -> String {
+    let indent = " ".repeat(columns(CALLED) + 1);
+    let cross = if failed { "✗ " } else { "" };
+
+    format!("{indent}{HANGS} {cross}")
 }
 
 /// What to say about a turn that ended, if anything.
