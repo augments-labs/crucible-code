@@ -25,38 +25,66 @@ prompt instead, spelled the way configuration spells it: `ask › `.
 
 ## The question
 
-When a call comes down to asking, the turn stops:
+When a call comes down to asking, the turn stops and a panel takes the place of
+the prompt box:
 
 ```
-? write wants to change: src/main.rs
-  [y]es  [s]ession  [n]o ›
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  Bash command                                                                │
+│                                                                              │
+│    cargo test --workspace --all-features                                     │
+│                                                                              │
+│  This command needs your verdict.                                            │
+│                                                                              │
+│  Do you want to proceed?                                                     │
+│  › 1. Yes, once                                                              │
+│    2. Yes, and don't ask again this session                                  │
+│    3. No, and end the turn                                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  esc to cancel
 ```
+
+The line over the frame names the tool and what the call is about — a file for
+`read`, `write` and `edit`, a command for `bash`. Inside the frame is the thing
+being consented to. A file change names the file it would touch: the resolved
+path, after symbolic links, spelled relative to the working directory when it
+is inside it. A command shows the line as it was sent, operators and all,
+because `a && b` is two commands *if the first one worked*, and consent to a
+list of commands is consent to something nobody sent.
+
+That line is folded to the window rather than cut, and control characters in it
+become spaces, because the text is the model's to choose: a name with its tail
+missing is one you agree to without having read it, and a control character
+left in it moves the cursor inside a row nothing measured. Nothing runs while
+the panel is on screen.
+
+`↑` and `↓` move the mark, and stop at each end rather than wrapping. `enter`
+takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.
+`esc` refuses.
+
+Where there is no keyboard — a redirected run — or no room to stand a panel in,
+the same question is asked a row at a time and the answer is typed:
 
 ```
 ? bash wants to run: cargo test
   [y]es  [s]ession  [n]o ›
 ```
 
-A file change names the file it would touch — the resolved path, after
-symbolic links, spelled relative to the working directory when it is inside
-it. A command shows what is about to run, and one written as several commands
-shows all of them: `git add ., then git commit`. Either line is clipped to fit
-and control characters in it become spaces, because the text is the model's to
-choose: a newline left in it would commit a second row, and the question you
-answer would be one the model wrote rather than the one crucible asked.
-Nothing runs while the question is on screen.
+Both leave the same thing behind: the question, and under it what was decided.
 
 ## The three answers
 
-| You type | What happens |
-| --- | --- |
-| `y`, `Y`, `yes` | Runs, this once. The next call like it asks again. |
-| `s`, `S`, `session` | Runs, and stops asking for calls like this one until crucible exits. |
-| anything else | Does not run. |
+| The answer | Typed | What happens |
+| --- | --- | --- |
+| Yes, once | `y`, `Y`, `yes` | Runs, this once. The next call like it asks again. |
+| Yes, and don't ask again this session | `s`, `S`, `session` | Runs, and stops asking for calls like this one until crucible exits. |
+| No, and end the turn | anything else | Does not run. |
 
-**Anything else** means exactly that: `n`, `no`, an empty line, a typo, or the
-input ending. There are two ways to say yes and both are explicit;
-everything that is not one of them leaves the tool unrun.
+**Anything else** is the typed question's third answer, and it means exactly
+that: `n`, `no`, an empty line, a typo, or the input ending. There are two ways
+to say yes and both are explicit; everything that is not one of them leaves the
+tool unrun. At the panel there is no anything-else — every key that answers is
+one of the three, and `esc` is how to refuse without choosing one.
 
 `s` is the answer for a command you will run twenty times this afternoon and
 never think about again. Durable standing policy is edited as a rule with the

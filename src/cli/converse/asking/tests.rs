@@ -25,6 +25,11 @@ fn running(sent: &str, parts: &[&str]) -> Sensitivity {
     }
 }
 
+/// A character typed at a standing panel.
+fn typed(character: char) -> Pressed {
+    Pressed::Key(Key::Char(character))
+}
+
 #[test]
 fn a_command_is_shown_as_the_line_that_was_sent_under_the_tool_that_would_run_it() {
     // The subject names the tool the way a row does, because the panel arrives
@@ -120,4 +125,25 @@ fn the_way_out_of_a_question_is_the_way_out_of_everything_else_and_it_refuses() 
     // And a panel there was no room for read no key at all, so it is not a
     // verdict either way — the caller still owes the question.
     assert_eq!(answered(Ended::Cramped, 0), Answered::Cramped);
+}
+
+#[test]
+fn a_digit_moves_the_mark_before_it_takes_what_the_mark_stands_on() {
+    // The panel draws a number on each answer, so a key that is one of them is
+    // that answer. The mark moves there first: what the last frame showed
+    // marked is then what was taken, rather than wherever the arrows left it.
+    let mut at = 0;
+
+    assert_eq!(moving(typed('3'), &mut at), Moved::Took);
+    assert_eq!(at, 2);
+
+    // A digit past the last answer names nothing, and neither does the one
+    // before the first — and a key naming nothing may not take whatever the
+    // mark is standing on instead.
+    for missing in ['0', '4', 'y'] {
+        let mut at = 1;
+
+        assert_eq!(moving(typed(missing), &mut at), Moved::Still, "{missing:?}");
+        assert_eq!(at, 1);
+    }
 }

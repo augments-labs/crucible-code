@@ -191,6 +191,7 @@ fn moving(arrived: Pressed, at: &mut usize) -> Moved {
         Pressed::Up => step(at, at.checked_sub(1)),
         Pressed::Down => step(at, Some(*at + 1).filter(|next| *next < ANSWERS.len())),
 
+        Pressed::Key(Key::Char(typed)) => and_took(at, numbered(typed)),
         Pressed::Key(Key::Enter) => Moved::Took,
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
@@ -200,6 +201,33 @@ fn moving(arrived: Pressed, at: &mut usize) -> Moved {
         | Pressed::Explain
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Moved::Still,
+    }
+}
+
+/// The answer a typed character is the number of, if it is the number of one.
+///
+/// The numbers are drawn on the answers by the panel, which is what makes them
+/// keys: a picture that numbers three things and then ignores the numbers is
+/// one that promised something. They start at one because that is what is
+/// drawn, so `0` names nothing, and so does a digit past the last answer.
+fn numbered(typed: char) -> Option<usize> {
+    let at = usize::try_from(typed.to_digit(10)?).ok()?.checked_sub(1)?;
+
+    (at < ANSWERS.len()).then_some(at)
+}
+
+/// Moves the mark to `next` and takes what it now stands on.
+///
+/// In that order, so the frame the panel leaves behind has the mark on what was
+/// taken. A key naming nothing moves nothing and takes nothing — taking what
+/// the mark happened to be standing on would make a mistyped key an answer.
+fn and_took(at: &mut usize, next: Option<usize>) -> Moved {
+    match next {
+        Some(next) => {
+            *at = next;
+            Moved::Took
+        }
+        None => Moved::Still,
     }
 }
 

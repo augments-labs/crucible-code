@@ -118,11 +118,24 @@ crucible --continue                     # carry on this directory's last session
 Reading never asks. Anything that changes a file or starts a process does:
 
 ```
-? bash wants to run: cargo
-  [y]es  [s]ession  [n]o ›
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  Bash command                                                                │
+│                                                                              │
+│    cargo test                                                                │
+│                                                                              │
+│  This command needs your verdict.                                            │
+│                                                                              │
+│  Do you want to proceed?                                                     │
+│  › 1. Yes, once                                                              │
+│    2. Yes, and don't ask again this session                                  │
+│    3. No, and end the turn                                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  esc to cancel
 ```
 
-`session` remembers calls like it until this process exits. Durable rules are
+`↑` and `↓` move the mark, `enter` takes it, and `1`, `2` and `3` answer
+directly. The second answer remembers calls like this one until this process
+exits. Durable rules are
 written deliberately in the user configuration outside a checkout.
 
 Full documentation is in [`docs/`](docs/index.md).
