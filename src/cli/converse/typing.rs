@@ -203,9 +203,10 @@ pub(crate) fn ask<T: Terminal>(
                 shown = draw(renderer, editor, style, &says, &open)?;
             }
 
-            // Nothing is standing, so there is nothing to back out of — except
-            // the offer above, which is on screen and has just been taken back.
-            Pressed::Escape | Pressed::Ignored => {
+            // Nothing is standing, so there is nothing to back out of and
+            // nothing to explain — except the offer above, which is on screen
+            // and has just been taken back.
+            Pressed::Escape | Pressed::Explain | Pressed::Ignored => {
                 if offered.is_some() {
                     shown = draw(renderer, editor, style, &says, &open)?;
                 }
@@ -584,8 +585,11 @@ fn meant(arrived: Pressed) -> Meant {
         // than meaning something a running turn taught it to mean.
         Pressed::Key(key) => Meant::Editing(key),
 
+        // Ctrl+E among them: what it opens is an explanation of something
+        // waiting to be decided about, and a running turn has decided already.
         Pressed::Clicked { .. }
         | Pressed::Cycle
+        | Pressed::Explain
         | Pressed::Up
         | Pressed::Down
         | Pressed::Ignored => Meant::Ignored,

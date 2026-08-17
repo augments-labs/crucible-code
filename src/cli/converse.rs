@@ -678,10 +678,15 @@ fn heard(arrived: Pressed) -> Heard {
 
         // An arrow, a click, a mode step, a key that means nothing here. None
         // of them is an answer, and none of them may be read as one.
+        //
+        // Ctrl+E is here for now rather than because it belongs here: the
+        // question is committed to scrollback a row at a time, and there is no
+        // second shape of it to toggle into until the panel is what draws it.
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
         | Pressed::Cycle
+        | Pressed::Explain
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
