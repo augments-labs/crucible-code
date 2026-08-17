@@ -711,7 +711,7 @@ fn answers(glyphs: Glyphs) -> String {
 ///
 /// Flattened before it is measured, for the reason [`flattened`] gives: what is
 /// counted has to be what will be drawn.
-fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> String {
+pub(crate) fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> String {
     within(flattened(text), width, glyphs)
 }
 

@@ -13,6 +13,10 @@
 //! twice in the same beat, with nothing else changed, draws the same row twice,
 //! and one that missed a beat is behind by a face rather than out of step for
 //! good.
+//!
+//! A caller with a second row to write under this one aligns it with
+//! [`Working::gutter`] rather than with a two it counted off the screen. The
+//! mark is this file's, and so is how wide it is.
 
 use std::time::Duration;
 
@@ -64,6 +68,22 @@ impl Working<'_> {
         u64::try_from(running.as_millis() / BEAT.as_millis()).unwrap_or(u64::MAX)
     }
 
+    /// How far the words on this row stand from the left, in columns.
+    ///
+    /// The mark and the space after it, measured rather than counted — and
+    /// measured off one face rather than off the one being worn, because every
+    /// face is a column wide and a gutter that moved with the beat would be a
+    /// row sliding sideways four times a second.
+    ///
+    /// Published because a caller writing a second row under this one has to
+    /// start it in the same column the word starts in, and the alternative is a
+    /// two written down somewhere else — a copy of a fact this file owns, which
+    /// goes wrong on the day a glyph set spells the mark differently.
+    #[must_use]
+    pub fn gutter(glyphs: Glyphs) -> usize {
+        crate::width::columns(glyphs.turning(0)).saturating_add(1)
+    }
+
     /// The row, drawn for a terminal `columns` wide.
     ///
     /// Never wider than that: a row past the last column is one the terminal
@@ -72,14 +92,13 @@ impl Working<'_> {
     #[must_use]
     pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
         let mark = glyphs.turning(Self::beat(self.running));
-        let wide = crate::width::columns(mark);
 
-        if columns < wide {
+        if columns < crate::width::columns(mark) {
             return Row::new();
         }
 
         let mut row = Row::new().then(Slot::Accent, mark);
-        let doing = clip(self.doing, columns.saturating_sub(wide + 1));
+        let doing = clip(self.doing, columns.saturating_sub(Self::gutter(glyphs)));
 
         if !doing.is_empty() {
             row.push(Slot::Plain, format!(" {doing}"));
@@ -361,6 +380,26 @@ mod tests {
 
                 assert!(row.columns() <= wide, "{wide}: {:?}", row.text());
             }
+        }
+    }
+
+    #[test]
+    fn the_gutter_is_the_column_the_word_on_the_row_starts_in() {
+        // What a second row written under this one is aligned by. Asserted
+        // against the row itself rather than against a number, because the
+        // number is the thing that would go stale: a mark spelt differently in
+        // some later glyph set moves the word, and a gutter that did not move
+        // with it would indent the row under it to nowhere.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let said = after(21).row(80, glyphs).text();
+            let head = clip(&said, Working::gutter(glyphs));
+
+            assert!(head.ends_with(' '), "{glyphs:?}: {said}");
+            assert!(
+                said.strip_prefix(head)
+                    .is_some_and(|word| word.starts_with("thinking")),
+                "{glyphs:?}: {said}"
+            );
         }
     }
 

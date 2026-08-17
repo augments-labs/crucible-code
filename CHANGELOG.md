@@ -8,6 +8,13 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A prompt typed while a turn runs is named under the working row.**
+  `Next: <what you typed>` stands directly beneath it, so a line that left the
+  box on `Enter` is acknowledged then rather than minutes later when its own
+  turn starts. What it costs: one row, and only while something is waiting. On
+  a window too short for everything over the box it goes after the call line
+  and before the row saying a turn is running at all.
+
 - **A call can say what it is for, and the question shows it.** `bash`, `write`
   and `edit` take an optional `description`, and it appears as a caption under
   the command or the path on the panel where you decide. What it costs: one row,
