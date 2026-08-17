@@ -7,6 +7,7 @@
 //! so the turn continues and the model can do exactly that.
 
 use std::fs;
+use std::io::Read as _;
 
 use crucible_core::{
     Approved, PathError, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
@@ -14,6 +15,7 @@ use crucible_core::{
 
 use crate::args::Args;
 use crate::atomic;
+use crate::changed;
 use crate::ledger::Ledger;
 use crate::summary;
 use crate::target;
@@ -116,7 +118,7 @@ impl Tool for Write {
             )));
         }
 
-        let original = if replaced {
+        let mut original = if replaced {
             let file = match path.open_regular_to_change() {
                 Ok(file) => file,
                 Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
@@ -134,6 +136,16 @@ impl Tool for Write {
                 problem: format!("could not inspect {requested}").into(),
                 source,
             })?;
+
+        // What is about to go, read back so that whoever is watching can see
+        // what went. Nothing else will ever hold both versions: the model is
+        // sent a line count, and by the time anything downstream reads that,
+        // the old file is gone.
+        let before = if replaced {
+            original.as_mut().and_then(discarded)
+        } else {
+            Some(String::new())
+        };
 
         // Prepared beside the destination and flushed before the namespace
         // changes atomically. Unix also flushes the directory; Windows flushes
@@ -155,8 +167,42 @@ impl Tool for Write {
 
         let lines = content.lines().count();
         let what = if replaced { "replaced" } else { "created" };
-        Ok(ToolOutput::ok(format!("{what} {requested}, {lines} lines")))
+        let answer = ToolOutput::ok(format!("{what} {requested}, {lines} lines"));
+
+        // No block rather than a wrong one. A file that could not be read back
+        // is not one that was empty, and a diff drawn from an empty string would
+        // say every line here is new when the truth is that nobody can say.
+        Ok(match before {
+            Some(before) => answer.showing(changed::between(&before, content)),
+            None => answer,
+        })
     }
+}
+
+/// The most of a file being replaced that is read back to show what went.
+///
+/// The figure is the one `edit` holds a whole-file transformation to, because
+/// this is that transformation with the finding step left out: both versions
+/// have to be in memory at once for either to be worked out.
+const DISCARDED: usize = 1_000_000;
+
+/// What was at the name, where it is small enough to hold and is text.
+///
+/// `None` where it is neither, which is why the caller carries an `Option` all
+/// the way to the answer rather than an empty string. A block is an extra and
+/// not a promise — the call's job is putting the new file down, and it does that
+/// whether or not the old one could be read — but an extra that guesses is worse
+/// than one that is absent.
+fn discarded(file: &mut fs::File) -> Option<String> {
+    let mut bytes = Vec::new();
+    file.take(DISCARDED as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > DISCARDED {
+        return None;
+    }
+
+    String::from_utf8(bytes).ok()
 }
 
 impl Write {

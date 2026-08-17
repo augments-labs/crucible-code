@@ -31,11 +31,19 @@
 //! the next request whole. The private `bound` module holds the one figure they
 //! share and says why that figure is in bytes rather than in lines.
 //!
-//! `edit` answers with one thing more, which the model is never sent: the change
-//! it made, for the reader to look at. It is the only code that ever holds both
-//! versions of the file, and it holds them for the length of one call, so the
-//! private `changed` module reads the change off there rather than leaving
-//! anything downstream to work it out again from bytes it no longer has.
+//! `edit` and `write` answer with one thing more, which the model is never sent:
+//! the change each of them made, for the reader to look at. Between them they
+//! are the only code that ever holds both versions of a file, and each holds
+//! them for the length of one call, so the private `changed` module reads the
+//! change off there rather than leaving anything downstream to work it out again
+//! from bytes it no longer has.
+//!
+//! They come by the two versions differently, and it shows in what each can
+//! promise. `edit` is handed the old one because it has to find text in it, so a
+//! change it made is a change it can always show. `write` is handed only the new
+//! one and has to go and read what it is about to discard, under a bound of its
+//! own — so a file too large to hold, or one that is not text at all, is
+//! replaced with nothing shown rather than with a block that guessed.
 //!
 //! Two of these tools share one piece of knowledge and nothing else: which
 //! files have been read. `write` puts down a whole file, so it refuses to
