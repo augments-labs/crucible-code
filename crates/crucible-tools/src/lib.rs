@@ -31,6 +31,12 @@
 //! the next request whole. The private `bound` module holds the one figure they
 //! share and says why that figure is in bytes rather than in lines.
 //!
+//! `edit` answers with one thing more, which the model is never sent: the change
+//! it made, for the reader to look at. It is the only code that ever holds both
+//! versions of the file, and it holds them for the length of one call, so the
+//! private `changed` module reads the change off there rather than leaving
+//! anything downstream to work it out again from bytes it no longer has.
+//!
 //! Two of these tools share one piece of knowledge and nothing else: which
 //! files have been read. `write` puts down a whole file, so it refuses to
 //! replace one nobody looked at, and neither tool can answer that alone. The
@@ -46,6 +52,7 @@ mod args;
 mod atomic;
 mod bash;
 mod bound;
+mod changed;
 mod edit;
 mod glob;
 mod grep;
