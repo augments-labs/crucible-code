@@ -46,6 +46,7 @@ use super::subscription::Subscriptions;
 use super::unasked;
 use super::{Fatal, Serving, standing};
 use command::Ran;
+use expanding::Standing;
 use turning::Turning;
 use typing::Asked;
 
@@ -174,6 +175,11 @@ pub(crate) fn converse<T: Terminal>(
     // anything.
     let mut kept = Kept::default();
 
+    // Whether that view is standing. Held beside what it stands over rather
+    // than by either loop that draws it: a view opened while a turn ran is
+    // still open when the turn ends, and the reader who opened it is reading.
+    let mut opened = Standing::default();
+
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -184,6 +190,17 @@ pub(crate) fn converse<T: Terminal>(
         // reports one; between turns there is nobody reading, so it is noticed
         // here instead.
         renderer.resized()?;
+
+        // A view opened during the last turn is still open, and it was standing
+        // in the rows the box is about to take. So it moves into the region
+        // here and reads keys of its own until it is closed, and what comes
+        // after it is the box with the line still in it. Nothing was written
+        // into the transcript on either side of it.
+        //
+        // The one door for both halves of the key: what Ctrl+O opens at the
+        // prompt is stood here too, so the view a reader closes is the same
+        // view whichever press put it up.
+        expanding::stand(renderer, style, &kept, &mut opened)?;
 
         // A line queued during the last turn is the prompt, and nothing is
         // asked. It is committed here rather than where it was typed: at that
@@ -201,6 +218,7 @@ pub(crate) fn converse<T: Terminal>(
                     editor: &mut editor,
                     queued: &mut queued,
                     kept: &mut kept,
+                    opened: &mut opened,
                     answers: Answers { input, keys },
                 },
             )?;
@@ -224,11 +242,10 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Said(said) => said,
             Asked::Ended => break,
 
-            // The view takes the region the box was standing in and gives it
-            // back on the way out, so what comes next is the box again with the
-            // line still in it. Nothing was written down on either side of it.
+            // Opened here and stood at the top of the loop, where the one
+            // opened under a turn is stood as well.
             Asked::Expand => {
-                expanding::stand(renderer, style, &kept)?;
+                opened.open(&kept);
                 continue;
             }
 
@@ -309,6 +326,7 @@ pub(crate) fn converse<T: Terminal>(
                 editor: &mut editor,
                 queued: &mut queued,
                 kept: &mut kept,
+                opened: &mut opened,
                 answers: Answers { input, keys },
             },
         )?;
@@ -506,6 +524,8 @@ fn take<T: Terminal>(
                     editor: taking.editor,
                     queued: taking.queued,
                     turning: &mut turning,
+                    kept: taking.kept,
+                    opened: taking.opened,
                     says: &says,
                     style: terms.style,
                     cancel: &terms.cancel,
@@ -522,9 +542,10 @@ fn take<T: Terminal>(
         }
     }
 
-    // The turn is over, so what stood under it is taken back. What comes back
-    // next is the same box, live this time, and the two on screen together
-    // would be one box drawn twice.
+    // The turn is over, so what stood under it is taken back — the box, or the
+    // view if Ctrl+O was pressed while the turn ran. What comes back next is
+    // the same one of them, live this time, and the two on screen together
+    // would be one of them drawn twice.
     if held.is_ok() {
         held = renderer
             .under(&[], None, terms.style.palette())
@@ -621,6 +642,10 @@ struct Taking<'a> {
     /// What this turn's results had no room to say, for the reader who asks
     /// afterwards. It outlives the turn the same way the line being typed does.
     kept: &'a mut Kept,
+    /// Whether the reader is standing that under the turn, and where over it.
+    /// It outlives the turn too: what was opened under one is still open after
+    /// it, in the region the box comes back to.
+    opened: &'a mut Standing,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
 }

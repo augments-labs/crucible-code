@@ -26,9 +26,13 @@ Notable changes to crucible. Format follows
   that had no room for what a tool said now names the key beside the count —
   `(+128 lines · ctrl+o to expand)` — and the key stands every result cut that
   way where the prompt box was, newest first, under the line of the call each
-  answers. What it costs: half a mebibyte held at most, oldest dropped first, so
-  a long session costs what a short one does. `esc` or the same key again closes
-  it and leaves nothing behind.
+  answers — whether or not a turn is running, and a view opened under one is
+  still open when the turn ends. What it costs: half a mebibyte held at most,
+  oldest dropped first, so a long session costs what a short one does; and a
+  view standing under a turn holds what had been cut when it opened, so results
+  arriving underneath wait for the next press rather than sliding the rows being
+  read down the screen. `esc` or the same key again closes it and leaves nothing
+  behind.
 
 - **A change to a file is shown rather than counted.** `edit` and `write` draw
   what they did under the call: the lines that went, the lines that came, and a

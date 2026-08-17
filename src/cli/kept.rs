@@ -82,6 +82,14 @@ pub(crate) struct Kept {
     /// knows the call by the line that was committed for it. The two meet here,
     /// one event apart, the same way they do on screen.
     calling: Option<String>,
+    /// How many results have been cut this session, counting the ones since
+    /// dropped.
+    ///
+    /// Not `whole.len()`, and the difference is the point. A view standing over
+    /// what was cut has to know what has arrived *since* it opened, and the
+    /// queue's length answers that only until the ceiling starts dropping from
+    /// the other end. This only ever goes up.
+    cut: usize,
 }
 
 impl Kept {
@@ -98,6 +106,7 @@ impl Kept {
     pub(crate) fn finished(&mut self, text: Box<str>) {
         let called = self.calling.take().unwrap_or_default();
 
+        self.cut = self.cut.saturating_add(1);
         self.held = self.held.saturating_add(text.len());
         self.whole.push_back(Whole { called, text });
 
@@ -119,6 +128,16 @@ impl Kept {
     /// past.
     pub(crate) fn newest(&self) -> impl Iterator<Item = &Whole> {
         self.whole.iter().rev()
+    }
+
+    /// How many results have been cut this session.
+    ///
+    /// Read by a view that is standing over them while a turn is still running:
+    /// the difference between this and what it read when it opened is how many
+    /// arrived underneath it, and those are the ones it steps over so that the
+    /// rows being read stay where the reader left them.
+    pub(crate) fn cut(&self) -> usize {
+        self.cut
     }
 
     /// Whether nothing has been cut.
