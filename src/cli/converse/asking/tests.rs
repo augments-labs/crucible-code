@@ -4,7 +4,7 @@ use crucible_core::{Account, Command, Sensitivity, Target, ToolArgs, ToolCall, T
 use crucible_tui::{Key, Pressed};
 
 use super::region::{Ended, Moved};
-use super::{ANSWERS, Answered, Words, answered, moving};
+use super::{ANSWERS, Answered, CANCEL, EXPLAIN, HIDE, Standing, Words, answered, footer, moving};
 
 /// A call by the name a tool answers to on the wire.
 fn call(name: &str) -> ToolCall {
@@ -28,6 +28,20 @@ fn running(sent: &str, parts: &[&str]) -> Sensitivity {
 /// A character typed at a standing panel.
 fn typed(character: char) -> Pressed {
     Pressed::Key(Key::Char(character))
+}
+
+/// A panel about a call that explained itself, with the prose open on a window
+/// that `end` rows of it are below.
+///
+/// The end is the layout's answer and is written by the frame that worked it
+/// out, so a test that wants to press a key at a cut explanation says so here
+/// rather than drawing one.
+fn reading(end: usize) -> Standing {
+    Standing {
+        open: true,
+        end,
+        ..Standing::new(true)
+    }
 }
 
 #[test]
@@ -133,22 +147,132 @@ fn the_models_caption_cannot_break_a_row_nobody_counted_either() {
 }
 
 #[test]
+fn the_paragraphs_are_the_models_own_words_and_the_panel_says_whose_they_are() {
+    // Every other row on this panel is crucible's, written out of what a tool
+    // read from the arguments. These are not, and the one row that says so is
+    // what keeps a page of the model's prose from reading as the program's
+    // account of what it is about to do.
+    let words = Words::of(
+        &call("bash"),
+        &running("cargo test", &["cargo test"]),
+        &Account::explained(
+            "run the suite",
+            ["Runs every test in the workspace.", "Nothing is written."],
+        ),
+    );
+
+    assert_eq!(words.attribution, "bash's own account of this call:");
+    assert_eq!(
+        words.explanation,
+        ["Runs every test in the workspace.", "Nothing is written."]
+    );
+}
+
+#[test]
+fn the_models_paragraphs_cannot_break_a_row_nobody_counted_either() {
+    // The same reason the payload and the caption are flattened, over more text
+    // than either: a control character here moves the cursor inside a row that
+    // was measured without it, and the panel then rewinds over the wrong rows.
+    let words = Words::of(
+        &call("bash"),
+        &running("ls", &["ls"]),
+        &Account::explained("list the files", ["It\r\nreads", "and\twrites nothing"]),
+    );
+
+    assert_eq!(words.explanation, ["It  reads", "and writes nothing"]);
+}
+
+#[test]
 fn the_arrows_stop_at_each_end_rather_than_wrapping() {
     // A ring puts the first answer one key past the last, which makes the key
     // that went too far the key that goes further. Here the key that went too
     // far does nothing, and the one coming back is the one that moves.
-    let mut at = 0;
+    let mut standing = Standing::new(false);
 
-    assert_eq!(moving(Pressed::Up, &mut at), Moved::Still);
-    assert_eq!(at, 0);
+    assert_eq!(moving(Pressed::Up, &mut standing), Moved::Still);
+    assert_eq!(standing.marked, 0);
 
     for expected in 1..ANSWERS.len() {
-        assert_eq!(moving(Pressed::Down, &mut at), Moved::Redraw);
-        assert_eq!(at, expected);
+        assert_eq!(moving(Pressed::Down, &mut standing), Moved::Redraw);
+        assert_eq!(standing.marked, expected);
     }
 
-    assert_eq!(moving(Pressed::Down, &mut at), Moved::Still);
-    assert_eq!(at, ANSWERS.len() - 1);
+    assert_eq!(moving(Pressed::Down, &mut standing), Moved::Still);
+    assert_eq!(standing.marked, ANSWERS.len() - 1);
+}
+
+#[test]
+fn the_key_that_opens_the_paragraphs_is_the_key_that_closes_them() {
+    // One key doing both is what makes it worth naming in the footer: a reader
+    // who opened a page of prose over the answers needs the way back, and the
+    // way back is the key they already pressed.
+    let mut standing = Standing::new(true);
+
+    assert_eq!(moving(Pressed::Explain, &mut standing), Moved::Redraw);
+    assert!(standing.open);
+
+    assert_eq!(moving(Pressed::Explain, &mut standing), Moved::Redraw);
+    assert!(!standing.open);
+}
+
+#[test]
+fn a_call_that_explained_nothing_is_a_panel_that_key_does_nothing_at() {
+    // A key named where it does nothing is worse than a key nobody was offered,
+    // so the footer does not name it — and the key itself is a frame nobody is
+    // owed rather than an empty window over an explanation that never arrived.
+    let mut standing = Standing::new(false);
+
+    assert_eq!(moving(Pressed::Explain, &mut standing), Moved::Still);
+    assert!(!standing.open);
+    assert_eq!(footer(&standing), CANCEL);
+}
+
+#[test]
+fn the_footer_names_the_key_by_what_it_would_do_next() {
+    // Three rows for three states, because the one thing this row is for is
+    // telling somebody what pressing it now does. *Explain* on prose already
+    // open would send them looking for a second page.
+    let mut standing = Standing::new(true);
+    assert_eq!(footer(&standing), EXPLAIN);
+
+    standing.open = true;
+    assert_eq!(footer(&standing), HIDE);
+}
+
+#[test]
+fn the_arrows_read_the_prose_while_it_is_open_and_was_cut() {
+    // The one pair of keys does whichever job the picture is asking about.
+    // Prose that ran past the window is asking to be read, so the arrows move
+    // the window and the mark stays where it was — the answers are still there
+    // under a number, which is the key somebody reading is not pressing.
+    let mut standing = reading(2);
+
+    assert_eq!(moving(Pressed::Up, &mut standing), Moved::Still);
+    assert_eq!(standing.from, 0);
+
+    for expected in 1..=2 {
+        assert_eq!(moving(Pressed::Down, &mut standing), Moved::Redraw);
+        assert_eq!(standing.from, expected);
+    }
+
+    // And it stops where the layout said the prose stops. Past that every press
+    // of the key that went too far is a frame drawing the picture that is
+    // already on screen.
+    assert_eq!(moving(Pressed::Down, &mut standing), Moved::Still);
+    assert_eq!(standing.from, 2);
+    assert_eq!(standing.marked, 0);
+}
+
+#[test]
+fn the_arrows_go_back_to_the_answers_where_the_prose_fitted() {
+    // Open is not the question — cut is. Prose with nothing below the window has
+    // nowhere to scroll to, and arrows that did nothing there would be two keys
+    // taken away from the thing this panel exists to ask.
+    let mut standing = reading(0);
+
+    assert_eq!(moving(Pressed::Down, &mut standing), Moved::Redraw);
+    assert_eq!(standing.marked, 1);
+    assert_eq!(standing.from, 0);
 }
 
 #[test]
@@ -160,8 +284,8 @@ fn the_way_out_of_a_question_is_the_way_out_of_everything_else_and_it_refuses() 
         Pressed::Key(Key::Interrupt),
         Pressed::Key(Key::Eof),
     ] {
-        let mut at = 0;
-        assert_eq!(moving(arrived, &mut at), Moved::Left, "{arrived:?}");
+        let mut standing = Standing::new(false);
+        assert_eq!(moving(arrived, &mut standing), Moved::Left, "{arrived:?}");
     }
 
     // Including when the mark was standing on an allow at the time. What was
@@ -181,18 +305,25 @@ fn a_digit_moves_the_mark_before_it_takes_what_the_mark_stands_on() {
     // The panel draws a number on each answer, so a key that is one of them is
     // that answer. The mark moves there first: what the last frame showed
     // marked is then what was taken, rather than wherever the arrows left it.
-    let mut at = 0;
+    let mut standing = Standing::new(false);
 
-    assert_eq!(moving(typed('3'), &mut at), Moved::Took);
-    assert_eq!(at, 2);
+    assert_eq!(moving(typed('3'), &mut standing), Moved::Took);
+    assert_eq!(standing.marked, 2);
 
     // A digit past the last answer names nothing, and neither does the one
     // before the first — and a key naming nothing may not take whatever the
     // mark is standing on instead.
     for missing in ['0', '4', 'y'] {
-        let mut at = 1;
+        let mut standing = Standing {
+            marked: 1,
+            ..Standing::new(false)
+        };
 
-        assert_eq!(moving(typed(missing), &mut at), Moved::Still, "{missing:?}");
-        assert_eq!(at, 1);
+        assert_eq!(
+            moving(typed(missing), &mut standing),
+            Moved::Still,
+            "{missing:?}"
+        );
+        assert_eq!(standing.marked, 1);
     }
 }

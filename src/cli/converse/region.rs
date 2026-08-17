@@ -2,10 +2,17 @@
 //!
 //! Draw, read a key, draw again if the key moved something, and hand the region
 //! back when it is over. That much is the same for a list, a ladder and a
-//! question, and what differs between them is two things: how the rows are laid
-//! out at the current size, and which keys move the mark. Both arrive as
-//! arguments, so a new component brings its own picture and its own keys and
-//! not its own loop.
+//! question, and what differs between them is three things: what the component
+//! keeps between frames, how the rows are laid out at the current size, and
+//! which keys move any of it. All three arrive as arguments, so a new component
+//! brings its own state and its own picture and its own keys and not its own
+//! loop.
+//!
+//! What is kept is the component's own type rather than an index, because a mark
+//! is not all a component has to remember. A panel whose prose can be scrolled
+//! holds where the window over it opens as well as which answer is marked, and
+//! the two move on different keys. Both are laid out at once and neither is
+//! this module's business.
 //!
 //! The loop itself cannot be driven from a test — the keyboard it reads is the
 //! process's own. That is the reason the two arguments are separate from it:
@@ -24,7 +31,7 @@ use crate::cli::style::Style;
 /// How a component that was standing stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ended {
-    /// Whatever the mark stood on was taken. Where it stood is the `at` the
+    /// Whatever the mark stood on was taken. Where it stood is in the state the
     /// caller handed in.
     Took,
     /// It was left with nothing taken.
@@ -49,27 +56,34 @@ pub(super) enum Moved {
 
 /// Stands something where the prompt box was and reads keys until it ends.
 ///
-/// `laid` is given the mark and the size of the window and answers with the
-/// rows to draw; `keys` is given a key and the mark and answers with what that
-/// key did. The mark is the caller's, so where it finished is readable there
+/// `laid` is given the state and the size of the window and answers with the
+/// rows to draw; `keys` is given a key and the state and answers with what that
+/// key did. The state is the caller's, so where it finished is readable there
 /// once this returns — which is what a component whose answer is an index
 /// needs, and what one with three fixed answers ignores.
+///
+/// `laid` takes it by mutable reference rather than by value, because laying the
+/// rows out is where a component finds out things a key cannot know. How far
+/// down a panel's prose the window may open is one: it depends on how many rows
+/// the paragraphs folded to at this width, which is the layout's answer and not
+/// the keyboard's. So the frame that discovers it is the frame that writes it
+/// down, and the next key acts on a state the picture has already agreed with.
 ///
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
-pub(super) fn stand<T: Terminal>(
+pub(super) fn stand<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: Style,
-    at: &mut usize,
-    mut laid: impl FnMut(usize, usize, usize) -> Vec<Row>,
-    keys: impl Fn(Pressed, &mut usize) -> Moved,
+    state: &mut S,
+    mut laid: impl FnMut(&mut S, usize, usize) -> Vec<Row>,
+    keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
     let mut changed = true;
 
     loop {
         if changed {
-            let rows = laid(*at, renderer.columns(), renderer.rows());
+            let rows = laid(state, renderer.columns(), renderer.rows());
             if !drawn(renderer, style, &rows)? {
                 return Ok(Ended::Cramped);
             }
@@ -86,7 +100,7 @@ pub(super) fn stand<T: Terminal>(
             renderer.resized()?;
         }
 
-        match keys(arrived, at) {
+        match keys(arrived, state) {
             Moved::Redraw => changed = true,
             Moved::Still => changed = false,
             Moved::Took => return over(renderer, Ended::Took),

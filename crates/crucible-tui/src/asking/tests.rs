@@ -16,6 +16,7 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
         subject: "Bash command",
         payload,
         description: "",
+        attribution: "",
         explanation: &[],
         from: 0,
         more: "↑↓ to see more",
@@ -308,6 +309,35 @@ fn each_paragraph_of_an_explanation_opens_with_a_blank_and_indents_alike() {
             "{paragraph:?} is not in {said:?}"
         );
     }
+}
+
+#[test]
+fn the_prose_opens_with_the_row_saying_whose_words_the_rest_of_it_is() {
+    // The paragraphs are the model's and the panel around them is not, and a
+    // reader deciding whether to allow a command is exactly the reader who has
+    // to know which is which. So the block opens with a row of the panel's own,
+    // drawn quiet like the row that counts what is below it, and it scrolls
+    // with the prose because it is the first thing the prose says.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+    question.attribution = "bash's own account of this call:";
+
+    let said = inside(&question.within(WIDE, 40, Glyphs::Unicode));
+    let at = said
+        .iter()
+        .position(|row| row == "    bash's own account of this call:")
+        .unwrap_or_else(|| panic!("{said:?}"));
+
+    // Above it the blank that parts it from the command, below it the blank
+    // that opens the first paragraph — so the row reads as a heading over the
+    // block rather than as one more sentence in it.
+    assert_eq!(said.get(at - 1).map(String::as_str), Some(""));
+    assert_eq!(said.get(at + 1).map(String::as_str), Some(""));
+    assert!(
+        said.get(at + 2)
+            .is_some_and(|row| row.starts_with("    Runs the workspace's")),
+        "{said:?}"
+    );
 }
 
 #[test]

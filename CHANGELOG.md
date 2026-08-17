@@ -14,6 +14,13 @@ Notable changes to crucible. Format follows
   gave one. It is the model's own sentence, so it sits under what would actually
   run rather than beside it — the tool never reads it, and no rule weighs it.
 
+- **A call can make its case at length, and `ctrl+e` opens it.** `bash` takes an
+  optional `explanation`, a list of paragraphs, and the permission panel shows
+  them under one row saying they are the model's words rather than crucible's.
+  What it costs: nothing until you press the key, and the paragraphs are the
+  first thing given up where the window is short. `↑` and `↓` read them where
+  they run past the room there is, and `ctrl+e` again puts them away.
+
 - **A change to a file is shown rather than counted.** `edit` and `write` draw
   what they did under the call: the lines that went, the lines that came, and a
   few either side, each at the number the file gives it. What it costs: up to 64

@@ -28,6 +28,16 @@
 //! A blank is what separates one block here from the next, so withholding one
 //! is the whole of what joins that row to the command it describes.
 //!
+//! **The prose says whose words it is before it says anything else.** The
+//! paragraphs are the model's and everything drawn around them is not, and the
+//! person deciding whether to allow a command is exactly the one who has to
+//! know which is which. So the block opens with a row of the panel's own,
+//! drawn quiet like the row that counts what is below it. That row scrolls with
+//! the prose rather than being pinned above it: a row held out of the window is
+//! one the arithmetic on either side of the window would each have to subtract,
+//! and those two disagreeing by one is an arrow that stops a row from where the
+//! picture stops.
+//!
 //! **The prose is the first thing to give way, and it says so.** A description
 //! and an explanation are written by whatever asked for the permission, so they
 //! are drawn quiet, they sit below the thing they are about, and they are what
@@ -111,6 +121,12 @@ pub struct Question<'a> {
     pub payload: &'a [&'a str],
     /// One row under the payload saying what the call is for, or empty.
     pub description: &'a str,
+    /// The row that opens the prose, naming whose words the rest of it is.
+    ///
+    /// Drawn quiet like the row that counts what is below, because both are the
+    /// panel talking about the paragraphs rather than a paragraph. Empty draws
+    /// nothing, and the prose then opens on the first paragraph.
+    pub attribution: &'a str,
     /// The paragraphs a reader asked to see, or empty until they ask.
     pub explanation: &'a [&'a str],
     /// Which row of the explanation the window over it opens at.
@@ -337,9 +353,21 @@ impl Question<'_> {
     ///
     /// A paragraph opens with a blank rather than being separated from the next
     /// one by it, so the first paragraph is parted from the command above it the
-    /// same way the second is parted from the first.
+    /// same way the second is parted from the first. The attribution opens the
+    /// same way and for the same reason, and it is counted here rather than
+    /// pinned above the window because a row held out of the window is a row
+    /// [`Self::spare`] and [`Self::end`] would each have to subtract — and the
+    /// two of them disagreeing by one is the arrow that stops a row from where
+    /// the picture stops.
     fn prose(&self, inner: usize, payload: usize, glyphs: Glyphs) -> Vec<Row> {
         let mut rows = Vec::new();
+
+        if !self.attribution.is_empty() {
+            rows.push(framed(Row::new(), inner, glyphs));
+            for line in fold(self.attribution, payload) {
+                rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
+            }
+        }
 
         for paragraph in self.explanation {
             rows.push(framed(Row::new(), inner, glyphs));
