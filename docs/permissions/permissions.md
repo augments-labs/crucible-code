@@ -70,7 +70,11 @@ the same question is asked a row at a time and the answer is typed:
   [y]es  [s]ession  [n]o ›
 ```
 
-Both leave the same thing behind: the question, and under it what was decided.
+What each leaves in the transcript is what was on screen. The typed question
+was written there, so it stays there. The panel stood in the live region and
+the region was given back, so what stays is the verdict alone, under the call
+that already names the command — a second copy of it there would be the same
+consent read twice.
 
 ## The three answers
 

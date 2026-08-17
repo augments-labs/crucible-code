@@ -247,29 +247,22 @@ pub(crate) fn question<T: Terminal>(
     mark(renderer, &answers(style.glyphs()), style)
 }
 
-/// Writes down a question a panel asked and the answer it was given.
+/// Writes down the answer a panel was given.
 ///
-/// The panel itself is not written down — it stood in the live region and the
-/// region was taken back. What is left behind is the question in the rows
-/// [`question`] would have used, and under it the answer in the words it was
-/// offered in.
+/// The panel is not written down: it stood in the live region and the region
+/// was taken back. Neither is the question, and that is the part worth saying —
+/// the call is already on the row above, spelled the way the transcript spells
+/// one, so a copy of the command underneath it is the same thing read twice and
+/// the longer the command the worse that reads.
+///
+/// What is left is what was decided, in the words it was offered in, at the
+/// indent the row hanging under a call uses. That is what makes it the answer
+/// to that call rather than a line of its own.
 pub(crate) fn decided<T: Terminal>(
     renderer: &mut Renderer<T>,
-    call: &ToolCall,
-    sensitivity: &Sensitivity,
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
-
-    renderer.settle()?;
-    for row in asked(call, sensitivity, columns) {
-        renderer.commit(&row)?;
-    }
-
-    // Under the question rather than beside it, at the indent its own wrapped
-    // rows use — so an answer to a question three rows tall is still plainly
-    // the answer to it.
     mark(renderer, &format!("{UNDER}{said}"), style)?;
     answered(renderer, "")
 }
