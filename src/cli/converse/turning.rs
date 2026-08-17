@@ -12,11 +12,19 @@
 //! box names it too — and that is deliberate. It is the third segment of this
 //! row and the first thing a narrow window drops, and the key that stops a turn
 //! is the wrong thing for a narrow window to take away.
+//!
+//! The call whose tool is out is held here too, for the same reason the word
+//! is: the events go past this and nowhere else. It is held rather than written
+//! so that the line and the result hanging under it reach scrollback together —
+//! [`Turning::saw`] hands it back the moment the tool answers, and whoever
+//! drives this writes it.
 
 use std::time::{Duration, Instant};
 
 use crucible_core::Event;
 use crucible_tui::{Glyphs, Row, Working};
+
+use super::super::draw;
 
 /// How the turn is asked to stop, said after the clock.
 const STOPS: &str = "esc to interrupt";
@@ -61,6 +69,9 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
+    /// The words of the line of the call whose tool is out, or `None` where
+    /// none is. Without the mark, which is the writer's to draw.
+    calling: Option<String>,
     /// What the row was last drawn from, so a redraw that would draw the same
     /// row again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
@@ -82,16 +93,18 @@ impl Turning {
             since: Instant::now(),
             doing: Doing::Thinking,
             spent: None,
+            calling: None,
             drawn: None,
         }
     }
 
-    /// Takes the word from one event on its way to the screen.
+    /// Takes the word from one event on its way to the screen, and hands back
+    /// the call line that has stopped being live, where one has.
     ///
     /// Every variant is named rather than caught by a rest arm: an event added
     /// later either changes what the turn is doing or does not, and that is a
     /// decision to make here rather than one to inherit.
-    pub(super) fn saw(&mut self, event: &Event) {
+    pub(super) fn saw(&mut self, event: &Event) -> Option<String> {
         // Before the guard below, because what a turn spent is true whether it
         // is stopping or not — and a turn asked to stop goes on spending until
         // the response in flight has finished arriving. That is the stretch
@@ -100,11 +113,27 @@ impl Turning {
             self.spent = Some(spend.tokens());
         }
 
+        // Before it as well, and for a sharper reason. A turn asked to stop
+        // still has its tool out, and that tool still answers; a turn that ends
+        // or fails with one out never gets an answer at all. Either way the
+        // line has to come back, or a call that was made leaves no record —
+        // which is the one thing a transcript may not do.
+        let returned = match event {
+            Event::ToolRequested { call, summary } => {
+                self.calling = Some(draw::called(call, summary));
+                None
+            }
+            Event::ToolFinished { .. } | Event::TurnFinished { .. } | Event::Failed { .. } => {
+                self.calling.take()
+            }
+            Event::TurnStarted { .. } | Event::Delta { .. } | Event::Spent { .. } => None,
+        };
+
         // A turn that has been asked to stop is stopping whatever else it is
         // still reporting. The deltas already in flight arrive after the key,
         // and a row that went back to `writing` would be saying the key missed.
         if self.doing == Doing::Interrupting {
-            return;
+            return returned;
         }
 
         self.doing = match event {
@@ -116,6 +145,8 @@ impl Turning {
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };
+
+        returned
     }
 
     /// Says the turn has been asked to stop.
@@ -168,7 +199,9 @@ impl Turning {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Spend, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
+    use crucible_core::{
+        Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnError, TurnId,
+    };
 
     use super::*;
 
@@ -301,5 +334,77 @@ mod tests {
         }
 
         assert_eq!(turning.rows(80, Glyphs::Unicode, ROWS + 1).len(), ROWS);
+    }
+
+    #[test]
+    fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
+        // Held from the moment the model asks until then, so that the line and
+        // the result hanging under it are written one after the other.
+        let mut turning = Turning::started();
+
+        assert_eq!(turning.saw(&requested()), None);
+        assert_eq!(turning.saw(&Event::Delta { text: "hi".into() }), None);
+        assert_eq!(
+            turning.saw(&Event::ToolFinished {
+                call: ToolId::new("a"),
+                output: ToolOutput::ok("done"),
+            }),
+            Some("Read(src/main.rs)".to_owned())
+        );
+
+        // And once only. A second reading would commit the same line twice.
+        assert_eq!(
+            turning.saw(&Event::ToolFinished {
+                call: ToolId::new("a"),
+                output: ToolOutput::ok("done"),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn a_turn_that_ends_with_a_tool_still_out_hands_its_call_back_anyway() {
+        // Otherwise a call that was made leaves no record of having been made:
+        // its line was still being held, and the turn holding it is over. That
+        // is the one thing a transcript may not do -- and it is reached by
+        // every turn that fails or is stopped mid-call, which is exactly when
+        // somebody goes looking for what ran.
+        for ending in [
+            Event::TurnFinished {
+                turn: TurnId::FIRST,
+                stop: StopReason::Cancelled,
+            },
+            Event::Failed {
+                error: TurnError::Refused("read".into()),
+            },
+        ] {
+            let mut turning = Turning::started();
+            turning.saw(&requested());
+
+            assert_eq!(
+                turning.saw(&ending),
+                Some("Read(src/main.rs)".to_owned()),
+                "{ending:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
+        // The word freezes at `interrupting` when the key is pressed. The line
+        // of the call still out is not a word, and holding on to it too would
+        // lose the record of the call at the one moment there is most to
+        // explain.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.interrupting();
+
+        assert_eq!(
+            turning.saw(&Event::ToolFinished {
+                call: ToolId::new("a"),
+                output: ToolOutput::ok("done"),
+            }),
+            Some("Read(src/main.rs)".to_owned())
+        );
     }
 }

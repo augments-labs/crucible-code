@@ -215,7 +215,7 @@ count next and the clock after that, since all three are recoverable — the key
 is named under the box, and the other two will be back next second; the word is
 the last thing left.
 
-Tool calls appear as they run:
+Tool calls appear as they answer:
 
 ```
 › what does the runner do when a tool fails?
@@ -237,6 +237,11 @@ path for `read`, `write` and `edit`, the pattern for `grep` and `glob`, the
 command line for `bash`. Each tool answers that for itself, because each knows
 which of its arguments a person would recognise the call by. A call whose
 arguments could not be read is just the name, and the tool says why next.
+
+That line is written when the tool answers rather than when the model asks for
+it, so it and the result under it reach your scrollback one after the other and
+nothing the turn did in between comes to stand between the two. While the tool
+is out, the row above the box is what says a call is running.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
