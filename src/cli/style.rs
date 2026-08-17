@@ -164,6 +164,16 @@ impl Style {
             ..Self::plain()
         }
     }
+
+    /// And what it uses when the colour is. [`Style::plain`] settles on a
+    /// terminal that announced nothing, which is a palette writing no bytes at
+    /// all — the right instrument for a test reading what a row says, and no
+    /// instrument at all for one reading what a row is painted as.
+    pub(crate) fn coloured() -> Self {
+        Self::resolve(Output::default(), true, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        })
+    }
 }
 
 #[cfg(test)]

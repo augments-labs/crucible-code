@@ -8,6 +8,14 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **A tool call keeps its colour once it has been written out.** The mark and
+  the tool's name are in crucible's own colour, the arguments in brackets beside
+  them are toned down, and the line hanging under the call is toned down whole —
+  above the box while the tool is out, and in the transcript after. A failure's
+  `✗` is the one thing on that row left in your terminal's own foreground. What
+  it costs: nothing on a terminal without colour, where the same rows are the
+  same characters they were.
+
 - **The transcript is a column of blocks with a blank row between them.** What
   was asked, what was answered, each call and the line hanging under it: one
   block each, parted by a row of nothing, and the prompt box stands off the last
