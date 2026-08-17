@@ -46,6 +46,14 @@
 //! pressed. The row it gives back goes to the prose, so the panel is the same
 //! height throughout and the last press uncovers exactly what it promised.
 //!
+//! **Clamping happens twice, and the second one is the caller's.** The offset
+//! into the prose arrives on the panel, because this crate reads no keys — so
+//! whatever does read them holds a copy of it across frames. The panel clamps
+//! what it is given, which is what stops a key held down scrolling the prose off
+//! the top; [`Question::end`] is what stops the caller's copy running on past
+//! the end, where every press of the key that went too far is a press coming
+//! back that moves nothing.
+//!
 //! **A key is named only where it does something.** What the cut leaves off
 //! screen is reachable — the window over the prose moves by a row at a time —
 //! and the footer says so only where the prose did not fit. Where it did not,
@@ -108,7 +116,9 @@ pub struct Question<'a> {
     /// Which row of the explanation the window over it opens at.
     ///
     /// Clamped here rather than by the caller, so a key held down runs to the
-    /// end of the prose and stops instead of scrolling it off the top.
+    /// end of the prose and stops instead of scrolling it off the top. A caller
+    /// keeping its own copy of this across frames clamps that with
+    /// [`Self::end`], which is where the clamp here lands.
     pub from: usize,
     /// The extra footer item, drawn only where the prose did not fit — at the
     /// end of it as much as at the start, because up is still a direction there.
@@ -137,12 +147,9 @@ impl Question<'_> {
         // The prose gives way before the spacing does, and before anything the
         // ladder touches. It is the one thing here a reader can have back for
         // the price of the key they pressed to see it.
-        if !self.explanation.is_empty() {
-            let bare = self.laid(columns, glyphs, Spacing::WHOLE, 0);
-            let spare = room.saturating_sub(bare.len());
-            if !bare.is_empty() && spare >= AT_LEAST {
-                return self.laid(columns, glyphs, Spacing::WHOLE, spare);
-            }
+        let spare = self.spare(columns, room, glyphs);
+        if spare > 0 {
+            return self.laid(columns, glyphs, Spacing::WHOLE, spare);
         }
 
         for spacing in Spacing::LADDER {
@@ -153,6 +160,51 @@ impl Question<'_> {
         }
 
         Vec::new()
+    }
+
+    /// The furthest down the prose the window can open, at this size.
+    ///
+    /// Zero where there is nowhere to scroll to, which is both the prose that
+    /// fitted and the window with no room to open any in — so a caller clamps
+    /// with this rather than asking first whether there was anything to clamp.
+    ///
+    /// [`Self::from`] is clamped here too, and that is not this. Clamping what
+    /// arrives keeps a held key from scrolling the prose off the top; what this
+    /// answers is the caller holding its own copy of the offset across frames,
+    /// which is anything reading the arrows, since this crate reads no keys.
+    /// Let that copy run on past the end and every press of the key that went
+    /// too far is a press coming back that moves nothing.
+    #[must_use]
+    pub fn end(&self, columns: usize, room: usize, glyphs: Glyphs) -> usize {
+        let spare = self.spare(columns, room, glyphs);
+        if spare == 0 {
+            return 0;
+        }
+
+        let inner = columns.saturating_sub(AROUND);
+        self.prose(inner, inner.saturating_sub(PAYLOAD), glyphs)
+            .len()
+            .saturating_sub(spare)
+    }
+
+    /// How many rows are left over for the prose, and zero where none are owed.
+    ///
+    /// Both callers ask the same question of the same layout, and the answer is
+    /// what the two of them have to agree about: one draws the window and the
+    /// other says how far it can move, so a difference here would be an arrow
+    /// that stops one row from where the picture stops.
+    fn spare(&self, columns: usize, room: usize, glyphs: Glyphs) -> usize {
+        if self.explanation.is_empty() {
+            return 0;
+        }
+
+        let bare = self.laid(columns, glyphs, Spacing::WHOLE, 0);
+        let spare = room.saturating_sub(bare.len());
+        if bare.is_empty() || spare < AT_LEAST {
+            return 0;
+        }
+
+        spare
     }
 
     /// The panel at one rung of the ladder, with `spare` rows for the prose.
@@ -233,18 +285,11 @@ impl Question<'_> {
     /// of the prose ↑ still does something, so the arrows are still worth
     /// naming there.
     fn told(&self, inner: usize, payload: usize, glyphs: Glyphs, spare: usize) -> (Vec<Row>, bool) {
-        let mut rows = Vec::new();
         if spare == 0 {
-            return (rows, false);
+            return (Vec::new(), false);
         }
 
-        for paragraph in self.explanation {
-            rows.push(framed(Row::new(), inner, glyphs));
-            for line in fold(paragraph, payload) {
-                rows.push(framed(said(PAYLOAD, Slot::Plain, line), inner, glyphs));
-            }
-        }
-
+        let rows = self.prose(inner, payload, glyphs);
         if rows.len() <= spare {
             return (rows, false);
         }
@@ -286,6 +331,24 @@ impl Question<'_> {
         }
 
         (window, true)
+    }
+
+    /// Every row the whole explanation folds to, blanks and all.
+    ///
+    /// A paragraph opens with a blank rather than being separated from the next
+    /// one by it, so the first paragraph is parted from the command above it the
+    /// same way the second is parted from the first.
+    fn prose(&self, inner: usize, payload: usize, glyphs: Glyphs) -> Vec<Row> {
+        let mut rows = Vec::new();
+
+        for paragraph in self.explanation {
+            rows.push(framed(Row::new(), inner, glyphs));
+            for line in fold(paragraph, payload) {
+                rows.push(framed(said(PAYLOAD, Slot::Plain, line), inner, glyphs));
+            }
+        }
+
+        rows
     }
 
     /// One answer's rows: its number, its words, and the mark where it is the
