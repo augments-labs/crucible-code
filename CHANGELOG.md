@@ -18,6 +18,32 @@ Notable changes to crucible. Format follows
   call line and the queued prompt give way before a task does. The panel stands
   between turns as well; `/clear` puts it away and `/resume` brings it back.
 
+### Fixed
+
+- **An OpenAI model on a `ChatGPT` plan can run a tool again.** The finish of a
+  response says nothing about why it finished, so crucible read that back off the
+  list of items the finishing event repeats — a list the plan's backend sends
+  empty, having already narrated every item in it. So every turn that asked for
+  a tool read as a turn that had answered: the call was streamed and then
+  dropped, the tool never ran, and the turn drew nothing at all. The stop reason
+  is now what the response asked for as it went, which both services say the same
+  way. Anthropic, Moonshot and an OpenAI API key were never affected.
+
+- **A turn no longer ends because a connection went away between rounds.** A
+  response that failed before it said a word is asked for again — twice at most,
+  a quarter of a second before the first and half a second before the second —
+  with `retrying` on the row above the box and <kbd>Esc</kbd> ending the wait.
+  Most often it is the socket a provider closed while the tools ran, which is
+  why it struck mid-conversation rather than at the first request. What it
+  costs: up to three quarters of a second before a genuine failure is reported.
+  A refusal about the request rather than the moment — a key without access, a
+  model nobody serves, a response that did not parse — is still reported the
+  first time, and an answer that had started arriving is never asked for twice.
+
+## [0.4.0] - 2026-08-18
+
+### Added
+
 - **A call can say what it is for, and the question shows it.** `bash`, `write`
   and `edit` take an optional `description`, and it appears as a caption under
   the command or the path on the panel where you decide. What it costs: one row,
@@ -50,26 +76,6 @@ Notable changes to crucible. Format follows
   words, and no binding moved.
 
 ### Fixed
-
-- **An OpenAI model on a `ChatGPT` plan can run a tool again.** The finish of a
-  response says nothing about why it finished, so crucible read that back off the
-  list of items the finishing event repeats — a list the plan's backend sends
-  empty, having already narrated every item in it. So every turn that asked for
-  a tool read as a turn that had answered: the call was streamed and then
-  dropped, the tool never ran, and the turn drew nothing at all. The stop reason
-  is now what the response asked for as it went, which both services say the same
-  way. Anthropic, Moonshot and an OpenAI API key were never affected.
-
-- **A turn no longer ends because a connection went away between rounds.** A
-  response that failed before it said a word is asked for again — twice at most,
-  a quarter of a second before the first and half a second before the second —
-  with `retrying` on the row above the box and <kbd>Esc</kbd> ending the wait.
-  Most often it is the socket a provider closed while the tools ran, which is
-  why it struck mid-conversation rather than at the first request. What it
-  costs: up to three quarters of a second before a genuine failure is reported.
-  A refusal about the request rather than the moment — a key without access, a
-  model nobody serves, a response that did not parse — is still reported the
-  first time, and an answer that had started arriving is never asked for twice.
 
 - **A question about several commands shows the line that was sent.** Asked
   about `cargo fmt --all && cargo test`, the prompt said
@@ -1964,7 +1970,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/augments-labs/crucible-code/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/augments-labs/crucible-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/augments-labs/crucible-code/compare/v0.1.13...v0.2.0
 [0.1.13]: https://github.com/augments-labs/crucible-code/compare/v0.1.12...v0.1.13
