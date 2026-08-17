@@ -78,6 +78,10 @@ fn marked(slot: Slot) -> Option<&'static str> {
         Slot::Quiet => Some("Quiet"),
         Slot::AllowEdits => Some("AllowEdits"),
         Slot::FullAccess => Some("FullAccess"),
+        Slot::Removed => Some("Removed"),
+        Slot::RemovedNumber => Some("RemovedNumber"),
+        Slot::Added => Some("Added"),
+        Slot::AddedNumber => Some("AddedNumber"),
     }
 }
 
