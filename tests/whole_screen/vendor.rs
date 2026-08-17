@@ -7,18 +7,24 @@
 //! bytes reach no network.
 //!
 //! It speaks the smallest part of HTTP/1.1 that gets an event stream back to a
-//! client: read a request until the headers end, ignore every word of it, write
-//! a status line and the body. Nothing here is a general server, and nothing
-//! here should grow into one — what it exists for is that crucible's own reader
-//! is on the other end, and the thing under test is the screen rather than the
-//! protocol.
+//! client: read a request, ignore every word of it, write a status line and the
+//! body. Nothing here is a general server, and nothing here should grow into
+//! one — what it exists for is that crucible's own reader is on the other end,
+//! and the thing under test is the screen rather than the protocol.
+//!
+//! The whole request, though, and not only its headers. Nothing here reads the
+//! body, but a socket closed with bytes still unread in it is reset rather than
+//! ended, and the reset throws away whatever of the response the client had not
+//! taken yet. That is a truncated answer on a busy machine and a whole answer on
+//! an idle one, which is the shape of a case that fails once a fortnight in
+//! somebody else's pull request.
 //!
 //! The deltas go out one at a time with a pause between them. Not for the frame
 //! count — crucible draws once per delta however the bytes were chunked getting
 //! here — but so that the reader on the other end is doing across a stream what
 //! it does in a real turn, rather than meeting a whole answer already arrived.
 
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -31,6 +37,16 @@ use std::time::Duration;
 /// hundred of them and a test measured in seconds is one people stop running.
 const BETWEEN: Duration = Duration::from_millis(5);
 
+/// The event that opens a message. Nothing on this side reads what it carries.
+const STARTED: &str =
+    "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n";
+
+/// The event that closes the one content block each of these answers has.
+const ENDED: &str = "event: content_block_stop\ndata: {\"index\":0}\n\n";
+
+/// The event that closes the message.
+const STOPPED: &str = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+
 /// A provider listening on this machine.
 pub(crate) struct Vendor {
     /// Where crucible is told to send its requests.
@@ -41,23 +57,46 @@ pub(crate) struct Vendor {
 
 impl Vendor {
     /// Starts one that answers every request with `text`, a word at a time.
+    pub(crate) fn answering(text: &str) -> Self {
+        Self::serving(vec![stream(text)])
+    }
+
+    /// Starts one whose first answer asks for `tool` with `input`, and whose
+    /// second is `text`.
+    ///
+    /// Two answers, because a turn with a call in it takes two requests: the
+    /// one that came back asking, and the one sent with what the call
+    /// returned. They arrive in that order, each on its own connection.
+    pub(crate) fn calling(tool: &str, input: &str, text: &str) -> Self {
+        Self::serving(vec![asking(tool, input), stream(text)])
+    }
+
+    /// Starts one that answers each request with the next of `bodies`.
     ///
     /// Port zero, so two cases running at once cannot collide on one — which
     /// the address then carries, since it is the port the kernel picked.
-    pub(crate) fn answering(text: &str) -> Self {
+    ///
+    /// A request past the last body is answered with that last body again. A
+    /// run that asked once more than the case wrote for then fails on what is
+    /// on its screen, which says what happened, rather than hanging on a socket
+    /// nobody is answering.
+    fn serving(bodies: Vec<Vec<String>>) -> Self {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a port on this machine");
         let port = listener
             .local_addr()
             .expect("the port that was bound")
             .port();
 
-        let body = stream(text);
         let serving = thread::spawn(move || {
-            // Every connection, not one: crucible opens a fresh one per turn,
-            // and a case that takes two turns would otherwise hang on the
+            // Every connection, not one: crucible opens a fresh one per
+            // request, and a case that takes two would otherwise hang on the
             // second. The loop ends when the listener is dropped below.
+            let mut asked = 0;
             while let Ok((connection, _)) = listener.accept() {
-                answer(connection, &body);
+                if let Some(body) = bodies.get(asked).or_else(|| bodies.last()) {
+                    answer(connection, body);
+                }
+                asked += 1;
             }
         });
 
@@ -86,17 +125,32 @@ impl Drop for Vendor {
     }
 }
 
-/// Reads one request and writes the canned response back.
+/// Reads one request whole and writes the canned response back.
 fn answer(mut connection: TcpStream, body: &[String]) {
-    // Read to the end of the headers and no further. There is a body after
-    // them, and none of it changes what this says back.
+    // Read to the end of the headers, keeping the one field that says how much
+    // follows them.
     let mut reading = BufReader::new(connection.try_clone().expect("a second handle"));
     let mut line = String::new();
+    let mut length = 0;
     while reading.read_line(&mut line).is_ok_and(|read| read > 0) {
         if line == "\r\n" || line == "\n" {
             break;
         }
+        if let Some(said) = header(&line, "content-length") {
+            length = said.trim().parse().unwrap_or(0);
+        }
         line.clear();
+    }
+
+    // Then the request itself, which nothing here reads a word of — and which
+    // has to be read anyway. Closing a socket with bytes still sitting unread
+    // in it resets the connection rather than ending it, and a reset throws
+    // away whatever of the response the client had not taken yet. A request
+    // left undrained is an answer that arrives cut in half, on a machine busy
+    // enough that the client was still writing while this wrote back.
+    let mut request = vec![0; length];
+    if reading.read_exact(&mut request).is_err() {
+        return;
     }
 
     let sent = connection.write_all(
@@ -118,14 +172,22 @@ fn answer(mut connection: TcpStream, body: &[String]) {
     }
 }
 
+/// The value of the `name` header, where `line` is that header.
+///
+/// Without regard to case, because which case a field name is written in is the
+/// client's business and not something a case here should be pinning.
+fn header<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let (said, value) = line.split_once(':')?;
+    said.trim().eq_ignore_ascii_case(name).then_some(value)
+}
+
 /// `text` as the events Anthropic's Messages API streams for it.
 ///
 /// One delta per word, keeping the spaces, so the answer arrives the way a real
 /// one does rather than all at once.
 fn stream(text: &str) -> Vec<String> {
     let mut events = vec![
-        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n"
-            .to_owned(),
+        STARTED.to_owned(),
         "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
             .to_owned(),
     ];
@@ -137,12 +199,41 @@ fn stream(text: &str) -> Vec<String> {
         )
     }));
 
-    events.push("event: content_block_stop\ndata: {\"index\":0}\n\n".to_owned());
-    events.push(
-        "event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}\n\n"
-            .to_owned(),
-    );
-    events.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_owned());
+    events.push(ENDED.to_owned());
+    events.push(stopped("end_turn"));
+    events.push(STOPPED.to_owned());
 
     events
+}
+
+/// A call for `tool` with `input`, as the same API streams one.
+///
+/// The arguments go out as one delta of the text that spells them rather than
+/// as an object, because that is what the wire does: crucible reads them back
+/// as text and parses them once, when the block ends.
+fn asking(tool: &str, input: &str) -> Vec<String> {
+    vec![
+        STARTED.to_owned(),
+        format!(
+            "event: content_block_start\ndata: {{\"index\":0,\"content_block\":{{\"type\":\
+             \"tool_use\",\"id\":\"toolu_1\",\"name\":{},\"input\":{{}}}}}}\n\n",
+            serde_json::Value::from(tool)
+        ),
+        format!(
+            "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\
+             \"input_json_delta\",\"partial_json\":{}}}}}\n\n",
+            serde_json::Value::from(input)
+        ),
+        ENDED.to_owned(),
+        stopped("tool_use"),
+        STOPPED.to_owned(),
+    ]
+}
+
+/// The event saying why the model stopped, and what it spent getting there.
+fn stopped(reason: &str) -> String {
+    format!(
+        "event: message_delta\ndata: {{\"delta\":{{\"stop_reason\":\"{reason}\"}},\"usage\":\
+         {{\"output_tokens\":4}}}}\n\n"
+    )
 }

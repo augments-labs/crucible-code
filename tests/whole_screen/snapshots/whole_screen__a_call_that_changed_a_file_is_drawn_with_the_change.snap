@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 191
+expression: window.picture()
+---
+80x24 cursor 19,4 scrolled 9
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
+|                                                                                |
+|› rename that comment                                                           |
+|                                                                                |
+|● Edit(release.yml)                                                             |
+|  └ Added 1 line, removed 1 line                                                |
+|        1 -  # trend data                                                       |
+|        1 +  # what stops a tag                                                 |
+|        2    budgets:                                                           |
+|        3      name: release budgets                                            |
+|                                                                                |
+|Renamed. Nothing else in the file moved.                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
+|                                                                                |
