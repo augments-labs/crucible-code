@@ -37,7 +37,7 @@ const TIPS: &str = "Tips";
 const AFFORDANCES: [(&str, &str); 3] = [
     ("/", "opens the command list"),
     ("shift+tab", "steps the permission mode"),
-    ("ctrl-c", "clears the line typed so far"),
+    ("ctrl+c", "clears the line typed so far"),
 ];
 
 /// At least this much space between a session's title and when it happened, so

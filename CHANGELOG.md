@@ -16,6 +16,11 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
+  where they said `ctrl-c`, and so does the offer to leave, which puts them in
+  the spelling `shift+tab` was already in. What it costs: nothing but the two
+  words, and no binding moved.
+
 - **A tool call keeps its colour once it has been written out.** The mark and
   the tool's name are in crucible's own colour, the arguments in brackets beside
   them are toned down, and the line hanging under the call is toned down whole —

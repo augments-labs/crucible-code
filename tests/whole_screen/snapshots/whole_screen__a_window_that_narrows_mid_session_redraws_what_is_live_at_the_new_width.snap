@@ -10,7 +10,7 @@ expression: window.picture()
 |│                                  │                |
 |│                                  │ · /          op|
 |│                                  │ · shift+tab  st|
-|│                                  │ · ctrl-c     cl|
+|│                                  │ · ctrl+c     cl|
 |╰───────────────────────────────────────────────────|
 |                                                    |
 |                                                    |

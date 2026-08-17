@@ -19,5 +19,5 @@ expression: "dump(&welcome.rows(columns, glyphs), columns)"
 <Accent>│</>                                                                             <Accent>│</>
 <Accent>│</> <Quiet>·</> <Accent>/</>          opens the command list                                         <Accent>│</>
 <Accent>│</> <Quiet>·</> <Accent>shift+tab</>  steps the permission mode                                      <Accent>│</>
-<Accent>│</> <Quiet>·</> <Accent>ctrl-c</>     clears the line typed so far                                   <Accent>│</>
+<Accent>│</> <Quiet>·</> <Accent>ctrl+c</>     clears the line typed so far                                   <Accent>│</>
 <Accent>╰─────────────────────────────────────────────────────────────────────────────╯</>

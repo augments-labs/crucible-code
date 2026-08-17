@@ -61,7 +61,7 @@ const CYCLE: &str = "(shift+tab to cycle)";
 /// press is the moment somebody is asking to leave, so it is the moment worth
 /// answering — and by the time waiting too long could be noticed, the thing to
 /// say would be that the offer had already gone.
-const LEAVING: &str = "press ctrl-c again to leave";
+const LEAVING: &str = "press ctrl+c again to leave";
 
 /// What the row under the box says when finished prompts already fill their
 /// retained-memory bound.

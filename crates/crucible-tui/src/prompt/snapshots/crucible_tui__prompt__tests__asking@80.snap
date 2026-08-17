@@ -6,4 +6,4 @@ expression: "dump(&prompt.rows(columns, glyphs), columns)"
 <Accent>│</> <Accent>›</>                                                                            <Accent>│</>
 <Accent>╰──────────────────────────────────────────────────────────────────────────────╯</>
 <Accent>ask before edits</><Quiet> (shift+tab to cycle)</>                                           
-<Quiet>press ctrl-c again to leave</>
+<Quiet>press ctrl+c again to leave</>
