@@ -1,6 +1,6 @@
 # Tools
 
-Six tools, advertised in the order a model tends to reach for them:
+Seven tools, advertised in the order a model tends to reach for them:
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -10,6 +10,7 @@ Six tools, advertised in the order a model tends to reach for them:
 | `edit` | Replaces text in a file | yes |
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
+| `todo_write` | Writes down the plan | no |
 
 The list is fixed. There is nothing to install and nothing to switch off; what
 you configure is which calls get through, and that is
@@ -30,6 +31,11 @@ session and deliberately.
 reach, so what bounds it is the question you are asked, which names the command
 rather than a directory.
 
+`todo_write` names no path, because it reaches no file. What it changes is a
+value inside crucible, which is the whole of why nobody is asked about it —
+there is no target for a rule to be written about. [Writing down the
+plan](planning.md) is the rest of it.
+
 Two files are outside every tool's reach in every mode: `config.json` and
 `config.local.json` inside any directory named `.crucible`. [The files no tool
 may write](../permissions/permissions.md#the-files-no-tool-may-write) says why
@@ -40,6 +46,11 @@ that one cannot be a rule.
 What a tool returns goes into the next request to the model whole, so an
 unbounded answer is an unbounded bill and a context window spent on a log file
 somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
+
+`todo_write` is the one that never arrives there. Its answer is the plan it just
+wrote, and a plan is bounded before it is written rather than after it is read —
+so the fullest one anybody can put down is a fifth of that figure, and no answer
+it gives was ever going to be cut.
 
 A cut answer says so, in the answer:
 

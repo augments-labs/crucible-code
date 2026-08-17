@@ -46,6 +46,7 @@ use crate::cli::style::Style;
 use super::command;
 use super::expanding::{self, Standing};
 use super::mode::tone;
+use super::planning::Planning;
 use super::turning::Turning;
 use super::{Prompts, Retained};
 
@@ -166,19 +167,68 @@ fn insert(editor: &mut Editor, first: char) -> Result<Inserted, Fatal> {
     })
 }
 
+/// What one prompt is read against.
+///
+/// Everything here belongs to the session rather than to the prompt, and every
+/// one of them can be changed by a key pressed at it: Shift+Tab steps the mode
+/// the runner holds, Ctrl+T opens the plan, and the rest go into the line.
+pub(crate) struct Between<'a> {
+    /// Holds the mode, which is the one thing a key at the prompt changes about
+    /// the session rather than about the screen.
+    pub(crate) runner: &'a mut Runner,
+    /// The line being written, which still holds whatever was typed while the
+    /// last turn ran.
+    pub(crate) editor: &'a mut Editor,
+    /// The plan above the box, and whether the reader has opened it.
+    pub(crate) planning: &'a mut Planning,
+    /// Whether there is a keyboard to read. A session with a terminal at only
+    /// one end reads whole lines instead, and the caller is what does that.
+    pub(crate) keys: bool,
+}
+
+/// The four of them at one call.
+///
+/// A function rather than a literal at the one place that asks, for the reason
+/// [`around`] is one: the names are worth writing once, and the loop that owns
+/// all four of these is long enough already.
+pub(crate) fn between<'a>(
+    runner: &'a mut Runner,
+    editor: &'a mut Editor,
+    planning: &'a mut Planning,
+    keys: bool,
+) -> Between<'a> {
+    Between {
+        runner,
+        editor,
+        planning,
+        keys,
+    }
+}
+
 /// Reads one prompt, drawing it as it arrives.
 pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
-    runner: &mut Runner,
-    editor: &mut Editor,
-    keys: bool,
+    between: Between<'_>,
 ) -> Result<Asked, Fatal> {
+    let Between {
+        runner,
+        editor,
+        planning,
+        keys,
+    } = between;
+
     if !keys {
         return Ok(Asked::Untyped);
     }
 
     let glyphs = style.glyphs();
+
+    // The plan may have moved since the last frame that drew it: the turn above
+    // wrote to it, or a command emptied it. Asked once here rather than per key,
+    // because nothing between turns can write to it — the tool that does runs
+    // inside one.
+    planning.moved();
 
     let mut says = saying(runner);
 
@@ -190,7 +240,7 @@ pub(crate) fn ask<T: Terminal>(
     // Whatever was typed while the last turn ran is already here, so the list a
     // slash opens has to be worked out from it rather than assumed empty.
     let mut open = Opened::filtered(editor.text(), glyphs);
-    let mut above = draw(renderer, editor, style, &says, &open)?;
+    let mut above = draw(renderer, editor, style, around(planning, &open, &says))?;
 
     let mut following = None;
     loop {
@@ -204,13 +254,17 @@ pub(crate) fn ask<T: Terminal>(
         let offered = leaving.take();
         says.asking = None;
 
-        match arrived {
+        // Whether this key left the box looking like anything other than what
+        // is already on screen. Answered by every arm and drawn on once, below:
+        // a key that moved nothing costs no frame, and the arms that end the
+        // call leave through their own `return` without drawing at all.
+        let moved = match arrived {
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                above = draw(renderer, editor, style, &says, &open)?;
+                true
             }
 
             // Handed back to the caller rather than answered here. What was
@@ -218,14 +272,16 @@ pub(crate) fn ask<T: Terminal>(
             // meet where the loop that owns both of them is.
             Pressed::Expand => return Ok(Asked::Expand),
 
+            // And the key that says the same word about the other thing that
+            // was cut down to fit. Answered here rather than handed back,
+            // because the plan stands in the region this call is drawing: it is
+            // the box's own footing rather than something committed above it.
+            Pressed::Plan => planning.expand(),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
             // and has just been taken back.
-            Pressed::Escape | Pressed::Explain | Pressed::Ignored => {
-                if offered.is_some() {
-                    above = draw(renderer, editor, style, &says, &open)?;
-                }
-            }
+            Pressed::Escape | Pressed::Explain | Pressed::Ignored => offered.is_some(),
 
             // Two things a click can land on and one round trip to tell them
             // apart. On the line it is the move the arrows make one place at a
@@ -236,27 +292,15 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Clicked { row, column } => {
                 match landed(renderer, editor, &says, above, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
-                    Landed::Line => above = draw(renderer, editor, style, &says, &open)?,
-                    Landed::Nothing => {
-                        if offered.is_some() {
-                            above = draw(renderer, editor, style, &says, &open)?;
-                        }
-                    }
+                    Landed::Line => true,
+                    Landed::Nothing => offered.is_some(),
                 }
             }
 
             // Through whatever the line has open above the box. With nothing
             // open, or at the end it is already on, the key costs no frame.
-            Pressed::Up => {
-                if open.up() || offered.is_some() {
-                    above = draw(renderer, editor, style, &says, &open)?;
-                }
-            }
-            Pressed::Down => {
-                if open.down() || offered.is_some() {
-                    above = draw(renderer, editor, style, &says, &open)?;
-                }
-            }
+            Pressed::Up => open.up() || offered.is_some(),
+            Pressed::Down => open.down() || offered.is_some(),
 
             // Stepping the mode on. Every step takes effect on the press: the
             // row under the box says which mode that landed in, and the same
@@ -265,7 +309,7 @@ pub(crate) fn ask<T: Terminal>(
                 runner.cycle();
 
                 says = saying(runner);
-                above = draw(renderer, editor, style, &says, &open)?;
+                true
             }
 
             Pressed::Key(Key::Char(first)) => {
@@ -278,27 +322,21 @@ pub(crate) fn ask<T: Terminal>(
                 if inserted.refused {
                     says.asking = Some(LIMITED);
                 }
-                if inserted.redraw || offered.is_some() {
-                    above = draw(renderer, editor, style, &says, &open)?;
-                }
+                inserted.redraw || offered.is_some()
             }
 
             Pressed::Key(key) => match editor.press(key) {
                 // A key that moved nothing costs no frame, unless the offer
                 // above is on screen and now stale. An arrow held down against
                 // the end of a line is what the first half of that saves.
-                Typed::Ignored => {
-                    if offered.is_some() {
-                        above = draw(renderer, editor, style, &says, &open)?;
-                    }
-                }
+                Typed::Ignored => offered.is_some(),
                 Typed::Changed => {
                     open = Opened::filtered(editor.text(), glyphs);
-                    above = draw(renderer, editor, style, &says, &open)?;
+                    true
                 }
                 Typed::Refused => {
                     says.asking = Some(LIMITED);
-                    above = draw(renderer, editor, style, &says, &open)?;
+                    true
                 }
                 Typed::Submitted => return said(renderer, editor, &open, style),
 
@@ -314,7 +352,7 @@ pub(crate) fn ask<T: Terminal>(
 
                     leaving = Some(Instant::now());
                     says.asking = Some(LEAVING);
-                    above = draw(renderer, editor, style, &says, &open)?;
+                    true
                 }
 
                 Typed::Ended => {
@@ -322,6 +360,10 @@ pub(crate) fn ask<T: Terminal>(
                     return Ok(Asked::Ended);
                 }
             },
+        };
+
+        if moved {
+            above = draw(renderer, editor, style, around(planning, &open, &says))?;
         }
     }
 }
@@ -361,6 +403,21 @@ pub(super) struct Says {
     asking: Option<&'static str>,
 }
 
+impl Says {
+    /// The same rows with one more thing said under them.
+    ///
+    /// A copy, because what it is made from belongs to the session and what is
+    /// folded into it belongs to the frame: a notice is put up by a key or a
+    /// bound and taken back by the next one. Made only where there is one to
+    /// fold in, so the ordinary frame copies nothing.
+    fn noticing(&self, notice: &'static str) -> Self {
+        Self {
+            asking: Some(notice),
+            ..self.clone()
+        }
+    }
+}
+
 /// The box as it stands under a turn, and where the cursor sits in it.
 ///
 /// The same component in the same place rather than a row standing in for it.
@@ -372,13 +429,14 @@ pub(super) struct Says {
 /// It is not a picture of a box: the keys below are read while the turn runs,
 /// so what is typed goes in and the cursor is where it is going.
 ///
-/// Above it, the row that says the turn is running. Laid out after the box
-/// rather than before it, because the box takes its share of the window first
-/// and what is left is what decides whether that row is drawn at all.
+/// Above it, the row that says the turn is running and the plan it is working
+/// to. Laid out after the box rather than before it, because the box takes its
+/// share of the window first and what is left is what decides how much of that
+/// footing is drawn at all.
 pub(super) fn working<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
-    turning: &Turning,
+    footing: Footing<'_>,
     says: &Says,
     style: Style,
 ) -> (Vec<Row>, Caret) {
@@ -389,11 +447,25 @@ pub(super) fn working<T: Terminal>(
     let mut caret = prompt.caret(columns);
     let room = renderer.rows().saturating_sub(boxed.len());
 
-    let mut rows = turning.rows(columns, style, room);
+    let mut rows = footing.turning.rows(footing.planning, columns, style, room);
     caret.row += rows.len();
     rows.append(&mut boxed);
 
     (rows, caret)
+}
+
+/// What stands between the transcript and the box while a turn runs.
+///
+/// The two of them together because they are laid out together: the row that
+/// says the turn is running and the plan above it share one window, and which
+/// of them gives way when there is not enough of it is a single decision made
+/// in one place.
+#[derive(Clone, Copy)]
+pub(super) struct Footing<'a> {
+    /// The row that says the turn is running, and what it is queueing.
+    pub(super) turning: &'a Turning,
+    /// The plan the agent is working to, above that row.
+    pub(super) planning: &'a Planning,
 }
 
 /// What the row under a running turn says.
@@ -420,12 +492,13 @@ pub(super) fn under(runner: &Runner, glyphs: Glyphs) -> Says {
 /// The keys that mean something here are the ones that still do. Return
 /// finishes a line, Esc asks the turn to stop, Ctrl+O stands the whole of what
 /// the results so far were cut down to, a click on a row that offered to expand
-/// stands that one result, Ctrl-C is the line's own — in raw mode the terminal
-/// sends it rather than raising a signal, so it reaches the editor here exactly
-/// as it does at the prompt — and the rest edit the line. While that view
-/// stands it has all of them: it takes the rows the box has, so the box is not
-/// on screen to be typed into and Esc closes the view rather than stopping the
-/// turn behind it.
+/// stands that one result, Ctrl+T opens the whole of the plan above the box or
+/// bounds it again, Ctrl-C is the line's own — in raw mode the terminal sends it
+/// rather than raising a signal, so it reaches the editor here exactly as it
+/// does at the prompt — and the rest edit the line. While that view stands it
+/// has all of them: it takes the rows the box has, so the box is not on screen
+/// to be typed into and Esc closes the view rather than stopping the turn behind
+/// it.
 ///
 /// Stepping the mode is not among them: the runner that holds it is on
 /// the worker thread for the length of the turn, and a key that moved the row
@@ -439,6 +512,7 @@ pub(super) fn during<T: Terminal>(
         editor,
         queued,
         turning,
+        planning,
         kept,
         opened,
         says,
@@ -547,6 +621,12 @@ pub(super) fn during<T: Terminal>(
                 moved |= opened.is_open();
             }
 
+            // The other key that says *expand*, on the other thing that was cut
+            // down to fit. Answered here as well as between turns because this
+            // is where a plan is usually read: the tool that writes it runs
+            // inside a turn, so the list moves under the reader while it stands.
+            Meant::Plan => moved |= planning.expand(),
+
             // The same view over one result rather than all of them, asked for
             // by pointing at the row that offered it. Most rows offered
             // nothing, and a click on one of those is answered by the screen
@@ -573,16 +653,19 @@ pub(super) fn during<T: Terminal>(
     // what the view stands over does not change while it stands.
     moved |= turning.moved();
 
+    // And the plan beside it, for the half of the same reason that is not the
+    // clock: this is the one place in a session where a tool call can change
+    // what stands above the box while nobody is pressing anything.
+    moved |= planning.moved();
+
     if moved && !expanding::under(renderer, style, kept, opened)? {
         // The view takes the rows the box has, so a frame draws one or the
         // other. A window with no room for the view has closed it above, and
         // the box comes back in the same frame.
-        if let Some(notice) = notice {
-            let mut says = says.clone();
-            says.asking = Some(notice);
-            stand(renderer, editor, turning, &says, style)?;
-        } else {
-            stand(renderer, editor, turning, says, style)?;
+        let footing = Footing { turning, planning };
+        match notice {
+            Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
+            None => stand(renderer, editor, footing, says, style)?,
         }
     }
 
@@ -652,6 +735,8 @@ enum Meant {
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
     /// the turn that is still writing it.
     Expand,
+    /// Ctrl+T: the whole of the plan above the box, or the bounded list again.
+    Plan,
     /// A click on this screen row, which stands the one result offered there.
     ///
     /// The rows worth clicking are the ones a turn writes, so this is the key
@@ -682,6 +767,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Key(key) => Meant::Editing(key),
 
         Pressed::Expand => Meant::Expand,
+        Pressed::Plan => Meant::Plan,
 
         // The column is dropped rather than carried: what a click means up in
         // the transcript is which row it landed on, and a row that offered to
@@ -706,6 +792,9 @@ pub(super) struct During<'a> {
     /// The row above the box, which is the one thing on screen that changes
     /// without anybody pressing anything.
     pub(super) turning: &'a mut Turning,
+    /// The plan above that row. The other thing on screen a turn moves without
+    /// a key being pressed — the tool that writes it runs on the worker thread.
+    pub(super) planning: &'a mut Planning,
     /// What this turn's results have had no room to say, which is what Ctrl+O
     /// stands. Read only: the turn's own thread is what adds to it.
     pub(super) kept: &'a Kept,
@@ -732,11 +821,11 @@ pub(super) struct During<'a> {
 pub(super) fn stand<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
-    turning: &Turning,
+    footing: Footing<'_>,
     says: &Says,
     style: Style,
 ) -> Result<(), Fatal> {
-    let (rows, caret) = working(renderer, editor, turning, says, style);
+    let (rows, caret) = working(renderer, editor, footing, says, style);
 
     renderer.under(&rows, Some(caret), style.palette())?;
     Ok(())
@@ -757,26 +846,57 @@ fn saying(runner: &Runner) -> Says {
     }
 }
 
+/// What is drawn around the box between turns.
+///
+/// Three borrows in one value because a call taking all three beside the
+/// renderer, the editor and the style is a call nobody can read — which is what
+/// the argument ceiling is there to stop.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    /// The plan the agent is working to, above everything else.
+    planning: &'a Planning,
+    /// The commands a leading slash is offering, between the plan and the box.
+    open: &'a Opened,
+    /// What the rows under the box say.
+    says: &'a Says,
+}
+
+/// The three of them at one call.
+///
+/// A function rather than a literal at each place that draws: the names are
+/// worth writing once, and the call that draws the box is worth keeping on one
+/// line.
+fn around<'a>(planning: &'a Planning, open: &'a Opened, says: &'a Says) -> Around<'a> {
+    Around {
+        planning,
+        open,
+        says,
+    }
+}
+
 /// Puts the box on screen with the cursor where the line was typed to, and
 /// answers how many rows of the region ended up above the box.
 ///
-/// The box is the last rows of the region and the list, when there is one, is
-/// the first. Drawn in that order for the reason the list opens upwards at all:
-/// the box and the row under it are what the eye is resting on, and rows added
-/// above them leave both exactly where they were.
+/// The box is the last rows of the region, the list is the ones above it, and
+/// the plan is above that. Drawn in that order for the reason the list opens
+/// upwards at all: the box and the row under it are what the eye is resting on,
+/// and rows added above them leave both exactly where they were.
 ///
 /// Which is also why that count is what comes back. A click is read against the
 /// box, and the box is however far down the region this frame happened to put
 /// it — so the frame that put it there is what has to say.
+///
+/// The list takes its share of the window before the plan is asked for any. It
+/// is the shorter of the two and it was opened by the character last typed,
+/// which is a stronger claim on the rows than a panel that was already there.
 fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
     style: Style,
-    says: &Says,
-    open: &Opened,
+    around: Around<'_>,
 ) -> Result<usize, Fatal> {
     let columns = renderer.columns();
-    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
+    let prompt = writing(editor, around.says, Prompt::room(renderer.rows()));
 
     let mut boxed = prompt.rows(columns, style.glyphs());
     let mut caret = prompt.caret(columns);
@@ -785,15 +905,20 @@ fn draw<T: Terminal>(
     // the box have taken theirs.
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
-    let mut rows = open.rows(columns, room, style.glyphs());
+    let mut listed = around.open.rows(columns, room, style.glyphs());
 
     // The row that keeps the box off whatever was last committed. A list opens
     // with its own, so this is only owed where there is no list -- and the box
     // is owed one either way, because a border drawn against the last line of
     // an answer reads as part of it.
-    if rows.is_empty() {
-        rows.push(Row::new());
+    if listed.is_empty() {
+        listed.push(Row::new());
     }
+
+    let mut rows = around
+        .planning
+        .rows(columns, room.saturating_sub(listed.len()), style.glyphs());
+    rows.append(&mut listed);
 
     let above = rows.len();
     caret.row += above;

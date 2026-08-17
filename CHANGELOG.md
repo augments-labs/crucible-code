@@ -8,6 +8,16 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **The agent writes down its plan, and you read it above the box.** A seventh
+  tool, `todo_write`, puts down a list of at most 64 tasks, each a line and each
+  `open`, `doing` or `done`; the panel over the prompt draws the one under way
+  first, then what is open, then what is finished. It asks nothing, because it
+  reaches no file and starts no process. What it costs: four rows and up to seven
+  tasks of the window, and only once a plan has been written — `ctrl+t` shows the
+  rest and puts it back, and on a short window the panel is measured first, so the
+  call line and the queued prompt give way before a task does. The panel stands
+  between turns as well; `/clear` puts it away and `/resume` brings it back.
+
 - **A prompt typed while a turn runs is named under the working row.**
   `Next: <what you typed>` stands directly beneath it, so a line that left the
   box on `Enter` is acknowledged then rather than minutes later when its own

@@ -393,10 +393,12 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         // Ctrl+O among them. What it opens is the transcript's, and the panel
         // stands over the transcript: the view would take the region this panel
         // is in, leaving a question on screen with nothing left to answer it
-        // with.
+        // with. Ctrl+T is the same sentence about the plan, which stands in that
+        // region too and is not on screen while this question is.
         Pressed::Key(_)
         | Pressed::Cycle
         | Pressed::Expand
+        | Pressed::Plan
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Moved::Still,
     }

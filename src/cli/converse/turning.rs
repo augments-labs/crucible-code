@@ -27,6 +27,12 @@
 //! only acknowledgement it ever got was its own turn starting, minutes later.
 //! It is a second row of the same thing rather than a thing of its own, so no
 //! blank parts the two.
+//!
+//! Under all of that, the plan the agent is working to. Nothing about it is
+//! held here — it is read from the tool that writes it, and this module never
+//! learns there is a tool — but it is laid out here, because a window with room
+//! for some of this and not all of it has to be divided somewhere, and dividing
+//! it in two places is how a footing comes to be a row taller than the window.
 
 use std::time::{Duration, Instant};
 
@@ -35,6 +41,7 @@ use crucible_tui::{Row, Slot, Working};
 
 use super::super::draw;
 use super::super::style::Style;
+use super::planning::Planning;
 
 /// How the turn is asked to stop, said after the clock.
 const STOPS: &str = "esc to interrupt";
@@ -55,10 +62,13 @@ const QUEUED: usize = ROWS + 1;
 /// And with a call standing over it, the blank that parts them included.
 ///
 /// The call line is what a narrow window gives up first, because it is the one
-/// of the three that a second look gets back anyway: the tool answers and the
+/// of the four that a second look gets back anyway: the tool answers and the
 /// line is committed to scrollback either way. The prompt waiting goes next,
-/// since it is still in the queue and its own turn will say it. The row saying
-/// a turn is running exists nowhere else.
+/// since it is still in the queue and its own turn will say it. Then the plan,
+/// which gives up its own rows a state at a time before it goes entirely — and
+/// it is measured before either of the other two, so those are what a window
+/// short of rows drops on its behalf. The row saying a turn is running exists
+/// nowhere else and never gives way.
 const CALLING: usize = ROWS + 2;
 
 /// The one word for what a turn is doing at this moment.
@@ -265,10 +275,31 @@ impl Turning {
     /// box has taken its share: dropped whole rather than squeezed, because a
     /// footing taller than the window is a region the renderer cannot rewind
     /// over, and one row of turn output is worth more than a clock.
-    pub(super) fn rows(&self, columns: usize, style: Style, room: usize) -> Vec<Row> {
+    ///
+    /// The plan goes under all of it, directly over the box, and it is laid out
+    /// here rather than by the caller so that the whole of that arithmetic is
+    /// one function. What it stands under is the turn; what it stands over is
+    /// the line being typed while the turn runs — and the panel between them
+    /// says which of the plan's tasks that turn is on.
+    pub(super) fn rows(
+        &self,
+        planning: &Planning,
+        columns: usize,
+        style: Style,
+        room: usize,
+    ) -> Vec<Row> {
         if room <= ROWS {
             return Vec::new();
         }
+
+        // Offered what is left once the row saying a turn is running has taken
+        // its three and the footing has left the window its one. That is what
+        // puts the plan last in the order things give way: it is measured
+        // first, so the call line and the prompt waiting are the two measured
+        // against what it left, and a window short of rows drops those before
+        // the panel gives up a task.
+        let mut panel = planning.rows(columns, room - ROWS - 1, style.glyphs());
+        let room = room - panel.len();
 
         let working = Working {
             doing: self.doing.word(),
@@ -300,6 +331,7 @@ impl Turning {
             rows.push(next(said, columns, style));
         }
 
+        rows.append(&mut panel);
         rows.push(Row::new());
 
         rows
@@ -383,6 +415,29 @@ mod tests {
 
     use super::*;
 
+    /// No plan at all, which is what a session has until the agent writes one
+    /// and is what every test here but the last two is about.
+    fn nothing() -> Planning {
+        Planning::new(crucible_tools::Plan::new())
+    }
+
+    /// A plan of `count` open tasks, each named after where it is in the list.
+    ///
+    /// Written through the tool the way the model writes one, because that is
+    /// the only way anything gets into a plan and the panel is drawn from what
+    /// came out the other side.
+    fn planned(count: usize) -> Planning {
+        let said = (0..count)
+            .map(|at| format!(r#"{{"task":"Task {at}","state":"open"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let plan = crucible_tools::Plan::new();
+        plan.replay(&ToolArgs::new(format!(r#"{{"tasks":[{said}]}}"#)));
+
+        Planning::new(plan)
+    }
+
     /// The word the row says after `event`, from a turn that just started.
     fn after(event: &Event) -> &'static str {
         let mut turning = Turning::started();
@@ -450,7 +505,7 @@ mod tests {
         assert_eq!(turning.doing.word(), "interrupting");
 
         // And stops offering the key that has already been pressed.
-        let rows = turning.rows(80, Style::plain(), 24);
+        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
         let said = rows.iter().map(Row::text).collect::<String>();
 
         assert!(said.contains("interrupting"), "{said:?}");
@@ -464,7 +519,7 @@ mod tests {
         let mut turning = Turning::started();
         let said = |turning: &Turning| {
             turning
-                .rows(80, Style::plain(), 24)
+                .rows(&nothing(), 80, Style::plain(), 24)
                 .iter()
                 .map(Row::text)
                 .collect::<String>()
@@ -522,10 +577,18 @@ mod tests {
         let turning = Turning::started();
 
         for room in 0..=ROWS {
-            assert!(turning.rows(80, Style::plain(), room).is_empty(), "{room}");
+            assert!(
+                turning
+                    .rows(&nothing(), 80, Style::plain(), room)
+                    .is_empty(),
+                "{room}"
+            );
         }
 
-        assert_eq!(turning.rows(80, Style::plain(), ROWS + 1).len(), ROWS);
+        assert_eq!(
+            turning.rows(&nothing(), 80, Style::plain(), ROWS + 1).len(),
+            ROWS
+        );
     }
 
     #[test]
@@ -536,7 +599,7 @@ mod tests {
         let mut turning = Turning::started();
         let said = |turning: &Turning| {
             turning
-                .rows(80, Style::plain(), 24)
+                .rows(&nothing(), 80, Style::plain(), 24)
                 .iter()
                 .map(Row::text)
                 .collect::<Vec<_>>()
@@ -707,7 +770,7 @@ mod tests {
         let mut turning = Turning::started();
         turning.queueing(Some("fix the failing test"), 80, Style::plain());
 
-        let rows = turning.rows(80, Style::plain(), 24);
+        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
         let said = rows.iter().map(Row::text).collect::<Vec<_>>();
 
         assert_eq!(said.len(), QUEUED, "{said:?}");
@@ -729,7 +792,7 @@ mod tests {
         // window spent, and what it is spent against is the turn's own output
         // above it.
         let turning = Turning::started();
-        let rows = turning.rows(80, Style::plain(), 24);
+        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
 
         assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
     }
@@ -742,7 +805,7 @@ mod tests {
         let mut turning = Turning::started();
         turning.queueing(Some(&"a".repeat(200)), 40, Style::plain());
 
-        let rows = turning.rows(40, Style::plain(), 24);
+        let rows = turning.rows(&nothing(), 40, Style::plain(), 24);
         let said = rows.get(2).map(Row::text).unwrap_or_default();
 
         assert!(said.ends_with('…'), "{said:?}");
@@ -810,7 +873,7 @@ mod tests {
 
         let said = |room: usize| {
             turning
-                .rows(80, Style::plain(), room)
+                .rows(&nothing(), 80, Style::plain(), room)
                 .iter()
                 .map(Row::text)
                 .collect::<Vec<_>>()
@@ -839,11 +902,69 @@ mod tests {
         let mut turning = Turning::started();
         turning.saw(&requested());
 
-        let rows = turning.rows(80, Style::plain(), CALLING);
+        let rows = turning.rows(&nothing(), 80, Style::plain(), CALLING);
         let said = rows.iter().map(Row::text).collect::<String>();
 
         assert_eq!(rows.len(), ROWS, "{said:?}");
         assert!(said.contains("running"), "{said:?}");
         assert!(!said.contains("Read"), "{said:?}");
+    }
+
+    #[test]
+    fn the_plan_stands_under_everything_the_turn_says_and_over_the_box() {
+        // The only place it can go. What it stands under is the turn — the call
+        // out and the row saying one is running — and what it stands over is
+        // the line being typed while that happens. The blank at the end parts
+        // it from the box, so the panel is the last thing above one.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+
+        let rows = turning.rows(&planned(3), 80, Style::plain(), 40);
+        let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+
+        assert!(said.contains("Task 0"), "{said:?}");
+        assert!(said.find("Read") < said.find("Task 0"), "{said:?}");
+        assert!(said.find("running") < said.find("Task 0"), "{said:?}");
+        assert!(said.find("Next:") < said.find("Task 0"), "{said:?}");
+        assert_eq!(rows.last().map(Row::text).as_deref(), Some(""), "{said:?}");
+    }
+
+    #[test]
+    fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompt_before_a_task() {
+        // What measuring the panel first buys. The call line and the row naming
+        // the prompt behind the turn are the two measured against what the plan
+        // left, so they are the two a narrow window drops on its behalf: a call
+        // is committed to scrollback the moment its tool answers and a queued
+        // prompt has its own turn coming, while what the agent is working to is
+        // on screen nowhere else.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+
+        let planning = planned(3);
+        let panel = planning.rows(80, 40, Style::plain().glyphs()).len();
+
+        let said = |room: usize| {
+            turning
+                .rows(&planning, 80, Style::plain(), room)
+                .iter()
+                .map(Row::text)
+                .collect::<String>()
+        };
+
+        let whole = said(panel + 7);
+        assert!(whole.contains("Read"), "{whole:?}");
+        assert!(whole.contains("Next:"), "{whole:?}");
+        assert!(whole.contains("Task 2"), "{whole:?}");
+
+        let shorter = said(panel + 6);
+        assert!(!shorter.contains("Read"), "{shorter:?}");
+        assert!(shorter.contains("Next:"), "{shorter:?}");
+        assert!(shorter.contains("Task 2"), "{shorter:?}");
+
+        let shortest = said(panel + 4);
+        assert!(!shortest.contains("Next:"), "{shortest:?}");
+        assert!(shortest.contains("Task 2"), "{shortest:?}");
     }
 }

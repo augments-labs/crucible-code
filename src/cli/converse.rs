@@ -35,7 +35,7 @@ use crucible_core::{
     Cancel, Event, Post as _, Remember, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
-use crucible_tools::Ledger;
+use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pressed};
 
 use super::draw;
@@ -47,6 +47,7 @@ use super::unasked;
 use super::{Fatal, Serving, standing};
 use command::Ran;
 use expanding::Standing;
+use planning::Planning;
 use turning::Turning;
 use typing::Asked;
 
@@ -55,6 +56,7 @@ mod command;
 mod expanding;
 mod mode;
 mod picking;
+mod planning;
 mod region;
 mod secret;
 mod turning;
@@ -107,6 +109,13 @@ pub(crate) struct Terms {
     /// were read in, and a record that outlived its session would let `write`
     /// replace a file the session in hand never saw.
     pub(crate) ledger: Ledger,
+    /// The plan the agent is working to, which is what stands above the box.
+    ///
+    /// Held for the same reason the ledger is, and emptied by the same command:
+    /// the plan belongs to the session it was written in, and one that outlived
+    /// its session would be a panel above the prompt describing work the agent
+    /// on the other side of it has no memory of.
+    pub(crate) plan: Plan,
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
     /// there is no name to write it under.
@@ -193,6 +202,11 @@ pub(crate) fn converse<T: Terminal>(
     // still open when the turn ends, and the reader who opened it is reading.
     let mut opened = Standing::default();
 
+    // This side of the plan the tools were built with. Made once for the
+    // session, because what it holds is a copy of the plan and the setting of
+    // the key that opens it, and both outlive every turn.
+    let mut planning = Planning::new(terms.plan.clone());
+
     // Whether the log's trouble has been said. Once is all it is worth, for
     // the reason `troubled` gives.
     let mut told = false;
@@ -232,6 +246,7 @@ pub(crate) fn converse<T: Terminal>(
                     queued: &mut queued,
                     kept: &mut kept,
                     opened: &mut opened,
+                    planning: &mut planning,
                     answers: Answers { input, keys },
                 },
             )?;
@@ -247,7 +262,8 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let prompt = match typing::ask(renderer, style, &mut runner, &mut editor, keys)? {
+        let between = typing::between(&mut runner, &mut editor, &mut planning, keys);
+        let prompt = match typing::ask(renderer, style, between)? {
             Asked::Said(said) => said,
             Asked::Ended => break,
 
@@ -321,6 +337,7 @@ pub(crate) fn converse<T: Terminal>(
                 queued: &mut queued,
                 kept: &mut kept,
                 opened: &mut opened,
+                planning: &mut planning,
                 answers: Answers { input, keys },
             },
         )?;
@@ -496,7 +513,16 @@ fn take<T: Terminal>(
     // is with the worker now, so a terminal that failed here has to be carried
     // to the end of the turn rather than returned from the middle of one.
     let mut held = stop_if_failed(
-        typing::stand(renderer, taking.editor, &turning, &says, terms.style),
+        typing::stand(
+            renderer,
+            taking.editor,
+            typing::Footing {
+                turning: &turning,
+                planning: taking.planning,
+            },
+            &says,
+            terms.style,
+        ),
         &terms.cancel,
     );
 
@@ -574,6 +600,7 @@ fn take<T: Terminal>(
                     editor: taking.editor,
                     queued: taking.queued,
                     turning: &mut turning,
+                    planning: taking.planning,
                     kept: taking.kept,
                     opened: taking.opened,
                     says: &says,
@@ -706,6 +733,10 @@ struct Taking<'a> {
     /// It outlives the turn too: what was opened under one is still open after
     /// it, in the region the box comes back to.
     opened: &'a mut Standing,
+    /// The plan above the box. A turn is when it changes — the tool that writes
+    /// it runs on the worker thread — and it outlives the turn the same way
+    /// everything else here does.
+    planning: &'a mut Planning,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
 }
@@ -804,12 +835,16 @@ fn heard(arrived: Pressed) -> Heard {
         // Ctrl+O is here because this is the question with nowhere to stand: it
         // was put a row at a time precisely because there was no room for a
         // panel, and a view of what was cut needs more room than the panel did.
+        //
+        // Ctrl+T for the same reason as Ctrl+E: the question took the rows the
+        // plan stands in, so there is no panel on screen for the key to open.
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
         | Pressed::Cycle
         | Pressed::Explain
         | Pressed::Expand
+        | Pressed::Plan
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
