@@ -316,6 +316,7 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
         &call("bash", r#"{"command":"rm -rf build"}"#),
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
+                sent: "rm -rf build".into(),
                 parts: Box::from([Box::from("rm -rf build")]),
             },
         },
@@ -323,6 +324,31 @@ fn a_question_about_a_process_names_the_program_not_the_json() {
     );
 
     assert_eq!(asking, ["? bash wants to run: rm -rf build"]);
+}
+
+#[test]
+fn a_question_about_several_commands_shows_the_line_that_was_sent() {
+    // `&&` is the difference between three commands and three commands *if the
+    // one before worked*, and a question that paraphrased it away would be
+    // asking about a line nobody sent. The parts are what a rule is matched
+    // against; they are not what somebody is being asked to agree to.
+    let line = "cargo fmt --all && cargo test --workspace || git checkout .";
+    let asking = asked(
+        &call("bash", r#"{"command":"cargo fmt --all"}"#),
+        &Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                sent: line.into(),
+                parts: Box::from([
+                    Box::from("cargo fmt --all"),
+                    Box::from("cargo test --workspace"),
+                    Box::from("git checkout ."),
+                ]),
+            },
+        },
+        WIDE,
+    );
+
+    assert_eq!(asking, [format!("? bash wants to run: {line}")]);
 }
 
 #[test]
@@ -597,6 +623,7 @@ fn a_padded_command_is_put_to_the_user_whole_rather_than_cut_short() {
     let padded = format!("echo {} && rm -rf /", "x".repeat(80));
     let written = questioned(&Sensitivity::SpawnsProcess {
         command: Command::Understood {
+            sent: padded.as_str().into(),
             parts: Box::from([Box::from(padded.as_str())]),
         },
     });

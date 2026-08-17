@@ -71,6 +71,10 @@ fn writing(below_root: &str) -> Sensitivity {
 fn running(parts: &[&str]) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
+            // A line these parts would in fact decompose from. Nothing here is
+            // about what a question shows, but a fixture that spelled the two
+            // out of step would be one nobody could read that from.
+            sent: parts.join(" && ").into(),
             parts: parts.iter().map(|part| (*part).into()).collect(),
         },
     }

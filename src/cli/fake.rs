@@ -234,6 +234,7 @@ pub(crate) fn changing() -> Sensitivity {
 pub(crate) fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
+            sent: command.into(),
             parts: Box::from([Box::from(command)]),
         },
     }

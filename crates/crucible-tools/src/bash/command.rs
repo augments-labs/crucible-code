@@ -41,7 +41,14 @@ pub(super) fn read(line: &str) -> Command {
         // A line that decomposed into nothing ran nothing a rule could be
         // about. Reported as unreadable rather than as an empty list, because
         // an empty list is a thing every `allow` rule vacuously covers.
-        Some(parts) if !parts.is_empty() => Command::Understood { parts },
+        Some(parts) if !parts.is_empty() => Command::Understood {
+            // Trimmed at the ends and nowhere else. The parts drop the spelling
+            // because a rule is about the command rather than the spacing; this
+            // keeps it, because it is what a question shows and the answer to a
+            // question is about the line somebody read.
+            sent: line.trim().into(),
+            parts,
+        },
         Some(_) | None => Command::Opaque(line.trim().into()),
     }
 }

@@ -19,6 +19,7 @@ fn call() -> ToolCall {
 fn running(command: &str) -> Sensitivity {
     Sensitivity::SpawnsProcess {
         command: Command::Understood {
+            sent: command.into(),
             parts: Box::from([Box::from(command)]),
         },
     }

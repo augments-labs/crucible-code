@@ -18,7 +18,7 @@ pub(super) fn any(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
             covered(rules, call, target)
         }
         Sensitivity::SpawnsProcess {
-            command: Command::Understood { parts },
+            command: Command::Understood { parts, .. },
         } => parts.iter().any(|part| runs(rules, call, part)),
         Sensitivity::SpawnsProcess {
             command: Command::Opaque(_),
@@ -33,7 +33,7 @@ pub(super) fn all(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
             covered(rules, call, target)
         }
         Sensitivity::SpawnsProcess {
-            command: Command::Understood { parts },
+            command: Command::Understood { parts, .. },
         } => {
             // A command that decomposed into nothing is not a command every
             // rule covers, it is one nobody can say anything about.
