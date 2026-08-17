@@ -119,6 +119,56 @@ fn a_call_that_answered_commits_the_words_it_was_drawn_with() {
 }
 
 #[test]
+fn a_call_that_answered_keeps_the_colours_it_was_drawn_in() {
+    // The mark in the accent, the tool's name in the accent emphasised, what the
+    // call was about in the quieter one -- and all three still there once the
+    // line has stopped moving. A line that gave its colour up at the moment it
+    // was written out would leave one coloured row above the box and a colourless
+    // copy of it in the transcript, with the join wherever the turn is now.
+    let style = Style::coloured();
+    let palette = style.palette();
+    let written = committed("Read(src/main.rs)", WIDE, style);
+
+    for (slot, text) in [
+        (Slot::Accent, style.glyphs().called()),
+        (Slot::Strong, "Read"),
+        (Slot::Quiet, "(src/main.rs)"),
+    ] {
+        let painted = format!("{}{text}{}", palette.open(slot), palette.close());
+
+        assert!(
+            written.contains(&painted),
+            "{written:?} is missing {painted:?}"
+        );
+    }
+}
+
+#[test]
+fn the_line_hanging_under_a_call_is_quiet() {
+    // The call above it says what was done; this is the detail under it. Drawn
+    // in the reader's own foreground the two rows carry equal weight, and a
+    // column of them reads as a paragraph rather than as a list of calls.
+    let style = Style::coloured();
+    let palette = style.palette();
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+
+    event(
+        &mut renderer,
+        Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok("128 lines"),
+        },
+        style,
+    )
+    .expect("the result to draw");
+
+    let written = renderer.terminal().written();
+    let quiet = format!("{}128 lines{}", palette.open(Slot::Quiet), palette.close());
+
+    assert!(written.contains(&quiet), "{written:?} is missing {quiet:?}");
+}
+
+#[test]
 fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
     // Empty brackets would say the call was about nothing, when what happened
     // is that its arguments could not be read at all. The tool refuses it a
@@ -139,7 +189,7 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 fn a_long_summary_is_clipped_rather_than_wrapped() {
     let long = "x".repeat(200);
 
-    let line = words(&long, WIDE, Style::plain());
+    let line = words(&long, WIDE, Style::plain()).text();
 
     assert!(line.ends_with('…'), "{line}");
     assert!(line.chars().count() <= args(), "{line}");
@@ -165,13 +215,16 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
 fn output_shows_its_first_line_and_says_how_much_more_there_was() {
     let output = ToolOutput::ok("one\ntwo\nthree");
 
-    assert_eq!(finished(&output, shown(), unicode()), "  └ one (+2 lines)");
+    assert_eq!(
+        finished(&output, shown(), unicode()).text(),
+        "  └ one (+2 lines)"
+    );
 }
 
 #[test]
 fn a_single_line_of_output_gets_no_count() {
     assert_eq!(
-        finished(&ToolOutput::ok("done"), shown(), unicode()),
+        finished(&ToolOutput::ok("done"), shown(), unicode()).text(),
         "  └ done"
     );
 }
@@ -182,7 +235,7 @@ fn a_failure_is_marked_as_one() {
     // and the user goes looking for the mistake in the wrong place. The mark
     // goes on the result rather than on the call above it: one thing says a
     // call failed, and it is the row that says what the failure was.
-    let line = finished(&ToolOutput::failed("no such file"), shown(), unicode());
+    let line = finished(&ToolOutput::failed("no such file"), shown(), unicode()).text();
 
     assert!(line.contains('✗'), "{line}");
     assert!(line.starts_with("  └ ✗ "), "{line}");
@@ -196,7 +249,7 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
     // Both sets, because both draw the pair.
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         let mark = columns(glyphs.called());
-        let under = finished(&ToolOutput::ok("done"), shown(), glyphs);
+        let under = finished(&ToolOutput::ok("done"), shown(), glyphs).text();
         let corner = under.find(glyphs.hangs()).unwrap_or_default();
 
         assert_eq!(corner, mark + 1, "{glyphs:?}: {under:?}");
@@ -205,7 +258,10 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
 
 #[test]
 fn no_output_at_all_is_still_a_line() {
-    assert_eq!(finished(&ToolOutput::ok(""), shown(), unicode()), "  └ ");
+    assert_eq!(
+        finished(&ToolOutput::ok(""), shown(), unicode()).text(),
+        "  └ "
+    );
 }
 
 #[test]

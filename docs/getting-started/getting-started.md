@@ -239,6 +239,12 @@ command line for `bash`. Each tool answers that for itself, because each knows
 which of its arguments a person would recognise the call by. A call whose
 arguments could not be read is just the name, and the tool says why next.
 
+The mark and the name are in crucible's own colour and the brackets beside them
+are toned down, so a screenful of calls reads as the tools that ran with what
+each was given rather than as a paragraph. The colour is the row's rather than
+the text's, so it costs no column, and it is there whether the line is still
+waiting above the box or has already been written out.
+
 That line is written when the tool answers rather than when the model asks for
 it, so it and the result under it reach your scrollback one after the other and
 nothing the turn did in between comes to stand between the two. While the tool
@@ -252,9 +258,13 @@ gives way to the row that says the turn is running at all.
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.
 It hangs under `└`, one column past the `●` that opened the call, so a result
-belongs to the call above it at a glance rather than by being next to it. A call
-that failed is marked `✗` there and only there — the call line stands as it was,
-since a call that was made is a call that was made whatever came back.
+belongs to the call above it at a glance rather than by being next to it. The
+whole row is toned down, corner and words together, because the line above it
+already says what was done and this is the detail under it. A call that failed
+is marked `✗` there and only there — the call line stands as it was, since a
+call that was made is a call that was made whatever came back — and that mark is
+the one thing on the row left in your terminal's own foreground, so it is where
+the eye goes.
 
 The answer itself is read as markdown rather than printed with the markers still
 in it. A heading loses its hashes and stands out, `**` or `_` around a phrase

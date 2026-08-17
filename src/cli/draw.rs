@@ -1,9 +1,16 @@
 //! Events, turned into what a terminal shows.
 //!
-//! Committed lines carry no escape sequences. The live tail measures what it
-//! holds in display columns to know where to move the cursor back to, and a
-//! colour code is bytes it would count as width. Colour therefore goes only
-//! where nothing is ever redrawn: the prompt mark, written straight through.
+//! Text that arrived from somewhere else is committed without colour. The live
+//! tail measures what it holds in display columns to know where to move the
+//! cursor back to, and a colour code in a tool's output is bytes an untrusted
+//! string put there — bytes that would be counted as width.
+//!
+//! What this file composed itself is a different thing and goes out a different
+//! door. A call line and the line hanging under it are spans this program built,
+//! so they are handed to [`Renderer::present`] as rows and the palette decides
+//! their colour at the last moment: the mark and the tool's name in the accent,
+//! what the call was about and what came back in the quieter one. Nothing is
+//! ever redrawn over a presented row, so no frame is counting its columns.
 //!
 //! Every mark drawn into a line comes out of [`Glyphs`] rather than out of a
 //! literal here. A terminal whose font is missing a corner is missing the one a
@@ -91,9 +98,10 @@ pub(crate) fn event<T: Terminal>(
         // be in scrollback. It commits through [`returned`].
         Event::ToolRequested { .. } => renderer.settle(),
 
-        Event::ToolFinished { output, .. } => {
-            renderer.commit(&finished(&output, style.output(columns), style.glyphs()))
-        }
+        Event::ToolFinished { output, .. } => renderer.present(
+            &[finished(&output, style.output(columns), style.glyphs())],
+            style.palette(),
+        ),
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
@@ -289,40 +297,55 @@ pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
 /// ceiling does: a line as wide as the window with a mark still in front of it
 /// is a row the terminal wraps and the live tail never counted.
 ///
-/// Nothing comes back where the window has room for neither. Both callers draw
-/// the mark alone then — it still says a call was made, which is the half of
-/// this line the result hanging under it cannot say for itself.
-pub(crate) fn words(said: &str, window: usize, style: Style) -> String {
+/// The tool's name is in the accent and what the call is about is in the quieter
+/// colour, so a column of calls reads as the tools that ran with their arguments
+/// beside them rather than as a paragraph. They are told apart here, after the
+/// clipping and not before it, because how much of the line a narrow window
+/// leaves is decided on the whole of it — a name cut off before its bracket is a
+/// row with no arguments on it, and then there is nothing to tell apart.
+///
+/// An empty row comes back where the window has room for neither. Both callers
+/// draw the mark alone then — it still says a call was made, which is the half
+/// of this line the result hanging under it cannot say for itself.
+pub(crate) fn words(said: &str, window: usize, style: Style) -> Row {
     let glyphs = style.glyphs();
     let room = style
         .args(window)
         .min(window.saturating_sub(columns(glyphs.called()) + 1));
 
-    clipped(said, room, glyphs)
+    let said = clipped(said, room, glyphs);
+
+    match said.split_once('(') {
+        Some((name, about)) => Row::new()
+            .then(Slot::Strong, name)
+            .then(Slot::Quiet, format!("({about}")),
+        None => Row::new().then(Slot::Strong, said),
+    }
 }
 
-/// Commits the line of a call that has stopped being live.
+/// Writes the line of a call that has stopped being live.
 ///
-/// The same words the footing was drawing, in the same columns, with the motion
-/// gone — so what reaches scrollback carries no escape sequence, and the result
-/// that follows hangs under a line that is already there.
+/// The same words the footing was drawing, in the same columns and the same
+/// colours, with the motion gone — the mark stops pulsing and settles on the
+/// accent, and the result that follows hangs under a line that is already there.
 pub(crate) fn returned<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
     let window = renderer.columns();
-    let mark = style.glyphs().called();
-    let said = words(said, window, style);
+    let words = words(said, window, style);
 
     renderer.settle()?;
     renderer.apart()?;
 
-    if said.is_empty() {
-        renderer.commit(mark)
-    } else {
-        renderer.commit(&format!("{mark} {said}"))
+    let mut row = Row::new().then(Slot::Accent, style.glyphs().called());
+    if !words.is_empty() {
+        row.push(Slot::Plain, " ");
+        row = row.join(words);
     }
+
+    renderer.present(&[row], style.palette())
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.
@@ -344,21 +367,7 @@ fn pascal(name: &str) -> String {
     written
 }
 
-/// The line for a call that finished, hung under the call it answers.
-fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> String {
-    let text = output.text();
-    let mut lines = text.lines();
-    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
-    let rest = lines.count();
-
-    let under = gutter(output.is_failed(), glyphs);
-    match rest {
-        0 => format!("{under}{first}"),
-        more => format!("{under}{first} (+{more} lines)"),
-    }
-}
-
-/// What a result row opens with, before whatever the tool said.
+/// The row for a call that finished, hung under the call it answers.
 ///
 /// The corner sits one column past the mark that opened the call, and where
 /// that column is is measured off the mark rather than counted out: the two are
@@ -366,18 +375,33 @@ fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> String {
 /// A corner under the tool's name rather than under its mark reads as a second
 /// call rather than as the first one's answer.
 ///
-/// A failure is marked here and nowhere else. The call line above it stands as
-/// it was — a call that was made is a call that was made, whatever came back —
-/// and one thing says the answer was a failure: the row that says what it was.
-fn gutter(failed: bool, glyphs: Glyphs) -> String {
-    let indent = " ".repeat(columns(glyphs.called()) + 1);
-    let cross = if failed {
-        format!("{} ", glyphs.failed())
-    } else {
-        String::new()
-    };
+/// Quiet, corner and words together. The line above already says what was done;
+/// this is the detail under it, and a column of calls is read by its marks and
+/// its names rather than by what each of them happened to return.
+///
+/// A failure is marked here and nowhere else, and the cross is the one thing on
+/// the row in the reader's own foreground — the call line above it stands as it
+/// was, because a call that was made is a call that was made whatever came back,
+/// so this row is the only place the eye can be sent.
+fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> Row {
+    let text = output.text();
+    let mut lines = text.lines();
+    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
+    let rest = lines.count();
 
-    format!("{indent}{} {cross}", glyphs.hangs())
+    let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
+    row.push(Slot::Quiet, format!("{} ", glyphs.hangs()));
+
+    if output.is_failed() {
+        row.push(Slot::Plain, format!("{} ", glyphs.failed()));
+    }
+
+    row.push(Slot::Quiet, first);
+    if rest > 0 {
+        row.push(Slot::Quiet, format!(" (+{rest} lines)"));
+    }
+
+    row
 }
 
 /// What to say about a turn that ended, if anything.
