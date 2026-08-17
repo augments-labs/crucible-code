@@ -127,6 +127,20 @@ impl Glyphs {
         }
     }
 
+    /// The keys that step along a track, drawn as marks: left, then right.
+    ///
+    /// Named under a track rather than drawn on one, which is why they are a
+    /// pair rather than two marks that happen to be nearby: what somebody is
+    /// looking for is the two keys either side of the one their hand is on, and
+    /// a set that spelled one of them out and drew the other would break that.
+    #[must_use]
+    pub fn stepping(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("←", "→"),
+            Self::Ascii => ("<", ">"),
+        }
+    }
+
     /// The long mark that stands between a thing and what is said about it.
     ///
     /// Two columns under `ascii` where [`Glyphs::dot`] is one, and that is the

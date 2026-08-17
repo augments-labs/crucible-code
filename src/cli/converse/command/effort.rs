@@ -29,7 +29,7 @@
 
 use crucible_core::{Effort, EffortError};
 use crucible_runner::Runner;
-use crucible_tui::{Ladder, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::converse::picking::{self, Taken};
 use crate::cli::{Fatal, remember, rungs, unasked};
@@ -54,7 +54,21 @@ const NO_RUNG: &str =
 const ENDS: (&str, &str) = ("Faster", "Smarter");
 
 /// The keys, under the track they work on.
-const FOOTER: &str = "←/→ to adjust · enter to confirm · esc to cancel";
+///
+/// Built rather than written down, because two of the marks in it are the
+/// setting's: the arrows for the keys that step along the track, and the mark
+/// that parts one key from the next.
+fn footer(glyphs: Glyphs) -> String {
+    let (left, right) = glyphs.stepping();
+    let parting = glyphs.dot();
+
+    format!("{left}/{right} to adjust {parting} enter to confirm {parting} esc to cancel")
+}
+
+/// What the panel is standing over: the ladder, and the model it is asked of.
+fn title(model: &str, glyphs: Glyphs) -> String {
+    format!("Effort {} {model}", glyphs.dot())
+}
 
 /// The rung the ladder opens on where nothing has chosen one.
 ///
@@ -131,18 +145,20 @@ fn chosen<T: Terminal>(
     served: &[Effort],
 ) -> Result<Taken<Effort>, Fatal> {
     let words: Vec<&str> = served.iter().map(|one| one.as_str()).collect();
+    let glyphs = terms.style.glyphs();
 
     // The model by name, because a rung is asked of one model and what it buys
     // differs between them. It is also the fact that stops this reading as a
     // setting of crucible's — the ladder is what is sent, and this is who to.
-    let title = format!("Effort · {}", runner.model());
+    let title = title(runner.model(), glyphs);
+    let footer = footer(glyphs);
 
     let ladder = Ladder {
         title: &title,
         rungs: &words,
         chosen: rung(runner.effort().unwrap_or(OPENS_ON), served),
         ends: ENDS,
-        footer: FOOTER,
+        footer: &footer,
     };
 
     Ok(picking::adjust(renderer, terms.style, ladder)?.of(served))
@@ -256,4 +272,40 @@ fn listing<T: Terminal>(
 /// rather than as the panel having agreed with what was already in force.
 fn rung(effort: Effort, served: &[Effort]) -> usize {
     served.iter().position(|one| *one == effort).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_keys_under_the_track_come_out_of_the_glyph_set() {
+        // The row that says which keys work here is the whole of what teaches
+        // somebody standing at a ladder how to leave it. A terminal without the
+        // arrows draws two hollow squares where the two keys are named, on the
+        // one row that exists to be read by somebody who does not yet know.
+        assert_eq!(
+            footer(Glyphs::Unicode),
+            "←/→ to adjust · enter to confirm · esc to cancel"
+        );
+        assert_eq!(
+            footer(Glyphs::Ascii),
+            "</> to adjust - enter to confirm - esc to cancel"
+        );
+    }
+
+    #[test]
+    fn what_the_panel_is_standing_over_is_parted_by_the_set_s_mark() {
+        // The title is what says the ladder is asked of one model rather than
+        // set on crucible, so the mark between the two halves is load-bearing:
+        // without it the row reads as one name.
+        assert_eq!(
+            title("claude-sonnet-5", Glyphs::Unicode),
+            "Effort · claude-sonnet-5"
+        );
+        assert_eq!(
+            title("claude-sonnet-5", Glyphs::Ascii),
+            "Effort - claude-sonnet-5"
+        );
+    }
 }
