@@ -1,4 +1,5 @@
-//! Filesystem, search and process tools the agent can call.
+//! Filesystem, search and process tools the agent can call, and the one that
+//! writes down its plan.
 //!
 //! Its only dependency on another crucible crate is `crucible-core`, and it is
 //! a sibling of `crucible-provider`: neither may reach the other. Each tool
@@ -51,6 +52,14 @@
 //! record is handed to both when they are built rather than reached for by
 //! either, which keeps the binary the only place that knows they share it.
 //!
+//! `todo_write` touches no file at all, and that is the whole of its permission
+//! story: what it changes is a value inside this process, so there is no path
+//! for a rule to be written about and nobody is asked. It puts down the plan the
+//! agent is working to, replacing it whole and answering with it. That plan is
+//! handed to it the way the read record above is handed to the two tools that
+//! share it, and for the same reason — the loop drawing it above the prompt
+//! holds the other end.
+//!
 //! `bash` is the exception, and deliberately. It runs a shell, and a shell
 //! reaches anything the user can; the workspace gives it a directory to start
 //! in, not a fence. What bounds that tool is the permission engine, which is
@@ -66,6 +75,7 @@ mod edit;
 mod glob;
 mod grep;
 mod ledger;
+mod plan;
 mod read;
 #[cfg(test)]
 mod sample;
@@ -80,5 +90,6 @@ pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;
 pub use ledger::Ledger;
+pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
 pub use write::Write;
