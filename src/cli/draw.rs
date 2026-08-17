@@ -46,6 +46,7 @@ use std::fmt;
 use crucible_core::{Change, Diff, Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
+use super::kept::Kept;
 use super::style::Style;
 
 mod opening;
@@ -79,6 +80,7 @@ pub(crate) fn event<T: Terminal>(
     renderer: &mut Renderer<T>,
     event: Event,
     style: Style,
+    kept: &mut Kept,
 ) -> Result<(), TerminalError> {
     let columns = renderer.columns();
 
@@ -118,12 +120,28 @@ pub(crate) fn event<T: Terminal>(
         // call that changed a file moved. No row parts them, because a reader
         // asking what the call did is asking both halves of the same question.
         Event::ToolFinished { output, .. } => {
-            let mut rows = vec![finished(&output, style.output(columns), style.glyphs())];
+            let beyond = beyond(&output);
+            let mut rows = vec![finished(
+                &output,
+                beyond,
+                style.output(columns),
+                style.glyphs(),
+            )];
             if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
                 rows.extend(block(diff, columns, style.glyphs()));
             }
 
-            renderer.present(&rows, style.palette())
+            renderer.present(&rows, style.palette())?;
+
+            // After the rows and not before them, because this is what the rows
+            // could not say: a result the row said the whole of is a result
+            // nobody has to be offered, and one held anyway would be an offer to
+            // show somebody what they are already looking at.
+            if beyond > 0 {
+                kept.finished(output.into_text());
+            }
+
+            Ok(())
         }
 
         // The tail is settled either way; an answer that stopped early is
@@ -411,7 +429,7 @@ pub(crate) fn pascal(name: &str) -> String {
 /// in its answer to the model. Both are true of the same call, and only one is
 /// about the file: how many replacements `edit` made is a fact about the
 /// instruction it was sent, and the reader is looking at what is in the file.
-fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> Row {
+fn finished(output: &ToolOutput, beyond: usize, width: usize, glyphs: Glyphs) -> Row {
     let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
     row.push(Slot::Quiet, format!("{} ", glyphs.hangs()));
 
@@ -424,17 +442,40 @@ fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> Row {
         return row;
     }
 
-    let text = output.text();
-    let mut lines = text.lines();
-    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
-    let rest = lines.count();
+    let said = output.text().lines().next().unwrap_or_default();
 
-    row.push(Slot::Quiet, first);
-    if rest > 0 {
-        row.push(Slot::Quiet, format!(" (+{rest} lines)"));
+    if beyond == 0 {
+        row.push(Slot::Quiet, clipped(said, width, glyphs));
+        return row;
     }
 
+    // The tail comes off the room before the line does. It is the part of the
+    // row a reader is looking for — how much was cut, and the key that gives it
+    // back — so a first line long enough to push it past the window would be
+    // hiding the offer behind the thing being offered.
+    let tail = format!(" (+{beyond} lines {} ctrl+o to expand)", glyphs.dot());
+
+    row.push(
+        Slot::Quiet,
+        clipped(said, width.saturating_sub(columns(&tail)), glyphs),
+    );
+    row.push(Slot::Quiet, tail);
+
     row
+}
+
+/// How many lines of a result its row has no room to say.
+///
+/// Zero for a call that changed a file. That result is drawn as the change
+/// itself and the block under the row is where its lines are; what the block
+/// could not fit was cut where the change was built rather than here, so there
+/// is nothing left over to offer.
+fn beyond(output: &ToolOutput) -> usize {
+    if output.diff().is_some_and(|diff| !diff.is_empty()) {
+        return 0;
+    }
+
+    output.text().lines().count().saturating_sub(1)
 }
 
 /// What a change did, counted.

@@ -276,6 +276,19 @@ impl ToolOutput {
         &self.text
     }
 
+    /// The same text, out of the result and into whatever asked for it.
+    ///
+    /// For the reader's copy of a result, which arrives owned and is otherwise
+    /// dropped once the row for it has been drawn. A reader who asks to see the
+    /// whole of a result that was cut down to a row is asking for text that has
+    /// already been allocated twice — once for the transcript the model is
+    /// replayed, once for the event that drew it — and this is what keeps the
+    /// answer from being a third copy.
+    #[must_use]
+    pub fn into_text(self) -> Box<str> {
+        self.text
+    }
+
     /// Whether the provider should mark this result as an error.
     #[must_use]
     pub fn is_failed(&self) -> bool {

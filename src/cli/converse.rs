@@ -39,6 +39,7 @@ use crucible_tools::Ledger;
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
 
 use super::draw;
+use super::kept::Kept;
 use super::seen::{Answer, Asking, CAPACITY, Inbox, Relay, Seen};
 use super::style::Style;
 use super::subscription::Subscriptions;
@@ -50,6 +51,7 @@ use typing::Asked;
 
 mod asking;
 mod command;
+mod expanding;
 mod mode;
 mod picking;
 mod region;
@@ -166,6 +168,12 @@ pub(crate) fn converse<T: Terminal>(
     // another.
     let mut queued = Prompts::default();
 
+    // What the transcript had no room to say, waiting for Ctrl+O. Held for the
+    // whole session rather than for a turn: the row offering the key is read
+    // after the turn that drew it has ended, which is when there is time to read
+    // anything.
+    let mut kept = Kept::default();
+
     // Said once. The log does not start working again, and a line under every
     // turn from here on would bury the turns.
     let mut told = false;
@@ -188,10 +196,11 @@ pub(crate) fn converse<T: Terminal>(
                 runner,
                 renderer,
                 terms,
+                said,
                 Taking {
-                    prompt: said,
                     editor: &mut editor,
                     queued: &mut queued,
+                    kept: &mut kept,
                     answers: Answers { input, keys },
                 },
             )?;
@@ -214,6 +223,14 @@ pub(crate) fn converse<T: Terminal>(
         let prompt = match typing::ask(renderer, style, &mut runner, &mut editor, keys)? {
             Asked::Said(said) => said,
             Asked::Ended => break,
+
+            // The view takes the region the box was standing in and gives it
+            // back on the way out, so what comes next is the box again with the
+            // line still in it. Nothing was written down on either side of it.
+            Asked::Expand => {
+                expanding::stand(renderer, style, &kept)?;
+                continue;
+            }
 
             // Nothing to type into: no terminal, or one at only one end. The
             // line is read the way every other answer on this thread is.
@@ -287,10 +304,11 @@ pub(crate) fn converse<T: Terminal>(
             runner,
             renderer,
             terms,
+            prompt,
             Taking {
-                prompt,
                 editor: &mut editor,
                 queued: &mut queued,
+                kept: &mut kept,
                 answers: Answers { input, keys },
             },
         )?;
@@ -340,6 +358,7 @@ fn take<T: Terminal>(
     mut runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
+    prompt: String,
     mut taking: Taking<'_>,
 ) -> Result<Took, Fatal> {
     // Both channels are made fresh for this turn. A reply channel that outlived
@@ -367,7 +386,6 @@ fn take<T: Terminal>(
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
     let says = typing::under(&runner, terms.style.glyphs());
-    let prompt = taking.prompt;
 
     // Read here for the same reason and at the same moment: half of what a turn
     // is asked under is about the session — which model is answering, and how
@@ -448,11 +466,16 @@ fn take<T: Terminal>(
                         draw::returned(renderer, &said, terms.style).map_err(Fatal::from),
                         &terms.cancel,
                     );
+
+                    // And the same line is what a result too long for its row
+                    // is held under, since that is how the reader knows which
+                    // call the text they asked for answers.
+                    taking.kept.calling(said);
                 }
 
                 if held.is_ok() {
                     held = stop_if_failed(
-                        shown(one, renderer, terms, &mut taking.answers, &reply),
+                        shown(one, renderer, terms, &mut taking, &reply),
                         &terms.cancel,
                     );
                 } else if matches!(one, Seen::Question { .. }) {
@@ -579,19 +602,25 @@ impl Prompts {
     }
 }
 
-/// What one turn is being taken with, beyond the runner and the terminal.
+/// What one turn borrows for as long as it runs, beyond the runner and the
+/// terminal.
 ///
-/// A struct because the line and where an answer comes from both outlive the
-/// turn, and a call with five references in a row is one nobody can read.
+/// Everything here outlives the turn and belongs to the loop above it — the
+/// line being typed, the lines finished behind it, what its results had no room
+/// to say, where the answer to a question comes from. A struct because a call
+/// with four references in a row is one nobody can read; the prompt is not among
+/// them because the prompt is what the turn is about rather than something it
+/// hands back.
 struct Taking<'a> {
-    /// What was asked.
-    prompt: String,
     /// The line being written while the turn runs. It outlives the turn, so
     /// what was typed during one is still in the box after it.
     editor: &'a mut Editor,
     /// The prompts waiting behind this turn, which this one adds to as lines
     /// are finished in the box under it. The loop above takes them.
     queued: &'a mut Prompts,
+    /// What this turn's results had no room to say, for the reader who asks
+    /// afterwards. It outlives the turn the same way the line being typed does.
+    kept: &'a mut Kept,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
 }
@@ -686,11 +715,16 @@ fn heard(arrived: Pressed) -> Heard {
         // Ctrl+E is here for now rather than because it belongs here: the
         // question is committed to scrollback a row at a time, and there is no
         // second shape of it to toggle into until the panel is what draws it.
+        //
+        // Ctrl+O is here because this is the question with nowhere to stand: it
+        // was put a row at a time precisely because there was no room for a
+        // panel, and a view of what was cut needs more room than the panel did.
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
         | Pressed::Cycle
         | Pressed::Explain
+        | Pressed::Expand
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
@@ -701,19 +735,19 @@ fn shown<T: Terminal>(
     one: Seen,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    answers: &mut Answers<'_>,
+    taking: &mut Taking<'_>,
     reply: &Sender<Answer>,
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
     match one {
-        Seen::Turn(event) => draw::event(renderer, event, style)?,
+        Seen::Turn(event) => draw::event(renderer, event, style, taking.kept)?,
         Seen::Question { call, sensitivity } => {
             // A durable rule cannot live in either project configuration file:
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
             // the prompt offers only answers this process can honour.
-            let answer = asked(renderer, &call, &sensitivity, answers, style);
+            let answer = asked(renderer, &call, &sensitivity, &mut taking.answers, style);
             let answer = match answer {
                 Ok(answer) => answer,
                 Err(problem) => {

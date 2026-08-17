@@ -112,6 +112,13 @@ pub(crate) enum Asked {
     /// The session is over: Ctrl-D on an empty line, or Ctrl-C twice against
     /// one.
     Ended,
+    /// Ctrl+O: whatever the transcript cut down to a row is to be shown whole,
+    /// and the box asked for again once it has been closed.
+    ///
+    /// The box is not written down on the way out. It stands in the live region
+    /// and so does the view, so the one replaces the other and the line being
+    /// typed is still there underneath when this comes back.
+    Expand,
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
 }
@@ -202,6 +209,11 @@ pub(crate) fn ask<T: Terminal>(
                 renderer.resized()?;
                 shown = draw(renderer, editor, style, &says, &open)?;
             }
+
+            // Handed back to the caller rather than answered here. What was
+            // cut is the transcript's, this module is the box's, and the two
+            // meet where the loop that owns both of them is.
+            Pressed::Expand => return Ok(Asked::Expand),
 
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
@@ -587,9 +599,16 @@ fn meant(arrived: Pressed) -> Meant {
 
         // Ctrl+E among them: what it opens is an explanation of something
         // waiting to be decided about, and a running turn has decided already.
+        //
+        // Ctrl+O for a nearer reason. What it opens stands under the tail, and
+        // the tail is where a running turn is writing — so the next result to
+        // arrive would take the view away, and the tool that answered is the one
+        // the reader most likely opened it to read about. The key does what it
+        // says the moment the turn yields.
         Pressed::Clicked { .. }
         | Pressed::Cycle
         | Pressed::Explain
+        | Pressed::Expand
         | Pressed::Up
         | Pressed::Down
         | Pressed::Ignored => Meant::Ignored,
