@@ -88,6 +88,15 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **An OpenAI model on a `ChatGPT` plan can run a tool again.** The finish of a
+  response says nothing about why it finished, so crucible read that back off the
+  list of items the finishing event repeats — a list the plan's backend sends
+  empty, having already narrated every item in it. So every turn that asked for
+  a tool read as a turn that had answered: the call was streamed and then
+  dropped, the tool never ran, and the turn drew nothing at all. The stop reason
+  is now what the response asked for as it went, which both services say the same
+  way. Anthropic, Moonshot and an OpenAI API key were never affected.
+
 - **A long answer no longer draws slower the taller the window is.** Each piece
   of streamed text redrew every live row, and the live region was a whole screen
   tall, so a 5,400-character answer wrote 1.1 MB to the terminal on a 40-row
