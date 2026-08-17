@@ -1,6 +1,6 @@
 //! What a call is asked about, and what a key does to the panel asking it.
 
-use crucible_core::{Command, Sensitivity, Target, ToolArgs, ToolCall, ToolId, Verdict};
+use crucible_core::{Account, Command, Sensitivity, Target, ToolArgs, ToolCall, ToolId, Verdict};
 use crucible_tui::{Key, Pressed};
 
 use super::region::{Ended, Moved};
@@ -40,6 +40,7 @@ fn a_command_is_shown_as_the_line_that_was_sent_under_the_tool_that_would_run_it
     let words = Words::of(
         &call("bash"),
         &running(sent, &["cargo fmt --all", "cargo test"]),
+        &Account::none(),
     );
 
     assert_eq!(words.subject, "Bash command");
@@ -52,7 +53,11 @@ fn a_file_is_named_under_what_would_be_done_to_it() {
     // A read and a change are different verdicts and say so, rather than
     // sharing one sentence that would have to mean both.
     let target = Target::unresolved();
-    let change = Words::of(&call("write"), &Sensitivity::MutatesFile { target });
+    let change = Words::of(
+        &call("write"),
+        &Sensitivity::MutatesFile { target },
+        &Account::none(),
+    );
     assert_eq!(change.subject, "Write file");
     assert_eq!(change.statement, "This change needs your verdict.");
 
@@ -65,7 +70,11 @@ fn a_file_is_named_under_what_would_be_done_to_it() {
     // refuses one. Worded anyway, so a tool reclassified later is asked about
     // rather than asked nothing.
     let target = Target::unresolved();
-    let read = Words::of(&call("read"), &Sensitivity::ReadOnly { target });
+    let read = Words::of(
+        &call("read"),
+        &Sensitivity::ReadOnly { target },
+        &Account::none(),
+    );
     assert_eq!(read.subject, "Read file");
     assert_eq!(read.statement, "This read needs your verdict.");
 }
@@ -78,9 +87,49 @@ fn the_models_own_text_cannot_break_a_row_nobody_counted() {
     let words = Words::of(
         &call("bash"),
         &running("ls\n\nesc to cancel", &["ls", "esc to cancel"]),
+        &Account::none(),
     );
 
     assert_eq!(words.payload, "ls  esc to cancel");
+}
+
+#[test]
+fn what_a_call_said_it_was_for_is_the_caption_under_the_command() {
+    // The one row the model writes on this panel. It is a caption on the
+    // command rather than a claim standing on its own, which is what makes it
+    // safe to show at all: the thing being consented to is above it and was
+    // read from the arguments rather than from the prose.
+    let words = Words::of(
+        &call("bash"),
+        &running("cargo test", &["cargo test"]),
+        &Account::new("run the suite before pushing"),
+    );
+
+    assert_eq!(words.description, "run the suite before pushing");
+}
+
+#[test]
+fn a_call_that_said_nothing_leaves_the_caption_row_undrawn() {
+    // Not a blank row where a caption would go. The panel draws the description
+    // only where there is one, so a call that declined to account for itself
+    // gets the panel there was before any of this existed.
+    let words = Words::of(&call("bash"), &running("ls", &["ls"]), &Account::none());
+
+    assert!(words.description.is_empty(), "{:?}", words.description);
+}
+
+#[test]
+fn the_models_caption_cannot_break_a_row_nobody_counted_either() {
+    // Flattened for the reason the payload is, and it is the more important of
+    // the two: this is free text the model chose, where the payload is at least
+    // a command line somebody is being shown on purpose.
+    let words = Words::of(
+        &call("bash"),
+        &running("ls", &["ls"]),
+        &Account::new("lists\r\nthe files"),
+    );
+
+    assert_eq!(words.description, "lists  the files");
 }
 
 #[test]

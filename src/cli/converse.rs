@@ -747,7 +747,13 @@ fn asked<T: Terminal>(
     style: Style,
 ) -> Result<Answer, Fatal> {
     if answers.keys {
-        match asking::ask(renderer, style, call, sensitivity)? {
+        // Read here rather than carried from the worker, because the panel is
+        // the only thing that shows it: the row a call gets in the transcript
+        // is drawn from what the tool made of the arguments, and this is the
+        // model's own sentence about them.
+        let account = crucible_tools::account(&call.args);
+
+        match asking::ask(renderer, style, call, sensitivity, &account)? {
             asking::Answered::Said(answer, said) => {
                 draw::decided(renderer, said, style)?;
                 return Ok(answer);

@@ -33,6 +33,7 @@ the prompt box:
 │  Bash command                                                                │
 │                                                                              │
 │    cargo test --workspace --all-features                                     │
+│    Run the suite before touching the module                                  │
 │                                                                              │
 │  This command needs your verdict.                                            │
 │                                                                              │
@@ -57,6 +58,16 @@ become spaces, because the text is the model's to choose: a name with its tail
 missing is one you agree to without having read it, and a control character
 left in it moves the cursor inside a row nothing measured. Nothing runs while
 the panel is on screen.
+
+Under it, where the call gave one, is the model's own line saying what the call
+is for. It is a caption on the command and not a claim standing beside it —
+there is no blank between them, which is what says whose sentence it is about.
+Read it as what the model *says* it is doing; what it *would* do is the line
+above, and that one was read out of the arguments rather than written. The
+caption is cut to one row however much arrived, so nothing off-screen decides
+how tall this panel is, and a call that offered none leaves the row out
+entirely. `bash` is the tool that invites one today,
+[`description`](../tools/commands.md).
 
 `↑` and `↓` move the mark, and stop at each end rather than wrapping. `enter`
 takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.

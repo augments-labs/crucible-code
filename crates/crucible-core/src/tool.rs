@@ -135,6 +135,54 @@ impl fmt::Debug for Summary {
     }
 }
 
+/// What the model said this call is for, on its way to whoever decides it.
+///
+/// The panel a call waits behind is drawn by a thread with no provider behind
+/// it: it sends the question and blocks on the answer, so it cannot go back and
+/// ask what the command was for. What the model says about a call therefore
+/// arrives *with* the call, as an argument the schema invites and the tool
+/// itself never reads.
+///
+/// Empty is the ordinary case and not a failure. A tool whose schema invites no
+/// account, and a call that declined to give one, both come through here, and
+/// the panel they get is the panel there was before this existed.
+///
+/// A [`Summary`] is the neighbouring type and answers a different question:
+/// that one is *what* the call is, taken out of the arguments the tool acts on,
+/// and it goes in the transcript. This is what the model says *about* the call,
+/// in its own words, and it is shown only while somebody is deciding.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Account(Box<str>);
+
+impl Account {
+    /// Takes the one line a call gave about itself.
+    #[must_use]
+    pub fn new(description: impl Into<Box<str>>) -> Self {
+        Self(description.into())
+    }
+
+    /// A call that said nothing about itself.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::new("")
+    }
+
+    /// The line, for whatever is drawing the question.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Account {
+    /// Redacted for the reason [`Summary`] is: this is the model's prose about
+    /// arguments this crate refuses to show, and prose about a command line
+    /// quotes it as often as not.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Account([redacted])")
+    }
+}
+
 /// What a tool produced, on its way back to the model.
 ///
 /// And on its way to the reader, which is not the same journey. The text is

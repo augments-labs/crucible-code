@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A command can say what it is for, and the question shows it.** `bash` takes
+  an optional `description`, and it appears as a caption under the command on
+  the panel where you decide. What it costs: one row, and only where the call
+  gave one. It is the model's own sentence, so it sits under what would actually
+  run rather than beside it — the tool never reads it, and no rule weighs it.
+
 - **A change to a file is shown rather than counted.** `edit` and `write` draw
   what they did under the call: the lines that went, the lines that came, and a
   few either side, each at the number the file gives it. What it costs: up to 64
