@@ -73,7 +73,9 @@ That is a repository ruleset with no bypass, so it holds for the person cutting
 the release too — the tired push at the end of a long day is the one it exists
 to catch. A required check is the only kind there is: one that merely runs is a
 red mark beside a merge button that still works, which is what the size check
-was until it was added to that list.
+was until it was added to that list. It is still on it now that it reports
+rather than blocks, so that turning the ceiling back on is one line in the
+workflow and nothing here.
 
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.

@@ -117,19 +117,15 @@ naming no concrete provider or tool is deliberate — the loop drives
     invariant sitting where the next reader goes to learn it. Read the prose
     above what you changed, and above whatever now behaves differently because
     you changed it.
-11. **A pull request over 400 changed lines is sent back, whatever it targets.**
-    Additions plus deletions, generated files aside. Past that a review stops
-    being one, and that is true of the reader in front of a diff into a
-    collecting branch as much as one into `main`. The remedy is a sequence of
-    pull requests that each stand on their own. Two diffs are measured wrongly
-    and each takes a label, which is the only way past and stays visible on the
-    pull request afterwards: `moves-only` for code that only moves, and
-    `whole-module` for a module whose parts do not compile apart — `-D warnings`
-    makes an unreached function a failed build, so where a module's floor is
-    already over the ceiling, the only smaller pull request is one that lands
-    code without the tests that prove it. The test of the second is whether an
-    intermediate pull request would compile, not whether the change is large or
-    awkward to split. `CONTRIBUTING.md` has the rest.
+11. **A pull request has one reason to change.** What decides whether a change
+    is one pull request or several is whether it takes one summary to say what
+    it does: a change that needs two is two, however short each of them turns
+    out to be, and a module that only compiles whole is one however long. The
+    line ceiling that used to answer this instead is temporarily off while the
+    project is this young: CI still counts a diff and prints the number, and
+    sends nothing back for it. Off rather than gone; `CONTRIBUTING.md` has the
+    rest.
+
 ## Vocabulary
 
 One word per concept, in names, comments, docs and commit messages. The synonym
