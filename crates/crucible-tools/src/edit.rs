@@ -20,6 +20,7 @@ use crucible_core::{
 
 use crate::args::Args;
 use crate::atomic;
+use crate::changed;
 use crate::summary;
 use crate::target;
 
@@ -168,8 +169,13 @@ impl Tool for Edit {
         // Every change is made to the text in memory, and the file is written
         // only once they all have been. A list that fails part-way through has
         // touched nothing.
-        let mut after = before;
-        let mut changed = 0_usize;
+        // Both versions are kept, because two readers are owed different
+        // things: the model is told how many replacements were made, and the
+        // person watching is shown which lines moved, which cannot be worked
+        // out from the result alone. Each is bounded by the ceiling above, and
+        // both are gone when this call returns.
+        let mut after = before.clone();
+        let mut replaced = 0_usize;
         for (at, change) in wanted.iter().enumerate() {
             if self.cancel.requested() {
                 return Err(ToolError::Cancelled(NAME));
@@ -190,7 +196,7 @@ impl Tool for Edit {
             } else {
                 after.replacen(change.find, change.replace, 1)
             };
-            changed = changed.saturating_add(made);
+            replaced = replaced.saturating_add(made);
         }
 
         let permissions = file
@@ -215,14 +221,15 @@ impl Tool for Edit {
             return Ok(ToolOutput::failed(problem.to_string()));
         }
 
-        Ok(ToolOutput::ok(format!(
-            "changed {requested}, {changed} replacements"
-        )))
+        Ok(
+            ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
+                .showing(changed::between(&before, &after)),
+        )
     }
 }
 
 /// One replacement a call asks for.
-struct Change<'a> {
+struct Replacement<'a> {
     find: &'a str,
     replace: &'a str,
     all: bool,
@@ -233,9 +240,12 @@ struct Change<'a> {
 /// A call that sent both is refused rather than read as one of them: taking
 /// `edits` and dropping `find` would do half of what the call said and report
 /// that it worked.
-fn changes<'a>(args: &'a Args, listed: Option<&'a [Args]>) -> Result<Vec<Change<'a>>, ToolError> {
+fn changes<'a>(
+    args: &'a Args,
+    listed: Option<&'a [Args]>,
+) -> Result<Vec<Replacement<'a>>, ToolError> {
     let Some(each) = listed else {
-        return Ok(vec![Change {
+        return Ok(vec![Replacement {
             find: args.text("find")?,
             replace: args.exact("replace")?,
             all: args.flag("all", false)?,
@@ -251,7 +261,7 @@ fn changes<'a>(args: &'a Args, listed: Option<&'a [Args]>) -> Result<Vec<Change<
 
     each.iter()
         .map(|one| {
-            Ok(Change {
+            Ok(Replacement {
                 find: one.text("find")?,
                 replace: one.exact("replace")?,
                 all: one.flag("all", false)?,
@@ -262,7 +272,7 @@ fn changes<'a>(args: &'a Args, listed: Option<&'a [Args]>) -> Result<Vec<Change<
 
 /// How long the text is once a change has been made to it, or `None` where the
 /// arithmetic leaves what a `usize` can hold.
-fn grown(length: usize, made: usize, change: &Change<'_>) -> Option<usize> {
+fn grown(length: usize, made: usize, change: &Replacement<'_>) -> Option<usize> {
     let removed = made.checked_mul(change.find.len())?;
     let added = made.checked_mul(change.replace.len())?;
     length.checked_sub(removed)?.checked_add(added)
