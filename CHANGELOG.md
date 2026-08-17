@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A change to a file is shown rather than counted.** `edit` and `write` draw
+  what they did under the call: the lines that went, the lines that came, and a
+  few either side, each at the number the file gives it. What it costs: up to 64
+  rows of the window per call, and a change longer than that says on the row
+  above how much of it you are not looking at.
+
 ### Changed
 
 - **A tool call keeps its colour once it has been written out.** The mark and

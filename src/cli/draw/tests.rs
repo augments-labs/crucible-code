@@ -1,7 +1,8 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
 use crucible_core::{
-    Command, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError, TurnId, Workspace,
+    Change, Command, Diff, Line, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError,
+    TurnId, Workspace,
 };
 use crucible_tui::Recording;
 
@@ -707,4 +708,182 @@ fn an_answer_arriving_in_pieces_is_one_block() {
     ];
 
     assert_eq!(transcript(turn.into()), "Two plus two is four.\n");
+}
+
+/// Three lines of run-up, three gone, three in their place, two after. The
+/// numbers are the ones a reader would find these lines at, so both sides of the
+/// change start at the same one and what follows it does not.
+fn changed() -> Diff {
+    let mut lines = vec![
+        Line::new(303, Change::Kept, "        digest=$(<artifact/digest)"),
+        Line::new(304, Change::Kept, "        scripts/smoke.sh"),
+        Line::new(305, Change::Kept, ""),
+    ];
+    lines.extend((306..=308).map(|at| Line::new(at, Change::Removed, "# trend data")));
+    lines.extend((306..=308).map(|at| Line::new(at, Change::Added, "# what stops a tag")));
+    lines.extend([
+        Line::new(309, Change::Kept, "budgets:"),
+        Line::new(310, Change::Kept, "  name: release budgets"),
+    ]);
+
+    Diff::new(lines)
+}
+
+/// Wide enough for the longest line [`changed`] holds and no wider, so what a
+/// row is padded to is visible in the expected text rather than lost in space.
+const NARROW: usize = 48;
+
+/// Where a block for a change at `number` starts, with the ground it is padded
+/// to the window with left off.
+fn starts(number: usize) -> String {
+    let one = Diff::new([Line::new(number, Change::Removed, "old")]);
+    let rows = block(&one, 40, unicode());
+
+    rows.first()
+        .map(Row::text)
+        .unwrap_or_default()
+        .trim_end()
+        .to_owned()
+}
+
+#[test]
+fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
+    // The gutter is the number the reader would find the line at, the sign says
+    // which way it went, and what a line is indented by is left where it was --
+    // a block is read by comparing one row with the row above it, and where each
+    // of them starts is the first thing that comparison is made of.
+    let drawn: Vec<String> = block(&changed(), NARROW, unicode())
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    assert_eq!(
+        drawn,
+        [
+            "      303            digest=$(<artifact/digest)",
+            "      304            scripts/smoke.sh",
+            "      305    ",
+            "      306 -  # trend data                       ",
+            "      307 -  # trend data                       ",
+            "      308 -  # trend data                       ",
+            "      306 +  # what stops a tag                 ",
+            "      307 +  # what stops a tag                 ",
+            "      308 +  # what stops a tag                 ",
+            "      309    budgets:",
+            "      310      name: release budgets",
+        ]
+    );
+}
+
+#[test]
+fn a_line_that_moved_is_carried_to_the_last_column_and_one_that_stayed_is_not() {
+    // A block of colour is what the eye finds before it reads anything, and one
+    // that stopped where its text stopped would have a ragged edge meaning
+    // nothing. The lines around it are on the reader's own ground, so the eye
+    // skips them on the way to the change -- which is what they are there for.
+    for row in block(&changed(), NARROW, unicode()) {
+        let moved = row.text().contains('-') || row.text().contains('+');
+
+        assert_eq!(row.columns() == NARROW, moved, "{:?}", row.text());
+    }
+}
+
+#[test]
+fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
+    // Both are true of the same call and only one of them is about the file: the
+    // model asked for a replacement and is told it was made; the reader is
+    // looking at what is in the file now.
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
+
+    assert_eq!(
+        finished(&output, shown(), unicode()).text(),
+        "  └ Added 3 lines, removed 3 lines"
+    );
+}
+
+#[test]
+fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
+    let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
+    let said = |output| finished(&output, shown(), unicode()).text();
+
+    assert_eq!(said(one(Change::Added)), "  └ Added 1 line");
+    assert_eq!(said(one(Change::Removed)), "  └ Removed 1 line");
+}
+
+#[test]
+fn a_block_that_stopped_short_says_so_where_the_counts_are() {
+    // A block that stopped without saying so reads as the whole of what happened.
+    // It is said beside the counts because those are the claim the reader is
+    // checking the block against.
+    let whole = (1..=Diff::LINES + 4).map(|at| Line::new(at, Change::Added, "line"));
+    let output = ToolOutput::ok("wrote it").showing(Diff::new(whole));
+
+    let said = finished(&output, shown(), unicode()).text();
+
+    assert!(said.contains("Added 68 lines"), "{said}");
+    assert!(said.contains("(4 of them not shown)"), "{said}");
+}
+
+#[test]
+fn the_gutter_widens_for_a_long_file_and_never_narrows_below_three() {
+    // Otherwise a change near the top of a file and one a thousand lines down
+    // would start their text in different columns, and a reader comparing two
+    // calls reads the shape of a block before its digits.
+    assert_eq!(starts(4), "        4 -  old");
+    assert_eq!(starts(12_345), "      12345 -  old");
+}
+
+#[test]
+fn a_line_too_wide_for_the_window_is_cut_inside_it() {
+    // The ground is drawn to the last column, so a row that outgrew the window
+    // is one the terminal wraps itself -- a row the live tail never counted, and
+    // a cursor a row off on every frame after it.
+    let long = Diff::new([Line::new(9, Change::Added, "x".repeat(500))]);
+
+    for row in block(&long, 40, unicode()) {
+        assert_eq!(row.columns(), 40, "{:?}", row.text());
+    }
+}
+
+#[test]
+fn a_change_reaches_the_terminal_on_the_ground_that_says_which_way_it_went() {
+    // Through `event` rather than around it, since what a block is worth is the
+    // colour under it and nothing above this draws one.
+    let style = Style::coloured();
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+
+    event(
+        &mut renderer,
+        Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok("changed one.rs, 1 replacements").showing(changed()),
+        },
+        style,
+    )
+    .expect("the change to draw");
+
+    let written = renderer.terminal().written();
+    for slot in [
+        Slot::Added,
+        Slot::AddedNumber,
+        Slot::Removed,
+        Slot::RemovedNumber,
+    ] {
+        let ground = style.palette().open(slot);
+
+        assert!(written.contains(ground), "{written:?} is missing {slot:?}");
+    }
+}
+
+#[test]
+fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
+    // An empty diff is a call that ran and left the file alone, which is a
+    // different thing from one that changed something nobody could work out.
+    let output = ToolOutput::ok("created one.rs, 0 lines").showing(Diff::new([]));
+
+    assert_eq!(
+        finished(&output, shown(), unicode()).text(),
+        "  └ created one.rs, 0 lines"
+    );
+    assert!(block(&Diff::new([]), 40, unicode()).is_empty());
 }

@@ -131,3 +131,34 @@ The record belongs to the session rather than to the transcript. `/clear` and
 a `write` in the session that follows asks for the read again. Leaving crucible
 drops it for the same reason, so a fresh run refuses a file the last one read.
 Nothing about it is written to disk.
+
+## What a change leaves on screen
+
+The answer `edit` and `write` send the model says what was done. What is drawn
+under the call is the change itself:
+
+```
+● Edit(.github/workflows/release.yml)
+  └ Added 2 lines, removed 1 line
+      303            scripts/smoke.sh --no-provider
+      304
+      305 -  # Shared-runner numbers are trend data.
+      305 +  # What stops a tag whose build got slower
+      306 +  # is the budget below.
+      306    budgets:
+      307      name: release budgets
+```
+
+A line that went is marked `-` and one that came is marked `+`, each on ground
+saying which way; the lines around them did not move and are there to be read
+against. Every one carries the number it has in the file, and both sides of a
+replacement start at the same one, since one line stands where the other did.
+
+At most 64 lines are drawn, and a change longer than that is still counted whole
+on the row above, which then says how much of it is not below:
+`Added 300 lines, removed 12 lines (248 of them not shown)`.
+
+`write` is the one that can have nothing to show. It is handed the new file and
+has to read the one it is about to discard, so a file over 1000000 bytes or one
+that is not text is replaced with the block left out rather than guessed at. The
+write itself happens either way.

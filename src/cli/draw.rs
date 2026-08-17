@@ -26,6 +26,15 @@
 //! turn that parted on the way out would hand the shell back a prompt one row
 //! lower than it found it.
 //!
+//! A call that changed a file is drawn with the change under it, inside that
+//! same block: the count on the row hanging off the call, and below it the lines
+//! that moved, each on a ground saying which way. Which lines those are is not
+//! worked out here. It arrives on the result from the tool that held both
+//! versions of the file, already bounded in rows and in the length of each of
+//! them — so nothing on this side has to decide what to do about a change to a
+//! whole file, and a call that sent no block is one that changed nothing rather
+//! than one nobody could work out.
+//!
 //! One line is drawn twice. A call stands in the footing with a mark that moves
 //! for as long as its tool is out, and commits through [`returned`] once it has
 //! answered — the same words, in the same columns, with the motion gone. So
@@ -34,7 +43,7 @@
 
 use std::fmt;
 
-use crucible_core::{Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
+use crucible_core::{Change, Diff, Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
 use super::style::Style;
@@ -57,6 +66,13 @@ const PLAIN: &str = "\x1b[0m";
 /// The same two columns the reason and the answers are written behind, so the
 /// whole question reads as one block.
 const UNDER: &str = "  ";
+
+/// The narrowest a block's gutter of line numbers is drawn.
+///
+/// Three, because that is where a file stops being one screen: below it the
+/// numbers say where the reader is looking, and a column that narrowed to fit
+/// them would move the whole block sideways between one call and the next.
+const NUMBER: usize = 3;
 
 /// Draws one event.
 pub(crate) fn event<T: Terminal>(
@@ -98,10 +114,17 @@ pub(crate) fn event<T: Terminal>(
         // be in scrollback. It commits through [`returned`].
         Event::ToolRequested { .. } => renderer.settle(),
 
-        Event::ToolFinished { output, .. } => renderer.present(
-            &[finished(&output, style.output(columns), style.glyphs())],
-            style.palette(),
-        ),
+        // One block: the row that says what came back, and under it the lines a
+        // call that changed a file moved. No row parts them, because a reader
+        // asking what the call did is asking both halves of the same question.
+        Event::ToolFinished { output, .. } => {
+            let mut rows = vec![finished(&output, style.output(columns), style.glyphs())];
+            if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
+                rows.extend(block(diff, columns, style.glyphs()));
+            }
+
+            renderer.present(&rows, style.palette())
+        }
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
@@ -383,12 +406,12 @@ fn pascal(name: &str) -> String {
 /// the row in the reader's own foreground — the call line above it stands as it
 /// was, because a call that was made is a call that was made whatever came back,
 /// so this row is the only place the eye can be sent.
+///
+/// A call that changed a file says so in the change's own arithmetic instead of
+/// in its answer to the model. Both are true of the same call, and only one is
+/// about the file: how many replacements `edit` made is a fact about the
+/// instruction it was sent, and the reader is looking at what is in the file.
 fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> Row {
-    let text = output.text();
-    let mut lines = text.lines();
-    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
-    let rest = lines.count();
-
     let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
     row.push(Slot::Quiet, format!("{} ", glyphs.hangs()));
 
@@ -396,12 +419,122 @@ fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> Row {
         row.push(Slot::Plain, format!("{} ", glyphs.failed()));
     }
 
+    if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
+        counted(&mut row, diff);
+        return row;
+    }
+
+    let text = output.text();
+    let mut lines = text.lines();
+    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
+    let rest = lines.count();
+
     row.push(Slot::Quiet, first);
     if rest > 0 {
         row.push(Slot::Quiet, format!(" (+{rest} lines)"));
     }
 
     row
+}
+
+/// What a change did, counted.
+///
+/// The numbers are what the row is read for, so they are the part of it that
+/// stands out; the words around them are as quiet as the rest of the line.
+///
+/// What the block below could not fit is said here rather than at its foot,
+/// because this is the row that claims a number — a reader told nine lines went
+/// in and shown six of them has been told the truth about the call, and a block
+/// that stopped without saying so reads as the whole of what happened.
+fn counted(row: &mut Row, diff: &Diff) {
+    match (diff.added(), diff.removed()) {
+        (0, removed) => count(row, "Removed ", removed),
+        (added, 0) => count(row, "Added ", added),
+        (added, removed) => {
+            count(row, "Added ", added);
+            row.push(Slot::Quiet, ", ");
+            count(row, "removed ", removed);
+        }
+    }
+
+    if diff.dropped() > 0 {
+        row.push(
+            Slot::Quiet,
+            format!(" ({} of them not shown)", diff.dropped()),
+        );
+    }
+}
+
+/// `word`, then a number of lines with the number emphasised.
+fn count(row: &mut Row, word: &str, lines: usize) {
+    row.push(Slot::Quiet, word);
+    row.push(Slot::Strong, lines.to_string());
+    row.push(Slot::Quiet, if lines == 1 { " line" } else { " lines" });
+}
+
+/// The narrowest column the numbers down the left of a block all fit in.
+///
+/// Never under [`NUMBER`], so two calls in a column start their lines in the
+/// same place whatever part of a file each of them touched.
+fn gutter(diff: &Diff) -> usize {
+    let widest = diff
+        .lines()
+        .iter()
+        .map(|line| line.number().checked_ilog10().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+
+    usize::try_from(widest)
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(NUMBER)
+}
+
+/// The lines a call moved, under the row that counted them.
+///
+/// Each row is the number the reader would find that line at, the sign saying
+/// which way it went, and the line itself. The two that moved are drawn on a
+/// ground of their own carried to the last column of the window: a block of
+/// colour is what the eye finds before it reads anything, and one that stopped
+/// where its text stopped would have a ragged edge that means nothing.
+///
+/// The lines around them are on the reader's own ground, because they did not
+/// move. They are here so the ones that did have something to be read against,
+/// and a context line painted like the rest of the terminal is one the eye skips
+/// on its way to the change — which is what it is for.
+///
+/// Clipped to the window rather than to the ceiling a result line is held to.
+/// That ceiling exists to keep one event to about one row, and these rows are
+/// the event: a line of code cut off at the same column on a wide terminal would
+/// be hiding the change the block was drawn to show.
+fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
+    let left = columns(glyphs.called()) + 4;
+    let gutter = gutter(diff);
+
+    // A space each side of the number, the sign, and two more before the text:
+    // the columns the row spends before it says anything.
+    let room = window.saturating_sub(left + gutter + 5);
+
+    diff.lines()
+        .iter()
+        .map(|line| {
+            let (ground, marked, sign) = match line.change() {
+                Change::Kept => (Slot::Plain, Slot::Quiet, ' '),
+                Change::Removed => (Slot::Removed, Slot::RemovedNumber, '-'),
+                Change::Added => (Slot::Added, Slot::AddedNumber, '+'),
+            };
+
+            let mut row = Row::new().then(Slot::Plain, " ".repeat(left));
+            row.push(marked, format!(" {:>gutter$} {sign}  ", line.number()));
+            row.push(ground, indented(line.text(), room, glyphs));
+
+            if !matches!(line.change(), Change::Kept) {
+                row.fill(ground, window);
+            }
+
+            row
+        })
+        .collect()
 }
 
 /// What to say about a turn that ended, if anything.
@@ -527,8 +660,29 @@ fn answers(glyphs: Glyphs) -> String {
 /// Flattened before it is measured, for the reason [`flattened`] gives: what is
 /// counted has to be what will be drawn.
 fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> String {
-    let mut line = flattened(text);
+    within(flattened(text), width, glyphs)
+}
 
+/// One line of a file, at most `width` display columns of it.
+///
+/// Everything else here is a sentence written for a row, and [`flattened`] tidies
+/// a stray space off each end of it. A line of a file is read against the line
+/// above it, and what that comparison is made of first is where each of them
+/// starts — so this one keeps its indentation and loses only the end, where a
+/// carriage return the file was saved with would otherwise become a space the
+/// row is padded by.
+fn indented(text: &str, width: usize, glyphs: Glyphs) -> String {
+    let line = text
+        .trim_end()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+
+    within(line, width, glyphs)
+}
+
+/// `line`, cut to `width` with a mark saying it was cut.
+fn within(mut line: String, width: usize, glyphs: Glyphs) -> String {
     if cut(&line, width).is_none() {
         return line;
     }
