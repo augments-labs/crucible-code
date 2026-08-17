@@ -22,14 +22,18 @@ use crate::stream::Wire;
 /// The Responses API, being narrated.
 #[derive(Debug, Default)]
 pub(super) struct Responses {
+    /// The call being assembled right now.
     open: Open,
+    /// Whether this response has asked for a tool at any point, which is what
+    /// it stops for. See [`stop`].
+    called: bool,
 }
 
 impl Wire for Responses {
     const PROVIDER: &'static str = NAME;
 
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
-        deltas(event, &mut self.open)
+        deltas(event, self)
     }
 }
 
@@ -58,7 +62,7 @@ struct Open {
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when an event does not parse, announces a tool
 /// call by part of its identity, or contradicts what is open.
-fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+fn deltas(event: &SseEvent, response: &mut Responses) -> Result<Vec<Delta>, ProviderError> {
     // A heartbeat, which a proxy may spell any way it likes and may send with
     // no data line at all. There is nothing to parse; reading it as an event
     // fails the turn and discards the answer that had already arrived.
@@ -78,14 +82,14 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
         // that it finished normally.
         "response.output_text.delta" | "response.refusal.delta" => Ok(said(&payload)),
 
-        "response.output_item.added" => started(&payload, open),
-        "response.function_call_arguments.delta" => arguing(&payload, open),
-        "response.output_item.done" => finished(&payload, open),
+        "response.output_item.added" => started(&payload, response),
+        "response.function_call_arguments.delta" => arguing(&payload, &mut response.open),
+        "response.output_item.done" => finished(&payload, &mut response.open),
 
         // The three ways a response ends. `completed` is the only one that is
         // not a failure, and which of the two finishes it is depends on what
-        // the response turned out to hold.
-        "response.completed" => Ok(ended(&payload, stop(&payload))),
+        // the response turned out to ask for.
+        "response.completed" => Ok(ended(&payload, stop(response.called))),
         "response.incomplete" => Ok(ended(&payload, cut(&payload))),
         "response.failed" => Err(failed(&payload)),
 
@@ -113,7 +117,7 @@ fn said(payload: &Value) -> Vec<Delta> {
 ///
 /// A message item opening is nothing to report: its text arrives as fragments
 /// and this would put a delta in front of it saying so.
-fn started(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+fn started(payload: &Value, response: &mut Responses) -> Result<Vec<Delta>, ProviderError> {
     let Some(item) = payload.get("item") else {
         return Ok(Vec::new());
     };
@@ -140,10 +144,13 @@ fn started(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError
         });
     };
 
-    *open = Open {
+    response.open = Open {
         item: id.to_owned(),
         streamed: false,
     };
+    // Outlives the call it was set by: this is what the response stops for, and
+    // it is asked about once every item has been narrated.
+    response.called = true;
 
     Ok(vec![Delta::ToolStarted {
         id: ToolId::new(call),
@@ -242,19 +249,20 @@ fn spent(payload: &Value) -> Option<Delta> {
 /// Why a response that finished finished.
 ///
 /// There is no field for it: a response that wants tools and a response that
-/// has answered both complete, and what tells them apart is whether the output
-/// holds a call. Read from the finished response rather than remembered from
-/// the items, so the two cannot disagree.
-fn stop(payload: &Value) -> StopReason {
-    let calls = payload
-        .get("response")
-        .and_then(|response| response.get("output"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .any(|item| text(item, "type") == Some("function_call"));
-
-    if calls {
+/// has answered both complete, and what tells them apart is whether a call was
+/// asked for along the way.
+///
+/// Remembered from the items rather than read back off the finished response,
+/// because only one of those two is always there. The published API repeats the
+/// whole output list on the event that completes it; the backend a plan is
+/// served by sends that list empty, having already narrated every item in it.
+/// Read from the list, every tool call a plan makes ends as a clean finish —
+/// the call is streamed, the turn is told it is over, the tool never runs, and
+/// what the user sees is a turn that drew nothing at all. Remembered, the stop
+/// reason agrees with what was delivered, which is the thing it has to agree
+/// with.
+fn stop(called: bool) -> StopReason {
+    if called {
         StopReason::WantsTools
     } else {
         StopReason::Yielded
