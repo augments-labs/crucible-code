@@ -1,10 +1,8 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 191
 expression: window.picture()
 ---
-80x24 cursor 19,4 scrolled 9
-|│                                  │ · /          opens the command list       │|
+80x24 cursor 18,4 scrolled 10
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
@@ -26,5 +24,6 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
 |                                                                                |
 |                                                                                |

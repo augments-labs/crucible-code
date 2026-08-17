@@ -209,6 +209,12 @@ impl<T: Terminal> Renderer<T> {
     /// width and returns rows that fit it. Nothing is ever redrawn over these,
     /// so no frame is counting the columns they cost.
     ///
+    /// Whatever stands under the tail is put back afterwards. Ending the live
+    /// region is what makes room to write above it and takes that row off the
+    /// screen with everything else, and a presented row is the one frame with
+    /// nothing after it to draw it again — so this one draws it, and a result
+    /// arriving mid-turn lands above the box rather than in place of it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -230,7 +236,15 @@ impl<T: Terminal> Renderer<T> {
         }
 
         self.terminal.write(self.frame.sealed())?;
-        self.terminal.flush()
+
+        // Between turns there is nothing standing, and a frame drawn to put
+        // nothing back is a write and a flush on every row of a transcript that
+        // only gets longer.
+        if self.footing.is_empty() {
+            return self.terminal.flush();
+        }
+
+        self.draw()
     }
 
     /// Draws rows crucible composed itself and leaves them live, with the
