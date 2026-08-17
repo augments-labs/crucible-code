@@ -224,6 +224,11 @@ impl Tool for Glob {
         summary::field(NAME, args, "pattern")
     }
 
+    fn counted(&self) -> &'static str {
+        // One call, one walk of the tree looking for one pattern.
+        "searches"
+    }
+
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;

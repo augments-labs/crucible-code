@@ -208,6 +208,12 @@ impl Tool for Fixed {
         self.sensitivity.clone()
     }
 
+    /// What a fake is counted in. A real tool answers with the thing it acts
+    /// on; a fake acts on nothing, so it answers with the word for the call.
+    fn counted(&self) -> &'static str {
+        "calls"
+    }
+
     /// The arguments as they arrived. A real tool names one field of them; what
     /// a test needs is to see that whatever the tool said reached the row, so
     /// this says something no other value could be mistaken for.

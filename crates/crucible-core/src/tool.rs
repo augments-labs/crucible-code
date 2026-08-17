@@ -216,6 +216,21 @@ pub trait Tool: Send + Sync {
     /// something that never happened.
     fn summary(&self, args: &ToolArgs) -> Summary;
 
+    /// What several of this tool's calls are counted in, where a run of them is
+    /// drawn as one line — `files` for a tool that reads them, `commands` for
+    /// one that runs them.
+    ///
+    /// Plural, and only ever plural. A single call is drawn as itself, so
+    /// nothing asks this until there are at least two, and that is what keeps
+    /// the answer one word rather than a rule about how to pluralise one.
+    ///
+    /// Of the tool rather than of the call, which is the difference from
+    /// [`Tool::summary`] and the reason it takes no arguments: what a run is
+    /// counted in cannot depend on the arguments, because the calls in a run do
+    /// not have the same ones. Two `read` calls are two files whichever files
+    /// they name.
+    fn counted(&self) -> &'static str;
+
     /// Runs the call.
     ///
     /// An [`Approved`] cannot be constructed outside the permission engine, so

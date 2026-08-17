@@ -68,6 +68,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
         Event::ToolRequested {
             call: call(name, args),
             summary: Summary::new(summary),
+            counted: "files",
         },
         Style::plain(),
     )

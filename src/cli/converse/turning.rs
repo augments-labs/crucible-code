@@ -142,7 +142,7 @@ impl Turning {
         // line has to come back, or a call that was made leaves no record —
         // which is the one thing a transcript may not do.
         let returned = match event {
-            Event::ToolRequested { call, summary } => {
+            Event::ToolRequested { call, summary, .. } => {
                 self.calling = Some(draw::called(call, summary));
                 None
             }
@@ -293,6 +293,7 @@ mod tests {
                 args: ToolArgs::new("{}"),
             },
             summary: Summary::new("src/main.rs"),
+            counted: "files",
         }
     }
 

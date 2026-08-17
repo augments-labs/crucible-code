@@ -84,6 +84,11 @@ pub enum Event {
         /// asked where the tools are in reach, since the arguments are opaque
         /// to whatever draws the row.
         summary: Summary,
+        /// What several of this tool's calls are counted in, for a drawer that
+        /// folds a run of them into one line. Asked here for the same reason
+        /// the summary is: the tools are in reach on this side and nowhere
+        /// downstream of it.
+        counted: &'static str,
     },
 
     /// A tool finished.

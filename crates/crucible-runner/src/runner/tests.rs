@@ -758,6 +758,10 @@ impl Tool for Watching {
         Summary::new("")
     }
 
+    fn counted(&self) -> &'static str {
+        "calls"
+    }
+
     fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
         let deadline = Instant::now() + SETTLE;
 
@@ -833,7 +837,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
         .seen
         .try_iter()
         .filter_map(|event| match event {
-            Event::ToolRequested { call, summary } => Some((call, summary)),
+            Event::ToolRequested { call, summary, .. } => Some((call, summary)),
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }

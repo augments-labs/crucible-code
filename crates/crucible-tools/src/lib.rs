@@ -65,3 +65,48 @@ pub use grep::Grep;
 pub use ledger::Ledger;
 pub use read::Read;
 pub use write::Write;
+
+#[cfg(test)]
+mod tests {
+    use crucible_core::{Cancel, Tool};
+
+    use crate::sample::Sample;
+    use crate::{Bash, Edit, Glob, Grep, Ledger, Read, Write};
+
+    #[test]
+    fn a_run_of_calls_is_counted_in_whatever_the_tool_acted_on() {
+        // The word a folded row says: `6 files`, not `6 calls`. Only the tool
+        // knows it — downstream of here a call is a name and a line of JSON,
+        // and a table of names kept beside whatever draws the row would be a
+        // second list of these tools, to fall out of step with this one the
+        // first time either changed.
+        let sample = Sample::new("tools-counted");
+        let workspace = sample.workspace();
+        let cancel = Cancel::new();
+        let seen = Ledger::new();
+
+        // The three that put a file in front of the model or change one.
+        let files: [Box<dyn Tool>; 3] = [
+            Box::new(Read::new(workspace.clone(), cancel.clone(), seen.clone())),
+            Box::new(Write::new(workspace.clone(), seen)),
+            Box::new(Edit::new(workspace.clone(), cancel.clone())),
+        ];
+
+        for tool in &files {
+            assert_eq!(tool.counted(), "files", "{}", tool.name());
+        }
+
+        // And the three that do not. A shell command is not a file, and a walk
+        // of the tree looking for a pattern is not one either however many it
+        // opens on the way.
+        assert_eq!(
+            Bash::new(workspace.clone(), cancel.clone()).counted(),
+            "commands"
+        );
+        assert_eq!(
+            Grep::new(workspace.clone(), cancel.clone()).counted(),
+            "searches"
+        );
+        assert_eq!(Glob::new(workspace, cancel).counted(), "searches");
+    }
+}

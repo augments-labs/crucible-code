@@ -200,6 +200,11 @@ impl Tool for Bash {
         summary::field(NAME, args, "command")
     }
 
+    fn counted(&self) -> &'static str {
+        // One call, one command line, whatever it strings together.
+        "commands"
+    }
+
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text("command")?;

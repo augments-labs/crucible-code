@@ -436,15 +436,19 @@ impl Runner {
 
             for call in &calls {
                 // A name no tool answers to is a call `Work` refuses a moment
-                // later, and it has nothing to say about itself first.
-                let summary = self
-                    .tools
-                    .find(&call.name)
-                    .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args));
+                // later, and it has nothing to say about itself first. Both
+                // questions are asked of the same lookup, because a second one
+                // would be a second chance for the two answers to come from
+                // different tools.
+                let found = self.tools.find(&call.name);
+                let summary =
+                    found.map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args));
+                let counted = found.map_or("calls", |tool| tool.counted());
 
                 events.post(Event::ToolRequested {
                     call: call.clone(),
                     summary,
+                    counted,
                 });
             }
 

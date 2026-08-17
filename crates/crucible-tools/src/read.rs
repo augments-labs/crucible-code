@@ -178,6 +178,11 @@ impl Tool for Read {
         summary::field(NAME, args, "path")
     }
 
+    fn counted(&self) -> &'static str {
+        // One call, one file.
+        "files"
+    }
+
     fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
