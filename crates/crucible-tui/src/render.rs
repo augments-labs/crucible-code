@@ -77,6 +77,14 @@ pub struct Renderer<T: Terminal> {
     /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
     /// renderer nobody told showing the answer exactly as it arrived.
     palette: Palette,
+    /// Whether the record already ends in a blank row.
+    ///
+    /// What [`Renderer::apart`] reads, and the reason the rhythm is one
+    /// decision rather than one per caller: the thing that knows whether a
+    /// blank is owed is the thing that knows what was last written. True to
+    /// start with, because the top of a session is already a boundary and a
+    /// transcript that opens on an empty row has spent one for nothing.
+    parted: bool,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -109,6 +117,7 @@ impl<T: Terminal> Renderer<T> {
             footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
+            parted: true,
         }
     }
 
@@ -139,6 +148,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
+        if !delta.trim().is_empty() {
+            self.parted = false;
+        }
+
         // Nowhere to put a slot is nowhere to put a marker either. A redirected
         // run, `NO_COLOR`, `--color never`: the answer arrives as the model
         // wrote it, which is markdown, and a file of markdown is worth more
@@ -174,6 +187,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        self.parted = line.trim().is_empty();
         self.finished.push(line, &mut self.overflow);
         // The newline is what makes the last row complete, and only complete
         // rows leave a tail.
@@ -200,6 +214,10 @@ impl<T: Terminal> Renderer<T> {
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn present(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
         self.settle()?;
+
+        if let Some(last) = rows.last() {
+            self.parted = last.text().trim().is_empty();
+        }
 
         let terminal = self.terminal.is_terminal();
         let mut painted = String::new();
@@ -435,9 +453,41 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn prompt(&mut self, text: &str) -> Result<(), TerminalError> {
+        if !text.trim().is_empty() {
+            self.parted = false;
+        }
+
         self.settle()?;
         self.terminal.write(text)?;
         self.terminal.flush()
+    }
+
+    /// Leaves one blank row between what has been written and what comes next.
+    ///
+    /// The transcript is a column of blocks — what was asked, what was
+    /// answered, each call and the line under it — and what separates one from
+    /// the next is a row of nothing. Every block asks for that row on its way
+    /// in rather than leaving one behind, because a block cannot know it was
+    /// the last: a session that parted on the way out would end on a blank row
+    /// under the final answer, and the shell's own prompt would come back one
+    /// row lower than it left.
+    ///
+    /// Blank rows do not accumulate, and none is owed at the very top, where
+    /// the boundary is the start of the session. Nor is one owed while the tail
+    /// still holds something: what comes next is then the rest of that line
+    /// rather than a block after it, and a caller that asks on every piece of a
+    /// streamed answer — which is the only way it can ask on the first — must
+    /// get a row before the answer and none inside it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn apart(&mut self) -> Result<(), TerminalError> {
+        if self.parted || !self.tail.is_empty() {
+            return Ok(());
+        }
+
+        self.commit("")
     }
 
     /// Whether output is going to a terminal rather than a pipe or a file.

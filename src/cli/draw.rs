@@ -11,6 +11,14 @@
 //! set of marks in this file would be a second answer to a question the
 //! configuration asks in one word.
 //!
+//! What arrives here is a stream of events; what it is drawn as is a column of
+//! blocks. What was asked, what was answered, a call and the line hanging under
+//! it: each of those is one block, and what separates two of them is a row of
+//! nothing. Every block asks [`Renderer::apart`] for that row on its way in
+//! rather than leaving one behind — a block cannot know it was the last, and a
+//! turn that parted on the way out would hand the shell back a prompt one row
+//! lower than it found it.
+//!
 //! One line is drawn twice. A call stands in the footing with a mark that moves
 //! for as long as its tool is out, and commits through [`returned`] once it has
 //! answered — the same words, in the same columns, with the motion gone. So
@@ -53,15 +61,28 @@ pub(crate) fn event<T: Terminal>(
 
     match event {
         // The turn number is in the title bar, not in the transcript: a line
-        // per turn saying which turn it is crowds out the turn itself.
+        // per turn saying which turn it is crowds out the turn itself. What it
+        // is worth here is the row it parts from the prompt above it — the
+        // answer starts under a blank rather than against the line that asked
+        // for it.
         //
         // What a turn spent is on the row above the box, which is drawn from the
         // footing rather than committed here — a running total committed to
         // scrollback would be one line per reading, each of them wrong the
         // moment the next arrived.
-        Event::TurnStarted { .. } | Event::Spent { .. } => Ok(()),
+        Event::TurnStarted { .. } => renderer.apart(),
 
-        Event::Delta { text } => renderer.stream(&text),
+        Event::Spent { .. } => Ok(()),
+
+        // Asked on every delta because the first one is the only one worth
+        // asking on, and nothing here can tell which that was: a turn opens
+        // with deltas, and so does whatever the model says after a tool has
+        // answered. The renderer settles the question — a row is owed where
+        // nothing is live, and never in the middle of a line still arriving.
+        Event::Delta { text } => {
+            renderer.apart()?;
+            renderer.stream(&text)
+        }
 
         // Whatever the model was saying is finished; it said it to explain the
         // call that follows. The line for the call itself is not written here:
@@ -79,7 +100,10 @@ pub(crate) fn event<T: Terminal>(
         Event::TurnFinished { stop, .. } => {
             renderer.settle()?;
             match notice(stop) {
-                Some(said) => renderer.commit(said),
+                Some(said) => {
+                    renderer.apart()?;
+                    renderer.commit(said)
+                }
                 None => Ok(()),
             }
         }
@@ -90,6 +114,7 @@ pub(crate) fn event<T: Terminal>(
         // may become extra rows.
         Event::Failed { error } => {
             renderer.settle()?;
+            renderer.apart()?;
             renderer.commit(&format!(
                 "! {}",
                 clipped(error, style.output(columns), style.glyphs())
@@ -291,6 +316,7 @@ pub(crate) fn returned<T: Terminal>(
     let said = words(said, window, style);
 
     renderer.settle()?;
+    renderer.apart()?;
 
     if said.is_empty() {
         renderer.commit(mark)

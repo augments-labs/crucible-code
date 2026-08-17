@@ -665,6 +665,15 @@ fn draw<T: Terminal>(
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
     let mut rows = open.rows(columns, room, style.glyphs());
+
+    // The row that keeps the box off whatever was last committed. A list opens
+    // with its own, so this is only owed where there is no list -- and the box
+    // is owed one either way, because a border drawn against the last line of
+    // an answer reads as part of it.
+    if rows.is_empty() {
+        rows.push(Row::new());
+    }
+
     let above = rows.len();
     caret.row += above;
     rows.append(&mut boxed);
