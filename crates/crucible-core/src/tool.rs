@@ -10,6 +10,7 @@
 
 use std::fmt;
 
+use crate::diff::Diff;
 use crate::ids::ToolId;
 use crate::permission::{Approved, Sensitivity};
 
@@ -135,10 +136,15 @@ impl fmt::Debug for Summary {
 }
 
 /// What a tool produced, on its way back to the model.
+///
+/// And on its way to the reader, which is not the same journey. The text is
+/// what both are shown; a [`Diff`] is what only the reader is, and it comes off
+/// at [`ToolOutput::forget_diff`] where the two copies part company.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
+    diff: Option<Diff>,
 }
 
 impl fmt::Debug for ToolOutput {
@@ -146,6 +152,7 @@ impl fmt::Debug for ToolOutput {
         f.debug_struct("ToolOutput")
             .field("text", &"[redacted]")
             .field("failed", &self.failed)
+            .field("diff", &self.diff)
             .finish()
     }
 }
@@ -157,6 +164,7 @@ impl ToolOutput {
         Self {
             text: text.into(),
             failed: false,
+            diff: None,
         }
     }
 
@@ -167,7 +175,20 @@ impl ToolOutput {
         Self {
             text: text.into(),
             failed: true,
+            diff: None,
         }
+    }
+
+    /// The same result, with the change it made for the reader to look at.
+    ///
+    /// What a tool that rewrote a file adds on its way out. It is the one thing
+    /// here the model is not sent, so it carries no meaning the text does not
+    /// also carry — a result whose words depended on it would say different
+    /// things to the two readers of the same call.
+    #[must_use]
+    pub fn showing(mut self, diff: Diff) -> Self {
+        self.diff = Some(diff);
+        self
     }
 
     /// The text the model sees.
@@ -180,6 +201,22 @@ impl ToolOutput {
     #[must_use]
     pub fn is_failed(&self) -> bool {
         self.failed
+    }
+
+    /// What the call changed, where it changed a file and said so.
+    #[must_use]
+    pub fn diff(&self) -> Option<&Diff> {
+        self.diff.as_ref()
+    }
+
+    /// Drops it, for the copy that is kept rather than drawn.
+    ///
+    /// A diff is drawn once and a transcript is replayed every turn for the
+    /// rest of the session, so the copy going into one keeps only what the
+    /// model was told. Otherwise the transcript would grow with what had been
+    /// *shown*, where what bounds it is what was *said*.
+    pub fn forget_diff(&mut self) {
+        self.diff = None;
     }
 }
 
@@ -243,6 +280,7 @@ impl fmt::Debug for dyn Tool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::{Change, Line};
 
     #[test]
     fn output_carries_whether_the_model_should_treat_it_as_a_failure() {
@@ -280,10 +318,41 @@ mod tests {
 
     #[test]
     fn output_debug_never_shows_workspace_content() {
-        let output = ToolOutput::ok("output-debug-canary");
+        let output = ToolOutput::ok("output-debug-canary").showing(Diff::new([Line::new(
+            1,
+            Change::Added,
+            "diff-debug-canary",
+        )]));
         let shown = format!("{output:?}");
-        assert!(!shown.contains("output-debug-canary"), "{shown}");
+        for canary in ["output-debug-canary", "diff-debug-canary"] {
+            assert!(!shown.contains(canary), "{shown}");
+        }
         assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn a_result_shown_a_diff_hands_it_over_until_it_is_asked_to_forget_it() {
+        // The two ends of the one journey that is not shared. Everything else on
+        // a result goes to the model and the reader alike; this goes to the
+        // reader, and the same value carries it as far as the split and no
+        // further.
+        let mut output = ToolOutput::ok("changed 1, 1 replacements")
+            .showing(Diff::new([Line::new(315, Change::Added, "budgets:")]));
+
+        assert_eq!(output.diff().map(Diff::added), Some(1));
+
+        output.forget_diff();
+
+        assert!(output.diff().is_none());
+        // And what the model was told is untouched, because it never depended on
+        // the diff in the first place.
+        assert_eq!(output.text(), "changed 1, 1 replacements");
+    }
+
+    #[test]
+    fn a_result_that_changed_nothing_carries_no_diff_to_begin_with() {
+        assert!(ToolOutput::ok("done").diff().is_none());
+        assert!(ToolOutput::failed("no such file").diff().is_none());
     }
 
     #[test]
