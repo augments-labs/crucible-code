@@ -4,7 +4,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use crucible_core::Cancel;
+use crucible_core::{Cancel, Change};
 
 use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
 use crate::sample::{Sample, allowed, symlink};
@@ -389,4 +389,73 @@ fn a_path_that_does_not_resolve_still_says_a_file_is_about_to_change() {
     let sensitivity = tool.sensitivity(&ToolArgs::new("{}"));
 
     assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
+}
+
+#[test]
+fn replacing_a_file_shows_what_went_and_what_came_in_its_place() {
+    let sample = Sample::new("write-shown");
+    sample.write("one.txt", "alpha\nbeta\ngamma\n");
+    let seen = looked_at(&sample, "one.txt");
+
+    let output = writing(
+        &sample,
+        r#"{"path":"one.txt","content":"alpha\nBETA\ngamma\n"}"#,
+        &seen,
+    );
+
+    // The one thing a write answers with that the model is never sent. It is
+    // also the last moment either version exists together: the result text says
+    // how many lines went down, and the file that was there is already gone.
+    let diff = output.diff().expect("the change the call made");
+    let block: Vec<(usize, Change, &str)> = diff
+        .lines()
+        .iter()
+        .map(|line| (line.number(), line.change(), line.text()))
+        .collect();
+
+    assert_eq!((diff.added(), diff.removed()), (1, 1));
+    assert_eq!(
+        block,
+        [
+            (1, Change::Kept, "alpha"),
+            (2, Change::Removed, "beta"),
+            (2, Change::Added, "BETA"),
+            (3, Change::Kept, "gamma"),
+        ]
+    );
+}
+
+#[test]
+fn a_file_that_was_not_there_is_shown_as_lines_that_are_all_new() {
+    let sample = Sample::new("write-shown-new");
+
+    let output = write(&sample, r#"{"path":"one.txt","content":"alpha\nbeta\n"}"#);
+
+    let diff = output.diff().expect("the change the call made");
+    assert_eq!((diff.added(), diff.removed()), (2, 0));
+    assert!(
+        diff.lines()
+            .iter()
+            .all(|line| line.change() == Change::Added)
+    );
+}
+
+#[test]
+fn a_file_nobody_can_read_back_is_replaced_with_no_block_rather_than_a_wrong_one() {
+    // Both of these are written all the same. What is missing is the block, and
+    // that is the point: a diff drawn against an empty string would say every
+    // line here is new, when the truth is that nobody can say what went.
+    let sample = Sample::new("write-shown-unreadable");
+    sample.write("big.txt", &"a".repeat(super::DISCARDED + 1));
+    sample.write_bytes("raw.bin", &[0xff, 0xfe, b'\n']);
+    let big = looked_at(&sample, "big.txt");
+    let raw = looked_at(&sample, "raw.bin");
+
+    let over = writing(&sample, r#"{"path":"big.txt","content":"small\n"}"#, &big);
+    let binary = writing(&sample, r#"{"path":"raw.bin","content":"text\n"}"#, &raw);
+
+    assert_eq!(over.text(), "replaced big.txt, 1 lines");
+    assert!(over.diff().is_none());
+    assert_eq!(binary.text(), "replaced raw.bin, 1 lines");
+    assert!(binary.diff().is_none());
 }
