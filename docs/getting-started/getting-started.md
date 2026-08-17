@@ -267,14 +267,19 @@ the one thing on the row left in your terminal's own foreground, so it is where
 the eye goes.
 
 A result the row had no room for says how much it left over and names the key
-that gives it back: `(+128 lines · ctrl+o to expand)`. <kbd>Ctrl+O</kbd> at the
-prompt stands every result that was cut this way where the box was, newest
-first, each under the line of the call it answers. The arrow keys walk it where
-there is more of it than the window holds, and <kbd>Esc</kbd> or
-<kbd>Ctrl+O</kbd> again closes it — the box comes back with the line you were
-typing still in it, and nothing is written into your scrollback on either side
-of it. It is a key for between turns: a turn is writing its own results where
-the view would stand, so the key waits for the turn to yield.
+that gives it back: `(+128 lines · ctrl+o to expand)`. <kbd>Ctrl+O</kbd> stands
+every result that was cut this way where the box was, newest first, each under
+the line of the call it answers. The arrow keys walk it where there is more of
+it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
+it — the box comes back with the line you were typing still in it, and nothing
+is written into your scrollback on either side of it.
+
+The key works whether or not a turn is running. While one is, the view stands in
+the rows the box has and the turn goes on writing above it, so what you are
+reading stays where you left it rather than being pushed down the screen by the
+next result. What it holds is what had been cut when you opened it; a turn that
+cut more while you were reading is one press away, since opening it again is
+what brings the newer results in.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where

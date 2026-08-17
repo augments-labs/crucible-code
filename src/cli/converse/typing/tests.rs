@@ -569,6 +569,15 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
 }
 
 #[test]
+fn ctrl_o_does_what_the_row_offering_it_says_while_the_turn_is_still_running() {
+    // The row saying `ctrl+o to expand` is drawn by the turn that cut the
+    // result, and the moment somebody reads it is the moment it goes past. A
+    // key that waited for the turn to yield would be one whose offer is on
+    // screen for the whole stretch it does nothing.
+    assert_eq!(meant(Pressed::Expand), Meant::Expand);
+}
+
+#[test]
 fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
     // The one place the key is printed beside the thing it acts on while a turn
     // is the thing on screen. It earns the room the same way the mode's key

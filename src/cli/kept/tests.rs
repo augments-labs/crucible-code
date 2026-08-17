@@ -99,6 +99,24 @@ fn a_result_bigger_than_the_ceiling_on_its_own_is_still_the_one_held() {
 }
 
 #[test]
+fn the_count_of_what_was_cut_goes_on_counting_past_the_ceiling() {
+    // A view standing over what was cut works out what arrived under it from
+    // the difference between this and what it read when it opened. The queue's
+    // own length answers that only until the ceiling starts dropping from the
+    // other end, at which point it stops going up and the view starts stepping
+    // over rows nobody added.
+    let mut cut = Kept::default();
+    assert_eq!(cut.cut(), 0);
+
+    for turn in 0..16 {
+        kept(&mut cut, &format!("Bash({turn})"), HELD / 3);
+    }
+
+    assert_eq!(cut.cut(), 16);
+    assert!(cut.newest().count() < 16, "nothing was dropped");
+}
+
+#[test]
 fn nothing_cut_is_nothing_to_offer() {
     // The key that asks for this reads it before it draws anything, because a
     // session where no result was ever cut has no offer on screen to have

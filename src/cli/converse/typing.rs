@@ -40,9 +40,11 @@ use crucible_tui::{
 };
 
 use crate::cli::Fatal;
+use crate::cli::kept::Kept;
 use crate::cli::style::Style;
 
 use super::command;
+use super::expanding::{self, Standing};
 use super::mode::tone;
 use super::turning::Turning;
 use super::{Prompts, Retained};
@@ -118,6 +120,10 @@ pub(crate) enum Asked {
     /// The box is not written down on the way out. It stands in the live region
     /// and so does the view, so the one replaces the other and the line being
     /// typed is still there underneath when this comes back.
+    ///
+    /// Reported rather than acted on here, because the same key pressed while a
+    /// turn runs opens the same view a row further down the screen. Both go
+    /// through the one door at the top of the loop above.
     Expand,
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
@@ -408,10 +414,15 @@ pub(super) fn under(runner: &Runner, glyphs: Glyphs) -> Says {
 /// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
-/// finishes a line, Esc asks the turn to stop, Ctrl-C is the line's own — in
-/// raw mode the terminal sends it rather than raising a signal, so it reaches
-/// the editor here exactly as it does at the prompt — and the rest edit the
-/// line. Stepping the mode is not among them: the runner that holds it is on
+/// finishes a line, Esc asks the turn to stop, Ctrl+O stands the whole of what
+/// the results so far were cut down to, Ctrl-C is the line's own — in raw mode
+/// the terminal sends it rather than raising a signal, so it reaches the editor
+/// here exactly as it does at the prompt — and the rest edit the line. While
+/// that view stands it has all of them: it takes the rows the box has, so the
+/// box is not on screen to be typed into and Esc closes the view rather than
+/// stopping the turn behind it.
+///
+/// Stepping the mode is not among them: the runner that holds it is on
 /// the worker thread for the length of the turn, and a key that moved the row
 /// on screen and nothing else would be a lie about what the next tool call
 /// costs.
@@ -423,6 +434,8 @@ pub(super) fn during<T: Terminal>(
         editor,
         queued,
         turning,
+        kept,
+        opened,
         says,
         style,
         cancel,
@@ -444,6 +457,16 @@ pub(super) fn during<T: Terminal>(
         // the ones this loop does nothing else with.
         let offered = leaving.take();
         moved |= offered.is_some();
+
+        // While the view stands it has the keyboard, the way whatever is
+        // standing has it everywhere else in a session: Esc closes it rather
+        // than stopping the turn, and Ctrl-C reaches it before it reaches the
+        // line. The turn goes on writing above it either way, which is the
+        // whole reason the view is worth standing there.
+        if opened.is_open() {
+            moved |= opened.against(arrived);
+            continue;
+        }
 
         match meant(arrived) {
             // The rows on screen were laid out for a width the window no longer
@@ -512,6 +535,15 @@ pub(super) fn during<T: Terminal>(
                 Typed::Ignored | Typed::Submitted | Typed::Ended => {}
             },
 
+            // The key the cut rows themselves name, doing what they say while
+            // the turn that cut them is still running. What it opens stands
+            // under the tail, which is the one part of the screen a turn
+            // writing above it does not reach.
+            Meant::Expand => {
+                opened.open(kept);
+                moved |= opened.is_open();
+            }
+
             Meant::Ignored => {}
         }
     }
@@ -520,9 +552,17 @@ pub(super) fn during<T: Terminal>(
     // beat that landed in the same look at the keyboard are one frame. It is
     // also what redraws a row nobody touched: the clock counts and the mark
     // turns whether anything is typed or not.
+    //
+    // Asked while the view stands as well, though the row it moves is not on
+    // screen then. It is what puts the view back after a question was answered
+    // over the top of it, and the picture it redraws is the same one, since
+    // what the view stands over does not change while it stands.
     moved |= turning.moved();
 
-    if moved {
+    if moved && !expanding::under(renderer, style, kept, opened)? {
+        // The view takes the rows the box has, so a frame draws one or the
+        // other. A window with no room for the view has closed it above, and
+        // the box comes back in the same frame.
         if let Some(notice) = notice {
             let mut says = says.clone();
             says.asking = Some(notice);
@@ -574,6 +614,9 @@ enum Meant {
     Typing(char),
     /// The line's own key — a cursor move, a delete, Ctrl-C against it, Ctrl-D.
     Editing(Key),
+    /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
+    /// the turn that is still writing it.
+    Expand,
     /// An arrow through a list there is none of, a click, a mode step. None of
     /// them has anything to act on while a turn is running.
     Ignored,
@@ -597,18 +640,16 @@ fn meant(arrived: Pressed) -> Meant {
         // than meaning something a running turn taught it to mean.
         Pressed::Key(key) => Meant::Editing(key),
 
+        Pressed::Expand => Meant::Expand,
+
         // Ctrl+E among them: what it opens is an explanation of something
         // waiting to be decided about, and a running turn has decided already.
-        //
-        // Ctrl+O for a nearer reason. What it opens stands under the tail, and
-        // the tail is where a running turn is writing — so the next result to
-        // arrive would take the view away, and the tool that answered is the one
-        // the reader most likely opened it to read about. The key does what it
-        // says the moment the turn yields.
+        // The arrows for a plainer reason — they walk a view that is not
+        // standing, and a key that means nothing until Ctrl+O has been pressed
+        // means nothing before it.
         Pressed::Clicked { .. }
         | Pressed::Cycle
         | Pressed::Explain
-        | Pressed::Expand
         | Pressed::Up
         | Pressed::Down
         | Pressed::Ignored => Meant::Ignored,
@@ -622,6 +663,15 @@ pub(super) struct During<'a> {
     /// The row above the box, which is the one thing on screen that changes
     /// without anybody pressing anything.
     pub(super) turning: &'a mut Turning,
+    /// What this turn's results have had no room to say, which is what Ctrl+O
+    /// stands. Read only: the turn's own thread is what adds to it.
+    pub(super) kept: &'a Kept,
+    /// Whether that view is standing, and where over it.
+    ///
+    /// Owned by the session rather than by this call for the same reason
+    /// `leaving` is, and one more: the view goes on standing after the turn it
+    /// was opened under has ended.
+    pub(super) opened: &'a mut Standing,
     pub(super) says: &'a Says,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
