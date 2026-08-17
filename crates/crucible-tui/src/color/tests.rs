@@ -9,12 +9,20 @@ const LEGIBLE: f64 = 3.0;
 /// asked for and could be either.
 const GROUNDS: [(u8, u8, u8); 2] = [(0, 0, 0), (255, 255, 255)];
 
+/// The slots that take the ground, in the order a row of them is built.
+const DIFF: [Slot; 4] = [
+    Slot::Removed,
+    Slot::RemovedNumber,
+    Slot::Added,
+    Slot::AddedNumber,
+];
+
 /// Every slot there is.
 ///
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 6] {
+fn all() -> [Slot; 10] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -24,6 +32,10 @@ fn all() -> [Slot; 6] {
             Slot::Quiet => 3,
             Slot::AllowEdits => 4,
             Slot::FullAccess => 5,
+            Slot::Removed => 6,
+            Slot::RemovedNumber => 7,
+            Slot::Added => 8,
+            Slot::AddedNumber => 9,
         }
     }
 
@@ -34,6 +46,10 @@ fn all() -> [Slot; 6] {
         Slot::Quiet,
         Slot::AllowEdits,
         Slot::FullAccess,
+        Slot::Removed,
+        Slot::RemovedNumber,
+        Slot::Added,
+        Slot::AddedNumber,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -64,15 +80,73 @@ fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
     }
 }
 
-/// The three channels of a `38;2;r;g;b` sequence, if it carries one.
-fn exact_hue(sequence: &str) -> Option<(u8, u8, u8)> {
-    let channels = sequence.strip_suffix('m')?.split_once("38;2;")?.1;
-    let mut channels = channels.split(';').map(str::parse::<u8>);
+/// What a sequence does to one half of a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sets {
+    /// Nothing: that half is left to the terminal's own theme.
+    Nothing,
+    /// A colour, at a rung that names one rather than spelling it out.
+    Named,
+    /// A colour, with its three channels written out.
+    Exact((u8, u8, u8)),
+}
 
-    match (channels.next(), channels.next(), channels.next()) {
-        (Some(Ok(red)), Some(Ok(green)), Some(Ok(blue))) => Some((red, green, blue)),
-        _ => None,
+/// The ink and the ground a sequence sets, in that order.
+///
+/// Walked in order rather than searched for, because a channel is a number like
+/// any other: `30` is a blue channel inside `48;2;74;26;30` and the plain
+/// foreground anywhere else, and a scan that did not consume what `48` brought
+/// with it would read the first as the second.
+fn sets(sequence: &str) -> (Sets, Sets) {
+    let (mut ink, mut ground) = (Sets::Nothing, Sets::Nothing);
+    let Some(body) = sequence
+        .strip_prefix("\x1b[")
+        .and_then(|rest| rest.strip_suffix('m'))
+    else {
+        return (ink, ground);
+    };
+
+    let mut params = body.split(';');
+    while let Some(param) = params.next() {
+        match param {
+            "38" => ink = extended(&mut params),
+            "48" => ground = extended(&mut params),
+            _ if named(param, 30) => ink = Sets::Named,
+            _ if named(param, 40) => ground = Sets::Named,
+            _ => {}
+        }
     }
+
+    (ink, ground)
+}
+
+/// Whether `param` is one of the eight codes at `base`, or one of the eight
+/// bright ones sixty above it.
+fn named(param: &str, base: u16) -> bool {
+    param.parse::<u16>().is_ok_and(|code| {
+        (base..base + 8).contains(&code) || (base + 60..base + 68).contains(&code)
+    })
+}
+
+/// What a `38` or a `48` brings with it: an index, or three channels.
+fn extended(params: &mut core::str::Split<'_, char>) -> Sets {
+    match params.next() {
+        Some("2") => channels(params).map_or(Sets::Named, Sets::Exact),
+        Some("5") => {
+            params.next();
+            Sets::Named
+        }
+        _ => Sets::Named,
+    }
+}
+
+/// The next three parameters, if all three are channels.
+fn channels(params: &mut core::str::Split<'_, char>) -> Option<(u8, u8, u8)> {
+    Some((
+        params.next()?.parse().ok()?,
+        params.next()?.parse().ok()?,
+        params.next()?.parse().ok()?,
+    ))
 }
 
 /// Relative luminance, as the contrast formula defines it.
@@ -105,9 +179,10 @@ fn contrast(one: (u8, u8, u8), other: (u8, u8, u8)) -> f64 {
 fn every_colour_is_legible_on_a_dark_ground_and_on_a_light_one() {
     // The claim the whole no-detection design rests on. The ground belongs to
     // the reader and is never asked for, so one palette has to work on both --
-    // and "looks fine here" is the thing this replaces.
+    // and "looks fine here" is the thing this replaces. A slot that took the
+    // ground is not in this: it is checked against the one it took, below.
     for slot in all() {
-        let Some(hue) = exact_hue(at(Depth::Exact).open(slot)) else {
+        let (Sets::Exact(hue), Sets::Nothing) = sets(at(Depth::Exact).open(slot)) else {
             continue;
         };
 
@@ -122,29 +197,69 @@ fn every_colour_is_legible_on_a_dark_ground_and_on_a_light_one() {
 }
 
 #[test]
+fn a_slot_that_takes_the_ground_is_legible_on_the_one_it_takes() {
+    // The one pair this palette gets to choose both halves of, so it is the
+    // pair that is checked. Nothing else here can be: everywhere else the other
+    // half is the reader's, which is why everywhere else clears both.
+    for slot in DIFF {
+        let (Sets::Exact(hue), Sets::Exact(ground)) = sets(at(Depth::Exact).open(slot)) else {
+            panic!("{slot:?} spells out its ink and its ground, or it cannot be checked");
+        };
+
+        let ratio = contrast(hue, ground);
+        assert!(
+            ratio >= LEGIBLE,
+            "{slot:?} is {ratio:.2}:1 on the ground it carries, under {LEGIBLE}:1"
+        );
+    }
+}
+
+#[test]
 fn the_two_slots_without_a_hue_are_the_two_that_meant_not_to_have_one() {
     // So the check above is known to have skipped only what it should. Plain is
     // the reader's own foreground and Quiet is their theme's answer to "subdued
     // on this ground", which is the one judgement worth deferring to.
     let hueless: Vec<Slot> = all()
         .into_iter()
-        .filter(|slot| exact_hue(at(Depth::Exact).open(*slot)).is_none())
+        .filter(|slot| !matches!(sets(at(Depth::Exact).open(*slot)).0, Sets::Exact(_)))
         .collect();
 
     assert_eq!(hueless, [Slot::Plain, Slot::Quiet]);
 }
 
 #[test]
-fn no_slot_at_any_rung_ever_writes_a_background() {
+fn a_slot_takes_the_ground_only_where_it_writes_the_ink_for_it() {
     // The inline design in one assertion: the ground behind a row belongs to
-    // the terminal, and a background attribute is how a process takes it.
+    // the terminal, and a background attribute is how a process takes it. A
+    // diff takes it, and may, because it writes the ink for that ground in the
+    // same sequence. Half of the pair is the failure, at any rung -- a ground
+    // over the reader's own foreground is a contrast nobody chose.
     for slot in all() {
         for depth in [Depth::Exact, Depth::Indexed, Depth::Basic, Depth::Off] {
             let written = at(depth).open(slot);
+            let (ink, ground) = sets(written);
 
             assert!(
-                !written.contains("48;") && !written.contains("\x1b[4"),
-                "{slot:?} at {depth:?} wrote a background: {written:?}"
+                ground == Sets::Nothing || ink != Sets::Nothing,
+                "{slot:?} at {depth:?} took the ground and left the ink: {written:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nothing_but_a_diff_takes_the_ground_at_any_rung() {
+    // And so the exception stays four slots wide. A rung is where it would go
+    // unnoticed -- the sixteen-colour ladder is the one nobody is looking at,
+    // and it is the one where a ground is a single digit away from a hue.
+    for slot in all() {
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            let written = at(depth).open(slot);
+
+            assert_eq!(
+                sets(written).1 != Sets::Nothing,
+                DIFF.contains(&slot),
+                "{slot:?} at {depth:?}: {written:?}"
             );
         }
     }
