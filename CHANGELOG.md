@@ -63,6 +63,15 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The screen stops blinking while an answer arrives.** Every redraw erases the
+  live region and writes it again, and a terminal was free to paint in between —
+  so the more of the window a turn filled, the more of it flickered, once per
+  delta and again under every tool call. Each frame is now bracketed as a
+  synchronized update, which holds the picture until the whole of the next one
+  has arrived. What it costs: two escape sequences per frame, ignored by a
+  terminal that does not implement the mode, and nothing at all on a redirected
+  run.
+
 - **A question about several commands shows the line that was sent.** Asked
   about `cargo fmt --all && cargo test`, the prompt said
   `cargo fmt --all, then cargo test` — a paraphrase, and one that reads as two

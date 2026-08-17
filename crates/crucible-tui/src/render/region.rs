@@ -79,11 +79,8 @@ mod tests {
         let parked = draw(&mut frame, 0, &boxed(), Caret { row: 1, column: 3 });
 
         assert_eq!(parked, 2);
-        assert!(
-            frame.as_str().ends_with("\x1b[2A\x1b[4G"),
-            "{:?}",
-            frame.as_str()
-        );
+        let written = frame.unheld();
+        assert!(written.ends_with("\x1b[2A\x1b[4G"), "{written:?}");
     }
 
     #[test]
@@ -94,11 +91,8 @@ mod tests {
         let parked = draw(&mut frame, 0, &boxed(), Caret { row: 3, column: 0 });
 
         assert_eq!(parked, 0);
-        assert!(
-            frame.as_str().ends_with("ask\x1b[1G"),
-            "{:?}",
-            frame.as_str()
-        );
+        let written = frame.unheld();
+        assert!(written.ends_with("ask\x1b[1G"), "{written:?}");
     }
 
     #[test]
@@ -110,11 +104,8 @@ mod tests {
         let mut frame = Frame::new();
         draw(&mut frame, 4 - 2, &boxed(), Caret { row: 1, column: 3 });
 
-        assert!(
-            frame.as_str().starts_with("\r\x1b[1A\x1b[J"),
-            "{:?}",
-            frame.as_str()
-        );
+        let written = frame.unheld();
+        assert!(written.starts_with("\r\x1b[1A\x1b[J"), "{written:?}");
     }
 
     #[test]

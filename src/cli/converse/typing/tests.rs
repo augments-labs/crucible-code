@@ -73,6 +73,16 @@ fn roomy() -> Renderer<Recording> {
     Renderer::new(Recording::new(60, 24))
 }
 
+/// What a frame drew, without the sequence that closes it.
+///
+/// The renderer brackets every frame it writes to a terminal, so where the
+/// cursor was left is the last thing it *drew* rather than the last thing it
+/// wrote. Spelled once here rather than at each assertion about the cursor,
+/// which is not what any of them is about.
+fn drawn(written: &str) -> &str {
+    written.strip_suffix("\x1b[?2026l").unwrap_or(written)
+}
+
 #[test]
 fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     // The keyboard is held by the loop above for the whole session now, so what
@@ -159,7 +169,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
     .expect("the box to be drawn");
 
     let written = renderer.terminal().written();
-    assert!(written.ends_with("\x1b[2A\x1b[7G"), "{written:?}");
+    assert!(drawn(written).ends_with("\x1b[2A\x1b[7G"), "{written:?}");
 }
 
 #[test]
@@ -316,7 +326,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
     .expect("the box to be drawn");
 
     let written = renderer.terminal().written();
-    assert!(written.ends_with("\x1b[2A\x1b[7G"), "{written:?}");
+    assert!(drawn(written).ends_with("\x1b[2A\x1b[7G"), "{written:?}");
 }
 
 #[test]

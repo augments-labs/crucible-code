@@ -229,7 +229,7 @@ impl<T: Terminal> Renderer<T> {
             self.frame.settled(&painted, terminal);
         }
 
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
 
@@ -280,7 +280,7 @@ impl<T: Terminal> Renderer<T> {
         self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
         self.drawn = self.painted.len();
 
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
 
@@ -375,7 +375,7 @@ impl<T: Terminal> Renderer<T> {
         let region = self.region();
         screen::settle(&mut self.frame, region, &mut self.overflow, &mut self.tail);
 
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()?;
 
         self.drawn = 0;
@@ -545,7 +545,7 @@ impl<T: Terminal> Renderer<T> {
         );
 
         self.drawn = self.tail.len() + self.footing.len();
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
 
@@ -555,7 +555,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
 
@@ -565,7 +565,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        self.terminal.write(self.frame.as_str())?;
+        self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
 
@@ -574,7 +574,7 @@ impl<T: Terminal> Renderer<T> {
         self.frame.rewind(self.region());
         self.drawn = 0;
         self.parked = 0;
-        self.terminal.write(self.frame.as_str())
+        self.terminal.write(self.frame.sealed())
     }
 
     /// How many rows a rewind has to move back over to reach the top of the

@@ -65,10 +65,10 @@ mod tests {
 
         settle(&mut frame, &mut overflow, &mut tail);
 
+        let written = frame.unheld();
         assert!(
-            !frame.as_str().contains('\x1b'),
-            "a pipe received escape bytes: {:?}",
-            frame.as_str()
+            !written.contains('\x1b'),
+            "a pipe received escape bytes: {written:?}"
         );
     }
 
@@ -88,7 +88,7 @@ mod tests {
         let mut frame = Frame::new();
 
         assert!(draw(&mut frame, &mut overflow));
-        assert_eq!(frame.as_str(), "alpha\nbeta\n");
+        assert_eq!(frame.unheld(), "alpha\nbeta\n");
         assert!(overflow.is_empty(), "overflow was not drained");
     }
 
@@ -98,7 +98,7 @@ mod tests {
         let mut frame = Frame::new();
 
         assert!(settle(&mut frame, &mut overflow, &mut tail));
-        assert_eq!(frame.as_str(), "alpha\nbeta\ngamma\ndelta\n");
+        assert_eq!(frame.unheld(), "alpha\nbeta\ngamma\ndelta\n");
     }
 
     #[test]
