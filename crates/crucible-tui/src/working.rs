@@ -130,13 +130,22 @@ impl Working<'_> {
 /// whole thousands hold still for a thousand tokens at a time, and a number
 /// that has stopped, on the row whose whole job is to say work has not, is the
 /// row saying the opposite of what it is there for.
+///
+/// A tenth of nothing is not written. `1k` is the whole of what 1000 has to
+/// say, and the `.0` in `1.0k` is a column spent on a digit that is there to
+/// hold a place rather than to be read.
 fn counted(spent: u64) -> String {
     for (unit, over) in [('M', 1_000_000), ('k', 1_000)] {
         if spent >= over {
             // Integer throughout: the tenth is taken off the remainder rather
             // than rounded off a float, which is one decimal digit that cannot
             // be a rounding of a number nobody counted that way.
-            return format!("{}.{}{unit}", spent / over, (spent % over) * 10 / over);
+            let (whole, tenth) = (spent / over, (spent % over) * 10 / over);
+
+            return match tenth {
+                0 => format!("{whole}{unit}"),
+                _ => format!("{whole}.{tenth}{unit}"),
+            };
         }
     }
 
@@ -264,15 +273,19 @@ mod tests {
         // count moving: whole thousands hold still for a thousand tokens at a
         // time, which on the row that says work is happening reads as work
         // having stopped.
+        //
+        // And a tenth of nothing is not written: 1000 is `1k`, because the
+        // digit in `1.0k` holds a place rather than saying anything.
         for (spent, said) in [
             (0, "↓ 0 "),
             (320, "↓ 320 "),
             (999, "↓ 999 "),
-            (1_000, "↓ 1.0k "),
+            (1_000, "↓ 1k "),
             (1_161, "↓ 1.1k "),
+            (1_420, "↓ 1.4k "),
             (12_800, "↓ 12.8k "),
             (128_400, "↓ 128.4k "),
-            (1_000_000, "↓ 1.0M "),
+            (1_000_000, "↓ 1M "),
             (1_250_000, "↓ 1.2M "),
         ] {
             let row = drawn(

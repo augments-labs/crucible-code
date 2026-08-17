@@ -205,13 +205,15 @@ never pauses — not for a permission question, which is time spent waiting just
 as much.
 
 `↓` is what the turn has spent so far, counted in the tokens the model has
-produced and added up across every response of the turn. It appears once the
-provider has said and not before, so a turn shows no count for its first
-response — a provider that never reports and a model that has produced nothing
-are different things, and only one of them is worth a number. On a window too
-narrow for all of it the key goes first, the count next and the clock after
-that, since all three are recoverable — the key is named under the box, and the
-other two will be back next second; the word is the last thing left.
+produced and added up across every response of the turn. It is written the way
+it would be said — `840`, `1k`, `1.4k`, `128.4k` — with a tenth only where there
+is one to write. It appears once the provider has said and not before, so a turn
+shows no count for its first response — a provider that never reports and a
+model that has produced nothing are different things, and only one of them is
+worth a number. On a window too narrow for all of it the key goes first, the
+count next and the clock after that, since all three are recoverable — the key
+is named under the box, and the other two will be back next second; the word is
+the last thing left.
 
 Tool calls appear as they run:
 

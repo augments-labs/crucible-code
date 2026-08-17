@@ -12,7 +12,8 @@ Notable changes to crucible. Format follows
   has cost.** One row between the answer and the box — a mark that turns, the
   word for what is being waited on (`thinking`, `writing`, `running`,
   `interrupting`), a clock counting from the moment the prompt was sent, and
-  `↓` with the tokens the model has produced so far, added up across the turn.
+  `↓` with the tokens the model has produced so far, added up across the turn
+  and written the way it would be said — `840`, `1k`, `1.4k`, `128.4k`.
   A still screen and a hung one no longer look alike, and a turn that is getting
   expensive says so while there is still time to stop it. What it costs: three
   rows of the window while a turn runs, given up by the turn's own output, and
