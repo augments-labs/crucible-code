@@ -1,12 +1,16 @@
-//! Standing the whole of what the transcript had to cut down to a row.
+//! Standing what the transcript had to cut down to a row.
 //!
-//! Every result a row could not say, newest first. It stands rather than being
-//! written into the transcript for the reason nothing else standing here is
-//! written down: the results are already in the record as the rows that could
-//! not fit them, and committing the text a second time would be a session
-//! saying everything twice. So the way out of it is the way out of everything
-//! else here — what it stood in is given back, and the screen reads afterwards
-//! as though nothing had been opened.
+//! Two ways in and one picture. Ctrl+O names no result, so it stands every one
+//! of them, newest first; a click names one by landing on the row that made the
+//! offer, so it stands that one. Everything after that is the same — the same
+//! rows, the same arrows through them, the same keys out.
+//!
+//! It stands rather than being written into the transcript for the reason
+//! nothing else standing here is written down: the results are already in the
+//! record as the rows that could not fit them, and committing the text a second
+//! time would be a session saying everything twice. So the way out of it is the
+//! way out of everything else here — what it stood in is given back, and the
+//! screen reads afterwards as though nothing had been opened.
 //!
 //! Which is also what makes Ctrl+O a toggle rather than a door. It is the key
 //! the rows themselves name, and pressing it against what it opened closes it
@@ -30,28 +34,57 @@
 use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Terminal};
 
 use crate::cli::Fatal;
-use crate::cli::kept::Kept;
+use crate::cli::kept::{Kept, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
 
-/// Where the window over the whole of it is open.
+/// What the view is standing over.
+///
+/// Which of the two it is depends on what asked for it, and on nothing after
+/// that: the key names no result, so it stands them all, and a click names one
+/// by landing on the row that offered it. Both are the same picture with a
+/// different number of results in it, and both are closed by the same keys.
+#[derive(Debug, PartialEq, Eq)]
+enum Over {
+    /// Everything that had been cut when it opened, newest first.
+    ///
+    /// A count of them rather than the results themselves, so that nothing
+    /// standing here borrows what a running turn is writing into.
+    Everything(usize),
+    /// The one result whose offer was written on this row of the record.
+    ///
+    /// The row rather than the result, for the same reason. It is also what
+    /// makes the view close on its own when the ceiling drops that result:
+    /// there is then no row to find, and nothing to stand.
+    One(usize),
+}
+
+/// Where the window over what is standing is open.
 ///
 /// `end` is the layout's answer rather than the keyboard's — how far down the
 /// window may go depends on how many rows the results came to at this width,
 /// which is not known until they are laid out. So the frame that discovers it
 /// writes it here, and the next key acts on a number the picture agrees with.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct Window {
     /// How far down the whole of it the window is open.
     from: usize,
     /// The furthest down it may go, as of the last frame drawn.
     end: usize,
-    /// How many results had been cut when it opened.
-    ///
-    /// A count rather than the results themselves, so that nothing standing
-    /// here borrows what a running turn is writing into.
-    cut: usize,
+    /// What it is a window over.
+    over: Over,
+}
+
+impl Window {
+    /// A window at the top of `over`, before a frame has said how far it goes.
+    fn onto(over: Over) -> Self {
+        Self {
+            from: 0,
+            end: 0,
+            over,
+        }
+    }
 }
 
 /// Whether the whole of what was cut is standing, and where over it.
@@ -87,10 +120,21 @@ impl Standing {
             return;
         }
 
-        *self = Self::Open(Window {
-            cut: kept.cut(),
-            ..Window::default()
-        });
+        *self = Self::Open(Window::onto(Over::Everything(kept.cut())));
+    }
+
+    /// Opens the view over the one result the record row `at` offered.
+    ///
+    /// Nothing opens where that row offered nothing, which is most rows: a
+    /// pointer lands wherever it lands, and the answer to a click on a line of
+    /// an answer, a blank row or the shell's own output is the screen the
+    /// reader was already looking at.
+    pub(super) fn one(&mut self, kept: &Kept, at: usize) {
+        if !kept.offered(at) {
+            return;
+        }
+
+        *self = Self::Open(Window::onto(Over::One(at)));
     }
 
     /// Gives one key to the view, and answers whether a frame is owed.
@@ -191,6 +235,11 @@ pub(super) fn under<T: Terminal>(
 }
 
 /// The rows of the view at this size, and the state the picture agrees with.
+///
+/// No rows where there is nothing left to stand, which both callers read as the
+/// view closing. That is a result the ceiling dropped while somebody was
+/// reading it — rare, and the honest answer to it is the screen coming back
+/// rather than a frame of chrome with nothing under it.
 fn laying(
     kept: &Kept,
     window: &mut Window,
@@ -198,18 +247,30 @@ fn laying(
     columns: usize,
     rows: usize,
 ) -> Vec<Row> {
-    // Stepped over rather than counted up to, because the end that gives is the
-    // other one: what arrived after the view opened is at the front of `newest`,
-    // and what was dropped to stay under the ceiling has gone from its back.
-    let since = kept.cut().saturating_sub(window.cut);
-    let shown: Vec<Shown<'_>> = kept
-        .newest()
-        .skip(since)
-        .map(|whole| Shown {
-            called: whole.called(),
-            text: whole.text(),
-        })
-        .collect();
+    let shown: Vec<Shown<'_>> = match window.over {
+        // Stepped over rather than counted up to, because the end that gives is
+        // the other one: what arrived after the view opened is at the front of
+        // `newest`, and what was dropped to stay under the ceiling has gone
+        // from its back.
+        Over::Everything(cut) => kept
+            .newest()
+            .skip(kept.cut().saturating_sub(cut))
+            .map(showing)
+            .collect(),
+
+        // Found rather than filtered: one row of the record wrote one offer, so
+        // the walk stops at it and nothing after it is looked at.
+        Over::One(at) => kept
+            .newest()
+            .find(|whole| whole.at() == at)
+            .map(showing)
+            .into_iter()
+            .collect(),
+    };
+
+    if shown.is_empty() {
+        return Vec::new();
+    }
 
     let expanded = Expanded {
         shown: &shown,
@@ -222,6 +283,14 @@ fn laying(
     window.from = window.from.min(window.end);
 
     expanded.within(columns, rows, glyphs)
+}
+
+/// One held result, as the view shows it.
+fn showing(whole: &Whole) -> Shown<'_> {
+    Shown {
+        called: whole.called(),
+        text: whole.text(),
+    }
 }
 
 /// What one key does to the view.

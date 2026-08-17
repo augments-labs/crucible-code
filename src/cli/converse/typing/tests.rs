@@ -557,15 +557,21 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Key(Key::Eof)), Meant::Editing(Key::Eof));
     assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
 
-    for arrived in [
-        Pressed::Up,
-        Pressed::Down,
-        Pressed::Cycle,
-        Pressed::Clicked { row: 4, column: 2 },
-        Pressed::Ignored,
-    ] {
+    for arrived in [Pressed::Up, Pressed::Down, Pressed::Cycle, Pressed::Ignored] {
         assert_eq!(meant(arrived), Meant::Ignored, "{arrived:?}");
     }
+}
+
+#[test]
+fn a_click_read_during_a_turn_keeps_the_row_it_landed_on_and_drops_the_column() {
+    // The rows worth clicking are the ones a turn writes, so this is the key
+    // that means more while one runs rather than less. Which row it landed on is
+    // the whole of what it means up there: a row that offered to expand offers
+    // it along the whole of its width.
+    assert_eq!(
+        meant(Pressed::Clicked { row: 4, column: 2 }),
+        Meant::Clicked(4)
+    );
 }
 
 #[test]

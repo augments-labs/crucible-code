@@ -89,20 +89,20 @@ impl ToolDetail {
     }
 }
 
-/// Who the mouse belongs to while a prompt is up.
+/// Who the mouse belongs to for the length of a session.
 ///
 /// The two ends of one trade rather than a preference. A terminal forwarding
 /// buttons to crucible is not using them itself, and the wheel is a button —
-/// so a session where clicking places the cursor is a session where the wheel
-/// no longer scrolls the terminal's scrollback, which is where crucible's
-/// transcript lives. An inline renderer cannot offer both.
+/// so a session where clicking means something to crucible is a session where
+/// the wheel no longer scrolls the terminal's scrollback, which is where
+/// crucible's transcript lives. An inline renderer cannot offer both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mouse {
     /// The terminal keeps it: the wheel scrolls, dragging selects, the middle
     /// button pastes.
     Off,
-    /// crucible takes button reports while the prompt is up, so a click places
-    /// the cursor.
+    /// crucible takes button reports for the whole session, so a click places
+    /// the cursor in the prompt and opens a result that was cut short.
     Click,
 }
 

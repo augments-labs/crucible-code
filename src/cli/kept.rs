@@ -51,6 +51,14 @@ pub(crate) struct Whole {
     called: String,
     /// The whole of what came back.
     text: Box<str>,
+    /// Which row of the record the offer to expand it was written on.
+    ///
+    /// What a click is answered from. The renderer counts the rows it has let
+    /// go of and this is the count at the moment that row went, so a pointer
+    /// landing somewhere on the screen becomes a row of the record and a row of
+    /// the record becomes this — or becomes nothing, which is a click on a row
+    /// that made no offer.
+    at: usize,
 }
 
 impl Whole {
@@ -62,6 +70,11 @@ impl Whole {
     /// The whole of what came back.
     pub(crate) fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Which row of the record offered it.
+    pub(crate) fn at(&self) -> usize {
+        self.at
     }
 }
 
@@ -103,12 +116,15 @@ impl Kept {
     /// Called only where the row said less than the result did — a result that
     /// fitted is on screen already, and offering to expand it would be offering
     /// the reader what they are looking at.
-    pub(crate) fn finished(&mut self, text: Box<str>) {
+    ///
+    /// `at` is the row of the record the offer went onto, which is what a click
+    /// on that row is looked up by.
+    pub(crate) fn finished(&mut self, text: Box<str>, at: usize) {
         let called = self.calling.take().unwrap_or_default();
 
         self.cut = self.cut.saturating_add(1);
         self.held = self.held.saturating_add(text.len());
-        self.whole.push_back(Whole { called, text });
+        self.whole.push_back(Whole { called, text, at });
 
         // After the push rather than before it, so that the newest result is
         // held whatever it costs. One longer than the ceiling on its own would
@@ -138,6 +154,17 @@ impl Kept {
     /// rows being read stay where the reader left them.
     pub(crate) fn cut(&self) -> usize {
         self.cut
+    }
+
+    /// Whether the row `at` of the record is one that offered to expand.
+    ///
+    /// A walk rather than a lookup, and it stays one: what it walks is bounded
+    /// by [`HELD`] however long the session has run, and it is walked once per
+    /// click. A map keyed by row would be a second thing to drop from when the
+    /// ceiling drops, which is a way for the two to disagree about what is
+    /// still held.
+    pub(crate) fn offered(&self, at: usize) -> bool {
+        self.whole.iter().any(|whole| whole.at == at)
     }
 
     /// Whether nothing has been cut.

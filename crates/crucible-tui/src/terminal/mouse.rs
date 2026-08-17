@@ -12,19 +12,22 @@
 //!
 //! It has a price, and the price is why nothing here is on unless it was asked
 //! for. A terminal that is forwarding buttons is not using them itself, and the
-//! wheel is a button: `output.mouse` left alone means the wheel goes on
-//! scrolling the terminal's own scrollback, which is where this program's
-//! transcript lives. Turned on, clicking places the cursor and the wheel stops
-//! scrolling — an inline renderer cannot offer both, because the transcript
-//! above the prompt is the terminal's rather than crucible's.
+//! wheel is a button.
 //!
-//! The binary holds one for exactly as long as a prompt is being read, and not
-//! for the session that prompt belongs to. The box under a running turn takes
-//! typing but reads no click, so a guard held across a turn would give the
-//! wheel up through the longest stretch of a session and buy nothing with it —
-//! and a turn is when somebody most wants to scroll back over what has just
-//! been written. Two sequences per prompt is what that costs, written where no
-//! frame is being assembled.
+//! The binary holds one for as long as it is reading keys at all, which is a
+//! prompt and the turn that follows it alike. What settles that is what a click
+//! does rather than when it arrives: a result the transcript cut down to a row
+//! is expanded by clicking the row, and the rows worth clicking are written by
+//! a turn. A guard dropped at the top of one would take the pointer away
+//! exactly where it has something to point at.
+//!
+//! The wheel is what that costs, and it is a real cost rather than a small one:
+//! a terminal forwarding buttons is not using them itself, so scrolling back
+//! over the transcript stops working for the length of a turn. An inline
+//! renderer cannot offer both, because the transcript above the prompt is the
+//! terminal's rather than crucible's. `output.mouse` left alone keeps the wheel
+//! and gives up the click, which is the trade for a reader who scrolls more
+//! than they expand.
 //!
 //! [`Raw`]: super::raw::Raw
 

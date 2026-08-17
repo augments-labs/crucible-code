@@ -34,6 +34,12 @@ Notable changes to crucible. Format follows
   read down the screen. `esc` or the same key again closes it and leaves nothing
   behind.
 
+- **A click opens the one result the row it landed on offered.** Where
+  `output.mouse` is `click`, the row that named the key is also a row you can
+  point at, and the view that comes up stands that call's output alone rather
+  than every result cut this session. What it costs: nothing beyond what that
+  setting already costs, which is the wheel.
+
 - **A change to a file is shown rather than counted.** `edit` and `write` draw
   what they did under the call: the lines that went, the lines that came, and a
   few either side, each at the number the file gives it. What it costs: up to 64

@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Reporting, Row, Slot,
-    Terminal, Typed, caret, characters, pressed, waiting,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot, Terminal,
+    Typed, caret, characters, pressed, waiting,
 };
 
 use crate::cli::Fatal;
@@ -125,6 +125,14 @@ pub(crate) enum Asked {
     /// turn runs opens the same view a row further down the screen. Both go
     /// through the one door at the top of the loop above.
     Expand,
+    /// A click on this row of the record, which stands the one result that row
+    /// offered to expand — or nothing, where it offered none.
+    ///
+    /// Which of the two it is, is not decided here. What was cut belongs to the
+    /// loop above and so does the view, and asking this module to hold either of
+    /// them to answer a click would put the transcript's half of the session
+    /// inside the box's.
+    Clicked(usize),
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
 }
@@ -159,10 +167,6 @@ fn insert(editor: &mut Editor, first: char) -> Result<Inserted, Fatal> {
 }
 
 /// Reads one prompt, drawing it as it arrives.
-///
-/// The guard is taken for this call and dropped on the way out of it, including
-/// on the `?` below, so no path out of here leaves a terminal that shows
-/// nothing as the user types.
 pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
@@ -173,13 +177,6 @@ pub(crate) fn ask<T: Terminal>(
     if !keys {
         return Ok(Asked::Untyped);
     }
-
-    // Held for exactly as long as a prompt is being read, and dropped before
-    // the turn is spawned. Held any longer the terminal would be forwarding
-    // buttons through a turn that reads none of them — and the wheel is a
-    // button, so the cost would be the scrollback this program's transcript
-    // lives in, paid for nothing.
-    let _pointer = style.clicks().then(Reporting::on).transpose()?.flatten();
 
     let glyphs = style.glyphs();
 
@@ -193,7 +190,7 @@ pub(crate) fn ask<T: Terminal>(
     // Whatever was typed while the last turn ran is already here, so the list a
     // slash opens has to be worked out from it rather than assumed empty.
     let mut open = Opened::filtered(editor.text(), glyphs);
-    let mut shown = draw(renderer, editor, style, &says, &open)?;
+    let mut above = draw(renderer, editor, style, &says, &open)?;
 
     let mut following = None;
     loop {
@@ -213,7 +210,7 @@ pub(crate) fn ask<T: Terminal>(
             // renderer's to take back before the new ones go down.
             Pressed::Resized => {
                 renderer.resized()?;
-                shown = draw(renderer, editor, style, &says, &open)?;
+                above = draw(renderer, editor, style, &says, &open)?;
             }
 
             // Handed back to the caller rather than answered here. What was
@@ -226,18 +223,25 @@ pub(crate) fn ask<T: Terminal>(
             // and has just been taken back.
             Pressed::Escape | Pressed::Explain | Pressed::Ignored => {
                 if offered.is_some() {
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
-            // The arrows walk the line one place at a time; this is the same
-            // move made in one go. A click that landed anywhere but on the line
-            // moves nothing, which is the same as a key that moved nothing.
+            // Two things a click can land on and one round trip to tell them
+            // apart. On the line it is the move the arrows make one place at a
+            // time, made in one go; above the box it is a row of the record,
+            // which is the loop above's to answer because what was cut is
+            // there. Anywhere else — the border, a blank row, the shell's own
+            // output — it moves nothing, the same as a key that moved nothing.
             Pressed::Clicked { row, column } => {
-                let moved = placed(renderer, editor, &says, shown, (row, column));
-
-                if moved || offered.is_some() {
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                match landed(renderer, editor, &says, above, Pointed { row, column }) {
+                    Landed::Record(at) => return Ok(Asked::Clicked(at)),
+                    Landed::Line => above = draw(renderer, editor, style, &says, &open)?,
+                    Landed::Nothing => {
+                        if offered.is_some() {
+                            above = draw(renderer, editor, style, &says, &open)?;
+                        }
+                    }
                 }
             }
 
@@ -245,12 +249,12 @@ pub(crate) fn ask<T: Terminal>(
             // open, or at the end it is already on, the key costs no frame.
             Pressed::Up => {
                 if open.up() || offered.is_some() {
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
             }
             Pressed::Down => {
                 if open.down() || offered.is_some() {
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
@@ -261,7 +265,7 @@ pub(crate) fn ask<T: Terminal>(
                 runner.cycle();
 
                 says = saying(runner);
-                shown = draw(renderer, editor, style, &says, &open)?;
+                above = draw(renderer, editor, style, &says, &open)?;
             }
 
             Pressed::Key(Key::Char(first)) => {
@@ -275,7 +279,7 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(LIMITED);
                 }
                 if inserted.redraw || offered.is_some() {
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
             }
 
@@ -285,16 +289,16 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => {
                     if offered.is_some() {
-                        shown = draw(renderer, editor, style, &says, &open)?;
+                        above = draw(renderer, editor, style, &says, &open)?;
                     }
                 }
                 Typed::Changed => {
                     open = Opened::filtered(editor.text(), glyphs);
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
                 Typed::Refused => {
                     says.asking = Some(LIMITED);
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
                 Typed::Submitted => return said(renderer, editor, &open, style),
 
@@ -310,7 +314,7 @@ pub(crate) fn ask<T: Terminal>(
 
                     leaving = Some(Instant::now());
                     says.asking = Some(LEAVING);
-                    shown = draw(renderer, editor, style, &says, &open)?;
+                    above = draw(renderer, editor, style, &says, &open)?;
                 }
 
                 Typed::Ended => {
@@ -415,12 +419,13 @@ pub(super) fn under(runner: &Runner, glyphs: Glyphs) -> Says {
 ///
 /// The keys that mean something here are the ones that still do. Return
 /// finishes a line, Esc asks the turn to stop, Ctrl+O stands the whole of what
-/// the results so far were cut down to, Ctrl-C is the line's own — in raw mode
-/// the terminal sends it rather than raising a signal, so it reaches the editor
-/// here exactly as it does at the prompt — and the rest edit the line. While
-/// that view stands it has all of them: it takes the rows the box has, so the
-/// box is not on screen to be typed into and Esc closes the view rather than
-/// stopping the turn behind it.
+/// the results so far were cut down to, a click on a row that offered to expand
+/// stands that one result, Ctrl-C is the line's own — in raw mode the terminal
+/// sends it rather than raising a signal, so it reaches the editor here exactly
+/// as it does at the prompt — and the rest edit the line. While that view
+/// stands it has all of them: it takes the rows the box has, so the box is not
+/// on screen to be typed into and Esc closes the view rather than stopping the
+/// turn behind it.
 ///
 /// Stepping the mode is not among them: the runner that holds it is on
 /// the worker thread for the length of the turn, and a key that moved the row
@@ -544,6 +549,17 @@ pub(super) fn during<T: Terminal>(
                 moved |= opened.is_open();
             }
 
+            // The same view over one result rather than all of them, asked for
+            // by pointing at the row that offered it. Most rows offered
+            // nothing, and a click on one of those is answered by the screen
+            // the reader was already looking at.
+            Meant::Clicked(row) => {
+                if let Some(at) = cursor().and_then(|cursor| renderer.recorded(row, cursor)) {
+                    opened.one(kept, at);
+                    moved |= opened.is_open();
+                }
+            }
+
             Meant::Ignored => {}
         }
     }
@@ -617,8 +633,14 @@ enum Meant {
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
     /// the turn that is still writing it.
     Expand,
-    /// An arrow through a list there is none of, a click, a mode step. None of
-    /// them has anything to act on while a turn is running.
+    /// A click on this screen row, which stands the one result offered there.
+    ///
+    /// The rows worth clicking are the ones a turn writes, so this is the key
+    /// that means *more* while one is running rather than less. It is also why
+    /// the terminal is left reporting buttons for the length of a turn.
+    Clicked(usize),
+    /// An arrow through a list there is none of, a mode step. Neither has
+    /// anything to act on while a turn is running.
     Ignored,
 }
 
@@ -642,17 +664,19 @@ fn meant(arrived: Pressed) -> Meant {
 
         Pressed::Expand => Meant::Expand,
 
+        // The column is dropped rather than carried: what a click means up in
+        // the transcript is which row it landed on, and a row that offered to
+        // expand offers it along the whole of its width.
+        Pressed::Clicked { row, .. } => Meant::Clicked(row),
+
         // Ctrl+E among them: what it opens is an explanation of something
         // waiting to be decided about, and a running turn has decided already.
         // The arrows for a plainer reason — they walk a view that is not
         // standing, and a key that means nothing until Ctrl+O has been pressed
         // means nothing before it.
-        Pressed::Clicked { .. }
-        | Pressed::Cycle
-        | Pressed::Explain
-        | Pressed::Up
-        | Pressed::Down
-        | Pressed::Ignored => Meant::Ignored,
+        Pressed::Cycle | Pressed::Explain | Pressed::Up | Pressed::Down | Pressed::Ignored => {
+            Meant::Ignored
+        }
     }
 }
 
@@ -714,19 +738,24 @@ fn saying(runner: &Runner) -> Says {
     }
 }
 
-/// Puts the box on screen with the cursor where the line was typed to.
+/// Puts the box on screen with the cursor where the line was typed to, and
+/// answers how many rows of the region ended up above the box.
 ///
 /// The box is the last rows of the region and the list, when there is one, is
 /// the first. Drawn in that order for the reason the list opens upwards at all:
 /// the box and the row under it are what the eye is resting on, and rows added
 /// above them leave both exactly where they were.
+///
+/// Which is also why that count is what comes back. A click is read against the
+/// box, and the box is however far down the region this frame happened to put
+/// it — so the frame that put it there is what has to say.
 fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
     style: Style,
     says: &Says,
     open: &Opened,
-) -> Result<Shown, Fatal> {
+) -> Result<usize, Fatal> {
     let columns = renderer.columns();
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
@@ -752,7 +781,7 @@ fn draw<T: Terminal>(
     rows.append(&mut boxed);
 
     renderer.live(&rows, caret, style.palette())?;
-    Ok(Shown { caret, above })
+    Ok(above)
 }
 
 /// The box as it is being typed into.
@@ -775,53 +804,84 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
     }
 }
 
-/// Where the last frame put things, for reading a click against.
+/// Where a click landed.
 #[derive(Debug, Clone, Copy)]
-struct Shown {
-    /// Where the cursor was left, counted from the top of the live region.
-    caret: Caret,
-    /// How many rows of that region sit above the box.
-    above: usize,
+struct Pointed {
+    /// The screen row the pointer was on.
+    row: usize,
+    /// How many columns from the left of it.
+    column: usize,
 }
 
-/// Moves the cursor to where the pointer was, and says whether it moved.
+/// The screen row the terminal says its cursor is on.
 ///
-/// crucible draws inline, so it does not know which row of the screen it is on.
-/// What it does know is that the terminal's cursor is parked on the caret, and
-/// the caret's row inside the region was worked out when the region was drawn —
-/// so asking the terminal where its cursor is turns one into the other. The
-/// question costs a round trip and is asked once per click, never per frame.
+/// The one fact an inline renderer cannot work out for itself: it draws
+/// wherever the shell left off and the terminal scrolls that without saying so,
+/// so where a frame went is a question only the terminal can answer. Asked once
+/// per click and never per frame, because it costs a round trip — and `None`
+/// where it went unanswered, which leaves the click meaning nothing.
+fn cursor() -> Option<usize> {
+    caret().ok().map(|(row, _)| row)
+}
+
+/// What a click landed on.
 ///
-/// Nothing happens where any step of that does not answer: a terminal that will
-/// not report its cursor, a click above the box or below it, a click on the
-/// border. Leaving the cursor where it is is the right answer to a click that
-/// did not land on the line, and a click is not worth failing a session over.
-fn placed<T: Terminal>(
+/// Three answers rather than two, because a click that landed on nothing is not
+/// the same as one that landed on the line: the first owes no frame, and the
+/// second has already moved the cursor to where the pointer was.
+enum Landed {
+    /// This row of the record, which is above the box entirely. What was cut is
+    /// held by the loop that owns the transcript, so the answer is there.
+    Record(usize),
+    /// The line being typed, which now has the cursor where the pointer was.
+    Line,
+    /// The border, a blank row, the shell's own output from before crucible
+    /// started — or a terminal that would not say where its cursor is.
+    Nothing,
+}
+
+/// Reads where a click landed, moving the cursor where it landed on the line.
+///
+/// Which row of its region a click landed on is the renderer's arithmetic — it
+/// knows how tall the region is and how far up in it the cursor was parked, so
+/// the screen row the terminal reported is the one thing it was missing. Both
+/// answers come out of that one reading, which is why they are asked together:
+/// a row above the region is a row of the record, and a row inside it may be a
+/// place in the line.
+///
+/// What is left here is where the box sits inside that region, which the frame
+/// that drew it said. Leaving the cursor where it is is the right answer to a
+/// click that did not land on the line.
+fn landed<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &mut Editor,
     says: &Says,
-    shown: Shown,
-    at: (usize, usize),
-) -> bool {
-    let (row, column) = at;
-
-    let Ok((where_row, _)) = caret() else {
-        return false;
+    above: usize,
+    at: Pointed,
+) -> Landed {
+    let Some(cursor) = cursor() else {
+        return Landed::Nothing;
     };
 
-    let Some(top) = where_row.checked_sub(shown.caret.row) else {
-        return false;
-    };
-    let Some(at) = row.checked_sub(top + shown.above) else {
-        return false;
+    if let Some(row) = renderer.recorded(at.row, cursor) {
+        return Landed::Record(row);
+    }
+
+    let within = renderer.within(at.row, cursor);
+    let Some(row) = within.and_then(|row| row.checked_sub(above)) else {
+        return Landed::Nothing;
     };
 
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
-    let Some(into) = prompt.clicked(renderer.columns(), at, column) else {
-        return false;
+    let Some(into) = prompt.clicked(renderer.columns(), row, at.column) else {
+        return Landed::Nothing;
     };
 
-    editor.place(into) == Typed::Changed
+    if editor.place(into) == Typed::Changed {
+        Landed::Line
+    } else {
+        Landed::Nothing
+    }
 }
 
 /// The command list a line has open above the box, and the row of it that
