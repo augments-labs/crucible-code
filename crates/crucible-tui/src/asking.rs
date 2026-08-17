@@ -14,9 +14,10 @@
 //! ceiling and folds or shortens against it; this one does not, because a
 //! report is read at a glance and a decision is consented to. A command cut at
 //! the right edge is approved by its leading columns and then does whatever the
-//! rest of it does. So the payload folds to the width, one row per simple
-//! command, and where even that will not fit the panel returns nothing and the
-//! caller asks the question in the scrollback instead, where nothing bounds it.
+//! rest of it does. So the payload folds to the width, word for word and
+//! operators and all, and where even that will not fit the panel returns
+//! nothing and the caller asks the question in the scrollback instead, where
+//! nothing bounds it.
 //!
 //! **Three blanks, counted.** Under the subject, under the payload, under the
 //! statement. They are what make the payload a block that is read rather than a
@@ -36,6 +37,12 @@
 //! [`Spacing`], the reader gets this back by pressing the key again. To keep
 //! the same argument on one row, a description is clipped rather than folded:
 //! a caption that folded would let whatever wrote it decide how tall this is.
+//!
+//! **A key is named only where it does something.** What the cut leaves off
+//! screen is reachable — the window over the prose moves by a row at a time —
+//! and the footer says so only while there is something off screen to reach.
+//! The panel is the only party that knows that, because it is the one that
+//! folded the paragraphs and found out how tall they were.
 //!
 //! **Where the colour goes.** The frame and the mark are [`Slot::Accent`], the
 //! subject and the marked answer [`Slot::Strong`], the payload and the
@@ -89,6 +96,13 @@ pub struct Question<'a> {
     pub description: &'a str,
     /// The paragraphs a reader asked to see, or empty until they ask.
     pub explanation: &'a [&'a str],
+    /// Which row of the explanation the window over it opens at.
+    ///
+    /// Clamped here rather than by the caller, so a key held down runs to the
+    /// end of the prose and stops instead of scrolling it off the top.
+    pub from: usize,
+    /// The extra footer item, drawn only while some of the prose is off screen.
+    pub more: &'a str,
     /// The sentence under the payload, saying why this stopped.
     pub statement: &'a str,
     /// The question the answers answer.
@@ -166,7 +180,8 @@ impl Question<'_> {
             let line = clip(self.description, payload);
             rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
         }
-        rows.extend(self.told(inner, payload, glyphs, spare));
+        let (prose, hidden) = self.told(inner, payload, glyphs, spare);
+        rows.extend(prose);
         rows.push(framed(Row::new(), inner, glyphs));
 
         if spacing.statement {
@@ -186,21 +201,32 @@ impl Question<'_> {
         rows.push(Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")));
         if spacing.footer {
             let room = columns.saturating_sub(SAID);
-            rows.push(said(SAID, Slot::Quiet, clip(self.footer, room)));
+            let keys = if hidden > 0 && !self.more.is_empty() {
+                format!("{} {} {}", self.footer, glyphs.dot(), self.more)
+            } else {
+                self.footer.to_owned()
+            };
+            rows.push(said(SAID, Slot::Quiet, clip(&keys, room)));
         }
 
         rows
     }
 
-    /// The prose a reader asked for, in `spare` rows, saying so where it was
-    /// cut.
+    /// The window over the prose a reader asked for, and how many of its rows
+    /// that window left off screen.
     ///
     /// Empty where nothing was asked for, and empty where `spare` is zero,
     /// which is what leaves the unexplained panel exactly the panel it was.
-    fn told(&self, inner: usize, payload: usize, glyphs: Glyphs, spare: usize) -> Vec<Row> {
+    fn told(
+        &self,
+        inner: usize,
+        payload: usize,
+        glyphs: Glyphs,
+        spare: usize,
+    ) -> (Vec<Row>, usize) {
         let mut rows = Vec::new();
         if spare == 0 {
-            return rows;
+            return (rows, 0);
         }
 
         for paragraph in self.explanation {
@@ -211,26 +237,29 @@ impl Question<'_> {
         }
 
         if rows.len() <= spare {
-            return rows;
+            return (rows, 0);
         }
 
-        // Counted in rows rather than paragraphs, because a row is what ran
-        // out, and the reader is deciding whether to make the window taller.
+        // One row of the window goes on saying how much of the prose is not in
+        // it. Counted in rows rather than paragraphs, because a row is what ran
+        // out and a row is what the arrows move by.
         let keep = spare.saturating_sub(1);
-        let left = rows.len() - keep;
-        let counted = if left == 1 { "row" } else { "rows" };
-        rows.truncate(keep);
-        rows.push(framed(
+        let hidden = rows.len() - keep;
+        let from = self.from.min(hidden);
+        let counted = if hidden == 1 { "row" } else { "rows" };
+
+        let mut window: Vec<Row> = rows.into_iter().skip(from).take(keep).collect();
+        window.push(framed(
             said(
                 PAYLOAD,
                 Slot::Quiet,
-                &format!("{} {left} more {counted} of explanation", glyphs.dot()),
+                &format!("{} {hidden} more {counted} of explanation", glyphs.dot()),
             ),
             inner,
             glyphs,
         ));
 
-        rows
+        (window, hidden)
     }
 
     /// One answer's rows: its number, its words, and the mark where it is the

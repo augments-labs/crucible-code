@@ -17,6 +17,8 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
         payload,
         description: "",
         explanation: &[],
+        from: 0,
+        more: "↑↓ to see more",
         statement: "This command needs your verdict.",
         question: "Do you want to proceed?",
         answers: &ANSWERS,
@@ -316,6 +318,67 @@ fn an_explanation_too_tall_for_the_window_is_cut_and_says_how_much_it_cut() {
     let dropped = whole.len() - short.len() + 1;
     let told = format!("    · {dropped} more rows of explanation");
     assert!(said.contains(&told), "{said:?}");
+}
+
+#[test]
+fn the_footer_offers_the_arrows_only_while_something_is_off_screen() {
+    // A key named on the footer has to do something when it is pressed. The
+    // component is the only party that knows whether the prose was cut, so it
+    // is the one that decides whether the item is drawn.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let whole = inside(&question.within(WIDE, 40, Glyphs::Unicode));
+    let short = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    let plain = "  esc to cancel · ctrl+e to explain".to_owned();
+    let scrolling = "  esc to cancel · ctrl+e to explain · ↑↓ to see more".to_owned();
+
+    assert!(whole.contains(&plain), "{whole:?}");
+    assert!(short.contains(&scrolling), "{short:?}");
+}
+
+#[test]
+fn scrolling_moves_the_window_over_the_prose_and_leaves_the_panel_alone() {
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let top = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+    question.from = 2;
+    let down = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    assert_eq!(top.len(), down.len());
+
+    // The two rows the window moved past are gone and two later ones have
+    // arrived, and the count of what is off screen does not change with it —
+    // the same rows are hidden, from the other end.
+    assert_ne!(top, down);
+    let opening = "    Runs the workspace's whole test suite with every feature turned on, which";
+    assert!(top.contains(&opening.to_owned()), "{top:?}");
+    assert!(!down.contains(&opening.to_owned()), "{down:?}");
+
+    for said in [&top, &down] {
+        assert!(
+            said.contains(&"    · 2 more rows of explanation".to_owned()),
+            "{said:?}"
+        );
+        assert!(said.contains(&"  › 1. Yes, once".to_owned()), "{said:?}");
+    }
+}
+
+#[test]
+fn scrolling_past_the_end_of_the_prose_stops_at_the_end() {
+    // What a held key does. Clamped here rather than by the caller, because the
+    // caller cannot see how many rows the prose folded into.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+    question.from = 2;
+    let last = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    for from in [3, 9, usize::MAX] {
+        question.from = from;
+        assert_eq!(inside(&question.within(WIDE, 20, Glyphs::Unicode)), last);
+    }
 }
 
 #[test]
