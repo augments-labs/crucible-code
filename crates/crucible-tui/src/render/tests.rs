@@ -493,11 +493,12 @@ fn boxed() -> Vec<Row> {
 #[test]
 fn the_region_never_grows_past_the_screen_however_long_the_answer_is() {
     // The bug this exists to stop, and the reason it took a long answer to
-    // show: the tail is bounded by the height of the window, so a tail that
-    // had filled it plus rows standing under it was a region taller than the
-    // screen. The top of one has already scrolled out of reach, so the next
-    // rewind erases rows the terminal has taken -- which the reader sees as
-    // the box and the mode being eaten away as the answer gets longer.
+    // show: a tail that had filled the window, plus rows standing under it, was
+    // a region taller than the screen. The top of one has already scrolled out
+    // of reach, so the next rewind erases rows the terminal has taken -- which
+    // the reader sees as the box and the mode being eaten away as the answer
+    // gets longer. A one-row tail leaves the rest of the window to whatever
+    // stands under it; this asserts the outcome rather than the constant.
     let rows = 8;
     let mut render = Renderer::new(Recording::new(20, rows));
     render.under(&boxed(), None, Palette::plain()).unwrap();
@@ -514,10 +515,10 @@ fn the_region_never_grows_past_the_screen_however_long_the_answer_is() {
 }
 
 #[test]
-fn the_tail_gives_back_the_rows_the_footing_takes() {
-    // The tail is the half that can give: what stands under it is a component
-    // somebody asked for, and the tail is a window onto a transcript the
-    // terminal is keeping anyway.
+fn the_tail_is_one_row_whatever_stands_under_it() {
+    // Streamed text only grows at the end, so the row being written to is the
+    // only one a later delta can change. Everything above it went to scrollback
+    // as it was written, which leaves the footing nothing to negotiate for.
     let mut render = Renderer::new(Recording::new(20, 8));
 
     for delta in 0..20 {
@@ -527,11 +528,36 @@ fn the_tail_gives_back_the_rows_the_footing_takes() {
 
     render.under(&boxed(), None, Palette::plain()).unwrap();
 
-    assert_eq!(alone, 8, "the tail alone may fill the window");
     assert_eq!(
-        render.tail.len() + render.footing.len(),
-        8,
-        "the two together may not"
+        alone, 1,
+        "the tail holds the row still being written and no more"
+    );
+    assert_eq!(render.tail.len(), 1, "and standing rows do not shrink it");
+}
+
+#[test]
+fn a_delta_costs_the_same_on_a_tall_window_as_on_a_short_one() {
+    // What a frame writes is what is live, and a delta is what causes a frame.
+    // The defect this exists to stop: the tail was bounded by the height of the
+    // window, so every delta rewound over a screen of rows and wrote them all
+    // again -- an answer costing the window's height per delta rather than the
+    // delta's own length, on the one path the burst budget bounds.
+    let cost = |rows: usize| {
+        let mut render = Renderer::new(Recording::new(40, rows));
+        render.under(&boxed(), None, Palette::plain()).unwrap();
+        render.terminal.take();
+
+        for delta in 0..40 {
+            render.stream(&format!("line {delta}\n")).unwrap();
+        }
+
+        render.terminal.take().len()
+    };
+
+    assert_eq!(
+        cost(8),
+        cost(40),
+        "a taller window drew more for the same answer"
     );
 }
 

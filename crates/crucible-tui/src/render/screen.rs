@@ -2,8 +2,9 @@
 //!
 //! The counterpart to [`super::plain`]. Here there is a cursor to move and a
 //! region to erase, so the live tail is redrawn in full every frame and only
-//! the rows that have left it are permanent. Everything a frame is allowed to
-//! do to the screen is in these two functions.
+//! the rows that have left it are permanent. That is what a frame costs, and a
+//! delta is what causes one — which is why the tail is one row tall. Everything
+//! a frame is allowed to do to the screen is in these two functions.
 
 use super::frame::Frame;
 use super::region::Caret;

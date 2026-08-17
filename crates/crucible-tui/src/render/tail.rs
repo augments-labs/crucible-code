@@ -147,26 +147,6 @@ impl Tail {
         }
     }
 
-    /// Holds at most `bound` rows from now on, spilling whatever that takes off
-    /// the top.
-    ///
-    /// What the live region is allowed to be tall is not a constant: rows stand
-    /// under the tail, there are more of them in some states than others, and
-    /// the tail plus what stands under it has to fit on the screen. A region
-    /// taller than the screen is one whose top has already scrolled out of
-    /// reach, and the next frame's rewind then erases rows the terminal has
-    /// taken — which reads as the rows underneath disappearing as the answer
-    /// gets longer, because that is exactly when the tail is full.
-    pub(crate) fn holding(&mut self, bound: usize, overflow: &mut Vec<String>) {
-        self.bound = bound.max(1);
-
-        while self.rows.len() > self.bound {
-            if let Some(row) = self.rows.pop_front() {
-                overflow.push(row.text);
-            }
-        }
-    }
-
     /// The rows currently drawn, oldest first.
     pub(crate) fn rows(&self) -> impl ExactSizeIterator<Item = &str> {
         self.rows.iter().map(|row| row.text.as_str())

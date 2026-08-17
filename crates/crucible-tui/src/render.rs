@@ -26,6 +26,27 @@ use frame::Frame;
 pub use region::Caret;
 use tail::Tail;
 
+/// How many rows of the transcript are still this process's to change.
+///
+/// One: streamed text only ever grows at the end, so the row being written to is
+/// the only one a later delta can alter. Every row above it was final the moment
+/// the wrap broke it, and holding it live would mean writing it again on every
+/// frame for the rest of the answer — a frame costing the height of the window
+/// rather than the size of the delta, on the one path the burst budget bounds.
+///
+/// It is also what keeps the live region on screen. A frame is taken back by
+/// moving the cursor up over it, so the tail and whatever stands under it have
+/// to fit together: one taller than the window is one whose top has already
+/// scrolled out of reach. A tail of a single row leaves the rest of the window
+/// to the component standing under it, so there is nothing to negotiate.
+///
+/// What it costs is re-wrapping: [`Renderer::resized`] can only re-wrap the row
+/// still being written to. Everything above it was committed at the width it was
+/// written at, and reflowing scrollback is the terminal's job — which it was for
+/// most of the answer regardless, since a taller tail would still have committed
+/// everything that scrolled out of it.
+const LIVE: usize = 1;
+
 /// Draws the transcript into the terminal's scrollback.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
@@ -45,11 +66,12 @@ pub struct Renderer<T: Terminal> {
     /// the way back to the top of the region is that many rows shorter than the
     /// region is tall.
     parked: usize,
-    /// The size the tail is currently wrapped and bounded for.
+    /// The size the tail is currently wrapped for.
     ///
-    /// Rows as much as columns: the bound is the height, so a window that only
-    /// got shorter would otherwise leave the tail holding more rows than there
-    /// is screen to show them, and every rewind would reach above the top.
+    /// Rows as much as columns, though the tail's own height is [`LIVE`] and
+    /// does not move: a rewind reaching further than the window is tall reaches
+    /// above the top, which is what [`Renderer::region`] clamps against, and the
+    /// components standing under the tail lay themselves out against it.
     size: Size,
     /// Reused across frames: a frame is one string, so it is one write.
     frame: Frame,
@@ -102,8 +124,8 @@ pub struct Renderer<T: Terminal> {
 impl<T: Terminal> Renderer<T> {
     /// A renderer drawing on `terminal`.
     ///
-    /// The tail is bounded by the height of the visible area: holding more than
-    /// one screen would keep rows nobody can see.
+    /// The tail holds [`LIVE`] rows. Everything else a frame draws has already
+    /// overflowed into scrollback and is the terminal's to keep.
     ///
     /// Nothing here can fail, and the signature says so. A terminal that will
     /// not report a size is still a terminal worth drawing on, so the size is
@@ -116,7 +138,7 @@ impl<T: Terminal> Renderer<T> {
         let size = terminal.size().unwrap_or(Size::FALLBACK);
 
         Self {
-            tail: Tail::new(size.columns, size.rows),
+            tail: Tail::new(size.columns, LIVE),
             finished: Tail::new(size.columns, 1),
             terminal,
             drawn: 0,
@@ -343,25 +365,7 @@ impl<T: Terminal> Renderer<T> {
 
         region::paint(rows, palette, &mut self.footing);
         self.footed = caret;
-        self.reserve();
         self.draw()
-    }
-
-    /// Leaves the tail exactly the rows the footing does not need.
-    ///
-    /// The live region is the tail and whatever stands under it together, and it
-    /// has to fit on the screen: taken back by moving the cursor up over it, one
-    /// taller than the screen is one whose top has already scrolled out of
-    /// reach. The tail is the half that can give — what stands under it is a
-    /// component that was asked for — so the tail's bound moves whenever the
-    /// footing's height does.
-    ///
-    /// A window with no room for both keeps one row of tail, because a tail of
-    /// none cannot hold the row still being written to.
-    fn reserve(&mut self) {
-        let bound = self.size.rows.saturating_sub(self.footing.len());
-
-        self.tail.holding(bound, &mut self.overflow);
     }
 
     /// Ends the live region, leaving what it held in scrollback.
@@ -458,7 +462,7 @@ impl<T: Terminal> Renderer<T> {
             self.settle_plain()?;
         }
 
-        self.tail = Tail::new(size.columns, size.rows);
+        self.tail = Tail::new(size.columns, LIVE);
         self.finished = Tail::new(size.columns, 1);
         // Dropped for the reason the live rows are: it was laid out for a width
         // the window no longer has, and a row too wide for the screen is one

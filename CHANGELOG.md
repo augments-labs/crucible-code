@@ -88,6 +88,16 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A long answer no longer draws slower the taller the window is.** Each piece
+  of streamed text redrew every live row, and the live region was a whole screen
+  tall, so a 5,400-character answer wrote 1.1 MB to the terminal on a 40-row
+  window and more on a 60-row one. Only the row still being written to can
+  change, so only that row is redrawn now: the same answer writes 72 kB, and
+  costs the same on a tall window as on a short one. What it costs: a resize
+  mid-answer re-wraps only that row rather than the last screenful — the rest
+  was written into scrollback at the width it was written at, and reflowing
+  scrollback belongs to the terminal.
+
 - **A turn no longer ends because a connection went away between rounds.** A
   response that failed before it said a word is asked for again — twice at most,
   a quarter of a second before the first and half a second before the second —
