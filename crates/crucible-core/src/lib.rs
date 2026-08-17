@@ -17,6 +17,7 @@
 
 mod cancel;
 mod credential;
+mod diff;
 mod event;
 mod ids;
 mod permission;
@@ -29,6 +30,7 @@ pub use cancel::Cancel;
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
+pub use diff::{Change, Diff, Line};
 pub use event::{Event, Post, TurnError};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
 pub use permission::{
