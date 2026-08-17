@@ -77,7 +77,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
 }
 
 /// What the terminal ends up with once the call whose line reads `said` has
-/// answered and its line has been written.
+/// answered and its line has stopped being live.
 fn committed(said: &str, window: usize, style: Style) -> String {
     let mut renderer = Renderer::new(Recording::new(window, 24));
 
@@ -98,17 +98,21 @@ fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
 }
 
 #[test]
-fn asking_for_a_call_writes_no_line_for_it() {
-    // The line is written when the tool answers, so that it and the result
-    // hanging under it reach scrollback together. Written here, anything the
-    // turn did in between would come to stand between the two.
+fn a_call_is_not_committed_while_its_tool_is_still_out() {
+    // It stands in the footing instead, with a mark that pulses, and the
+    // renderer moves back over it every frame. A line written to scrollback
+    // here would be that same line a second time once the tool answered --
+    // and a moving line cannot be one the renderer never rewinds over.
     let written = announced("read", r#"{"path":"src/main.rs"}"#, "src/main.rs");
 
     assert!(!written.contains("Read"), "{written}");
 }
 
 #[test]
-fn a_call_that_answered_is_written_with_the_mark_that_opens_one() {
+fn a_call_that_answered_commits_the_words_it_was_drawn_with() {
+    // The same words, in the same columns, with the motion gone. A line that
+    // changed shape at the moment it stopped moving would read as a second
+    // call rather than as the one that was standing there.
     let written = committed("Read(src/main.rs)", WIDE, Style::plain());
 
     assert!(written.contains("● Read(src/main.rs)"), "{written}");
@@ -133,17 +137,12 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 
 #[test]
 fn a_long_summary_is_clipped_rather_than_wrapped() {
-    let written = committed(&"x".repeat(200), WIDE, Style::plain());
-    let line = written
-        .lines()
-        .map(|row| row.trim_end_matches('\r'))
-        .find(|row| row.contains('…'))
-        .expect("a line that was cut");
+    let long = "x".repeat(200);
 
-    // Against the compact ceiling rather than the window: on a terminal this
-    // wide it is `toolDetail` that bounds how much of a call a line shows, and
-    // the two columns are the mark and the space after it.
-    assert!(crucible_tui::columns(line) <= args() + 2, "{line:?}");
+    let line = words(&long, WIDE, Style::plain());
+
+    assert!(line.ends_with('…'), "{line}");
+    assert!(line.chars().count() <= args(), "{line}");
 }
 
 #[test]

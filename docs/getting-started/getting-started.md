@@ -189,7 +189,8 @@ it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode i
 not offered there, because the mode is away with the turn until it finishes, and
 neither is <kbd>Ctrl-C</kbd>, which means the same thing there as at the prompt.
 
-One row stands between the answer and the box for as long as the turn runs:
+One row stands between the answer and the box for as long as the turn runs, and
+a second joins it above while a tool is out:
 
 ```
 ✳ thinking (2m 56s · ↓ 12.8k · esc to interrupt)
@@ -241,7 +242,12 @@ arguments could not be read is just the name, and the tool says why next.
 That line is written when the tool answers rather than when the model asks for
 it, so it and the result under it reach your scrollback one after the other and
 nothing the turn did in between comes to stand between the two. While the tool
-is out, the row above the box is what says a call is running.
+is out it stands above the working row instead, with its mark pulsing on the
+beat the mark below it turns on, and it commits the moment the tool answers —
+the same words in the same columns, with the motion gone. So a call still
+waiting is told from one that has finished at a glance, and what reaches your
+scrollback is the still line. On a window with room for one of the two, the call
+gives way to the row that says the turn is running at all.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
 numbers lines the way `cat -n` does, which is why the summary starts with a `1`.

@@ -13,24 +13,35 @@
 //! row and the first thing a narrow window drops, and the key that stops a turn
 //! is the wrong thing for a narrow window to take away.
 //!
-//! The call whose tool is out is held here too, for the same reason the word
-//! is: the events go past this and nowhere else. It is held rather than written
-//! so that the line and the result hanging under it reach scrollback together —
-//! [`Turning::saw`] hands it back the moment the tool answers, and whoever
-//! drives this writes it.
+//! A call standing above that row is the other thing held here. A tool that has
+//! been asked for and has not answered gets its line drawn with a mark that
+//! pulses, and it lives here rather than in scrollback because a line the
+//! renderer moves back over cannot also be committed. When the tool answers the
+//! line is handed back — [`Turning::saw`] returns it — and whoever drives this
+//! commits it still, so what reaches scrollback is the same words with the
+//! motion gone.
 
 use std::time::{Duration, Instant};
 
 use crucible_core::Event;
-use crucible_tui::{Glyphs, Row, Working};
+use crucible_tui::{Row, Slot, Working};
 
 use super::super::draw;
+use super::super::style::Style;
 
 /// How the turn is asked to stop, said after the clock.
 const STOPS: &str = "esc to interrupt";
 
 /// The rows this puts above the box, blanks included.
 const ROWS: usize = 3;
+
+/// And with a call standing over it, the blank that parts them included.
+///
+/// The call line is what a narrow window gives up first, because it is the one
+/// of the two that a second look gets back anyway: the tool answers and the
+/// line is committed to scrollback either way. The row saying a turn is running
+/// exists nowhere else.
+const CALLING: usize = ROWS + 2;
 
 /// The one word for what a turn is doing at this moment.
 ///
@@ -69,22 +80,34 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
-    /// The words of the line of the call whose tool is out, or `None` where
-    /// none is. Without the mark, which is the writer's to draw.
+    /// The words of the call whose tool is out, or `None` where none is. What
+    /// the tool said the call was about, without the mark: the mark is the part
+    /// that moves, and it is drawn per frame.
     calling: Option<String>,
-    /// What the row was last drawn from, so a redraw that would draw the same
-    /// row again can be skipped. `None` before the first.
+    /// What the footing was last drawn from, so a redraw that would draw the
+    /// same rows again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
 }
 
-/// Everything the row is drawn from, coarsened to what it is drawn *by*.
+/// Everything the footing is drawn from, coarsened to what it is drawn *by*.
 ///
-/// The clock counts and the mark turns while nothing arrives, so the loop above
+/// The clock counts and the marks move while nothing arrives, so the loop above
 /// redraws on its own — and this is what it asks about first. A value that has
 /// not moved is a frame nobody would be able to tell from the last, so anything
-/// the row says has to be in here: a segment left out is one that changes on
-/// screen only when something else on the row happens to change with it.
-type Drawn = (Doing, Option<u64>, u64);
+/// the rows say has to be in here: a segment left out is one that changes on
+/// screen only when something else happens to change with it.
+#[derive(Debug, PartialEq, Eq)]
+struct Drawn {
+    /// The word the row says.
+    doing: Doing,
+    /// The count beside it.
+    spent: Option<u64>,
+    /// The clock, and the face both marks are wearing, coarsened to the one
+    /// number every unit of them divides.
+    beat: u64,
+    /// The call standing over the row, where one is.
+    calling: Option<String>,
+}
 
 impl Turning {
     /// A turn that starts now.
@@ -162,8 +185,18 @@ impl Turning {
     /// face the mark is wearing; the other two are what the row says beside
     /// them.
     pub(super) fn moved(&mut self) -> bool {
-        let now: Drawn = (self.doing, self.spent, Working::beat(self.running()));
-        let moved = self.drawn != Some(now);
+        let now = Drawn {
+            doing: self.doing,
+            spent: self.spent,
+            beat: Working::beat(self.running()),
+
+            // Cloned rather than borrowed, because it is kept until the next
+            // frame to be compared against. A tool's name and a path is tens of
+            // bytes, taken at most four times a second, and it is freed the
+            // moment the tool answers — nothing here grows with the transcript.
+            calling: self.calling.clone(),
+        };
+        let moved = self.drawn.as_ref() != Some(&now);
 
         self.drawn = Some(now);
         moved
@@ -171,12 +204,15 @@ impl Turning {
 
     /// The rows to put above the box, or none where the window has no room.
     ///
-    /// A blank either side, so the row belongs to neither the turn's own output
-    /// above it nor the box below. `room` is what is left of the window once
-    /// the box has taken its share: dropped whole rather than squeezed, because
-    /// a footing taller than the window is a region the renderer cannot rewind
-    /// over, and one row of turn output is worth more than a clock.
-    pub(super) fn rows(&self, columns: usize, glyphs: Glyphs, room: usize) -> Vec<Row> {
+    /// A blank either side, so the rows belong to neither the turn's own output
+    /// above them nor the box below, and a blank between the call and the row
+    /// under it for the same reason: the call is a thing that is happening and
+    /// the row is what is happening to the turn. `room` is what is left of the
+    /// window once the box has taken its share: dropped whole rather than
+    /// squeezed, because a footing taller than the window is a region the
+    /// renderer cannot rewind over, and one row of turn output is worth more
+    /// than a clock.
+    pub(super) fn rows(&self, columns: usize, style: Style, room: usize) -> Vec<Row> {
         if room <= ROWS {
             return Vec::new();
         }
@@ -188,7 +224,43 @@ impl Turning {
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
         };
 
-        vec![Row::new(), working.row(columns, glyphs), Row::new()]
+        let mut rows = Vec::new();
+
+        if let Some(said) = self.calling.as_deref().filter(|_| room > CALLING) {
+            rows.push(Row::new());
+            rows.push(self.call(said, columns, style));
+        }
+
+        rows.push(Row::new());
+        rows.push(working.row(columns, style.glyphs()));
+        rows.push(Row::new());
+
+        rows
+    }
+
+    /// The line for the call whose tool is out.
+    ///
+    /// The mark pulses rather than turning: a call is one thing waiting on one
+    /// answer, and the row below it is already carrying the mark that says the
+    /// turn as a whole is moving. Two marks cycling through four faces beside
+    /// each other read as two independent things rather than as one inside the
+    /// other. On the same beat as that one, so the footing moves as one picture.
+    ///
+    /// The words go through the same clipping the committed line uses, so the
+    /// line does not change shape at the moment it stops moving.
+    fn call(&self, said: &str, columns: usize, style: Style) -> Row {
+        let lit = Working::beat(self.running()).is_multiple_of(2);
+        let slot = if lit { Slot::Accent } else { Slot::Quiet };
+
+        let row = Row::new().then(slot, style.glyphs().called());
+
+        // The mark alone where the window left no room for the words, as the
+        // committed line does: the space after it would be the one column a
+        // window that narrow has not got.
+        match draw::words(said, columns, style) {
+            words if words.is_empty() => row,
+            words => row.then(Slot::Plain, format!(" {words}")),
+        }
     }
 
     /// How long the turn has been running.
@@ -202,6 +274,7 @@ mod tests {
     use crucible_core::{
         Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnError, TurnId,
     };
+    use crucible_tui::Palette;
 
     use super::*;
 
@@ -258,7 +331,7 @@ mod tests {
         assert_eq!(turning.doing.word(), "interrupting");
 
         // And stops offering the key that has already been pressed.
-        let rows = turning.rows(80, Glyphs::Unicode, 24);
+        let rows = turning.rows(80, Style::plain(), 24);
         let said = rows.iter().map(Row::text).collect::<String>();
 
         assert!(said.contains("interrupting"), "{said:?}");
@@ -272,7 +345,7 @@ mod tests {
         let mut turning = Turning::started();
         let said = |turning: &Turning| {
             turning
-                .rows(80, Glyphs::Unicode, 24)
+                .rows(80, Style::plain(), 24)
                 .iter()
                 .map(Row::text)
                 .collect::<String>()
@@ -330,16 +403,48 @@ mod tests {
         let turning = Turning::started();
 
         for room in 0..=ROWS {
-            assert!(turning.rows(80, Glyphs::Unicode, room).is_empty(), "{room}");
+            assert!(turning.rows(80, Style::plain(), room).is_empty(), "{room}");
         }
 
-        assert_eq!(turning.rows(80, Glyphs::Unicode, ROWS + 1).len(), ROWS);
+        assert_eq!(turning.rows(80, Style::plain(), ROWS + 1).len(), ROWS);
+    }
+
+    #[test]
+    fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
+        // Here rather than in scrollback, because the mark on it moves: a line
+        // the renderer rewinds over every frame cannot also be a line it never
+        // rewinds over. It is committed when the tool answers and not before.
+        let mut turning = Turning::started();
+        let said = |turning: &Turning| {
+            turning
+                .rows(80, Style::plain(), 24)
+                .iter()
+                .map(Row::text)
+                .collect::<Vec<_>>()
+        };
+
+        assert!(!said(&turning).iter().any(|row| row.contains("Read")));
+
+        turning.saw(&requested());
+        let standing = said(&turning);
+
+        assert_eq!(standing.len(), CALLING, "{standing:?}");
+
+        // By position, since what is under test is the order: the call over the
+        // row that says a turn is running, and a blank above the call and
+        // another between the two, so neither belongs to the output above nor
+        // to the box under them.
+        let at = |row: usize| standing.get(row).cloned().unwrap_or_default();
+
+        assert!(at(0).is_empty(), "{standing:?}");
+        assert!(at(1).contains("Read(src/main.rs)"), "{standing:?}");
+        assert!(at(2).is_empty(), "{standing:?}");
+        assert!(at(3).contains("running"), "{standing:?}");
+        assert!(at(4).is_empty(), "{standing:?}");
     }
 
     #[test]
     fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
-        // Held from the moment the model asks until then, so that the line and
-        // the result hanging under it are written one after the other.
         let mut turning = Turning::started();
 
         assert_eq!(turning.saw(&requested()), None);
@@ -365,10 +470,10 @@ mod tests {
     #[test]
     fn a_turn_that_ends_with_a_tool_still_out_hands_its_call_back_anyway() {
         // Otherwise a call that was made leaves no record of having been made:
-        // its line was still being held, and the turn holding it is over. That
-        // is the one thing a transcript may not do -- and it is reached by
-        // every turn that fails or is stopped mid-call, which is exactly when
-        // somebody goes looking for what ran.
+        // the line was never committed, and the turn it was standing in is
+        // over. That is the one thing a transcript may not do -- and it is
+        // reached by every turn that fails or is stopped mid-call, which is
+        // exactly when somebody goes looking for what ran.
         for ending in [
             Event::TurnFinished {
                 turn: TurnId::FIRST,
@@ -392,9 +497,8 @@ mod tests {
     #[test]
     fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
         // The word freezes at `interrupting` when the key is pressed. The line
-        // of the call still out is not a word, and holding on to it too would
-        // lose the record of the call at the one moment there is most to
-        // explain.
+        // of the call still out is not a word, and freezing it too would lose
+        // the record of the call at the one moment there is most to explain.
         let mut turning = Turning::started();
         turning.saw(&requested());
         turning.interrupting();
@@ -406,5 +510,75 @@ mod tests {
             }),
             Some("Read(src/main.rs)".to_owned())
         );
+    }
+
+    #[test]
+    fn the_mark_on_a_live_call_pulses_and_the_words_beside_it_do_not_move() {
+        // Two frames, half a beat apart. The mark is painted one way and then
+        // the other; everything after it is the same string in the same
+        // columns, because a call line that changed width four times a second
+        // would be unreadable next to the row it stands over.
+        // Against a palette that writes colour, because the pulse *is* colour:
+        // on a terminal without any, the two faces are the same mark and the
+        // row is still and correct. What is under test is the beat reaching the
+        // slot, so the instrument has to be one that can tell two slots apart.
+        let style = Style::plain();
+        let palette = Palette::resolve(true, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let now = Instant::now();
+
+        // One beat apart to the microsecond, rather than two readings of the
+        // clock a beat apart in wall time: what is under test is that the face
+        // changes from one beat to the next, and a machine that stalled between
+        // two readings would be testing how long the stall was.
+        let face = |beat: Duration| {
+            let moment = Turning {
+                since: now.checked_sub(beat).expect("a clock past its own epoch"),
+                ..Turning::started()
+            };
+
+            moment.call("Read(src/main.rs)", 80, style).paint(palette)
+        };
+        let (lit, dim) = (face(Duration::ZERO), face(Duration::from_millis(250)));
+
+        assert_ne!(lit, dim, "the mark did not pulse");
+        for face in [&lit, &dim] {
+            assert!(face.contains("Read(src/main.rs)"), "{face}");
+        }
+    }
+
+    #[test]
+    fn the_call_line_is_on_the_value_the_loop_keys_a_redraw_on() {
+        // Left off it, a call would appear on screen only on the beat some
+        // other segment happened to change -- so the line naming what is
+        // running would arrive after the tool it names had already answered.
+        let mut turning = Turning::started();
+        turning.moved();
+
+        turning.saw(&requested());
+        assert!(turning.moved(), "the call appeared and the footing did not");
+
+        turning.saw(&Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok("done"),
+        });
+        assert!(turning.moved(), "the call went and the footing did not");
+    }
+
+    #[test]
+    fn a_window_too_short_for_both_drops_the_call_before_the_row() {
+        // The call is written to scrollback the moment its tool answers, so a
+        // window that drops it loses nothing a second look does not return.
+        // The row saying a turn is running exists nowhere else.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+
+        let rows = turning.rows(80, Style::plain(), CALLING);
+        let said = rows.iter().map(Row::text).collect::<String>();
+
+        assert_eq!(rows.len(), ROWS, "{said:?}");
+        assert!(said.contains("running"), "{said:?}");
+        assert!(!said.contains("Read"), "{said:?}");
     }
 }

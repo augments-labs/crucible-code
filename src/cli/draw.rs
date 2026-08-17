@@ -11,11 +11,11 @@
 //! set of marks in this file would be a second answer to a question the
 //! configuration asks in one word.
 //!
-//! A call's line is written when its tool answers rather than when the model
-//! asks for it, so it reaches scrollback with the result that hangs under it
-//! and nothing the turn did in between can come to stand between the two. It is
-//! [`returned`] that writes it, and whoever knows a tool has answered calls it —
-//! this file draws the events, and the request is not the moment.
+//! One line is drawn twice. A call stands in the footing with a mark that moves
+//! for as long as its tool is out, and commits through [`returned`] once it has
+//! answered — the same words, in the same columns, with the motion gone. So
+//! what reaches scrollback is still free of escape sequences, and a pipe and
+//! the session file get the still line rather than a frame of a moving one.
 
 use std::fmt;
 
@@ -65,8 +65,9 @@ pub(crate) fn event<T: Terminal>(
 
         // Whatever the model was saying is finished; it said it to explain the
         // call that follows. The line for the call itself is not written here:
-        // it is held until the tool answers and written through [`returned`],
-        // so that it and the result under it reach scrollback together.
+        // it is live until the tool answers, standing in the footing with a
+        // mark that moves, and a line the renderer moves back over cannot also
+        // be in scrollback. It commits through [`returned`].
         Event::ToolRequested { .. } => renderer.settle(),
 
         Event::ToolFinished { output, .. } => {
@@ -241,9 +242,9 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
 /// nobody could read is drawn as the bare name, because empty brackets would
 /// claim it was about nothing.
 ///
-/// Whole, and without the mark or the window: this is what is held from the
-/// moment the model asks until the tool answers, and what the line is worth is
-/// not a thing that changes while the tool runs.
+/// Whole, and without the mark: this is what the footing holds for as long as
+/// the tool is out, and the footing draws the mark itself because the mark is
+/// the part that moves.
 pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
     let name = pascal(&call.name);
 
@@ -254,30 +255,40 @@ pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
     }
 }
 
-/// Writes the line of a call whose tool has answered.
+/// A call line's words, in the columns a window this wide leaves them.
 ///
-/// The mark and the space after it are the window's rather than the words', so
-/// they come off the room before the ceiling does. A line as wide as the window
-/// with a mark still in front of it is a row the terminal wraps and the live
-/// tail never counted, and the cursor is a row off on every frame after it.
+/// One place, because the line is drawn twice — live in the footing, then
+/// committed — and a line that changed shape at the moment it stopped moving
+/// would read as a second call. The mark and the space after it are the
+/// window's rather than the words', so they come off the room before the
+/// ceiling does: a line as wide as the window with a mark still in front of it
+/// is a row the terminal wraps and the live tail never counted.
 ///
-/// A window with no room for the mark and a space beside it has none for what
-/// the call was about either, and the space is then a column spent saying
-/// nothing in the one window with none to spend. The mark is what is left: it
-/// still says a call was made, which is the half of this line that the result
-/// hanging under it cannot say for itself.
+/// Nothing comes back where the window has room for neither. Both callers draw
+/// the mark alone then — it still says a call was made, which is the half of
+/// this line the result hanging under it cannot say for itself.
+pub(crate) fn words(said: &str, window: usize, style: Style) -> String {
+    let glyphs = style.glyphs();
+    let room = style
+        .args(window)
+        .min(window.saturating_sub(columns(glyphs.called()) + 1));
+
+    clipped(said, room, glyphs)
+}
+
+/// Commits the line of a call that has stopped being live.
+///
+/// The same words the footing was drawing, in the same columns, with the motion
+/// gone — so what reaches scrollback carries no escape sequence, and the result
+/// that follows hangs under a line that is already there.
 pub(crate) fn returned<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
     let window = renderer.columns();
-    let glyphs = style.glyphs();
-    let mark = glyphs.called();
-    let room = style
-        .args(window)
-        .min(window.saturating_sub(columns(mark) + 1));
-    let said = clipped(said, room, glyphs);
+    let mark = style.glyphs().called();
+    let said = words(said, window, style);
 
     renderer.settle()?;
 
