@@ -222,7 +222,7 @@ Tool calls appear as they answer:
 › what does the runner do when a tool fails?
 
 ● Read(crates/crucible-runner/src/runner.rs)
-  └      1	//! The turn loop. (+238 lines)
+  └      1	//! The turn loop. (+238 lines · ctrl+o to expand)
 
 A failed tool is not a failed turn: the failure goes back to the model as the
 result of that call, and the model decides what to do about it.
