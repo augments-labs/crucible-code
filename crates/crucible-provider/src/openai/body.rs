@@ -17,23 +17,32 @@ use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSche
 #[cfg(test)]
 use serde_json::Value;
 
+use super::Serving;
 use crate::json::{Array, Json, Object, described};
 
-/// The whole request body.
-pub(super) fn serialize(request: &Request<'_>) -> String {
+/// The whole request body, as `serving` accepts it.
+pub(super) fn serialize(request: &Request<'_>, serving: Serving) -> String {
     let mut json = Json::new();
     json.object(|body| {
         body.text("model", request.model);
         body.boolean("stream", true);
-        body.number("max_output_tokens", request.max_tokens);
-
-        // This endpoint retains a response for retrieval unless told
-        // otherwise, and what a coding agent sends is somebody's source.
-        body.boolean("store", false);
 
         // This endpoint counts reasoning and visible output together. The
         // request's ceiling is for generated tokens, so `max_output_tokens` is
         // its exact wire counterpart rather than a visible-answer promise.
+        //
+        // The plan backend does not implement the field, and refuses the whole
+        // request over it rather than ignoring it — so every turn failed with
+        // `Unsupported parameter: max_output_tokens` before the ceiling was
+        // asked where it was going. Left off, the plan's own ceiling applies,
+        // which is the only one that service was ever going to honour.
+        if serving == Serving::Api {
+            body.number("max_output_tokens", request.max_tokens);
+        }
+
+        // This endpoint retains a response for retrieval unless told
+        // otherwise, and what a coding agent sends is somebody's source.
+        body.boolean("store", false);
 
         // A field rather than a message, which is the whole difference from the
         // older endpoint.
@@ -62,9 +71,16 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
     json.finish()
 }
 
+/// The body the published API receives, which is the whole of it.
 #[cfg(test)]
 fn build(request: &Request<'_>) -> Value {
-    serde_json::from_str(&serialize(request)).expect("request body is JSON")
+    served(request, Serving::Api)
+}
+
+/// The body one of the two services receives.
+#[cfg(test)]
+fn served(request: &Request<'_>, serving: Serving) -> Value {
+    serde_json::from_str(&serialize(request, serving)).expect("request body is JSON")
 }
 
 /// The transcript, as the flat list of items this endpoint reads.

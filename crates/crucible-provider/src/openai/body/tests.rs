@@ -64,6 +64,24 @@ fn the_generated_token_ceiling_reaches_the_endpoint() {
 }
 
 #[test]
+fn the_plan_backend_is_not_sent_a_ceiling_it_refuses_the_whole_request_over() {
+    // It does not implement the field and answers `Unsupported parameter:
+    // max_output_tokens` with a 400, so this was every turn of every session
+    // signed in with a plan rather than a key -- the whole provider, unusable,
+    // on a field the other address requires.
+    let body = served(&request(said("hello")), Serving::Subscription);
+
+    assert_eq!(at(&body, "/max_output_tokens"), &NOTHING);
+
+    // The rest of the request is unchanged: one field is missing there, not a
+    // second body.
+    assert_eq!(at(&body, "/model"), "gpt-test");
+    assert_eq!(at(&body, "/stream"), true);
+    assert_eq!(at(&body, "/store"), false);
+    assert_eq!(at(&body, "/input/0/content"), "hello");
+}
+
+#[test]
 fn a_session_nobody_told_how_hard_to_think_says_nothing_about_it() {
     // Which rungs a model serves is the model's business here, and one it does
     // not serve is a refusal. Leaving the field off is what keeps a session

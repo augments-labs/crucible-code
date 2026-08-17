@@ -2,7 +2,9 @@
 //!
 //! Four parts, and the split is the direction data travels: [`body`] builds a
 //! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
-//! one, and this file is the request itself — the headers and the status.
+//! one, and this file is the request itself — the address, the headers and the
+//! status. Two addresses serve this protocol and they do not accept the same
+//! body, so the address is also what [`Serving`] is read off on the way out.
 //!
 //! Only two of those are this vendor's. Delivering a response is the same job
 //! whoever sent it, so the loop that does it lives in `crate::stream` and
@@ -53,6 +55,38 @@ const VENDOR: Endpoint = Endpoint::fixed("https://api.openai.com/v1/responses");
 
 /// Where `ChatGPT` subscription credentials serve the Responses protocol.
 const SUBSCRIPTION: Endpoint = Endpoint::fixed("https://chatgpt.com/backend-api/codex/responses");
+
+/// Which of the two services a request is bound for.
+///
+/// They speak the same protocol and do not accept the same body: the published
+/// API takes the whole Responses request, and the backend a plan is served by
+/// implements a part of it and answers a field it does not know with a 400 that
+/// ends the turn. So the difference is carried into [`body`] rather than left to
+/// the address.
+///
+/// Read off the address rather than stored beside it, because being on that
+/// service *is* posting there — a field saying which one would be a second
+/// answer to a question the endpoint already answers, and the two would drift
+/// the first time one of them was set without the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Serving {
+    /// `api.openai.com`, or whatever gateway a key was pointed at.
+    Api,
+
+    /// The backend a `ChatGPT` plan is served by.
+    Subscription,
+}
+
+impl Serving {
+    /// Which service `endpoint` belongs to.
+    fn of(endpoint: &Endpoint) -> Self {
+        if *endpoint == SUBSCRIPTION {
+            Self::Subscription
+        } else {
+            Self::Api
+        }
+    }
+}
 
 /// OpenAI's Responses API.
 #[derive(Debug)]
@@ -133,7 +167,7 @@ impl Provider for OpenAi {
 
         let outgoing = self.headers()?;
         let redactions = outgoing.redactions();
-        let body = body::serialize(&request);
+        let body = body::serialize(&request, Serving::of(&self.endpoint));
 
         let response = self
             .transport
@@ -223,6 +257,28 @@ mod tests {
         assert_eq!(
             replay.sent().url,
             "https://chatgpt.com/backend-api/codex/responses"
+        );
+    }
+
+    #[test]
+    fn which_service_a_request_is_bound_for_is_read_off_where_it_is_going() {
+        // The body differs between the two, and the address is the only thing
+        // that says which is receiving it. A provider that built one body for
+        // both would be signed in with a plan and refused on every turn.
+        let replay = std::sync::Arc::new(Replay::new(200, ANSWER));
+        let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+
+        let provider = OpenAi::at(
+            OpenAi::SUBSCRIPTION,
+            Box::new(credential),
+            Box::new(std::sync::Arc::clone(&replay)),
+        );
+
+        provider.stream(asking("hello"), &Cancel::new()).unwrap();
+
+        assert!(
+            !replay.sent().body.contains("max_output_tokens"),
+            "the plan backend refuses the whole request over that field"
         );
     }
 

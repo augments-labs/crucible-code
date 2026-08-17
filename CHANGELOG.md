@@ -16,6 +16,18 @@ Notable changes to crucible. Format follows
   and of a redirected run's output, and a session piped to a file now has blank
   lines in it where before it had none.
 
+### Fixed
+
+- **OpenAI on a ChatGPT plan answers again.** Every turn signed in with a
+  subscription rather than an API key was refused with
+  `HTTP 400: Unsupported parameter: max_output_tokens` — the backend a plan is
+  served by does not implement that field and refuses the whole request over it.
+  It is now sent only to the published API, and the plan's own ceiling applies
+  on the other address. Refusals from that backend also read as the sentence
+  they state rather than as the line of JSON around it. What it costs: on a
+  plan, `maxTokens` no longer bounds a turn's generated tokens; nothing bounded
+  them before either, since no such turn ever reached the model.
+
 ## [0.2.0] - 2026-08-17
 
 ### Added
