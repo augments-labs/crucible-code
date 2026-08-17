@@ -37,8 +37,8 @@ Notable changes to crucible. Format follows
   and `3` answer directly, and `esc` refuses. What it costs: thirteen rows of
   the window while it is up. A redirected run, and a window with no room to
   stand one in, are asked a row at a time as before. What it leaves in the
-  transcript is the verdict alone, under the call that already names the
-  command.
+  transcript is nothing: a yes is followed by the call's own result, and a no
+  comes back as that call's result too.
 
 - **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
   where they said `ctrl-c`, and so does the offer to leave, which puts them in
@@ -62,6 +62,15 @@ Notable changes to crucible. Format follows
   lines in it where before it had none.
 
 ### Fixed
+
+- **The screen stops blinking while an answer arrives.** Every redraw erases the
+  live region and writes it again, and a terminal was free to paint in between —
+  so the more of the window a turn filled, the more of it flickered, once per
+  delta and again under every tool call. Each frame is now bracketed as a
+  synchronized update, which holds the picture until the whole of the next one
+  has arrived. What it costs: two escape sequences per frame, ignored by a
+  terminal that does not implement the mode, and nothing at all on a redirected
+  run.
 
 - **A question about several commands shows the line that was sent.** Asked
   about `cargo fmt --all && cargo test`, the prompt said

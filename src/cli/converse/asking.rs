@@ -22,10 +22,17 @@
 //! the thing asking for the permission. The panel says so above them, once, in
 //! its own voice.
 //!
-//! The panel is not written down. What belongs in the record is the answer,
-//! which is committed by the caller in the same shape whichever way the
-//! question was asked: a window with no room for a panel still asks, a row at a
-//! time, and a transcript should not say which of the two happened.
+//! **Nothing here is written down, the answer included.** The panel stood in
+//! the live region and the region was given back, and what a yes leaves behind
+//! is the call's own result on the row under it — which is on screen anyway, and
+//! is the thing the reader is looking for. A row saying the answer sits between
+//! that result and the one before it, in a column of calls that is read by its
+//! marks, and says nothing the next row does not.
+//!
+//! A no leaves its own trace for the same reason: the refusal comes back as
+//! that call's result and is drawn as one. So the record is the same shape
+//! whichever way it went, and it is the shape it has when nothing was asked at
+//! all.
 
 use crucible_core::{Account, Remember, Sensitivity, ToolCall, Verdict};
 use crucible_tui::{Key, Pressed, Question, Renderer, Terminal};
@@ -92,8 +99,13 @@ const KEPT: usize = 4;
 /// How a question ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Answered {
-    /// This is what was decided, and these are the words it was decided in.
-    Said(Answer, &'static str),
+    /// This is what was decided.
+    ///
+    /// The words it was decided in stay on the panel that offered them. They
+    /// were carried out of here once, to be written under the call, and what
+    /// that put in the record was a row between a call and its result saying
+    /// something the result already says.
+    Said(Answer),
     /// There was no room to stand a panel. Nothing was drawn and no key was
     /// read, so the caller still owes an answer.
     Cramped,
@@ -353,10 +365,10 @@ pub(super) fn ask<T: Terminal>(
 fn answered(ended: Ended, at: usize) -> Answered {
     match ended {
         Ended::Took => {
-            let (said, answer) = ANSWERS.get(at).copied().unwrap_or(DENIED);
-            Answered::Said(answer, said)
+            let (_, answer) = ANSWERS.get(at).copied().unwrap_or(DENIED);
+            Answered::Said(answer)
         }
-        Ended::Left => Answered::Said(DENIED.1, DENIED.0),
+        Ended::Left => Answered::Said(DENIED.1),
         Ended::Cramped => Answered::Cramped,
     }
 }

@@ -323,6 +323,16 @@ impl Window {
             self.screen.refusals().join("\n"),
             self.picture()
         );
+
+        // A settled screen is one that has finished drawing, so a frame still
+        // being held is one whose closing sequence is never coming. On a real
+        // terminal that is a picture frozen until its own timeout gives up on
+        // the frame, and it is the one failure a picture cannot show.
+        assert!(
+            !self.screen.is_holding(),
+            "crucible held the screen for a frame it never finished, {step}\n{}",
+            self.picture()
+        );
     }
 
     /// Whether a quiet screen is one worth looking at yet.

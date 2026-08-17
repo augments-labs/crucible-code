@@ -97,7 +97,7 @@ mod tests {
 
         draw(&mut frame, 3, &mut overflow, &tail, (&[], None));
 
-        assert_eq!(frame.as_str(), "\r\x1b[2A\x1b[Jone\r\ntwo\r\nthree");
+        assert_eq!(frame.unheld(), "\r\x1b[2A\x1b[Jone\r\ntwo\r\nthree");
     }
 
     #[test]
@@ -110,7 +110,7 @@ mod tests {
         draw(&mut frame, 2, &mut overflow, &tail, (&[], None));
 
         assert_eq!(
-            frame.as_str(),
+            frame.unheld(),
             "\r\x1b[1A\x1b[Jalpha\r\nbeta\r\ngamma\r\ndelta"
         );
         assert!(overflow.is_empty(), "overflow was not drained");
@@ -129,7 +129,7 @@ mod tests {
 
         assert_eq!(parked, 1);
         assert_eq!(
-            frame.as_str(),
+            frame.unheld(),
             "\r\x1b[Jthe answer\r\nask mode on\x1b[1A\x1b[11G"
         );
     }
@@ -158,11 +158,8 @@ mod tests {
 
         // Two rows below the cursor, so the next rewind stops short of them.
         assert_eq!(parked, 2);
-        assert!(
-            frame.as_str().ends_with("\x1b[2A\x1b[10G"),
-            "{:?}",
-            frame.as_str()
-        );
+        let written = frame.unheld();
+        assert!(written.ends_with("\x1b[2A\x1b[10G"), "{written:?}");
     }
 
     #[test]
@@ -174,7 +171,7 @@ mod tests {
 
         settle(&mut frame, 1, &mut overflow, &mut tail);
 
-        assert_eq!(frame.as_str(), "\r\x1b[Janswer\r\n");
+        assert_eq!(frame.unheld(), "\r\x1b[Janswer\r\n");
     }
 
     #[test]
@@ -186,7 +183,7 @@ mod tests {
 
         settle(&mut frame, 2, &mut overflow, &mut tail);
 
-        assert_eq!(frame.as_str(), "\r\x1b[1A\x1b[Janswer\r\n");
+        assert_eq!(frame.unheld(), "\r\x1b[1A\x1b[Janswer\r\n");
     }
 
     #[test]

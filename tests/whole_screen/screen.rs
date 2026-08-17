@@ -1,18 +1,25 @@
 //! A terminal that understands exactly what crucible promises to write.
 //!
 //! Not a general emulator, and deliberately not one. The renderer's claim is
-//! that it moves the cursor with three sequences and reaches nothing above the
-//! region it drew; a screen that quietly did something sensible with a fourth
-//! would be agreeing with the claim it was brought here to check. So anything
-//! outside the promised set is recorded by name and fails the case that drew
-//! it, which makes this a second assertion — that the renderer emits nothing it
-//! did not promise — carried by the same run as the pictures.
+//! that it moves the cursor with a small set of sequences and reaches nothing
+//! above the region it drew; a screen that quietly did something sensible with
+//! one outside that set would be agreeing with the claim it was brought here to
+//! check. So anything outside the promised set is recorded by name and fails
+//! the case that drew it, which makes this a second assertion — that the
+//! renderer emits nothing it did not promise — carried by the same run as the
+//! pictures.
 //!
-//! Two of crucible's own guarantees are checked as the bytes arrive rather than
-//! at the end, so the frame that broke one is the frame that reports it: no row
-//! is ever wider than the terminal, and nothing ever moves the cursor above the
-//! top of the screen. Both are cheap enough to hold continuously, and neither
-//! is visible to a component test, which sees rows and never a screen.
+//! Three of crucible's own guarantees are checked as the bytes arrive rather
+//! than at the end, so the frame that broke one is the frame that reports it:
+//! no row is ever wider than the terminal, nothing ever moves the cursor above
+//! the top of the screen, and a frame that asked the screen to be held asks for
+//! it to be shown again. All three are cheap enough to hold continuously, and
+//! none is visible to a component test, which sees rows and never a screen.
+//!
+//! Holding is only recorded here rather than acted on. What a real terminal
+//! does with it is show one picture instead of two, which is invisible to a
+//! screen assembled from every byte that arrived — so the picture is the same
+//! either way, and what this checks is that the two halves of it are paired.
 //!
 //! Columns are counted in characters here rather than from a width table.
 //! Everything these cases put on screen — ASCII, box drawing, the block glyphs
@@ -54,6 +61,9 @@ pub(crate) struct Screen {
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
     refused: Vec<String>,
+    /// Whether a frame has asked the screen to be held and not yet asked for it
+    /// to be shown.
+    holding: bool,
     /// Bytes that arrived without the rest of what they belong to.
     ///
     /// A read ends wherever the kernel filled the buffer, which is not where
@@ -75,6 +85,7 @@ impl Screen {
             column: 0,
             scrolled: 0,
             refused: Vec::new(),
+            holding: false,
             pending: Vec::new(),
         }
     }
@@ -122,6 +133,16 @@ impl Screen {
     /// What crucible did that it does not promise to do.
     pub(crate) fn refusals(&self) -> &[String] {
         &self.refused
+    }
+
+    /// Whether a frame is still being held.
+    ///
+    /// True on a quiet screen means a frame asked the terminal to wait for the
+    /// rest of it and never said the rest had arrived — which on a real one is
+    /// a picture that stops changing until the terminal's own timeout gives up
+    /// on the frame.
+    pub(crate) fn is_holding(&self) -> bool {
+        self.holding
     }
 
     /// The screen, as a picture with the size and the cursor above it.
@@ -300,7 +321,7 @@ impl Screen {
     /// Acts on one control sequence, or refuses it by name.
     ///
     /// The whole set the renderer promises: move up, set the column, erase
-    /// down, and colour.
+    /// down, colour, and the two that hold a frame until all of it has arrived.
     fn act(&mut self, params: &str, ends: char) {
         // Every one of these defaults to one where the parameter is left out.
         let count = params.parse::<usize>().unwrap_or(1);
@@ -313,8 +334,26 @@ impl Screen {
             (_, 'A') => self.up(count),
             (_, 'G') => self.park(count),
             ("" | "0", 'J') => self.erase_down(),
+            ("?2026", 'h') => self.hold(),
+            ("?2026", 'l') => self.show(),
             _ => self.refuse(format!("wrote ESC[{params}{ends}")),
         }
+    }
+
+    /// Holds the screen for a frame that is being written.
+    fn hold(&mut self) {
+        if self.holding {
+            self.refuse("held a screen that was already being held".to_owned());
+        }
+        self.holding = true;
+    }
+
+    /// Shows what was held.
+    fn show(&mut self) {
+        if !self.holding {
+            self.refuse("showed a screen that was never held".to_owned());
+        }
+        self.holding = false;
     }
 
     /// Puts the cursor at a column, counted the way the terminal counts them.
@@ -413,10 +452,10 @@ mod tests {
     const WRITTEN: &str = concat!(
         "\x1b]0;▽ crucible\x07",
         "\x1b[?1000h\x1b[?1006h",
-        "\r\x1b[Jcrucible v0.0.9\r\n",
-        "\x1b[36m│ › ───\x1b[0m\r\n",
-        "\r\x1b[2A\x1b[J╭──╮\r\n│  │\r\n╰──╯",
-        "\x1b[1A\x1b[3G",
+        "\x1b[?2026h\r\x1b[Jcrucible v0.0.9\r\n",
+        "\x1b[36m│ › ───\x1b[0m\r\n\x1b[?2026l",
+        "\x1b[?2026h\r\x1b[2A\x1b[J╭──╮\r\n│  │\r\n╰──╯",
+        "\x1b[1A\x1b[3G\x1b[?2026l",
     );
 
     /// The same bytes one at a time, which is every cut point at once.
@@ -486,6 +525,32 @@ mod tests {
         screen.feed(b"\x1b[2J");
 
         assert_eq!(screen.refusals(), ["wrote ESC[2J"]);
+    }
+
+    #[test]
+    fn a_frame_still_held_when_the_screen_goes_quiet_is_visible_from_outside() {
+        // The third invariant. A real terminal holds the picture it has until
+        // the closing sequence arrives, so a frame that opened one and never
+        // closed it is a screen that has stopped changing — which is invisible
+        // to a picture assembled from every byte, and is the point of asking.
+        let mut screen = Screen::new(8, 4);
+        screen.feed(b"\x1b[?2026h\r\x1b[Jone");
+
+        assert!(screen.is_holding());
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+
+        screen.feed(b"\x1b[?2026l");
+        assert!(!screen.is_holding());
+    }
+
+    #[test]
+    fn showing_a_screen_that_was_never_held_is_reported() {
+        // The pairing is what the invariant is made of, so the half nothing
+        // opened is refused as loudly as the half nothing closed.
+        let mut screen = Screen::new(8, 4);
+        screen.feed(b"\x1b[?2026l");
+
+        assert_eq!(screen.refusals(), ["showed a screen that was never held"]);
     }
 
     #[test]

@@ -7,14 +7,23 @@ use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::Recording;
 
-/// The escape a frame starts with when `rows` rows are already on screen.
-/// Written out literally rather than borrowed from `frame`, so a change
-/// there has to be asserted here too.
+/// The escape a frame starts with when `rows` rows are already on screen: the
+/// sequence asking the terminal to hold what it has, then the move back over
+/// what the last frame left. Written out literally rather than borrowed from
+/// `frame`, so a change there has to be asserted here too.
 fn rewind(rows: usize) -> String {
-    match rows {
+    let back = match rows {
         0 | 1 => "\r\x1b[J".to_owned(),
         n => format!("\r\x1b[{}A\x1b[J", n - 1),
-    }
+    };
+
+    format!("\x1b[?2026h{back}")
+}
+
+/// The whole of one frame: the rewind, what it drew, and the sequence that
+/// shows the two pictures swapped at once.
+fn shown(rows: usize, body: &str) -> String {
+    format!("{}{body}\x1b[?2026l", rewind(rows))
 }
 
 #[test]
@@ -24,7 +33,7 @@ fn the_first_frame_does_not_move_the_cursor_up() {
     let mut render = Renderer::new(Recording::new(80, 24));
     render.stream("hello").unwrap();
 
-    assert_eq!(render.terminal.written(), format!("{}hello", rewind(0)));
+    assert_eq!(render.terminal.written(), shown(0, "hello"));
 }
 
 #[test]
@@ -35,7 +44,7 @@ fn a_second_frame_erases_the_first() {
 
     render.stream("lo").unwrap();
 
-    assert_eq!(render.terminal.written(), format!("{}hello", rewind(1)));
+    assert_eq!(render.terminal.written(), shown(1, "hello"));
 }
 
 #[test]
@@ -102,7 +111,7 @@ fn settling_leaves_the_tail_in_scrollback_and_starts_fresh() {
 
     render.stream("next").unwrap();
 
-    assert_eq!(render.terminal.written(), format!("{}next", rewind(0)));
+    assert_eq!(render.terminal.written(), shown(0, "next"));
 }
 
 #[test]
@@ -344,7 +353,7 @@ fn settling_blank_rows_does_not_leave_them_in_the_tail() {
 
     render.stream("next").unwrap();
 
-    assert_eq!(render.terminal.written(), format!("{}next", rewind(0)));
+    assert_eq!(render.terminal.written(), shown(0, "next"));
     assert_eq!(render.drawn, 1);
 }
 
@@ -360,7 +369,7 @@ fn a_prompt_is_written_verbatim_after_the_live_region_ends() {
 
     assert_eq!(
         render.terminal.written(),
-        format!("{}answer\r\n> ", rewind(1))
+        format!("{}> ", shown(1, "answer\r\n"))
     );
     assert_eq!(render.drawn, 0);
 }
@@ -440,7 +449,7 @@ fn ending_a_live_region_takes_every_row_of_it_off_the_screen() {
 
     render.settle().unwrap();
 
-    assert_eq!(render.terminal.written(), rewind(1));
+    assert_eq!(render.terminal.written(), shown(1, ""));
     assert_eq!(render.drawn, 0);
     assert_eq!(render.parked, 0);
 }
@@ -466,7 +475,7 @@ fn a_standing_row_is_drawn_under_every_delta_that_arrives() {
 
     assert_eq!(
         render.terminal.written(),
-        format!("{}the answer\r\nask mode on\x1b[1A\x1b[11G", rewind(1))
+        shown(1, "the answer\r\nask mode on\x1b[1A\x1b[11G")
     );
 }
 
@@ -538,10 +547,7 @@ fn a_line_committed_under_a_standing_row_still_lands_above_it() {
 
     assert_eq!(
         render.terminal.written(),
-        format!(
-            "{}$ cargo build\r\n\r\nask mode on\x1b[1A\x1b[1G",
-            rewind(1)
-        )
+        shown(1, "$ cargo build\r\n\r\nask mode on\x1b[1A\x1b[1G")
     );
 }
 
@@ -557,10 +563,7 @@ fn a_standing_row_never_reaches_the_record() {
 
     render.settle().unwrap();
 
-    assert_eq!(
-        render.terminal.written(),
-        format!("{}one two\r\n", rewind(1))
-    );
+    assert_eq!(render.terminal.written(), shown(1, "one two\r\n"));
     assert_eq!(render.drawn, 0);
     assert_eq!(render.parked, 0);
 }
@@ -579,7 +582,7 @@ fn a_standing_row_comes_back_after_a_question_was_asked_in_the_middle_of_a_turn(
 
     assert_eq!(
         render.terminal.written(),
-        format!("{}carrying on\r\nask mode on\x1b[1A\x1b[12G", rewind(0))
+        shown(0, "carrying on\r\nask mode on\x1b[1A\x1b[12G")
     );
 }
 
@@ -592,10 +595,7 @@ fn taking_a_standing_row_back_leaves_the_tail_where_it_was() {
 
     render.under(&[], None, Palette::plain()).unwrap();
 
-    assert_eq!(
-        render.terminal.written(),
-        format!("{}the answer", rewind(1))
-    );
+    assert_eq!(render.terminal.written(), shown(1, "the answer"));
     assert_eq!(render.drawn, 1);
     assert_eq!(render.parked, 0);
 }
