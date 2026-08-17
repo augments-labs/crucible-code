@@ -32,17 +32,26 @@
 //! and an explanation are written by whatever asked for the permission, so they
 //! are drawn quiet, they sit below the thing they are about, and they are what
 //! the height is taken out of: the explanation is cut to the rows left over and
-//! the row where it stops says how many are not on screen. What is about to run
-//! and the answers under it are never what gives way — and unlike a rung of
+//! the row where it stops says how many are still below it. What is about to
+//! run and the answers under it are never what gives way — and unlike a rung of
 //! [`Spacing`], the reader gets this back by pressing the key again. To keep
 //! the same argument on one row, a description is clipped rather than folded:
 //! a caption that folded would let whatever wrote it decide how tall this is.
 //!
+//! **The count is of what is below, and it runs out.** A reader looking at a
+//! cut explanation is pressing down, so down is what the row counts: the number
+//! falls as the window moves, and at the end of the prose there is nothing left
+//! to say and the row is not drawn. A constant count would be a true sentence
+//! about the whole explanation read as a false one about the direction being
+//! pressed. The row it gives back goes to the prose, so the panel is the same
+//! height throughout and the last press uncovers exactly what it promised.
+//!
 //! **A key is named only where it does something.** What the cut leaves off
 //! screen is reachable — the window over the prose moves by a row at a time —
-//! and the footer says so only while there is something off screen to reach.
-//! The panel is the only party that knows that, because it is the one that
-//! folded the paragraphs and found out how tall they were.
+//! and the footer says so only where the prose did not fit. Where it did not,
+//! it says so at the end of the prose too, because up is still a direction
+//! there. The panel is the only party that knows any of this, because it is the
+//! one that folded the paragraphs and found out how tall they were.
 //!
 //! **Where the colour goes.** The frame and the mark are [`Slot::Accent`], the
 //! subject and the marked answer [`Slot::Strong`], the payload and the
@@ -69,7 +78,7 @@ const SAID: usize = 2;
 const PAYLOAD: usize = 4;
 
 /// The fewest rows worth opening the prose in: the blank that starts a
-/// paragraph, and the row saying how much of it is not on screen.
+/// paragraph, and the row saying how much of it is still below.
 ///
 /// Under that there is nothing true to draw, so the panel stays the one the
 /// reader was already looking at and the window is what has to change.
@@ -101,7 +110,8 @@ pub struct Question<'a> {
     /// Clamped here rather than by the caller, so a key held down runs to the
     /// end of the prose and stops instead of scrolling it off the top.
     pub from: usize,
-    /// The extra footer item, drawn only while some of the prose is off screen.
+    /// The extra footer item, drawn only where the prose did not fit — at the
+    /// end of it as much as at the start, because up is still a direction there.
     pub more: &'a str,
     /// The sentence under the payload, saying why this stopped.
     pub statement: &'a str,
@@ -180,7 +190,7 @@ impl Question<'_> {
             let line = clip(self.description, payload);
             rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
         }
-        let (prose, hidden) = self.told(inner, payload, glyphs, spare);
+        let (prose, cut) = self.told(inner, payload, glyphs, spare);
         rows.extend(prose);
         rows.push(framed(Row::new(), inner, glyphs));
 
@@ -201,7 +211,7 @@ impl Question<'_> {
         rows.push(Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")));
         if spacing.footer {
             let room = columns.saturating_sub(SAID);
-            let keys = if hidden > 0 && !self.more.is_empty() {
+            let keys = if cut && !self.more.is_empty() {
                 format!("{} {} {}", self.footer, glyphs.dot(), self.more)
             } else {
                 self.footer.to_owned()
@@ -212,21 +222,20 @@ impl Question<'_> {
         rows
     }
 
-    /// The window over the prose a reader asked for, and how many of its rows
-    /// that window left off screen.
+    /// The window over the prose a reader asked for, and whether the prose was
+    /// too tall for it.
     ///
     /// Empty where nothing was asked for, and empty where `spare` is zero,
     /// which is what leaves the unexplained panel exactly the panel it was.
-    fn told(
-        &self,
-        inner: usize,
-        payload: usize,
-        glyphs: Glyphs,
-        spare: usize,
-    ) -> (Vec<Row>, usize) {
+    ///
+    /// The second half of the answer is *was it cut at all*, not *is anything
+    /// below the window now*, because the footer is what reads it: at the end
+    /// of the prose ↑ still does something, so the arrows are still worth
+    /// naming there.
+    fn told(&self, inner: usize, payload: usize, glyphs: Glyphs, spare: usize) -> (Vec<Row>, bool) {
         let mut rows = Vec::new();
         if spare == 0 {
-            return (rows, 0);
+            return (rows, false);
         }
 
         for paragraph in self.explanation {
@@ -237,29 +246,46 @@ impl Question<'_> {
         }
 
         if rows.len() <= spare {
-            return (rows, 0);
+            return (rows, false);
         }
 
-        // One row of the window goes on saying how much of the prose is not in
-        // it. Counted in rows rather than paragraphs, because a row is what ran
-        // out and a row is what the arrows move by.
-        let keep = spare.saturating_sub(1);
-        let hidden = rows.len() - keep;
-        let from = self.from.min(hidden);
-        let counted = if hidden == 1 { "row" } else { "rows" };
+        // The furthest down the prose the window can open: from here the whole
+        // tail fits, so there is nothing below to count and the row that
+        // counted it goes back to the prose. The panel is the same height
+        // either way — what changes is whether its last row is a count or a
+        // sentence.
+        let last = rows.len() - spare;
+        let from = self.from.min(last);
+        let ended = from == last;
 
+        let keep = if ended { spare } else { spare - 1 };
         let mut window: Vec<Row> = rows.into_iter().skip(from).take(keep).collect();
-        window.push(framed(
-            said(
-                PAYLOAD,
-                Slot::Quiet,
-                &format!("{} {hidden} more {counted} of explanation", glyphs.dot()),
-            ),
-            inner,
-            glyphs,
-        ));
 
-        (window, hidden)
+        // Counted in rows rather than paragraphs, because a row is what ran out
+        // and a row is what the arrows move by. It counts what is *under* the
+        // window rather than what is off screen in both directions, because
+        // down is the direction somebody reading a cut explanation is pressing,
+        // and a number that did not fall as they pressed would be answering a
+        // question they had stopped asking.
+        //
+        // Which is also why it never reads one: the row the count sits on is one
+        // of the two the end of the prose is waiting for, so the number goes
+        // from two to gone. Anything that changes `keep` has to read that
+        // sentence again.
+        if !ended {
+            let below = last - from + 1;
+            window.push(framed(
+                said(
+                    PAYLOAD,
+                    Slot::Quiet,
+                    &format!("{} {below} more rows of explanation", glyphs.dot()),
+                ),
+                inner,
+                glyphs,
+            ));
+        }
+
+        (window, true)
     }
 
     /// One answer's rows: its number, its words, and the mark where it is the
