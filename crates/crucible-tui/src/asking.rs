@@ -95,11 +95,17 @@ const SAID: usize = 2;
 /// thing it indents may not be cut to fit — so it stays small.
 const PAYLOAD: usize = 4;
 
-/// The fewest rows worth opening the prose in: the blank that starts a
-/// paragraph, and the row saying how much of it is still below.
+/// The fewest rows worth opening the prose in: the blank that opens it, and the
+/// row saying how much of it is still below.
 ///
 /// Under that there is nothing true to draw, so the panel stays the one the
 /// reader was already looking at and the window is what has to change.
+///
+/// It did not move when the prose gained a row naming whose words it is, and the
+/// reason is that the row is worth the first glimpse. A window this short opens
+/// on who wrote what is under it and a count of how much that is, which is two
+/// true things about a page nobody can see yet; the alternative is a first row of
+/// somebody's argument with nothing saying it is theirs.
 const AT_LEAST: usize = 2;
 
 /// One call, waiting for a verdict.
