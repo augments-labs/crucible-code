@@ -84,7 +84,7 @@ $EDITOR Cargo.toml CHANGELOG.md
 cargo build                     # refresh Cargo.lock with the new version
 
 # The version is drawn in the session box, so the whole-screen snapshots hold
-# it and five of them fail until they are told the new one.
+# it and three of them fail until they are told the new one.
 INSTA_UPDATE=always cargo test -p crucible-code --test whole_screen
 git diff --stat tests/whole_screen/snapshots
 
