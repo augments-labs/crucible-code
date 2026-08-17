@@ -16,6 +16,14 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+- **A permission question is a panel, and its answers are words.** Where there
+  is a keyboard it stands where the prompt box was: the tool and what the call
+  is about over the frame, the command or the path inside it, and the three
+  answers said in full — `↑` and `↓` move the mark, `enter` takes it, `1`, `2`
+  and `3` answer directly, and `esc` refuses. What it costs: thirteen rows of
+  the window while it is up. A redirected run, and a window with no room to
+  stand one in, are asked a row at a time as before.
+
 - **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
   where they said `ctrl-c`, and so does the offer to leave, which puts them in
   the spelling `shift+tab` was already in. What it costs: nothing but the two
