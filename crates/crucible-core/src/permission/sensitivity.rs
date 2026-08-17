@@ -18,11 +18,15 @@ use crate::workspace::{Workspace, WorkspacePath, written};
 /// What a call would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sensitivity {
-    /// Reads, and changes nothing. Never prompts — a read is allowed or denied
-    /// and never put to the user, since a question nobody can act on is a
-    /// question nobody reads.
+    /// Changes nothing a rule could be written about. Reading a file is the
+    /// usual case and the one the wording is drawn from; a call that only moves
+    /// something this session is holding is the other, and carries a target
+    /// that resolves to nothing because there is no path in it to name.
+    ///
+    /// Never prompts — one of these is allowed or denied and never put to the
+    /// user, since a question nobody can act on is a question nobody reads.
     ReadOnly {
-        /// What is being read.
+        /// What is being read, where the call is about a path at all.
         target: Target,
     },
 
