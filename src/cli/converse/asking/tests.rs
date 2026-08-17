@@ -290,7 +290,7 @@ fn the_way_out_of_a_question_is_the_way_out_of_everything_else_and_it_refuses() 
 
     // Including when the mark was standing on an allow at the time. What was
     // marked is what enter would have taken; leaving took nothing.
-    let Answered::Said(refused, _) = answered(Ended::Left, 0) else {
+    let Answered::Said(refused) = answered(Ended::Left, 0) else {
         panic!("a panel that was left has been answered");
     };
     assert_eq!(refused.0, Verdict::Deny);

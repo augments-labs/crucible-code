@@ -85,10 +85,16 @@ the same question is asked a row at a time and the answer is typed:
 ```
 
 What each leaves in the transcript is what was on screen. The typed question
-was written there, so it stays there. The panel stood in the live region and
-the region was given back, so what stays is the verdict alone, under the call
-that already names the command — a second copy of it there would be the same
-consent read twice.
+was written there, so it stays there, and the letter typed under it stays with
+it. The panel stood in the live region and the region was given back, so it
+leaves nothing — not the question, and not the answer either. What a yes leaves
+behind is the call's own result on the row beneath it, which is the row the
+reader was waiting for; a line saying "Yes, and don't ask again this session"
+between a call and its result says nothing the result does not.
+
+A no leaves its trace the same way, because a refusal comes back as that call's
+result and is drawn as one. So the record is the same shape however the verdict
+was reached, and the same shape as one where nothing was asked at all.
 
 ## The long version
 

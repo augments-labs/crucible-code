@@ -914,26 +914,3 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
     );
     assert!(block(&Diff::new([]), 40, unicode()).is_empty());
 }
-
-#[test]
-fn what_a_panel_decided_is_written_down_without_the_command_it_was_about() {
-    // The call is already on the row above, spelled the way the transcript
-    // spells one. A second copy of the command under it is the same consent
-    // read twice, and a compound command is several rows of it.
-    let mut renderer = Renderer::new(Recording::new(80, 24));
-
-    decided(
-        &mut renderer,
-        "Yes, and don't ask again this session",
-        Style::plain(),
-    )
-    .expect("a verdict to draw");
-
-    let written = renderer.terminal().written().to_string();
-
-    assert!(
-        written.contains("Yes, and don't ask again this session"),
-        "{written:?}"
-    );
-    assert!(!written.contains("wants to run"), "{written:?}");
-}

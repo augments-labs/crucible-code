@@ -753,11 +753,12 @@ fn asked<T: Terminal>(
         // model's own sentence about them.
         let account = crucible_tools::account(&call.args);
 
+        // Nothing is drawn under it. The panel stood in the live region and the
+        // region was given back, so a call that was allowed reads exactly like
+        // one nothing asked about — which is what the reader is looking at
+        // anyway, since the result of the call is the row underneath.
         match asking::ask(renderer, style, call, sensitivity, &account)? {
-            asking::Answered::Said(answer, said) => {
-                draw::decided(renderer, said, style)?;
-                return Ok(answer);
-            }
+            asking::Answered::Said(answer) => return Ok(answer),
 
             // Nothing was drawn and no key was read, so the question still has
             // to be put. Falling through rather than refusing: a window this

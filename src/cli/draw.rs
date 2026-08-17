@@ -247,26 +247,6 @@ pub(crate) fn question<T: Terminal>(
     mark(renderer, &answers(style.glyphs()), style)
 }
 
-/// Writes down the answer a panel was given.
-///
-/// The panel is not written down: it stood in the live region and the region
-/// was taken back. Neither is the question, and that is the part worth saying —
-/// the call is already on the row above, spelled the way the transcript spells
-/// one, so a copy of the command underneath it is the same thing read twice and
-/// the longer the command the worse that reads.
-///
-/// What is left is what was decided, in the words it was offered in, at the
-/// indent the row hanging under a call uses. That is what makes it the answer
-/// to that call rather than a line of its own.
-pub(crate) fn decided<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    said: &str,
-    style: Style,
-) -> Result<(), TerminalError> {
-    mark(renderer, &format!("{UNDER}{said}"), style)?;
-    answered(renderer, "")
-}
-
 /// Writes something the user is expected to type after.
 ///
 /// Through `prompt` rather than `commit`, because what is wanted here is a line
