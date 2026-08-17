@@ -18,13 +18,6 @@ Notable changes to crucible. Format follows
   call line and the queued prompt give way before a task does. The panel stands
   between turns as well; `/clear` puts it away and `/resume` brings it back.
 
-- **A prompt typed while a turn runs is named under the working row.**
-  `Next: <what you typed>` stands directly beneath it, so a line that left the
-  box on `Enter` is acknowledged then rather than minutes later when its own
-  turn starts. What it costs: one row, and only while something is waiting. On
-  a window too short for everything over the box it goes after the call line
-  and before the row saying a turn is running at all.
-
 - **A call can say what it is for, and the question shows it.** `bash`, `write`
   and `edit` take an optional `description`, and it appears as a caption under
   the command or the path on the panel where you decide. What it costs: one row,
@@ -38,6 +31,75 @@ Notable changes to crucible. Format follows
   What it costs: nothing until you press the key, and the paragraphs are the
   first thing given up where the window is short. `↑` and `↓` read them where
   they run past the room there is, and `ctrl+e` again puts them away.
+
+### Changed
+
+- **A permission question is a panel, and its answers are words.** Where there
+  is a keyboard it stands where the prompt box was: the tool and what the call
+  is about over the frame, the command or the path inside it, and the three
+  answers said in full — `↑` and `↓` move the mark, `enter` takes it, `1`, `2`
+  and `3` answer directly, and `esc` refuses. What it costs: thirteen rows of
+  the window while it is up. A redirected run, and a window with no room to
+  stand one in, are asked a row at a time as before. What it leaves in the
+  transcript is nothing: a yes is followed by the call's own result, and a no
+  comes back as that call's result too.
+
+- **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
+  where they said `ctrl-c`, and so does the offer to leave, which puts them in
+  the spelling `shift+tab` was already in. What it costs: nothing but the two
+  words, and no binding moved.
+
+### Fixed
+
+- **An OpenAI model on a `ChatGPT` plan can run a tool again.** The finish of a
+  response says nothing about why it finished, so crucible read that back off the
+  list of items the finishing event repeats — a list the plan's backend sends
+  empty, having already narrated every item in it. So every turn that asked for
+  a tool read as a turn that had answered: the call was streamed and then
+  dropped, the tool never ran, and the turn drew nothing at all. The stop reason
+  is now what the response asked for as it went, which both services say the same
+  way. Anthropic, Moonshot and an OpenAI API key were never affected.
+
+- **A turn no longer ends because a connection went away between rounds.** A
+  response that failed before it said a word is asked for again — twice at most,
+  a quarter of a second before the first and half a second before the second —
+  with `retrying` on the row above the box and <kbd>Esc</kbd> ending the wait.
+  Most often it is the socket a provider closed while the tools ran, which is
+  why it struck mid-conversation rather than at the first request. What it
+  costs: up to three quarters of a second before a genuine failure is reported.
+  A refusal about the request rather than the moment — a key without access, a
+  model nobody serves, a response that did not parse — is still reported the
+  first time, and an answer that had started arriving is never asked for twice.
+
+- **A question about several commands shows the line that was sent.** Asked
+  about `cargo fmt --all && cargo test`, the prompt said
+  `cargo fmt --all, then cargo test` — a paraphrase, and one that reads as two
+  commands where `&&` runs the second only if the first worked. It now shows the
+  line as it arrived, operators and all. What it costs: nothing to a rule, which
+  is still matched against each command on the line rather than against the line.
+
+### Internal
+
+- **The 400-line ceiling on a pull request reports instead of blocking.** A line
+  count is a proxy for how much a reader can hold at once, and at this age it
+  was measuring the wrong thing: most of what arrives is a whole module, which
+  `-D warnings` makes indivisible, so the ceiling kept sending back changes
+  whose only fault was the size of the thing they added. The job, the count and
+  the two labels all stay and the number is still printed on every pull request
+  — what is switched off is the verdict, and switching it back on is one line in
+  the workflow. The rule meanwhile is the one the count stood for: a pull
+  request has one reason to change.
+
+## [0.3.0] - 2026-08-18
+
+### Added
+
+- **A prompt typed while a turn runs is named under the working row.**
+  `Next: <what you typed>` stands directly beneath it, so a line that left the
+  box on `Enter` is acknowledged then rather than minutes later when its own
+  turn starts. What it costs: one row, and only while something is waiting. On
+  a window too short for everything over the box it goes after the call line
+  and before the row saying a turn is running at all.
 
 - **A cut result gives the rest of itself back, and `ctrl+o` opens it.** A row
   that had no room for what a tool said now names the key beside the count —
@@ -65,21 +127,6 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
-- **A permission question is a panel, and its answers are words.** Where there
-  is a keyboard it stands where the prompt box was: the tool and what the call
-  is about over the frame, the command or the path inside it, and the three
-  answers said in full — `↑` and `↓` move the mark, `enter` takes it, `1`, `2`
-  and `3` answer directly, and `esc` refuses. What it costs: thirteen rows of
-  the window while it is up. A redirected run, and a window with no room to
-  stand one in, are asked a row at a time as before. What it leaves in the
-  transcript is nothing: a yes is followed by the call's own result, and a no
-  comes back as that call's result too.
-
-- **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
-  where they said `ctrl-c`, and so does the offer to leave, which puts them in
-  the spelling `shift+tab` was already in. What it costs: nothing but the two
-  words, and no binding moved.
-
 - **A tool call keeps its colour once it has been written out.** The mark and
   the tool's name are in crucible's own colour, the arguments in brackets beside
   them are toned down, and the line hanging under the call is toned down whole —
@@ -98,15 +145,6 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
-- **An OpenAI model on a `ChatGPT` plan can run a tool again.** The finish of a
-  response says nothing about why it finished, so crucible read that back off the
-  list of items the finishing event repeats — a list the plan's backend sends
-  empty, having already narrated every item in it. So every turn that asked for
-  a tool read as a turn that had answered: the call was streamed and then
-  dropped, the tool never ran, and the turn drew nothing at all. The stop reason
-  is now what the response asked for as it went, which both services say the same
-  way. Anthropic, Moonshot and an OpenAI API key were never affected.
-
 - **A long answer no longer draws slower the taller the window is.** Each piece
   of streamed text redrew every live row, and the live region was a whole screen
   tall, so a 5,400-character answer wrote 1.1 MB to the terminal on a 40-row
@@ -116,17 +154,6 @@ Notable changes to crucible. Format follows
   mid-answer re-wraps only that row rather than the last screenful — the rest
   was written into scrollback at the width it was written at, and reflowing
   scrollback belongs to the terminal.
-
-- **A turn no longer ends because a connection went away between rounds.** A
-  response that failed before it said a word is asked for again — twice at most,
-  a quarter of a second before the first and half a second before the second —
-  with `retrying` on the row above the box and <kbd>Esc</kbd> ending the wait.
-  Most often it is the socket a provider closed while the tools ran, which is
-  why it struck mid-conversation rather than at the first request. What it
-  costs: up to three quarters of a second before a genuine failure is reported.
-  A refusal about the request rather than the moment — a key without access, a
-  model nobody serves, a response that did not parse — is still reported the
-  first time, and an answer that had started arriving is never asked for twice.
 
 - **The prompt box stops disappearing under each tool result.** A result is rows
   crucible composed rather than text that arrived, and the frame that writes one
@@ -146,13 +173,6 @@ Notable changes to crucible. Format follows
   terminal that does not implement the mode, and nothing at all on a redirected
   run.
 
-- **A question about several commands shows the line that was sent.** Asked
-  about `cargo fmt --all && cargo test`, the prompt said
-  `cargo fmt --all, then cargo test` — a paraphrase, and one that reads as two
-  commands where `&&` runs the second only if the first worked. It now shows the
-  line as it arrived, operators and all. What it costs: nothing to a rule, which
-  is still matched against each command on the line rather than against the line.
-
 - **OpenAI on a ChatGPT plan answers again.** Every turn signed in with a
   subscription rather than an API key was refused with
   `HTTP 400: Unsupported parameter: max_output_tokens` — the backend a plan is
@@ -162,18 +182,6 @@ Notable changes to crucible. Format follows
   they state rather than as the line of JSON around it. What it costs: on a
   plan, `maxTokens` no longer bounds a turn's generated tokens; nothing bounded
   them before either, since no such turn ever reached the model.
-
-### Internal
-
-- **The 400-line ceiling on a pull request reports instead of blocking.** A line
-  count is a proxy for how much a reader can hold at once, and at this age it
-  was measuring the wrong thing: most of what arrives is a whole module, which
-  `-D warnings` makes indivisible, so the ceiling kept sending back changes
-  whose only fault was the size of the thing they added. The job, the count and
-  the two labels all stay and the number is still printed on every pull request
-  — what is switched off is the verdict, and switching it back on is one line in
-  the workflow. The rule meanwhile is the one the count stood for: a pull
-  request has one reason to change.
 
 ## [0.2.0] - 2026-08-17
 
@@ -1956,7 +1964,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/augments-labs/crucible-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/augments-labs/crucible-code/compare/v0.1.13...v0.2.0
 [0.1.13]: https://github.com/augments-labs/crucible-code/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/augments-labs/crucible-code/compare/v0.1.11...v0.1.12
