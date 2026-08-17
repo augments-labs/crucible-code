@@ -6,7 +6,8 @@
 //! swapped: a fresh log rather than a reopened one, handed to the same
 //! [`Runner::pick_up`], which is also what drops the permission answers given
 //! for the rest of a session that is now over. The record of what has been read
-//! is emptied here for the same reason, exactly as `/resume` empties it.
+//! is emptied here for the same reason, exactly as `/resume` empties it, and so
+//! is the plan the panel above the box is drawn from.
 //!
 //! What was said is not deleted. The log it was written to is closed and stays
 //! on the disk, so the session is on `/resume`'s list like any other and
@@ -55,6 +56,11 @@ pub(super) fn run<T: Terminal>(
     // `write` replaces a file on the strength of that record. Emptying it costs
     // a read; leaving it standing would cost the file.
     terms.ledger.forget();
+
+    // And the plan for the same reason said the other way round: it costs
+    // nothing to leave, and what it would leave is a panel above the prompt
+    // listing work the agent under it has no memory of.
+    terms.plan.forget();
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
@@ -107,9 +113,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
-    use crucible_core::{Cancel, Message, StopReason, Transcript};
+    use crucible_core::{Cancel, Message, StopReason, ToolArgs, Transcript};
     use crucible_runner::{Model, Runner, Session, Tools, recent};
-    use crucible_tools::Ledger;
+    use crucible_tools::{Ledger, Plan};
     use crucible_tui::{Glyphs, Recording, Renderer};
 
     use crate::cli::Fatal;
@@ -126,12 +132,13 @@ mod tests {
     }
 
     /// The terms a clear is run under: a session directory of the sample's own,
-    /// and the record the tools of such a run would have been built with.
-    fn terms(sample: &Sample, ledger: &Ledger) -> Terms {
+    /// and the two things the tools of such a run would have been built with.
+    fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         Terms {
             style: Style::plain(),
             cancel: Cancel::new(),
             ledger: ledger.clone(),
+            plan: plan.clone(),
             provider: std::cell::Cell::new(Some("anthropic")),
             choosing: sample.root().join("unwritten-home.json"),
             logins: Store::in_home(&sample.root()),
@@ -234,12 +241,31 @@ mod tests {
         let mut runner = talking(&sample, "what was said before");
         let left = runner.session().id().cloned().expect("a recorded session");
 
-        clearing(&terms(&sample, &Ledger::new()), &mut runner);
+        clearing(&terms(&sample, &Ledger::new(), &Plan::new()), &mut runner);
 
         let now = runner.session().id().cloned().expect("a recorded session");
         assert_ne!(now, left, "the session in hand is the one that was left");
         assert_eq!(runner.transcript().len(), 0, "the transcript came with it");
         assert_eq!(listed(&sample, 1), ["what was said before"]);
+    }
+
+    #[test]
+    fn a_plan_written_before_a_clear_is_not_standing_over_the_session_after_it() {
+        // The panel above the box is drawn from this, and the tasks in it were
+        // written by a session that is now over. Left standing, it would list
+        // work above a prompt whose agent has never heard of any of it.
+        let sample = Sample::new("clear-forgets-the-plan");
+        let mut runner = talking(&sample, "what was said before");
+        let plan = Plan::new();
+
+        plan.replay(&ToolArgs::new(
+            r#"{"tasks":[{"task":"Write the contributor guide","state":"doing"}]}"#,
+        ));
+        assert_eq!(plan.tasks().len(), 1);
+
+        clearing(&terms(&sample, &Ledger::new(), &plan), &mut runner);
+
+        assert!(plan.tasks().is_empty());
     }
 
     #[test]
@@ -249,7 +275,7 @@ mod tests {
         // another crucible — which names this crucible.
         let sample = Sample::new("clear-then-resume");
         let mut runner = talking(&sample, "what was said before");
-        let terms = terms(&sample, &Ledger::new());
+        let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
         clearing(&terms, &mut runner);
         assert_eq!(listed(&sample, 1), ["what was said before"]);
@@ -283,7 +309,7 @@ mod tests {
             session,
         );
 
-        let written = clearing(&terms(&sample, &Ledger::new()), &mut runner);
+        let written = clearing(&terms(&sample, &Ledger::new(), &Plan::new()), &mut runner);
 
         assert!(written.contains("nothing had been said"), "{written}");
         assert_eq!(runner.session().id(), Some(&held), "{written}");
@@ -302,7 +328,7 @@ mod tests {
         std::fs::write(&blocked, "").expect("a file where a directory is wanted");
         let terms = Terms {
             sessions: blocked,
-            ..terms(&sample, &Ledger::new())
+            ..terms(&sample, &Ledger::new(), &Plan::new())
         };
 
         let written = clearing(&terms, &mut runner);

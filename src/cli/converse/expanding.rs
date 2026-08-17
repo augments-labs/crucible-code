@@ -325,10 +325,13 @@ fn moving(arrived: Pressed, window: &mut Window) -> Moved {
         // Nothing here is typed into or picked from, so a letter, a click and a
         // mode step have nothing to act on. Return is among them: the line under
         // this is not being read, and closing on it would send whatever is in
-        // the box the moment somebody meant to scroll.
+        // the box the moment somebody meant to scroll. Ctrl+T for the reason
+        // that is nearly the opposite: the plan it opens is in the rows this
+        // view is standing over, so the key would move a panel nobody can see.
         Pressed::Key(_)
         | Pressed::Cycle
         | Pressed::Explain
+        | Pressed::Plan
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Moved::Still,
     }

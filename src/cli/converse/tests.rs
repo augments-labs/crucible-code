@@ -35,6 +35,7 @@ fn plain() -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
+        plan: Plan::new(),
         // A provider, so `/model` has a name to write its answer under, and a
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.

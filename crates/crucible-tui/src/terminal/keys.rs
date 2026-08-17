@@ -38,7 +38,7 @@ const READY_CHARACTERS: usize = 1024 * 1024;
 
 /// What arrived while the prompt was waiting.
 ///
-/// Five of these are keys the editor has no business seeing: they act on what
+/// Six of these are keys the editor has no business seeing: they act on what
 /// is drawn around the line rather than on the line. A line is a line whatever
 /// mode the session is in and whatever is listed above it, and the editor stays
 /// what its own module says it is — a string and an offset — rather than
@@ -61,6 +61,13 @@ pub enum Pressed {
     /// same want one step further out: that key is about the thing standing on
     /// screen now, and this one is about what has already been written down.
     Expand,
+    /// Ctrl+T: show the whole plan the agent is working to, or bound it again.
+    ///
+    /// Named for what it acts on rather than for what it does, which is what
+    /// keeps it apart from [`Pressed::Expand`]: both keys say *expand* on the
+    /// screen, and the difference between them is that one is about the plan
+    /// standing above the box and the other about a result down the transcript.
+    Plan,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -298,6 +305,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // with.
         KeyCode::Char('o') if control => Pressed::Expand,
 
+        // And above it again. Ctrl+T is readline's transpose-chars, which is an
+        // edit to a line — this prompt has no such key and the letter is the
+        // one the panel it opens is spelled with.
+        KeyCode::Char('t') if control => Pressed::Plan,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -412,6 +424,7 @@ mod tests {
         // of what keeps this one from joining them, so order is what this pins.
         assert_eq!(meaning(control(KeyCode::Char('e'))), Pressed::Explain);
         assert_eq!(meaning(control(KeyCode::Char('o'))), Pressed::Expand);
+        assert_eq!(meaning(control(KeyCode::Char('t'))), Pressed::Plan);
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is

@@ -234,6 +234,37 @@ short for everything standing over the box, this row goes before the one above
 it does: the prompt is still in the queue and its own turn will say it, and the
 row saying a turn is running is written nowhere else.
 
+Under everything the turn says, and over the box, is the plan — when the agent
+has written one:
+
+```
+────────────────────────────────────────────────────────────────
+
+3 tasks (1 done · 1 doing · 1 open)
+■ Run the validation spikes
+□ Design the architecture
+✓ Build the gate script
+```
+
+The agent puts it there with a tool and rewrites it as the work moves, so the
+panel is what it is working to rather than what it said it would do. `■` is the
+task under way and it is the one warm mark on the screen; `□` is one nobody has
+started; `✓` is one that is finished, struck through and toned down. The task
+under way is drawn first whatever order the plan was written in, then what is
+open, then what is finished with the most recently ticked off at the top of it.
+
+Seven tasks are shown and the rest are counted — `… +4 more · ctrl+t to expand`.
+<kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds arrives
+underneath the rows already on screen, so nothing you were reading moves. On a
+window with no room for all of this, the panel is measured before the rows around
+it: the call line and the queued prompt give way first, since a call reaches your
+scrollback the moment its tool answers and a queued prompt has its own turn
+coming, while what the agent is working to is on screen nowhere else.
+
+The panel does not come down when the turn does. What the agent was working to
+is what the next prompt is typed against, so it stands over the box between
+turns as well, and `/clear` is what puts it away.
+
 Tool calls appear as they answer:
 
 ```
@@ -253,7 +284,8 @@ ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · hig
 
 A call is the tool's name and, in brackets, the one thing the call is about: the
 path for `read`, `write` and `edit`, the pattern for `grep` and `glob`, the
-command line for `bash`. Each tool answers that for itself, because each knows
+command line for `bash`, how many tasks are being written down for `todo_write`.
+Each tool answers that for itself, because each knows
 which of its arguments a person would recognise the call by. A call whose
 arguments could not be read is just the name, and the tool says why next.
 
@@ -415,7 +447,9 @@ first one the model sees, and the turns before it are neither sent nor paid for
 again. The session you were in is finished rather than dropped — its log is
 complete and it is on `/resume`'s list, so everything said in it can be picked
 up whole. What does not come across is what that session allowed for the rest of
-itself, or the record of which files it read, both of which belonged to it; the
+itself, the record of which files it read, or the plan standing over the box,
+all three of which belonged to it — a plan that outlived its session would
+describe work the agent has no memory of. The panel comes down with it; the
 mode does not move, because it is where you are running crucible rather than
 something a session decided. The screen is left alone, because what is above the
 box is the terminal's scrollback rather than crucible's.
@@ -433,8 +467,10 @@ asked:
 `/resume 2` picks that one up. The session you were in is closed — its log is
 finished and stays readable — and the one you named becomes the session this
 crucible is recording to, with everything already in it back in the transcript.
-The number is the row on the list you were just shown, so read it again if
-something else has been recorded here since.
+The plan comes back with it, standing over the box where it stood, because the
+call that wrote it is in the transcript being replayed. The number is the row on
+the list you were just shown, so read it again if something else has been
+recorded here since.
 
 Two things are worth knowing before you switch. The [permission
 mode](../permissions/modes.md) comes with you, but what you allowed *for the
@@ -494,7 +530,7 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Six tools, advertised in the order a model tends to reach for them:
+Seven tools, advertised in the order a model tends to reach for them:
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -504,6 +540,7 @@ Six tools, advertised in the order a model tends to reach for them:
 | `edit` | Replaces text in a file | yes |
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
+| `todo_write` | Writes down the plan | no |
 
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see
@@ -528,3 +565,10 @@ waits only for a bounded interval: a background process does not keep an output
 reader or a turn alive. Windows uses a kill-on-close job and Unix a process
 group. A Unix program that deliberately creates a new session can leave that
 group; this is resource cleanup, not a sandbox around an allowed command.
+
+`todo_write` is the one that reaches nothing at all. It puts down the plan the
+agent is working to — a list of at most 64 tasks, each of them a line, each one
+of `open`, `doing` and `done` — and you read it as a panel above the box. Every
+call replaces the whole plan, so what the model thinks the plan is and what you
+are looking at are one thing rather than two. [Writing down the
+plan](../tools/planning.md) is the rest of it.

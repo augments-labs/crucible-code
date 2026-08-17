@@ -5,7 +5,7 @@
 //! being run in — so [`super::ask`] is exercised only where it declines to, and
 //! everything after that point is called directly.
 
-use crucible_core::{Mode, Permission, Rules};
+use crucible_core::{Mode, Permission, Rules, ToolArgs};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Key, Recording};
 
@@ -43,6 +43,30 @@ fn leaving(mode: Mode) -> Says {
         asking: Some(LEAVING),
         ..settled(mode)
     }
+}
+
+/// No plan above the box, which is what a session has until the agent writes
+/// one — and what every test in this file is drawn with but the last two, since
+/// none of the others is about the panel.
+fn nothing() -> Planning {
+    Planning::new(crucible_tools::Plan::new())
+}
+
+/// A plan of `count` open tasks, each named after where it is in the list.
+///
+/// Written through the tool the way the model writes one, because that is the
+/// only way anything gets into a plan and the panel is drawn from what came out
+/// the other side.
+fn planned(count: usize) -> Planning {
+    let said = (0..count)
+        .map(|at| format!(r#"{{"task":"Task {at}","state":"open"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let plan = crucible_tools::Plan::new();
+    plan.replay(&ToolArgs::new(format!(r#"{{"tasks":[{said}]}}"#)));
+
+    Planning::new(plan)
 }
 
 /// The list `said` opens, pointing where it points before an arrow has moved
@@ -96,9 +120,12 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     let asked = ask(
         &mut renderer,
         Style::plain(),
-        &mut runner,
-        &mut editor,
-        false,
+        Between {
+            runner: &mut runner,
+            editor: &mut editor,
+            planning: &mut nothing(),
+            keys: false,
+        },
     )
     .expect("no keys to read");
 
@@ -120,8 +147,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -142,8 +168,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -163,8 +188,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -181,8 +205,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &mut renderer,
         &editor,
         Style::plain(),
-        &settled(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
@@ -292,8 +315,7 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &mut renderer,
         &typed("/m"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &listing("/m"),
+        around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -320,8 +342,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
         &mut renderer,
         &typed("/m"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &listing("/m"),
+        around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -337,8 +358,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        &settled(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -359,8 +379,7 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &mut renderer,
         &Editor::new(),
         Style::plain(),
-        &leaving(Mode::Ask),
-        &Opened::default(),
+        around(&nothing(), &Opened::default(), &leaving(Mode::Ask)),
     )
     .expect("the box to be drawn");
 
@@ -628,4 +647,59 @@ fn no_two_modes_are_drawn_in_the_same_colour() {
     assert_ne!(quiet, edits);
     assert_ne!(edits, full);
     assert_ne!(quiet, full);
+}
+
+#[test]
+fn the_plan_stands_above_the_box_between_turns() {
+    // The same panel a running turn draws over the box, in the same place while
+    // nothing is running. What the agent was working to is what the next prompt
+    // is typed against, so it does not come down with the turn that wrote it.
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &typed("hi"),
+        Style::plain(),
+        around(&planned(3), &Opened::default(), &settled(Mode::Ask)),
+    )
+    .expect("the box to be drawn");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("3 tasks"), "{written:?}");
+    assert!(written.find("Task 0") < written.find("› hi"), "{written:?}");
+}
+
+#[test]
+fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
+    // The list is the shorter of the two and it was opened by the character
+    // last typed, which is a stronger claim on a short window than a panel that
+    // was already standing. So the panel is what gives way, and it gives way a
+    // task at a time rather than all at once.
+    let short = || Renderer::new(Recording::new(60, 14));
+    let plan = planned(6);
+
+    let mut alone = short();
+    draw(
+        &mut alone,
+        &typed("hi"),
+        Style::plain(),
+        around(&plan, &Opened::default(), &settled(Mode::Ask)),
+    )
+    .expect("the box to be drawn");
+
+    let mut beside = short();
+    draw(
+        &mut beside,
+        &typed("/m"),
+        Style::plain(),
+        around(&plan, &listing("/m"), &settled(Mode::Ask)),
+    )
+    .expect("the box to be drawn");
+
+    let tasks = |written: &str| written.matches("Task ").count();
+    let (alone, beside) = (alone.terminal().written(), beside.terminal().written());
+
+    assert!(tasks(alone) > 0, "{alone:?}");
+    assert!(tasks(beside) < tasks(alone), "{beside:?} against {alone:?}");
+    assert!(beside.contains("/model"), "{beside:?}");
 }

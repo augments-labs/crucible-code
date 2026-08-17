@@ -39,7 +39,7 @@ use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
-use crucible_tools::Ledger;
+use crucible_tools::{Ledger, Plan};
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
@@ -524,6 +524,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // thing holds one: `/clear` and `/resume` empty it when they leave the
     // session those files were read in.
     let ledger = Ledger::new();
+
+    // And beside it for the same reason again: the tool that writes the plan is
+    // one holder, the panel above the box is a second, and `/clear` is the
+    // third.
+    let plan = Plan::new();
     let from = |name: &str| std::env::var(name).ok();
 
     // Where crucible keeps its own files, read from the environment here and
@@ -600,6 +605,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
+        plan: plan.clone(),
 
         // Who `/model` is choosing for, and where it writes the choice down.
         // The second is a fact about how this run was set up and the prompt is
@@ -681,6 +687,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         workspace: &workspace,
         cancel: &cancel,
         ledger: &ledger,
+        plan: &plan,
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,

@@ -1,7 +1,7 @@
 //! Building the runner the loop drives.
 //!
 //! Everything the command line and the configuration files decided arrives here
-//! as a [`Startup`], and leaves as a `Runner` holding a provider, six tools, a
+//! as a [`Startup`], and leaves as a `Runner` holding a provider, seven tools, a
 //! model and a session. This is where a provider's *name* becomes a type, so
 //! adding one is an arm in [`provider`] and nothing in any crate below.
 //!
@@ -14,11 +14,12 @@ use std::path::Path;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Mode, Provider, Workspace,
+    ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Message, Mode, Provider, Transcript,
+    Workspace,
 };
 use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
-use crucible_tools::{Bash, Edit, Glob, Grep, Ledger, Read, Write};
+use crucible_tools::{Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, Write};
 
 use super::standing;
 use super::subscription::Subscriptions;
@@ -26,6 +27,14 @@ use super::{Fatal, PROVIDERS, Served};
 
 /// Ceiling on one response, in tokens.
 const MAX_TOKENS: u32 = 8192;
+
+/// The name the tool that writes the plan is called by.
+///
+/// Here rather than beside the panel, because this is the file allowed to know
+/// which tool is which: a resumed session is seeded by finding that tool's last
+/// call in the transcript, and the loop that draws the panel never learns there
+/// is a tool behind it at all.
+const PLANNING: &str = "todo_write";
 
 /// Everything the wiring needs to build a runner.
 ///
@@ -65,6 +74,10 @@ pub(super) struct Startup<'a> {
     /// cancel is: the loop holds one too, and the commands that leave a
     /// session empty it.
     pub(super) ledger: &'a Ledger,
+    /// The plan the agent is working to. Made by the caller for the same reason
+    /// the ledger is: the loop draws it above the box, the tool writes into it,
+    /// and `/clear` empties it.
+    pub(super) plan: &'a Plan,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
@@ -112,16 +125,47 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(
         provider,
-        tools(workspace, startup.cancel, startup.ledger, settings),
+        tools(
+            workspace,
+            startup.cancel,
+            startup.ledger,
+            startup.plan,
+            settings,
+        ),
         model(startup.model, startup.effort, workspace),
         session,
     )
     .permitting(settings.permission(startup.mode));
     if let Some(transcript) = earlier {
+        planned(startup.plan, &transcript);
         runner = runner.resuming(transcript);
     }
 
     Ok(runner)
+}
+
+/// Fills the plan from the last time the session wrote one.
+///
+/// A session log records what happened and nothing else, so there is no plan
+/// stored anywhere to read back: what there is, is the call that wrote it. The
+/// most recent one is the whole plan — the tool replaces the list every time —
+/// so the search stops at the first it finds from the end.
+///
+/// Nothing is said where there is none, and nothing is said where the call
+/// cannot be read: this is a picture of the work, drawn again from the record,
+/// and a session that is picked up without one opens the way a new session does.
+fn planned(plan: &Plan, transcript: &Transcript) {
+    let called = transcript.messages().iter().rev().find_map(|message| {
+        let Message::Agent { calls, .. } = message else {
+            return None;
+        };
+
+        calls.iter().rev().find(|call| &*call.name == PLANNING)
+    });
+
+    if let Some(call) = called {
+        plan.replay(&call.args);
+    }
 }
 
 /// Refuses a provider name this build has nothing for, and hands back the entry
@@ -368,8 +412,15 @@ fn key(
 /// Everything the model may call.
 ///
 /// The order is the order they are advertised in, which is the order a model
-/// tends to reach for them: read before write, search before either.
-fn tools(workspace: &Workspace, cancel: &Cancel, seen: &Ledger, settings: &Settings) -> Tools {
+/// tends to reach for them: read before write, search before either. The plan
+/// is last, because it is the one that does nothing to the workspace.
+fn tools(
+    workspace: &Workspace,
+    cancel: &Cancel,
+    seen: &Ledger,
+    plan: &Plan,
+    settings: &Settings,
+) -> Tools {
     let mut tools = Tools::new();
 
     // Which files have been read is learned by one tool and asked by another,
@@ -394,6 +445,11 @@ fn tools(workspace: &Workspace, cancel: &Cancel, seen: &Ledger, settings: &Setti
     tools.add(Box::new(
         Bash::new(workspace.clone(), cancel.clone()).exporting(settings.env()),
     ));
+
+    // The other end of the panel above the prompt. The clone shares one plan
+    // rather than copying it, which is what makes a call on the worker thread
+    // something the drawing thread sees on its next frame.
+    tools.add(Box::new(TodoWrite::new(plan.clone())));
 
     tools
 }

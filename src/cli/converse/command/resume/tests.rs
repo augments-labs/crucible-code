@@ -9,7 +9,7 @@ use std::time::Duration;
 use crucible_auth::Store;
 use crucible_core::{Cancel, Message, StopReason};
 use crucible_runner::{Model, Runner, Tools};
-use crucible_tools::Ledger;
+use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer};
 
 use crate::cli::fake::Script;
@@ -52,6 +52,7 @@ fn terms(sample: &Sample) -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
+        plan: Plan::new(),
         provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
