@@ -149,6 +149,38 @@ impl ProviderError {
             Self::Unconfigured(problem) => Self::Unconfigured(redactions.redact(&problem).into()),
         }
     }
+
+    /// Whether asking again could reasonably get a different answer.
+    ///
+    /// The difference is whether the failure is about *this* request or about
+    /// the moment it was made. A model name nobody has, a key without access, a
+    /// response that did not parse and a bound this program enforces all say the
+    /// same thing however many times they are asked; a socket that closed while
+    /// the tools ran, a service that is overloaded and a gateway that gave up
+    /// say it about one attempt.
+    ///
+    /// Every variant is named rather than caught by a rest arm: a failure added
+    /// later is a decision about whether it is worth another go, and one waved
+    /// through as permanent is a turn that fails where it did not have to.
+    #[must_use]
+    pub fn transient(&self) -> bool {
+        match self {
+            Self::Transport { .. } | Self::Upstream { .. } => true,
+
+            // A status the service itself says is about now: it is busy, it
+            // waited too long, or something behind it did. Every other status
+            // is about the request, and the same request gets it again.
+            Self::Refused { status, .. } => {
+                matches!(status, 408 | 429) || matches!(status, 500..=599)
+            }
+
+            Self::Limit { .. }
+            | Self::Protocol { .. }
+            | Self::Credential { .. }
+            | Self::Cancelled(_)
+            | Self::Unconfigured(_) => false,
+        }
+    }
 }
 
 /// Which bounded part of one provider response grew too far.
@@ -535,5 +567,68 @@ mod tests {
             "openai: rate_limit: account <redacted> is over quota"
         );
         assert!(!format!("{error:?}").contains("credential-canary"));
+    }
+
+    #[test]
+    fn a_failure_about_the_moment_is_worth_asking_again_and_one_about_the_request_is_not() {
+        let moment = [
+            ProviderError::Transport {
+                provider: "openai",
+                problem: "connection closed before any data was read".into(),
+            },
+            ProviderError::Upstream {
+                provider: "openai",
+                kind: "overloaded_error".into(),
+                message: "the engine is currently overloaded".into(),
+            },
+        ];
+
+        for failure in moment {
+            assert!(failure.transient(), "{failure}");
+        }
+
+        let request = [
+            ProviderError::Protocol {
+                provider: "openai",
+                problem: "no `type` on the event".into(),
+            },
+            ProviderError::Limit {
+                provider: "openai",
+                limit: ProviderLimit::ToolArguments,
+                maximum: 1024,
+            },
+            ProviderError::Credential {
+                provider: "openai",
+                source: CredentialError::NotInEnvironment("OPENAI_API_KEY".into()),
+            },
+            ProviderError::Cancelled("openai"),
+            ProviderError::Unconfigured("no credential for any provider".into()),
+        ];
+
+        for failure in request {
+            assert!(!failure.transient(), "{failure}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_is_worth_asking_again_only_where_the_status_is_about_the_moment() {
+        // The line this draws is the one a user meets: 429 and 503 clear on
+        // their own, and 401 and 404 are the same answer for as long as the key
+        // or the model name stays what it is.
+        for status in [408, 429, 500, 503, 529] {
+            assert!(refusal(status).transient(), "HTTP {status}");
+        }
+
+        for status in [400, 401, 403, 404, 413, 422] {
+            assert!(!refusal(status).transient(), "HTTP {status}");
+        }
+    }
+
+    fn refusal(status: u16) -> ProviderError {
+        ProviderError::Refused {
+            provider: "openai",
+            status,
+            message: "no".into(),
+        }
     }
 }

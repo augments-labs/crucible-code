@@ -69,6 +69,7 @@ impl Scripted {
                 Event::TurnStarted { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -85,6 +86,7 @@ impl Scripted {
                 Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -102,6 +104,7 @@ impl Scripted {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Retrying
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
@@ -118,10 +121,19 @@ impl Scripted {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
             })
             .collect()
+    }
+
+    /// How many responses were asked for again.
+    fn retried(&self) -> usize {
+        self.seen
+            .try_iter()
+            .filter(|event| matches!(event, Event::Retrying))
+            .count()
     }
 
     /// How much transcript each request carried, in order.
@@ -536,6 +548,11 @@ fn a_provider_that_fails_ends_the_turn() {
         problem,
         TurnError::Provider(ProviderError::Refused { .. })
     ));
+
+    // A key without access says the same thing however many times it is asked,
+    // so asking again spends the user's time to reach the same message.
+    assert_eq!(scripted.asked().len(), 1, "the request went out again");
+    assert_eq!(scripted.retried(), 0);
 }
 
 #[test]
@@ -570,6 +587,107 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
                 stop: None,
             },
         ]
+    );
+
+    // And is never asked for again. The deltas are on screen; a second answer
+    // would be written under the half of the first one the user already read.
+    assert_eq!(scripted.asked().len(), 1, "the request went out again");
+    assert_eq!(scripted.retried(), 0);
+}
+
+#[test]
+fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
+    // The failure this exists for: a connection the provider closed while the
+    // tools ran. The request is accepted, the stream produces nothing at all,
+    // and the turn that would have ended there instead asks once more.
+    let script = Script::dropping(1, vec![saying("done")]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    assert_eq!(scripted.turn("go").unwrap(), StopReason::Yielded);
+
+    assert_eq!(scripted.retried(), 1);
+    assert_eq!(scripted.asked().len(), 2, "the request went out once");
+
+    // Nothing of the attempt that went away is left behind: an empty agent
+    // message here is one the next request carries, and every request after it.
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::User("go".into()),
+            Message::Agent {
+                text: "done".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_response_that_keeps_going_away_ends_the_turn() {
+    let script = Script::dropping(usize::MAX, Vec::new());
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::Provider(ProviderError::Transport { .. })
+        ),
+        "{problem}"
+    );
+
+    // Bounded, and the bound is the constant rather than a number written out
+    // here: what this pins is that the loop stops rather than how soon.
+    assert_eq!(scripted.retried(), usize::from(RETRIES));
+    assert_eq!(scripted.asked().len(), 1 + usize::from(RETRIES));
+}
+
+#[test]
+fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not() {
+    // Both are refusals and only the status tells them apart, which is the whole
+    // of what `transient` decides: 503 is about the moment, 401 about the key.
+    let mut busy = Scripted::new(Script::refusing(503), Tools::new(), Verdict::Allow);
+    busy.turn("go").unwrap_err();
+    assert_eq!(busy.asked().len(), 1 + usize::from(RETRIES));
+
+    let mut refused = Scripted::new(Script::refusing(403), Tools::new(), Verdict::Allow);
+    refused.turn("go").unwrap_err();
+    assert_eq!(refused.asked().len(), 1);
+}
+
+#[test]
+fn asking_to_stop_during_the_pause_stops_the_retry() {
+    // The pause is the one place a turn waits with nothing arriving, so it is
+    // the one place Esc could be swallowed. Measured from when the cancel was
+    // raised, because when the thread that raises it gets to run is not this
+    // loop's doing.
+    let script = Script::dropping(usize::MAX, Vec::new());
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+
+    let cancel = scripted.cancel.clone();
+    let (report, when) = channel();
+    let esc = thread::spawn(move || {
+        thread::sleep(CANCEL_SLICE);
+        let at = Instant::now();
+        cancel.request();
+        report.send(at).unwrap();
+    });
+
+    scripted.turn("go").unwrap_err();
+    let returned = Instant::now();
+    esc.join().unwrap();
+
+    let raised_at = when.recv().unwrap();
+    let waited = returned.saturating_duration_since(raised_at);
+    assert!(
+        waited <= CANCEL_SLICE * 5,
+        "the pause held for {waited:?} after the cancel was raised"
+    );
+    assert!(
+        scripted.asked().len() < 1 + usize::from(RETRIES),
+        "every attempt went out anyway"
     );
 }
 
@@ -837,6 +955,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
+            | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,
@@ -985,6 +1104,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolRequested { .. }
+            | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,

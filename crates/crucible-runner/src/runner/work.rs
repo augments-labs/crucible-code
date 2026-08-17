@@ -405,6 +405,7 @@ mod tests {
                 Event::TurnStarted { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
+                | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,

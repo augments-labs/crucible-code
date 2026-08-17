@@ -200,10 +200,11 @@ The mark turns four times a second, and that is the part that says the program
 is busy rather than stuck — a screen that has been still for a minute looks the
 same either way. The word says what is being waited on: `thinking` for the
 model, `writing` while prose is arriving, `running` while a tool has not
-answered, and `interrupting` once <kbd>Esc</kbd> has been pressed and the turn
-has not stopped yet. The clock counts from the moment the prompt was sent and
-never pauses — not for a permission question, which is time spent waiting just
-as much.
+answered, `retrying` while a response that went away is being asked for again,
+and `interrupting` once <kbd>Esc</kbd> has been pressed and the turn has not
+stopped yet. The clock counts from the moment the prompt was sent and never
+pauses — not for a permission question, which is time spent waiting just as
+much.
 
 `↓` is what the turn has spent so far, counted in the tokens the model has
 produced and added up across every response of the turn. It is written the way

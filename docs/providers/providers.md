@@ -367,6 +367,26 @@ Two consequences you can see:
   the visible answer together, so a figure chosen for an answer is one the model
   can spend entirely on thinking; the model's own ceiling applies instead.
 
+## When a response goes away
+
+A connection can close between the request and the first word of the answer. The
+usual reason is time: a turn that runs tools holds its connection open while they
+work, and a socket the provider closed in the meantime returns nothing at all. A
+service saying it is busy reads the same way from here — HTTP 429, or a 5xx from
+the service or from a gateway in front of it.
+
+crucible asks again, twice at most, pausing a quarter of a second before the
+first and half a second before the second. The row above the box says `retrying`
+while it does, and <kbd>Esc</kbd> ends the wait. An attempt that failed leaves
+nothing in the transcript, and nothing is asked again once a word of the answer
+has arrived — those words are on screen already, and a second answer would be
+written underneath the half of the first one you have read. A failure that
+outlives both goes is reported as itself.
+
+A refusal about the request rather than the moment is reported the first time: a
+key without access, a model name nobody serves, a response that did not parse.
+Asking again would spend your time to reach the same sentence.
+
 ## MoonshotAI issues a key against one console or the other
 
 This is the one provider where a working key can still be refused, and the
