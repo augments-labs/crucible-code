@@ -187,7 +187,7 @@ ends. Up to 64 finished prompts and 1 MiB of their text can wait; when either
 bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
 it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode is
 not offered there, because the mode is away with the turn until it finishes, and
-neither is <kbd>Ctrl-C</kbd>, which means the same thing there as at the prompt.
+neither is <kbd>Ctrl+C</kbd>, which means the same thing there as at the prompt.
 
 One row stands between the answer and the box for as long as the turn runs, and
 a second joins it above while a tool is out:
@@ -279,11 +279,11 @@ put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taki
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
-<kbd>Ctrl-C</kbd> throws away a line you are part-way through, and does it whether
-or not a turn is running. Against an empty box it offers to leave — `press ctrl-c
+<kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
+or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
 again to leave`, under the mode — and a second press within two seconds takes the
 offer. Any other key first takes it back, so a session is never ended by one
-stray keystroke. <kbd>Ctrl-D</kbd> on an empty box leaves at once.
+stray keystroke. <kbd>Ctrl+D</kbd> on an empty box leaves at once.
 
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them

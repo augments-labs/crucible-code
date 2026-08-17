@@ -6,7 +6,7 @@ expression: window.picture()
 |│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl-c     clears the line typed so far │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |

@@ -37,7 +37,7 @@ const MODES: [(&str, Slot, &str); 3] = [
 ];
 
 /// What something waiting on the very next key says while it waits.
-const ASKING: &str = "press ctrl-c again to leave";
+const ASKING: &str = "press ctrl+c again to leave";
 
 /// How many rows of line the tests give a box, unless one is about the ceiling.
 ///
