@@ -1,9 +1,15 @@
 use super::*;
 
 /// A result of `bytes` bytes, kept under `called`.
+///
+/// The record row it went onto is the count of what has been cut so far. Not
+/// the number the loop passes, but with the property these tests need of it:
+/// one per result, and no two the same.
 fn kept(cut: &mut Kept, called: &str, bytes: usize) {
+    let at = cut.cut();
+
     cut.calling(called.to_owned());
-    cut.finished("x".repeat(bytes).into_boxed_str());
+    cut.finished("x".repeat(bytes).into_boxed_str(), at);
 }
 
 #[test]
@@ -41,7 +47,7 @@ fn a_result_that_arrived_without_a_call_line_is_still_held() {
     // is a result with nothing in front of it. Holding it without a name beats
     // dropping the text somebody asked for.
     let mut cut = Kept::default();
-    cut.finished("orphaned".into());
+    cut.finished("orphaned".into(), 0);
 
     let held: Vec<_> = cut.newest().collect();
     assert_eq!(held.len(), 1);
@@ -57,7 +63,7 @@ fn a_call_line_is_spent_by_the_result_that_follows_it() {
     // name with nothing on screen to say so.
     let mut cut = Kept::default();
     kept(&mut cut, "Bash(ls)", 1);
-    cut.finished("second".into());
+    cut.finished("second".into(), 1);
 
     let lines: Vec<_> = cut.newest().map(Whole::called).collect();
     assert_eq!(lines, ["", "Bash(ls)"]);
@@ -117,6 +123,43 @@ fn the_count_of_what_was_cut_goes_on_counting_past_the_ceiling() {
 }
 
 #[test]
+fn a_result_is_found_by_the_record_row_that_offered_it() {
+    // What a click is answered from. The pointer lands on a row of the screen,
+    // the renderer turns that into a row of the record, and this is the other
+    // end of it: the row the offer was written on, and the result behind it.
+    let mut cut = Kept::default();
+    cut.calling("Bash(cargo test)".to_owned());
+    cut.finished("what it said".into(), 41);
+
+    assert!(cut.offered(41));
+    assert_eq!(
+        cut.newest().next().map(Whole::at),
+        Some(41),
+        "the row the offer went onto is not the row it is held under"
+    );
+
+    // Every other row of the record offered nothing, which is most of them.
+    assert!(!cut.offered(40));
+    assert!(!cut.offered(42));
+    assert!(!cut.offered(0));
+}
+
+#[test]
+fn a_row_whose_result_was_dropped_under_the_ceiling_offers_nothing() {
+    // The offer is still on screen — the row said so and scrollback keeps it —
+    // and the text behind it has gone. Answering the click with the newest
+    // result instead would be showing somebody a different call's output under
+    // the row they pointed at, which reads as this call having said it.
+    let mut cut = Kept::default();
+    for turn in 0..16 {
+        kept(&mut cut, &format!("Bash({turn})"), HELD / 3);
+    }
+
+    assert!(!cut.offered(0), "a dropped result is still being offered");
+    assert!(cut.offered(15), "the newest result cannot be found");
+}
+
+#[test]
 fn nothing_cut_is_nothing_to_offer() {
     // The key that asks for this reads it before it draws anything, because a
     // session where no result was ever cut has no offer on screen to have
@@ -129,6 +172,6 @@ fn nothing_cut_is_nothing_to_offer() {
     cut.calling("Read(half)".to_owned());
     assert!(cut.is_empty());
 
-    cut.finished("here".into());
+    cut.finished("here".into(), 0);
     assert!(!cut.is_empty());
 }

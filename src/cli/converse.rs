@@ -36,7 +36,7 @@ use crucible_core::{
 };
 use crucible_runner::Runner;
 use crucible_tools::Ledger;
-use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
+use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pressed};
 
 use super::draw;
 use super::kept::Kept;
@@ -159,6 +159,19 @@ pub(crate) fn converse<T: Terminal>(
     let raw = Raw::enter()?;
     let keys = raw.is_some();
 
+    // Held beside it and for as long, because a click means something at both
+    // ends of a turn: it puts the cursor where the pointer is in the box
+    // between turns, and it expands a cut result up in the transcript while one
+    // runs. The rows worth clicking are written by a turn, so a guard taken per
+    // prompt would hand the pointer back exactly where it has something to
+    // point at.
+    //
+    // The wheel is what that costs. A terminal forwarding buttons is not using
+    // them itself, so scrolling back over the transcript stops working for as
+    // long as this is held, and `output.mouse` left alone is how a reader who
+    // scrolls more than they expand keeps it.
+    let _pointer = style.clicks().then(Reporting::on).transpose()?.flatten();
+
     // One line for the whole session rather than one per prompt. What was typed
     // while a turn ran is still there when it ends, and the allocation the last
     // line grew to is the one the next starts in.
@@ -180,8 +193,8 @@ pub(crate) fn converse<T: Terminal>(
     // still open when the turn ends, and the reader who opened it is reading.
     let mut opened = Standing::default();
 
-    // Said once. The log does not start working again, and a line under every
-    // turn from here on would bury the turns.
+    // Whether the log's trouble has been said. Once is all it is worth, for
+    // the reason `troubled` gives.
     let mut told = false;
 
     loop {
@@ -223,11 +236,7 @@ pub(crate) fn converse<T: Terminal>(
                 },
             )?;
             runner = took.runner;
-
-            if !told && let Some(problem) = runner.session().trouble() {
-                draw::trouble(renderer, &problem, style)?;
-                told = true;
-            }
+            troubled(renderer, &runner, style, &mut told)?;
 
             // Said after the trouble above rather than instead of it: a log
             // that stopped recording is worth hearing about on the way out as
@@ -249,36 +258,21 @@ pub(crate) fn converse<T: Terminal>(
                 continue;
             }
 
+            // The same view over the one result that row offered, which is a
+            // question about what was cut and so is answered where what was cut
+            // is held. A row that offered nothing opens nothing, and the box
+            // comes back with the line still in it.
+            Asked::Clicked(at) => {
+                opened.one(&kept, at);
+                continue;
+            }
+
             // Nothing to type into: no terminal, or one at only one end. The
             // line is read the way every other answer on this thread is.
-            Asked::Untyped => {
-                // The mode in force, spelled the way configuration spells it,
-                // in front of the line rather than under a box there is none
-                // of. It is on screen every time rather than said once at the
-                // top because the moment it matters is hours in, when the top
-                // has scrolled away — a `fullAccess` session must not be
-                // distinguishable from an `ask` one only by what the user
-                // remembers starting.
-                //
-                // The mark after it is the one a line is typed after
-                // everywhere else, taken from the same setting: this is the
-                // prompt on a run that has no box to draw one in.
-                let mark = style.glyphs().caret();
-                draw::mark(renderer, &format!("{} {mark} ", runner.mode()), style)?;
-
-                let Some(said) = read(input)? else {
-                    // The mark is still the last thing on its row, and nothing
-                    // but this ends it. Without it, whatever comes next is
-                    // drawn on top of `ask › ` — a report below, or the shell's
-                    // own prompt once crucible is gone, which is every ordinary
-                    // exit. The box needs none of this: it takes its own rows
-                    // back before it returns.
-                    draw::ended(renderer)?;
-                    break;
-                };
-
-                said
-            }
+            Asked::Untyped => match unboxed(renderer, &runner, style, input)? {
+                Some(said) => said,
+                None => break,
+            },
         };
 
         // Before the turn, because a command is not one: it is answered here,
@@ -331,11 +325,7 @@ pub(crate) fn converse<T: Terminal>(
             },
         )?;
         runner = took.runner;
-
-        if !told && let Some(problem) = runner.session().trouble() {
-            draw::trouble(renderer, &problem, style)?;
-            told = true;
-        }
+        troubled(renderer, &runner, style, &mut told)?;
 
         if matches!(took.meanwhile, typing::Meanwhile::Leaving) {
             break;
@@ -361,6 +351,61 @@ pub(crate) fn converse<T: Terminal>(
 
     renderer.settle()?;
     Ok(())
+}
+
+/// Says once that the session log stopped recording.
+///
+/// Once per session rather than once per turn: the log does not start working
+/// again, so a line under every turn from here on would bury the turns it is
+/// about. `told` is the loop's own memory of having said it, which is why it is
+/// passed rather than read back off anything.
+fn troubled<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &Runner,
+    style: Style,
+    told: &mut bool,
+) -> Result<(), Fatal> {
+    if !*told && let Some(problem) = runner.session().trouble() {
+        draw::trouble(renderer, &problem, style)?;
+        *told = true;
+    }
+
+    Ok(())
+}
+
+/// Reads one line on a run with no box to type it into.
+///
+/// `None` where input ended, which ends the session.
+///
+/// The mode in force is spelled the way configuration spells it, in front of
+/// the line rather than under a box there is none of. It is on screen every
+/// time rather than said once at the top because the moment it matters is hours
+/// in, when the top has scrolled away — a `fullAccess` session must not be
+/// distinguishable from an `ask` one only by what the user remembers starting.
+///
+/// The mark after it is the one a line is typed after everywhere else, taken
+/// from the same setting: this is the prompt on a run that has no box to draw
+/// one in.
+fn unboxed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &Runner,
+    style: Style,
+    input: &mut dyn BufRead,
+) -> Result<Option<String>, Fatal> {
+    let mark = style.glyphs().caret();
+    draw::mark(renderer, &format!("{} {mark} ", runner.mode()), style)?;
+
+    let Some(said) = read(input)? else {
+        // The mark is still the last thing on its row, and nothing but this
+        // ends it. Without it, whatever comes next is drawn on top of `ask › `
+        // — a report below, or the shell's own prompt once crucible is gone,
+        // which is every ordinary exit. The box needs none of this: it takes
+        // its own rows back before it returns.
+        draw::ended(renderer)?;
+        return Ok(None);
+    };
+
+    Ok(Some(said))
 }
 
 /// One turn, start to finish.

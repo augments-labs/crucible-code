@@ -166,10 +166,10 @@ not a space, so a path is one word.
 The mouse belongs to the terminal: the wheel scrolls, dragging selects, the
 middle button pastes. Set `output.mouse` to `click` and crucible takes the
 buttons instead, for the whole session, so clicking in the box between turns
-puts the cursor where you clicked — at the price of the wheel, because the wheel
-is a button and the scrollback it scrolls is where crucible's transcript lives.
-An inline renderer cannot have both, which is why it is a choice rather than a
-default.
+puts the cursor where you clicked, and clicking a result that was cut short
+stands it whole — at the price of the wheel, because the wheel is a button and
+the scrollback it scrolls is where crucible's transcript lives. An inline
+renderer cannot have both, which is why it is a choice rather than a default.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
@@ -280,6 +280,12 @@ reading stays where you left it rather than being pushed down the screen by the
 next result. What it holds is what had been cut when you opened it; a turn that
 cut more while you were reading is one press away, since opening it again is
 what brings the newer results in.
+
+With `output.mouse` set to `click`, clicking one of those rows stands that one
+result rather than all of them — the row names the call you asked about, so the
+answer is the output of that call alone. It reads the same as the key
+otherwise, and works while a turn runs for the same reason. A click anywhere
+else, on a row that offered nothing, leaves the screen as it was.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where

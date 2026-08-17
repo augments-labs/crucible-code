@@ -137,8 +137,14 @@ pub(crate) fn event<T: Terminal>(
             // could not say: a result the row said the whole of is a result
             // nobody has to be offered, and one held anyway would be an offer to
             // show somebody what they are already looking at.
+            //
+            // Where the offer went is the block's first row, which is the one
+            // that names the key — the lines under it are a change, and a change
+            // is cut where it is built rather than here, so it offers nothing.
+            // Counted back from the end because the rows have already gone.
             if beyond > 0 {
-                kept.finished(output.into_text());
+                let at = renderer.record().saturating_sub(rows.len());
+                kept.finished(output.into_text(), at);
             }
 
             Ok(())

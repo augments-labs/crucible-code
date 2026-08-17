@@ -77,6 +77,18 @@ pub struct Renderer<T: Terminal> {
     /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
     /// renderer nobody told showing the answer exactly as it arrived.
     palette: Palette,
+    /// How many rows the record has grown by this session.
+    ///
+    /// Never read for its own sake — what it is for is the difference between
+    /// two readings of it, which is how far a row written at the first has
+    /// travelled up the screen by the second. That is the whole of what an
+    /// inline renderer can know about a row it has let go of: this process
+    /// draws into the terminal's own buffer and never learns where the top of
+    /// the screen is, so a row's place is counted from the live region
+    /// downwards rather than from an origin.
+    ///
+    /// One `usize` and no more: what is counted is rows, not rows kept.
+    record: usize,
     /// Whether the record already ends in a blank row.
     ///
     /// What [`Renderer::apart`] reads, and the reason the rhythm is one
@@ -117,6 +129,7 @@ impl<T: Terminal> Renderer<T> {
             footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
+            record: 0,
             parted: true,
         }
     }
@@ -228,6 +241,7 @@ impl<T: Terminal> Renderer<T> {
         let terminal = self.terminal.is_terminal();
         let mut painted = String::new();
 
+        self.record = self.record.saturating_add(rows.len());
         self.frame.plain();
         for row in rows {
             painted.clear();
@@ -387,6 +401,9 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let region = self.region();
+        self.record = self
+            .record
+            .saturating_add(self.overflow.len() + self.tail.content().len());
         screen::settle(&mut self.frame, region, &mut self.overflow, &mut self.tail);
 
         self.terminal.write(self.frame.sealed())?;
@@ -543,6 +560,72 @@ impl<T: Terminal> Renderer<T> {
         self.size.rows
     }
 
+    /// How many rows have gone into the record.
+    ///
+    /// Read straight after writing something, to learn where it went: a caller
+    /// that means to point at a row later keeps this number and asks
+    /// [`Renderer::recorded`] about it, and the difference between the two
+    /// readings is how far the row has travelled.
+    ///
+    /// It counts rows written rather than rows kept, so it goes on rising for
+    /// the length of a session and says nothing about what is still on screen.
+    /// That is [`Renderer::recorded`]'s half of the question.
+    #[must_use]
+    pub fn record(&self) -> usize {
+        self.record
+    }
+
+    /// Which row of the live region is on screen row `at`, with the cursor on
+    /// screen row `cursor`.
+    ///
+    /// The half of [`Renderer::top`] that looks downwards. `None` above the
+    /// region and `None` below the last row of it, which are the two ways a
+    /// pointer lands on something this renderer is not currently drawing.
+    #[must_use]
+    pub fn within(&self, at: usize, cursor: usize) -> Option<usize> {
+        at.checked_sub(self.top(cursor)?)
+            .filter(|row| *row < self.drawn)
+    }
+
+    /// Which row of the record is on screen row `at`, with the cursor on
+    /// screen row `cursor`.
+    ///
+    /// The half that looks upwards. Directly above the region is the last row
+    /// of the record, so a row that many back from the end of it is the answer.
+    ///
+    /// `None` where that would be a guess: a row inside the live region or
+    /// below it, which the record does not hold, and a row above everything
+    /// this renderer has written, which belongs to whatever ran before it.
+    #[must_use]
+    pub fn recorded(&self, at: usize, cursor: usize) -> Option<usize> {
+        // Zero is the region's own first row rather than the record's last,
+        // which is why this is filtered rather than saturated.
+        let above = self
+            .top(cursor)?
+            .checked_sub(at)
+            .filter(|above| *above > 0)?;
+
+        self.record.checked_sub(above)
+    }
+
+    /// Which screen row the live region starts on, with the cursor on screen
+    /// row `cursor`.
+    ///
+    /// An inline renderer never learns where the top of the screen is: what it
+    /// draws starts wherever the shell left off, and the terminal scrolls it
+    /// without saying so. What it does know is the shape of its own live
+    /// region — how tall it is and how far up the cursor was parked in it — so
+    /// a caller that has asked the terminal where its cursor is has given this
+    /// the one fact it was missing, and both directions follow from here.
+    fn top(&self, cursor: usize) -> Option<usize> {
+        // Where the cursor sits inside the region, which is what its own two
+        // counts come to: the rows drawn, less the ones below it, less the one
+        // it is on. Nothing drawn leaves it on the row after the record, which
+        // is where a settle steps it to, and the arithmetic holds there
+        // unchanged.
+        cursor.checked_sub(self.drawn.saturating_sub(self.parked + 1))
+    }
+
     /// One frame, assembled by [`screen`].
     fn draw(&mut self) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
@@ -550,6 +633,7 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let region = self.region();
+        self.record = self.record.saturating_add(self.overflow.len());
         self.parked = screen::draw(
             &mut self.frame,
             region,
@@ -565,6 +649,8 @@ impl<T: Terminal> Renderer<T> {
 
     /// A frame for a pipe, assembled by [`plain`].
     fn draw_plain(&mut self) -> Result<(), TerminalError> {
+        self.record = self.record.saturating_add(self.overflow.len());
+
         if !plain::draw(&mut self.frame, &mut self.overflow) {
             return Ok(());
         }
@@ -575,6 +661,10 @@ impl<T: Terminal> Renderer<T> {
 
     /// Ending a turn into a pipe, assembled by [`plain`].
     fn settle_plain(&mut self) -> Result<(), TerminalError> {
+        self.record = self
+            .record
+            .saturating_add(self.overflow.len() + self.tail.content().len());
+
         if !plain::settle(&mut self.frame, &mut self.overflow, &mut self.tail) {
             return Ok(());
         }

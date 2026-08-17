@@ -850,3 +850,97 @@ fn rows_this_program_composed_settle_the_question_too() {
         "› what is 2+2\n\nTwo plus two is four.\n"
     );
 }
+
+#[test]
+fn the_record_counts_the_rows_that_have_gone_into_it() {
+    // Rows written rather than rows kept: this goes on rising for the length of
+    // a session, because what it is for is the difference between two readings
+    // of it rather than either reading on its own.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    assert_eq!(render.record(), 0);
+
+    render
+        .present(&[Row::plain("one"), Row::plain("two")], Palette::plain())
+        .unwrap();
+    assert_eq!(render.record(), 2);
+
+    render.stream("an answer").unwrap();
+    assert_eq!(render.record(), 2, "a live row is not in the record yet");
+
+    render.settle().unwrap();
+    assert_eq!(render.record(), 3);
+}
+
+#[test]
+fn a_row_is_found_again_by_the_count_that_was_read_when_it_went() {
+    // The whole of what the two are for. A caller that means to point at a row
+    // later keeps the count at the moment it was written, and the difference
+    // between that and where the region is now is how far the row has
+    // travelled — which is the only thing an inline renderer can know about a
+    // row it has let go of.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render
+        .present(
+            &[Row::plain("(+128 lines · ctrl+o to expand)")],
+            Palette::plain(),
+        )
+        .unwrap();
+    let at = render.record() - 1;
+
+    for _ in 0..4 {
+        render
+            .present(&[Row::plain("and then this")], Palette::plain())
+            .unwrap();
+    }
+
+    // Nothing is standing, so the cursor is on the row after the record: five
+    // rows have gone and the last of them is the row above the cursor.
+    assert_eq!(render.recorded(9, 10), Some(at + 4));
+    assert_eq!(render.recorded(5, 10), Some(at));
+}
+
+#[test]
+fn a_row_of_the_live_region_is_no_row_of_the_record() {
+    // The record holds what has been let go of. A pointer inside the region —
+    // on the box, or on a view standing under a turn — is on something still
+    // being drawn, and answering it with a row of the record would hand back a
+    // result nobody pointed at.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render
+        .present(&[Row::plain("one"), Row::plain("two")], Palette::plain())
+        .unwrap();
+
+    // Two rows of region with the cursor parked on the first of them, so the
+    // region starts on the row the cursor is on and the record ends above it.
+    let (rows, caret) = region();
+    render.live(&rows, caret, Palette::plain()).unwrap();
+
+    assert_eq!(render.recorded(8, 8), None, "the region's own first row");
+    assert_eq!(render.recorded(9, 8), None, "the region's second row");
+    assert_eq!(render.recorded(12, 8), None, "below everything drawn");
+
+    assert_eq!(render.recorded(7, 8), Some(1));
+    assert_eq!(render.recorded(6, 8), Some(0));
+    assert_eq!(
+        render.recorded(5, 8),
+        None,
+        "a row belonging to whatever ran before this process"
+    );
+}
+
+#[test]
+fn the_region_is_read_from_the_same_place_the_record_is() {
+    // The other half of the same arithmetic, and the reason it is one place:
+    // the box reads a click against the region and the transcript reads one
+    // against the record, and two answers to where the region starts would be
+    // two pictures of the same screen.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    let (rows, caret) = region();
+    render.live(&rows, caret, Palette::plain()).unwrap();
+
+    assert_eq!(render.within(4, 4), Some(0));
+    assert_eq!(render.within(5, 4), Some(1));
+
+    assert_eq!(render.within(3, 4), None, "above the region");
+    assert_eq!(render.within(6, 4), None, "below the last row of it");
+}

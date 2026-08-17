@@ -181,7 +181,7 @@ const OUTPUT: &[Field] = &[
     },
     Field {
         name: "mouse",
-        about: "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt, and the wheel stops scrolling",
+        about: "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt and open a result that was cut short, and the wheel stops scrolling",
         shape: Shape::Choice(MOUSE),
         examples: &[],
         widens: false,

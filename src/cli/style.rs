@@ -51,8 +51,8 @@ pub(crate) struct Style {
     glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
-    /// Whether a click in the box places the cursor. Off leaves the mouse to
-    /// the terminal, which is where the transcript above the box lives.
+    /// Whether a click means anything to crucible. Off leaves the mouse to the
+    /// terminal, which is where the transcript above the box lives.
     clicks: bool,
 }
 
@@ -106,13 +106,13 @@ impl Style {
         self.palette
     }
 
-    /// Which characters a component draws with.
-    /// Whether a click in the prompt box places the cursor, at the price of the
-    /// terminal's own use of the mouse.
+    /// Whether a click places the cursor in the box and expands a cut result up
+    /// in the transcript, at the price of the terminal's own use of the mouse.
     pub(crate) fn clicks(self) -> bool {
         self.clicks
     }
 
+    /// Which characters a component draws with.
     pub(crate) fn glyphs(self) -> Glyphs {
         self.glyphs
     }

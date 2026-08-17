@@ -2,22 +2,30 @@ use crucible_tui::Recording;
 
 use super::*;
 
-/// A view opened `from` rows down, with `end` rows below it.
+/// A view over everything, opened `from` rows down with `end` rows below it.
+///
+/// Everything rather than one result because that is what the keys are read
+/// against: which of the two is standing changes what is in the window and
+/// changes nothing about walking it.
 fn standing(from: usize, end: usize) -> Window {
     Window {
         from,
         end,
-        ..Window::default()
+        over: Over::Everything(0),
     }
 }
 
 /// Results cut down to a row, under the lines of the calls they answer.
+///
+/// The record row each offer went onto is its place in `called`, which is not
+/// what the loop passes but has what these need of it: one per result, and no
+/// two the same.
 fn cut(called: &[&str]) -> Kept {
     let mut kept = Kept::default();
 
-    for one in called {
+    for (at, one) in called.iter().enumerate() {
         kept.calling((*one).to_owned());
-        kept.finished(format!("{one} answered this\nand then this\n").into());
+        kept.finished(format!("{one} answered this\nand then this\n").into(), at);
     }
 
     kept
@@ -36,7 +44,7 @@ fn overflowing() -> Kept {
     let mut kept = Kept::default();
 
     kept.calling("Bash(cargo build)".to_owned());
-    kept.finished("a line of it\n".repeat(200).into());
+    kept.finished("a line of it\n".repeat(200).into(), 0);
 
     kept
 }
@@ -108,6 +116,55 @@ fn nothing_opens_where_nothing_was_cut() {
 }
 
 #[test]
+fn a_click_stands_the_one_result_the_row_it_landed_on_offered() {
+    // What separates the two ways in. Ctrl+O names no result so it stands them
+    // all; a click names one by landing on the row that made the offer, and
+    // standing the rest of them would be answering a question about one call
+    // with three calls' output.
+    let held = cut(&["Bash(cargo build)", "Read(src/main.rs)", "Bash(cargo test)"]);
+
+    let mut standing = Standing::default();
+    standing.one(&held, 1);
+
+    let rows = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 40);
+    let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+
+    assert!(said.contains("Read(src/main.rs)"), "{said}");
+    assert!(!said.contains("Bash(cargo build)"), "{said}");
+    assert!(!said.contains("Bash(cargo test)"), "{said}");
+}
+
+#[test]
+fn a_click_on_a_row_that_offered_nothing_opens_nothing() {
+    // Most rows of the record offered nothing — a line of an answer, a blank
+    // row, the shell's own output before crucible started. The answer to a
+    // click on one of those is the screen the reader was already looking at.
+    let held = cut(&["Bash(cargo build)"]);
+
+    let mut standing = Standing::default();
+    standing.one(&held, 7);
+
+    assert_eq!(standing, Standing::Closed);
+}
+
+#[test]
+fn a_view_over_a_result_the_ceiling_dropped_lays_out_no_rows() {
+    // Which both callers read as the view closing. The row is still on screen
+    // saying what it could not fit, and the text behind it has gone; a frame of
+    // chrome with nothing under it would say the result was empty.
+    let mut held = cut(&["Bash(cargo build)"]);
+
+    let mut standing = Standing::default();
+    standing.one(&held, 0);
+
+    held.calling("Bash(cat big)".to_owned());
+    held.finished("x".repeat(1024 * 1024).into_boxed_str(), 1);
+
+    let rows = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 40);
+    assert!(rows.is_empty(), "{rows:?}");
+}
+
+#[test]
 fn a_view_stands_still_while_the_turn_under_it_goes_on_cutting() {
     // What it stands over is what had been cut when it opened. Letting in the
     // results arriving underneath would slide the rows being read down the
@@ -120,7 +177,7 @@ fn a_view_stands_still_while_the_turn_under_it_goes_on_cutting() {
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
     held.calling("Bash(cargo test)".to_owned());
-    held.finished("something else entirely\n".into());
+    held.finished("something else entirely\n".into(), 1);
 
     let after = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
     assert_eq!(before, after);
@@ -138,7 +195,7 @@ fn opening_it_again_is_what_brings_the_newer_results_in() {
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
     held.calling("Bash(cargo test)".to_owned());
-    held.finished("something else entirely\n".into());
+    held.finished("something else entirely\n".into(), 1);
 
     standing.open(&held);
     let after = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);

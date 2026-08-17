@@ -184,10 +184,11 @@ blocks and `ascii` writes it as letters.
 terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
 the middle button pastes. Set to `click`, crucible asks the terminal to forward
 buttons for the whole session, so a click in the box places the cursor between
-turns — and the wheel is a button too, so it stops scrolling until crucible
-exits, a turn included, where a click places nothing. crucible draws inline,
-which means the transcript above the box belongs to the terminal, so it cannot
-scroll that for you in exchange.
+turns and a click on a result the transcript
+[cut short](../getting-started/getting-started.md) opens it, whether or not a
+turn is running — and the wheel is a button too, so it stops scrolling until
+crucible exits. crucible draws inline, which means the transcript above the box
+belongs to the terminal, so it cannot scroll that for you in exchange.
 
 ### `updates`
 
