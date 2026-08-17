@@ -618,6 +618,57 @@ fn a_prompt_drawn_over_a_standing_row_takes_it_off_the_screen() {
 }
 
 #[test]
+fn a_presented_row_lands_above_a_standing_row_and_leaves_it_on_the_screen() {
+    // A tool result is rows this program composed, so it arrives through
+    // `present` rather than `commit` -- and `present` ends the live region to
+    // write above it, which takes the standing row off the screen. Every other
+    // frame puts it back on the way past; this one wrote its rows and stopped.
+    // What the reader saw was the box under a running turn blinking out under
+    // each result and coming back on the next tick of the clock.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.under(&standing(), None, Palette::plain()).unwrap();
+    render.terminal.take();
+
+    render
+        .present(&[Row::plain("Bash(cargo build)")], Palette::plain())
+        .unwrap();
+
+    // The empty row between the two is the tail's own: where the next delta of
+    // the turn still running would land. A committed line under a standing row
+    // leaves the same one, and this is the same picture reached a frame sooner.
+    assert_eq!(
+        render.terminal.written(),
+        format!(
+            "{}Bash(cargo build)\r\n{}",
+            shown(0, ""),
+            shown(0, "\r\nask mode on\x1b[1A\x1b[1G")
+        )
+    );
+    assert_eq!(render.drawn, 2);
+    assert_eq!(render.parked, 1);
+}
+
+#[test]
+fn a_presented_row_with_nothing_standing_under_it_is_one_frame_and_no_more() {
+    // The other half of the same rule. Between turns there is nothing under the
+    // tail to put back, and a frame drawn to put nothing back is a write and a
+    // flush per row of a transcript that is only getting longer.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.stream("the answer").unwrap();
+    render.terminal.take();
+
+    render
+        .present(&[Row::plain("Bash(cargo build)")], Palette::plain())
+        .unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        format!("{}Bash(cargo build)\r\n", shown(1, "the answer\r\n"))
+    );
+    assert_eq!(render.drawn, 0);
+}
+
+#[test]
 fn a_redirected_run_stands_nothing_under_anything() {
     // The reason a live region is not drawn into a pipe: there is no bottom row
     // to hold something at, and the escapes that would hold it there end up in

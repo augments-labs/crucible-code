@@ -71,6 +71,15 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **The prompt box stops disappearing under each tool result.** A result is rows
+  crucible composed rather than text that arrived, and the frame that writes one
+  ends the live region to make room above it — which took the box down with it
+  and wrote nothing back. It came back only on the next tick of the working row,
+  so a turn full of calls read as a box flickering in and out a quarter of a
+  second at a time. The frame now puts back whatever was standing under the
+  tail. What it costs: one more frame per result, and none at all between turns,
+  where nothing is standing.
+
 - **The screen stops blinking while an answer arrives.** Every redraw erases the
   live region and writes it again, and a terminal was free to paint in between —
   so the more of the window a turn filled, the more of it flickered, once per
