@@ -160,6 +160,37 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// The file the call in [`a_call_that_changed_a_file_is_drawn_with_the_change`]
+/// is about, and the one line of it that moves.
+const BEFORE: &str = "# trend data\nbudgets:\n  name: release budgets\n";
+
+#[test]
+fn a_call_that_changed_a_file_is_drawn_with_the_change() {
+    // A whole turn with a call in it, which no case here could take before: the
+    // model asks for a tool, a rule lets it through without a question, the
+    // file changes, and what the reader is left with is the call, what it did,
+    // and the lines it moved. Every part of that has a test beside the rows it
+    // returns. This is the one place they are in the same picture, at a real
+    // width, in the order somebody watching a turn meets them.
+    let vendor = Vendor::calling(
+        "edit",
+        r##"{"path":"release.yml","find":"# trend data","replace":"# what stops a tag"}"##,
+        "Renamed. Nothing else in the file moved.",
+    );
+    let mut window = Window::allowing("tool-called", 80, 24, &vendor, "edit(*)");
+    let file = window.workspace().join("release.yml");
+    std::fs::write(&file, BEFORE).expect("a file for the call to change");
+
+    window.types_until("rename that comment\r", "Nothing else in the file moved");
+
+    // The screen says a line moved; this is whether it did. A picture of a
+    // block drawn from a change nobody made would look exactly the same.
+    let after = std::fs::read_to_string(&file).expect("the file the call changed");
+    assert_eq!(after, BEFORE.replace("# trend data", "# what stops a tag"));
+
+    insta::assert_snapshot!(window.picture());
+}
+
 #[test]
 fn an_environment_authenticated_session_never_claims_logout_removed_it() {
     // The key belongs to the shell that launched this real process. `/logout`

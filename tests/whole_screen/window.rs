@@ -67,7 +67,8 @@ const READY: &str = "ask mode on";
 /// rather than like a test fixture.
 const MODEL: &str = "claude-test-1";
 
-/// The configuration a case is given, pointed at `vendor` where there is one.
+/// The configuration a case is given, pointed at `vendor` where there is one
+/// and holding `allowed` where a case has a call to let through.
 ///
 /// `updates.check` reaches GitHub, and a test that asks a network for anything
 /// is a test that fails when the network does. Written rather than left to the
@@ -76,7 +77,7 @@ const MODEL: &str = "claude-test-1";
 /// This is crucible's *own* configuration file, in the home this run was given.
 /// That matters for `baseUrl`: it is refused in the file a checkout carries, so
 /// a case that wrote it there would be testing the refusal instead.
-fn document(vendor: Option<&Vendor>) -> String {
+fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
     let providers = vendor.map_or_else(String::new, |vendor| {
         format!(
             ",\n  \"providers\": {{\n    \"anthropic\": {{\n      \
@@ -84,8 +85,22 @@ fn document(vendor: Option<&Vendor>) -> String {
             vendor.address()
         )
     });
+    let rules = allowed.map_or_else(String::new, |rule| {
+        format!(",\n  \"permissions\": {{\n    \"allow\": [\"{rule}\"]\n  }}")
+    });
 
-    format!("{{\n  \"updates\": {{\n    \"check\": \"never\"\n  }}{providers}\n}}\n")
+    format!("{{\n  \"updates\": {{\n    \"check\": \"never\"\n  }}{providers}{rules}\n}}\n")
+}
+
+/// The directory a case is given to work in, below the one it is given.
+///
+/// Deep enough that the welcome always shortens it to its last part. A path
+/// short enough to be drawn whole would carry this run's process id onto the
+/// screen and into the snapshot.
+fn working(scratch: &Path) -> PathBuf {
+    scratch
+        .join("a-directory-to-be-working-in")
+        .join("workspace")
 }
 
 /// crucible, and the terminal it is drawing into.
@@ -136,6 +151,23 @@ impl Window {
         Self::started(case, columns, rows, Some(vendor), false)
     }
 
+    /// The same again, with one rule standing over the call the case makes.
+    ///
+    /// A rule rather than `fullAccess`, because what this reaches is the
+    /// transcript a call leaves behind: a mode that allowed everything would
+    /// put the case in front of a screen no ordinary run meets, and the
+    /// question a call is asked about has its own cases already.
+    pub(crate) fn allowing(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        rule: &str,
+    ) -> Self {
+        let document = document(Some(vendor), Some(rule));
+        Self::configured(case, columns, rows, &document, true)
+    }
+
     /// A provider, model and effort remembered after their credential left.
     pub(crate) fn unavailable(case: &str, columns: u16, rows: u16) -> Self {
         let document = concat!(
@@ -151,7 +183,7 @@ impl Window {
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
-        Self::configured(case, columns, rows, &document(vendor), keyed)
+        Self::configured(case, columns, rows, &document(vendor, None), keyed)
     }
 
     fn configured(case: &str, columns: u16, rows: u16, document: &str, keyed: bool) -> Self {
@@ -163,12 +195,7 @@ impl Window {
         ));
         let home = scratch.join("home");
 
-        // Deep enough that the welcome always shortens it to its last part.
-        // A path short enough to be drawn whole would carry this run's process
-        // id onto the screen and into the snapshot.
-        let workspace = scratch
-            .join("a-directory-to-be-working-in")
-            .join("workspace");
+        let workspace = working(&scratch);
         fs::create_dir_all(&home).expect("a scratch home directory");
         fs::create_dir_all(&workspace).expect("a scratch working directory");
         fs::write(home.join("config.json"), document).expect("a configuration file");
@@ -231,6 +258,16 @@ impl Window {
     /// written, and the file is whether it was.
     pub(crate) fn home(&self) -> PathBuf {
         self.scratch.join("home")
+    }
+
+    /// The directory this run was given to work in.
+    ///
+    /// A case with a call in it puts the file that call is about here, which it
+    /// can do after crucible has started: what has to exist by then is the
+    /// directory, and what the tool goes looking for is not read until the turn
+    /// asks for it.
+    pub(crate) fn workspace(&self) -> PathBuf {
+        working(&self.scratch)
     }
 
     /// Reads until the screen settles, and fails plainly when it never does.
