@@ -479,6 +479,7 @@ pub(super) fn during<T: Terminal>(
             // down again at the new one.
             Meant::Resized => {
                 renderer.resized()?;
+                turning.queueing(queued.waiting(), renderer.columns(), style);
                 moved = true;
             }
 
@@ -490,10 +491,7 @@ pub(super) fn during<T: Terminal>(
 
             Meant::Queue => {
                 if !editor.is_empty() {
-                    match queued.accept(editor) {
-                        Retained::Accepted => notice = None,
-                        Retained::Refused => notice = Some(QUEUED_LIMITED),
-                    }
+                    notice = queue(editor, queued, turning, renderer.columns(), style);
                     moved = true;
                 }
             }
@@ -589,6 +587,27 @@ pub(super) fn during<T: Terminal>(
     }
 
     Ok(Meanwhile::Nothing)
+}
+
+/// Moves the finished line behind the running turn, and says what the row under
+/// the box owes for it.
+///
+/// The row above the box is read again here rather than on the next thing to
+/// move, because what it names is exactly the line that has just gone: a box
+/// emptied by Return, with nothing anywhere saying where the line went, is what
+/// this row exists to answer. `None` where it was taken, which is also what
+/// clears whatever the row was saying before.
+fn queue(
+    editor: &mut Editor,
+    queued: &mut Prompts,
+    turning: &mut Turning,
+    columns: usize,
+    style: Style,
+) -> Option<&'static str> {
+    let retained = queued.accept(editor);
+
+    turning.queueing(queued.waiting(), columns, style);
+    matches!(retained, Retained::Refused).then_some(QUEUED_LIMITED)
 }
 
 /// What the keys read while a turn ran asked for.

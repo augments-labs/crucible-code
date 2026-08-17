@@ -216,6 +216,23 @@ count next and the clock after that, since all three are recoverable — the key
 is named under the box, and the other two will be back next second; the word is
 the last thing left.
 
+A prompt queued while the turn runs is named directly under that row, so a line
+that left the box has somewhere it can be read back:
+
+```
+✳ thinking (2m 56s · ↓ 12.8k · esc to interrupt)
+  Next: fix the failing test
+```
+
+It is the one the next turn takes — the oldest of the queue rather than the last
+you typed — and it starts in the column the word above it starts in, with no
+mark of its own, since nothing about it has begun. A prompt too wide for the
+window is cut at the right. Nothing parts it from the row above, because it is a
+second line of that row rather than a second thing beside it. On a window too
+short for everything standing over the box, this row goes before the one above
+it does: the prompt is still in the queue and its own turn will say it, and the
+row saying a turn is running is written nowhere else.
+
 Tool calls appear as they answer:
 
 ```

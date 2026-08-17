@@ -174,6 +174,29 @@ fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
 }
 
 #[test]
+fn what_is_waiting_is_the_line_that_goes_next_rather_than_the_one_typed_last() {
+    // The row above the box names it, so which of the queue it names is what
+    // the reader checks their typing against. The oldest is the one the next
+    // turn takes, and naming the newest would say a line is coming that three
+    // others are in front of.
+    let mut waiting = Prompts::default();
+    assert_eq!(waiting.waiting(), None);
+
+    let mut editor = typed("run the tests");
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    let mut editor = typed("now fix what failed");
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+
+    assert_eq!(waiting.waiting(), Some("run the tests"));
+
+    let _ = waiting.pop();
+    assert_eq!(waiting.waiting(), Some("now fix what failed"));
+
+    let _ = waiting.pop();
+    assert_eq!(waiting.waiting(), None);
+}
+
+#[test]
 fn typed_ahead_prompt_count_is_bounded_without_losing_the_refused_line() {
     let mut waiting = Prompts::default();
 

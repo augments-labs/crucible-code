@@ -473,6 +473,11 @@ fn take<T: Terminal>(
     // spends its first ten seconds connecting has spent them.
     let mut turning = Turning::started();
 
+    // A turn can start with prompts already behind it: the loop above took one
+    // of them and left the rest. Read before the first frame, so the row naming
+    // what is coming is right on the frame it first appears in.
+    turning.queueing(taking.queued.waiting(), renderer.columns(), terms.style);
+
     let working = thread::Builder::new()
         .name("turn".to_owned())
         .spawn(move || {
@@ -658,6 +663,16 @@ impl Prompts {
         self.bytes += bytes;
         self.lines.push_back(editor.take());
         Retained::Accepted
+    }
+
+    /// The prompt the next turn will be taken from, where one is waiting.
+    ///
+    /// Read while the turn ahead of it is still running, for the row that says
+    /// what is coming after it. A line that went into the box and vanished is
+    /// the thing this exists to stop: the queue is the only place it is, and
+    /// until it is named there is nothing on screen to say it was kept.
+    fn waiting(&self) -> Option<&str> {
+        self.lines.front().map(String::as_str)
     }
 
     /// Takes the oldest waiting prompt and releases its byte reservation.
