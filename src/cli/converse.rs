@@ -749,7 +749,7 @@ fn asked<T: Terminal>(
     if answers.keys {
         match asking::ask(renderer, style, call, sensitivity)? {
             asking::Answered::Said(answer, said) => {
-                draw::decided(renderer, call, sensitivity, said, style)?;
+                draw::decided(renderer, said, style)?;
                 return Ok(answer);
             }
 

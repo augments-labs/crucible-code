@@ -22,7 +22,9 @@ Notable changes to crucible. Format follows
   answers said in full — `↑` and `↓` move the mark, `enter` takes it, `1`, `2`
   and `3` answer directly, and `esc` refuses. What it costs: thirteen rows of
   the window while it is up. A redirected run, and a window with no room to
-  stand one in, are asked a row at a time as before.
+  stand one in, are asked a row at a time as before. What it leaves in the
+  transcript is the verdict alone, under the call that already names the
+  command.
 
 - **Every key is spelled with a plus.** The tips under the welcome say `ctrl+c`
   where they said `ctrl-c`, and so does the offer to leave, which puts them in
