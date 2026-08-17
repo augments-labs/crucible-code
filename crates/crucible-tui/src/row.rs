@@ -86,8 +86,18 @@ impl Row {
     /// a column reaches the divider on its right, and a row that has outgrown
     /// its column is one the caller has to shorten rather than one this can fix.
     pub fn pad(&mut self, columns: usize) {
+        self.fill(Slot::Plain, columns);
+    }
+
+    /// The same, in a slot the caller names.
+    ///
+    /// What a row that paints its own ground pads with. A space carries no ink
+    /// but it does carry a ground, so a row filled out in [`Slot::Plain`] is one
+    /// whose colour stops where its text does — and a block of them has a ragged
+    /// right edge with the reader's own ground showing through it.
+    pub fn fill(&mut self, slot: Slot, columns: usize) {
         let short = columns.saturating_sub(self.columns());
-        self.push(Slot::Plain, " ".repeat(short));
+        self.push(slot, " ".repeat(short));
     }
 
     /// How many display columns the row costs.
@@ -236,6 +246,26 @@ mod tests {
         let mut row = Row::plain("a much longer answer");
         row.pad(4);
         assert_eq!(row.text(), "a much longer answer");
+    }
+
+    #[test]
+    fn a_row_filled_out_in_a_slot_carries_that_slot_to_the_width() {
+        // Which is the whole of what a ground needs: the spaces at the end of a
+        // diff row are the part of it the reader's own theme would otherwise
+        // show through, and they are the part with nothing written on them to
+        // notice it by.
+        let mut row = Row::new().then(Slot::Added, "budgets:");
+        row.fill(Slot::Added, 12);
+
+        assert_eq!(row.columns(), 12);
+        assert_eq!(row.spans().last(), Some((Slot::Added, "    ")));
+
+        // And `pad` is the same thing in the reader's own foreground, which is
+        // what every row that is not painting a ground wants.
+        let mut row = Row::plain("ask");
+        row.pad(6);
+
+        assert_eq!(row.spans().last(), Some((Slot::Plain, "   ")));
     }
 
     #[test]
