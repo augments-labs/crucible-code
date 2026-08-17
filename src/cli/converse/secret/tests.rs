@@ -21,7 +21,7 @@ fn character(typed: char) -> Pressed {
 }
 
 #[test]
-fn what_is_typed_is_held_and_the_dots_follow_it() {
+fn what_is_typed_is_held_and_a_mark_follows_each_character() {
     let (held, last) = typed(&[character('s'), character('k'), character('-')]);
 
     assert_eq!(held, "sk-");
@@ -96,6 +96,27 @@ fn a_secret_past_the_box_ceiling_is_refused_and_said_so_beneath_it() {
     let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
     standing(&mut renderer, Style::plain(), "paste key", 0, true).expect("the refusal to be drawn");
     assert!(renderer.terminal().written().contains(LIMITED));
+}
+
+#[test]
+fn what_stands_in_for_a_character_comes_out_of_the_glyph_set() {
+    // One mark per character is the whole of what this box draws about the
+    // line, so a terminal whose font has no dot draws a row of hollow squares
+    // over a key being pasted — on the one row where there is nothing else to
+    // check what was typed against.
+    for (glyphs, mark) in [
+        (crucible_tui::Glyphs::Unicode, "•"),
+        (crucible_tui::Glyphs::Ascii, "*"),
+    ] {
+        let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+        standing(&mut renderer, Style::drawn(glyphs), "paste key", 3, false)
+            .expect("the box to be drawn");
+
+        assert!(
+            renderer.terminal().written().contains(&mark.repeat(3)),
+            "{glyphs:?}"
+        );
+    }
 }
 
 #[test]

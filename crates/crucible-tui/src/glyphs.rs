@@ -91,7 +91,13 @@ impl Glyphs {
     /// One column either way. The prompt reserves exactly that much room for
     /// it, and a set whose mark were two columns wide would push the line into
     /// the edge beside it.
-    pub(crate) fn caret(self) -> &'static str {
+    ///
+    /// Public because the prompt is not the only box a line is typed into: the
+    /// sign-in asks for a pasted authorization behind one of these, and a
+    /// second answer to "what is typed after" would make the two boxes look
+    /// like two kinds of thing.
+    #[must_use]
+    pub fn caret(self) -> &'static str {
         match self {
             Self::Unicode => "›",
             Self::Ascii => ">",
@@ -105,6 +111,19 @@ impl Glyphs {
         match self {
             Self::Unicode => "·",
             Self::Ascii => "-",
+        }
+    }
+
+    /// What stands in for one character of a line that is not shown.
+    ///
+    /// One column in both sets, which is what lets a box count the cursor's
+    /// column off the number of characters it is standing in for — the one
+    /// thing a box drawing these is allowed to know about the line.
+    #[must_use]
+    pub fn hidden(self) -> &'static str {
+        match self {
+            Self::Unicode => "•",
+            Self::Ascii => "*",
         }
     }
 
@@ -231,6 +250,22 @@ impl Glyphs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::columns;
+
+    #[test]
+    fn the_marks_a_box_counts_columns_off_are_one_column_in_both_sets() {
+        // A box that draws a line it may not show counts the cursor's column
+        // off the characters it stood in for, and the box it is typed into
+        // reserves exactly one column for its mark. Either of these two
+        // columns wide in one of the sets would park the cursor short of the
+        // line's end, in that set only — which is the one thing about a line
+        // nobody can read that is still visible.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
+            assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
 
     /// The wordmark split into the letters it is made of, one string each.
     ///

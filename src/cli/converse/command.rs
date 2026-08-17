@@ -345,14 +345,19 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Re
     Ok(renderer.present(&[row], terms.style.palette())?)
 }
 
-/// One row of the listing a run with no keyboard is given in place of a panel:
-/// the line that would take the row, and what taking it would reach.
+/// A thing and what is said about it, parted by the mark that says they are two.
 ///
-/// The three listings share this because they are read the same way — a command
-/// down the left and a sentence about it after the mark — and a mark that
-/// differed between them would say the three lists were three kinds of thing.
-fn about(said: &str, reaches: &str, glyphs: Glyphs) -> String {
-    format!("{said} {} {reaches}", glyphs.dash())
+/// The listing a run with no keyboard is given in place of a panel is read that
+/// way — a command down the left, what taking it would reach after the mark. So
+/// is a row of the sign-in's panel, which names the plan an account is billed
+/// under and then what taking the row does, and so is the row beneath a sign-in
+/// that has not finished, which is a state and the key that leaves it.
+///
+/// They share this because a mark that differed between them would say they
+/// were different kinds of thing, on surfaces somebody meets one after another
+/// inside a single sign-in.
+fn about(thing: &str, said: &str, glyphs: Glyphs) -> String {
+    format!("{thing} {} {said}", glyphs.dash())
 }
 
 /// The row that says which mode is in force, in the colour that mode is drawn
