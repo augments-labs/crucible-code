@@ -4,6 +4,8 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
+use crucible_core::Change;
+
 use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
 use crate::sample::{Sample, allowed};
 
@@ -390,4 +392,51 @@ fn editing_names_the_file_it_would_change() {
 
     assert!(matches!(sensitivity, Sensitivity::MutatesFile { .. }));
     assert_eq!(sensitivity.to_string(), "change one.rs");
+}
+
+#[test]
+fn a_change_leaves_the_lines_it_moved_behind_for_whoever_is_watching() {
+    let sample = Sample::new("edit-shown");
+    sample.write("show.rs", "let a = 1;\nlet b = 2;\nlet c = 3;\n");
+
+    let output = edit(
+        &sample,
+        r#"{"path":"show.rs","find":"let b = 2;","replace":"let b = 3;"}"#,
+    );
+
+    // The one thing an edit answers with that the model is never sent. The
+    // result text says how many replacements were made; which lines they landed
+    // on is a question only the two versions of the file can answer, and this
+    // call is the last place both of them exist.
+    let diff = output.diff().expect("the change the call made");
+    let block: Vec<(usize, Change, &str)> = diff
+        .lines()
+        .iter()
+        .map(|line| (line.number(), line.change(), line.text()))
+        .collect();
+
+    assert_eq!((diff.added(), diff.removed()), (1, 1));
+    assert_eq!(
+        block,
+        [
+            (1, Change::Kept, "let a = 1;"),
+            (2, Change::Removed, "let b = 2;"),
+            (2, Change::Added, "let b = 3;"),
+            (3, Change::Kept, "let c = 3;"),
+        ]
+    );
+}
+
+#[test]
+fn a_call_that_changed_nothing_leaves_nothing_to_draw() {
+    let sample = Sample::new("edit-nothing-shown");
+    sample.write("show.rs", "let a = 1;\n");
+
+    let output = edit(
+        &sample,
+        r#"{"path":"show.rs","find":"let z = 9;","replace":"let z = 8;"}"#,
+    );
+
+    assert!(output.is_failed());
+    assert!(output.diff().is_none());
 }
