@@ -259,7 +259,7 @@ impl Turning {
         // window that narrow has not got.
         match draw::words(said, columns, style) {
             words if words.is_empty() => row,
-            words => row.then(Slot::Plain, format!(" {words}")),
+            words => row.then(Slot::Plain, " ").join(words),
         }
     }
 
@@ -538,13 +538,26 @@ mod tests {
                 ..Turning::started()
             };
 
-            moment.call("Read(src/main.rs)", 80, style).paint(palette)
+            moment.call("Read(src/main.rs)", 80, style)
         };
         let (lit, dim) = (face(Duration::ZERO), face(Duration::from_millis(250)));
 
-        assert_ne!(lit, dim, "the mark did not pulse");
+        assert_ne!(
+            lit.paint(palette),
+            dim.paint(palette),
+            "the mark did not pulse"
+        );
+
+        // What the row says rather than what it is painted as, because the words
+        // are two spans now — the tool's name in the accent and its arguments in
+        // the quieter colour — and a sequence between them is bytes rather than
+        // a column the words moved by.
         for face in [&lit, &dim] {
-            assert!(face.contains("Read(src/main.rs)"), "{face}");
+            assert!(
+                face.text().ends_with("Read(src/main.rs)"),
+                "{}",
+                face.text()
+            );
         }
     }
 
