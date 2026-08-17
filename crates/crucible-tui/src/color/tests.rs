@@ -22,7 +22,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 10] {
+fn all() -> [Slot; 14] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -32,10 +32,14 @@ fn all() -> [Slot; 10] {
             Slot::Quiet => 3,
             Slot::AllowEdits => 4,
             Slot::FullAccess => 5,
-            Slot::Removed => 6,
-            Slot::RemovedNumber => 7,
-            Slot::Added => 8,
-            Slot::AddedNumber => 9,
+            Slot::Doing => 6,
+            Slot::DoingMark => 7,
+            Slot::Done => 8,
+            Slot::DoneMark => 9,
+            Slot::Removed => 10,
+            Slot::RemovedNumber => 11,
+            Slot::Added => 12,
+            Slot::AddedNumber => 13,
         }
     }
 
@@ -46,6 +50,10 @@ fn all() -> [Slot; 10] {
         Slot::Quiet,
         Slot::AllowEdits,
         Slot::FullAccess,
+        Slot::Doing,
+        Slot::DoingMark,
+        Slot::Done,
+        Slot::DoneMark,
         Slot::Removed,
         Slot::RemovedNumber,
         Slot::Added,
@@ -215,16 +223,19 @@ fn a_slot_that_takes_the_ground_is_legible_on_the_one_it_takes() {
 }
 
 #[test]
-fn the_two_slots_without_a_hue_are_the_two_that_meant_not_to_have_one() {
+fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // So the check above is known to have skipped only what it should. Plain is
     // the reader's own foreground and Quiet is their theme's answer to "subdued
-    // on this ground", which is the one judgement worth deferring to.
+    // on this ground", which is the one judgement worth deferring to. The other
+    // two are that same foreground with an attribute on it -- weight, and a
+    // line through it -- so what they are legible against is whatever Plain
+    // was, and there is no hue here for the check above to have an opinion on.
     let hueless: Vec<Slot> = all()
         .into_iter()
         .filter(|slot| !matches!(sets(at(Depth::Exact).open(*slot)).0, Sets::Exact(_)))
         .collect();
 
-    assert_eq!(hueless, [Slot::Plain, Slot::Quiet]);
+    assert_eq!(hueless, [Slot::Plain, Slot::Quiet, Slot::Doing, Slot::Done]);
 }
 
 #[test]
