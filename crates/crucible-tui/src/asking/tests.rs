@@ -91,3 +91,159 @@ fn the_rhythm_is_three_blanks_and_one_row_for_each_simple_command() {
 
     assert_eq!(inside(&rows), want);
 }
+
+#[test]
+fn a_command_wider_than_the_window_folds_and_every_row_is_indented_alike() {
+    // The content extreme, and the one the wording of this component turns on.
+    // A fold that left the first row shorter than the rest would put a whole
+    // command's worth of leading columns where the reader looks for one.
+    let long = "find . -name '*.rs' -newer target/.rustc_info.json -print0 | xargs -0 sed -i \
+                s/Budget/Ceiling/g && cargo test --workspace --all-features -- --nocapture";
+    let rows = asking(&[long]).within(WIDE, 24, Glyphs::Unicode);
+    let said = inside(&rows);
+
+    // The block between the blank under the subject and the blank under the
+    // payload, which is all of what a command was folded into.
+    let payload: Vec<&String> = said
+        .iter()
+        .skip_while(|row| !row.is_empty())
+        .skip(1)
+        .take_while(|row| !row.is_empty())
+        .collect();
+
+    assert!(payload.len() > 1, "{said:?}");
+    for row in &payload {
+        assert!(
+            row.starts_with("    ") && !row.starts_with("     "),
+            "{row:?}"
+        );
+    }
+
+    // Nothing was dropped on the way: every word of the command is still on
+    // screen, which is the property clipping would break silently.
+    let whole: Vec<&str> = payload
+        .iter()
+        .flat_map(|row| row.split_whitespace())
+        .collect();
+    assert_eq!(whole, long.split_whitespace().collect::<Vec<&str>>());
+}
+
+#[test]
+fn the_marked_answer_is_marked_as_well_as_coloured() {
+    // Colour alone would be the one thing on screen a terminal without it
+    // could not report, and the row a key is about to act on is the last thing
+    // to leave to a hue.
+    let mut question = asking(&["rm -rf build"]);
+    question.marked = 2;
+    let rows = question.within(WIDE, 24, Glyphs::Unicode);
+    let said = inside(&rows);
+
+    assert!(
+        said.iter().any(|row| row == "  › 3. No, and end the turn"),
+        "{said:?}"
+    );
+    assert!(said.iter().any(|row| row == "    1. Yes, once"), "{said:?}");
+
+    let marked = rows
+        .iter()
+        .find(|row| row.text().contains("3. No"))
+        .expect("the marked answer");
+    let spans: Vec<(Slot, &str)> = marked.spans().collect();
+
+    assert!(spans.contains(&(Slot::Accent, "›")), "{spans:?}");
+    assert!(
+        spans
+            .iter()
+            .any(|(slot, text)| *slot == Slot::Strong && text.contains("No, and end")),
+        "{spans:?}"
+    );
+}
+
+#[test]
+fn the_ladder_gives_up_the_footer_then_the_statement_then_the_blank() {
+    let question = asking(&["cargo test --workspace --all-features"]);
+    let rungs = [24, 12, 11, 9].map(|room| inside(&question.within(WIDE, room, Glyphs::Unicode)));
+
+    let held = |rows: &[String], said: &str| rows.iter().any(|row| row == said);
+    let footer = "  esc to cancel · ctrl+e to explain";
+    let statement = "  This command needs your verdict.";
+
+    let [full, quiet, plain, tight] = rungs;
+
+    assert_eq!(full.len(), 13);
+    assert!(held(&full, footer) && held(&full, statement));
+
+    assert_eq!(quiet.len(), 12);
+    assert!(!held(&quiet, footer) && held(&quiet, statement));
+
+    assert_eq!(plain.len(), 10);
+    assert!(!held(&plain, statement));
+    assert_eq!(plain.iter().filter(|row| row.is_empty()).count(), 2);
+
+    // The last rung: the blank under the subject goes, and the one under the
+    // payload stays. That one is what keeps the payload a block.
+    assert_eq!(tight.len(), 9);
+    assert_eq!(tight.iter().filter(|row| row.is_empty()).count(), 1);
+}
+
+#[test]
+fn what_is_about_to_run_survives_every_rung() {
+    let question = asking(&["cargo fmt --all", "git push origin HEAD"]);
+
+    for room in 9..=24 {
+        let said = inside(&question.within(WIDE, room, Glyphs::Unicode));
+        if said.is_empty() {
+            continue;
+        }
+        assert!(
+            said.iter().any(|row| row == "    cargo fmt --all"),
+            "{room}: {said:?}"
+        );
+        assert!(
+            said.iter().any(|row| row == "    git push origin HEAD"),
+            "{room}: {said:?}"
+        );
+    }
+}
+
+#[test]
+fn below_the_floor_there_is_no_panel_rather_than_a_short_one() {
+    let question = asking(&["cargo test --workspace --all-features"]);
+
+    // A row short of the floor, and a window with no room to fold a command
+    // to. Both are the caller's cue to ask in the scrollback, where nothing
+    // bounds the height of the question.
+    assert!(question.within(WIDE, 8, Glyphs::Unicode).is_empty());
+    assert!(
+        question
+            .within(AROUND + PAYLOAD, 24, Glyphs::Unicode)
+            .is_empty()
+    );
+    assert!(question.within(0, 24, Glyphs::Unicode).is_empty());
+
+    // And a call with nothing to show is not a question anyone can answer.
+    assert!(asking(&[]).within(WIDE, 24, Glyphs::Unicode).is_empty());
+}
+
+#[test]
+fn both_glyph_sets_draw_the_same_panel_at_the_same_width() {
+    let question = asking(&["cargo fmt --all", "git push origin HEAD"]);
+    let unicode = question.within(WIDE, 24, Glyphs::Unicode);
+    let ascii = question.within(WIDE, 24, Glyphs::Ascii);
+
+    assert_eq!(unicode.len(), ascii.len());
+    for (one, other) in unicode.iter().zip(&ascii) {
+        assert_eq!(one.columns(), other.columns(), "{:?}", other.text());
+    }
+
+    // The ascii set draws a frame and a mark of its own rather than dropping
+    // either: a terminal whose font has no box drawing still has to be able to
+    // see which answer a key is about to take.
+    let said = ascii
+        .iter()
+        .map(Row::text)
+        .collect::<Vec<String>>()
+        .join("\n");
+    assert!(said.contains("+---"), "{said}");
+    assert!(said.contains("|  > 1. Yes, once"), "{said}");
+}
