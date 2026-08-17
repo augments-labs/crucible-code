@@ -21,7 +21,13 @@ cd "$(dirname "$0")/.."
 # all of them. Nothing rewards filling the budget and nothing rewards splitting
 # to stay under it — what a file owes is one reason to change, and its length
 # follows from that.
-readonly MAX_FILE_LINES=1000
+#
+# It sat at 1000 and was moved because that was landing on the wrong side of the
+# judgement: a module with its tests beside it reaches four figures while it
+# still has one subject, and what the old number bought was a sibling `tests.rs`
+# next to half the modules here, holding no subject of its own and named after
+# the file it was cut out of.
+readonly MAX_FILE_LINES=2000
 
 # Every section runs, and the run reports all of them together.
 #

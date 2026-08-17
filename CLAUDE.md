@@ -17,7 +17,7 @@ scripts/check.sh
 
 Run it before every commit. It is exactly what CI runs.
 
-Its thresholds are ceilings, not targets: 1000 lines for a file, 100 for a
+Its thresholds are ceilings, not targets: 2000 lines for a file, 100 for a
 function. What a file owes is one reason to change, under a name that says what
 it holds, and its length follows from that. The ceiling is set where a file has
 plainly lost that name rather than where a careful one lands, because the
