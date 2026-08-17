@@ -59,17 +59,17 @@ const TICK: Duration = Duration::from_millis(20);
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// One of those arguments is not for this tool. The `description` under
-/// `properties` is never read here — it is drawn on the panel where somebody
-/// decides whether this call may run, and the reason it arrives with the call
-/// rather than being asked for when the panel opens is that the thread holding
-/// the terminal has no provider to ask. So it is declared here, at the one
-/// place a model is told what it may send, and read a layer up by
-/// [`crate::account`].
+/// Two of those arguments are not for this tool. The `description` and
+/// `explanation` under `properties` are never read here — they are drawn on the
+/// panel where somebody decides whether this call may run, and the reason they
+/// arrive with the call rather than being asked for when the panel opens is
+/// that the thread holding the terminal has no provider to ask. So they are
+/// declared here, at the one place a model is told what it may send, and read a
+/// layer up by [`crate::account`].
 ///
-/// It is not required, and that is the whole of what keeps it optional in
+/// Neither is required, and that is the whole of what keeps them optional in
 /// practice too: a call that says nothing about itself gets the panel it would
-/// have got before this existed, rather than a panel with a blank where an
+/// have got before either existed, rather than a panel with a blank where an
 /// account of the command should be.
 const SCHEMA: &str = r#"{
   "description": "Runs a shell command in the workspace root and returns its output and exit status.",
@@ -87,6 +87,13 @@ const SCHEMA: &str = r#"{
     "description": {
       "type": "string",
       "description": "One short line saying what this call is for, shown under the command to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
+    },
+    "explanation": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What the command does, why you want it, and what it costs if it is wrong. One string per paragraph, opened with a key by the same person, so write it for them rather than for yourself and do not restate the command: it is already on screen above this. Where the line runs more than one command, account for each of them."
     }
   },
   "required": ["command"]

@@ -118,7 +118,7 @@ pub(super) fn pick<T: Terminal>(
         style,
         &mut at,
         |marked, columns, rows| {
-            panel.chosen = marked;
+            panel.chosen = *marked;
             panel.within(columns, rows, style.glyphs())
         },
         |arrived, at| moving(arrived, at, count),
@@ -154,7 +154,7 @@ pub(super) fn adjust<T: Terminal>(
         style,
         &mut at,
         |marked, columns, _| {
-            ladder.chosen = marked;
+            ladder.chosen = *marked;
             ladder.rows(columns, style.glyphs())
         },
         |arrived, at| sliding(arrived, at, count),

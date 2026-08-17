@@ -42,7 +42,7 @@ the prompt box:
 │    2. Yes, and don't ask again this session                                  │
 │    3. No, and end the turn                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  esc to cancel
+  esc to cancel · ctrl+e to explain
 ```
 
 The line over the frame names the tool and what the call is about — a file for
@@ -66,12 +66,15 @@ Read it as what the model *says* it is doing; what it *would* do is the line
 above, and that one was read out of the arguments rather than written. The
 caption is cut to one row however much arrived, so nothing off-screen decides
 how tall this panel is, and a call that offered none leaves the row out
-entirely. `bash` is the tool that invites one today,
-[`description`](../tools/commands.md).
+entirely. It is spelled `description`, and the tools that invite one are the
+three whose calls stop here: [`bash`](../tools/commands.md),
+[`write` and `edit`](../tools/files.md). A read is allowed or refused without
+being asked about, so there would be nowhere to draw one.
 
 `↑` and `↓` move the mark, and stop at each end rather than wrapping. `enter`
 takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.
-`esc` refuses.
+`esc` refuses, and `ctrl+e` opens [what the call said about
+itself](#the-long-version) where it said more than a line.
 
 Where there is no keyboard — a redirected run — or no room to stand a panel in,
 the same question is asked a row at a time and the answer is typed:
@@ -86,6 +89,55 @@ was written there, so it stays there. The panel stood in the live region and
 the region was given back, so what stays is the verdict alone, under the call
 that already names the command — a second copy of it there would be the same
 consent read twice.
+
+## The long version
+
+The same three tools invite paragraphs as well, in `explanation`. The footer
+names the key where a call sent them, and `ctrl+e` opens them under the command
+or the path:
+
+```
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  Bash command                                                                │
+│                                                                              │
+│    cargo test --workspace --all-features                                     │
+│    Run the suite before touching the module                                  │
+│                                                                              │
+│    bash's own account of this call:                                          │
+│                                                                              │
+│    Runs every test in the workspace, including the ones behind a             │
+│    feature flag. It reads the tree and writes under target/ only, so         │
+│    · 5 more rows of explanation                                              │
+│                                                                              │
+│  This command needs your verdict.                                            │
+│                                                                              │
+│  Do you want to proceed?                                                     │
+│  › 1. Yes, once                                                              │
+│    2. Yes, and don't ask again this session                                  │
+│    3. No, and end the turn                                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  esc to cancel · ctrl+e to hide · ↑↓ to see more
+```
+
+The row over them says whose words they are, and it is crucible's rather than
+the model's. Everything else inside the frame was read out of the arguments;
+this is the one part of the panel the thing asking for the permission wrote,
+and it is the case *for* the call, made by whatever wants it run. Worth
+reading, and not evidence: what would actually happen is the line at the top.
+
+The paragraphs are the first thing on the panel to give way. The command, the
+sentence and the three answers are its floor and are never traded for room, so
+where the window is short it is the prose that gets less of it — down to none,
+which is a call whose explanation cannot be opened in a terminal that size.
+Where they run past the room there is, the last row of them counts what is
+underneath, `↑` and `↓` move the window, and the count falls as you go until
+the end, where the row goes back to being a paragraph. `ctrl+e` again closes
+them.
+
+Where the paragraphs fit whole there is nothing to scroll, so the arrows go on
+moving the mark. And a call that sent none gets the panel that was there before
+any of this, footer included — the key is named where it does something, and
+nowhere else.
 
 ## The three answers
 

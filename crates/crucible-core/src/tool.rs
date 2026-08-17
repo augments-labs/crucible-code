@@ -152,13 +152,36 @@ impl fmt::Debug for Summary {
 /// and it goes in the transcript. This is what the model says *about* the call,
 /// in its own words, and it is shown only while somebody is deciding.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Account(Box<str>);
+pub struct Account {
+    description: Box<str>,
+    explanation: Box<[Box<str>]>,
+}
 
 impl Account {
     /// Takes the one line a call gave about itself.
     #[must_use]
     pub fn new(description: impl Into<Box<str>>) -> Self {
-        Self(description.into())
+        Self {
+            description: description.into(),
+            explanation: Box::new([]),
+        }
+    }
+
+    /// Takes the line and the paragraphs behind it.
+    ///
+    /// Two things rather than one because they are shown at different times: the
+    /// line is on the panel from the moment it opens, and the paragraphs are
+    /// behind a key somebody has to press. A call that wrote only the first is
+    /// the ordinary one.
+    #[must_use]
+    pub fn explained(
+        description: impl Into<Box<str>>,
+        explanation: impl IntoIterator<Item = impl Into<Box<str>>>,
+    ) -> Self {
+        Self {
+            explanation: explanation.into_iter().map(Into::into).collect(),
+            ..Self::new(description)
+        }
     }
 
     /// A call that said nothing about itself.
@@ -170,7 +193,15 @@ impl Account {
     /// The line, for whatever is drawing the question.
     #[must_use]
     pub fn description(&self) -> &str {
-        &self.0
+        &self.description
+    }
+
+    /// The paragraphs, in the order they were written.
+    ///
+    /// Empty is the ordinary case and means the panel opens with no prose behind
+    /// its key — which is the panel there was before any of this existed.
+    pub fn explanation(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.explanation.iter().map(AsRef::as_ref)
     }
 }
 
@@ -335,6 +366,41 @@ mod tests {
         assert!(!ToolOutput::ok("done").is_failed());
         assert!(ToolOutput::failed("no such file").is_failed());
         assert_eq!(ToolOutput::failed("no such file").text(), "no such file");
+    }
+
+    #[test]
+    fn a_call_carries_the_paragraphs_it_would_be_explained_in() {
+        let account = Account::explained(
+            "run the suite",
+            ["It builds every crate.", "It takes about two minutes."],
+        );
+
+        assert_eq!(account.description(), "run the suite");
+        assert_eq!(
+            account.explanation().collect::<Vec<_>>(),
+            ["It builds every crate.", "It takes about two minutes."]
+        );
+    }
+
+    #[test]
+    fn a_call_that_said_only_what_it_was_for_did_not_explain_itself() {
+        // The two travel together and stay separate the whole way down: the
+        // line is a caption drawn with the panel, and the paragraphs are prose
+        // behind a key. A call that wrote one and not the other gets that.
+        assert_eq!(Account::new("lists the files").explanation().len(), 0);
+        assert_eq!(Account::none().explanation().len(), 0);
+        assert!(Account::none().description().is_empty());
+    }
+
+    #[test]
+    fn account_debug_never_shows_what_the_model_wrote() {
+        let account = Account::explained("description-canary", ["explanation-canary"]);
+        let shown = format!("{account:?}");
+
+        for canary in ["description-canary", "explanation-canary"] {
+            assert!(!shown.contains(canary), "{shown}");
+        }
+        assert!(shown.contains("redacted"));
     }
 
     #[test]

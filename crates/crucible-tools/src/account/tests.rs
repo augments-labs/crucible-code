@@ -4,11 +4,19 @@ use crucible_core::{Cancel, Tool, ToolArgs, Workspace};
 
 use super::of;
 use crate::sample::Sample;
-use crate::{Bash, Ledger, Read};
+use crate::{Bash, Edit, Ledger, Read, Write};
 
 /// The tools whose schemas invite an account, built against a scratch tree.
+///
+/// Which is the tools whose calls stop at a panel: a command and the two ways
+/// to change a file. A read is allowed or refused without being asked about, so
+/// prose sent with one would be paid for and never drawn.
 fn inviting(workspace: &Workspace) -> Vec<Box<dyn Tool>> {
-    vec![Box::new(Bash::new(workspace.clone(), Cancel::new()))]
+    vec![
+        Box::new(Bash::new(workspace.clone(), Cancel::new())),
+        Box::new(Write::new(workspace.clone(), Ledger::new())),
+        Box::new(Edit::new(workspace.clone(), Cancel::new())),
+    ]
 }
 
 #[test]
@@ -42,6 +50,43 @@ fn a_call_that_said_nothing_about_itself_is_read_as_having_said_nothing() {
 }
 
 #[test]
+fn a_call_is_read_as_explaining_itself_in_the_paragraphs_it_wrote() {
+    let said = of(&ToolArgs::new(
+        r#"{"command":"cargo test",
+            "description":"run the suite",
+            "explanation":["It builds every crate.","It takes about two minutes."]}"#,
+    ));
+
+    assert_eq!(said.description(), "run the suite");
+    assert_eq!(
+        said.explanation().collect::<Vec<_>>(),
+        ["It builds every crate.", "It takes about two minutes."]
+    );
+}
+
+#[test]
+fn a_call_that_explained_nothing_is_read_as_having_explained_nothing() {
+    // The line and the paragraphs are separate arguments and a call is free to
+    // send either without the other, so every way of getting the second wrong
+    // has to leave the first standing. The wrong-shape ones are the point: a
+    // model that sent one string where a list was asked for still said
+    // something worth putting on the panel, and refusing the lot would throw it
+    // away over prose nobody validates.
+    for arguments in [
+        r#"{"command":"ls","description":"list the files"}"#,
+        r#"{"command":"ls","description":"list the files","explanation":null}"#,
+        r#"{"command":"ls","description":"list the files","explanation":[]}"#,
+        r#"{"command":"ls","description":"list the files","explanation":"one paragraph"}"#,
+        r#"{"command":"ls","description":"list the files","explanation":["fine",7]}"#,
+    ] {
+        let said = of(&ToolArgs::new(arguments));
+
+        assert_eq!(said.explanation().len(), 0, "{arguments}");
+        assert_eq!(said.description(), "list the files", "{arguments}");
+    }
+}
+
+#[test]
 fn a_tool_that_invites_an_account_is_a_tool_whose_schema_asks_for_one() {
     // The reading above is one name for every tool, so what decides whether a
     // call can account for itself is the schema — and a schema that never
@@ -52,11 +97,13 @@ fn a_tool_that_invites_an_account_is_a_tool_whose_schema_asks_for_one() {
     let workspace = sample.workspace();
 
     for tool in inviting(&workspace) {
-        assert!(
-            tool.schema().contains(r#""description": {"#),
-            "{} invites no account",
-            tool.name()
-        );
+        for field in [r#""description": {"#, r#""explanation": {"#] {
+            assert!(
+                tool.schema().contains(field),
+                "{} invites no {field}",
+                tool.name()
+            );
+        }
     }
 
     // And one that does not, so the assertion above is about this schema rather
@@ -64,4 +111,5 @@ fn a_tool_that_invites_an_account_is_a_tool_whose_schema_asks_for_one() {
     // every one of them opens with the tool's own.
     let quiet = Read::new(workspace, Cancel::new(), Ledger::new());
     assert!(!quiet.schema().contains(r#""description": {"#));
+    assert!(!quiet.schema().contains(r#""explanation": {"#));
 }
