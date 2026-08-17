@@ -56,6 +56,7 @@
 //! in, not a fence. What bounds that tool is the permission engine, which is
 //! why the question it asks names the program the command is about to run.
 
+mod account;
 mod args;
 mod atomic;
 mod bash;
@@ -73,6 +74,7 @@ mod target;
 mod tree;
 mod write;
 
+pub use account::of as account;
 pub use bash::Bash;
 pub use edit::Edit;
 pub use glob::Glob;

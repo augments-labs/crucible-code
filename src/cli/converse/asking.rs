@@ -13,7 +13,7 @@
 //! question was asked: a window with no room for a panel still asks, a row at a
 //! time, and a transcript should not say which of the two happened.
 
-use crucible_core::{Remember, Sensitivity, ToolCall, Verdict};
+use crucible_core::{Account, Remember, Sensitivity, ToolCall, Verdict};
 use crucible_tui::{Key, Pressed, Question, Renderer, Terminal};
 
 use crate::cli::Fatal;
@@ -76,13 +76,22 @@ pub(super) enum Answered {
 struct Words {
     subject: String,
     payload: String,
+    description: String,
     statement: &'static str,
 }
 
 impl Words {
     /// What to say about this call.
-    fn of(call: &ToolCall, sensitivity: &Sensitivity) -> Self {
+    ///
+    /// Everything but the description is worked out from what the tool read out
+    /// of the arguments; the description is the model's own sentence, and it is
+    /// flattened for the reason the payload is. It is the one row here written
+    /// by the thing being consented to, which is why it is a caption on the
+    /// command rather than a line standing on its own — what is agreed to sits
+    /// above it and was not written by the same author.
+    fn of(call: &ToolCall, sensitivity: &Sensitivity, account: &Account) -> Self {
         let name = pascal(&call.name);
+        let description = flattened(account.description());
 
         match sensitivity {
             // Never reached through the permission engine, which allows or
@@ -91,12 +100,14 @@ impl Words {
             Sensitivity::ReadOnly { target } => Self {
                 subject: format!("{name} file"),
                 payload: flattened(target),
+                description,
                 statement: "This read needs your verdict.",
             },
 
             Sensitivity::MutatesFile { target } => Self {
                 subject: format!("{name} file"),
                 payload: flattened(target),
+                description,
                 statement: "This change needs your verdict.",
             },
 
@@ -107,6 +118,7 @@ impl Words {
             Sensitivity::SpawnsProcess { command } => Self {
                 subject: format!("{name} command"),
                 payload: flattened(command.sent()),
+                description,
                 statement: "This command needs your verdict.",
             },
         }
@@ -123,8 +135,9 @@ pub(super) fn ask<T: Terminal>(
     style: Style,
     call: &ToolCall,
     sensitivity: &Sensitivity,
+    account: &Account,
 ) -> Result<Answered, Fatal> {
-    let words = Words::of(call, sensitivity);
+    let words = Words::of(call, sensitivity, account);
 
     // One entry, because a command is one thing being agreed to however many
     // rows it folds to. The slice is for a call that would show two, and none
@@ -135,7 +148,7 @@ pub(super) fn ask<T: Terminal>(
     let mut question = Question {
         subject: &words.subject,
         payload: &payload,
-        description: "",
+        description: &words.description,
         explanation: &[],
         from: 0,
         more: "",

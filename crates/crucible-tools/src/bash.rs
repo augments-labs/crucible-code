@@ -58,6 +58,19 @@ const TICK: Duration = Duration::from_millis(20);
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
+///
+/// One of those arguments is not for this tool. The `description` under
+/// `properties` is never read here — it is drawn on the panel where somebody
+/// decides whether this call may run, and the reason it arrives with the call
+/// rather than being asked for when the panel opens is that the thread holding
+/// the terminal has no provider to ask. So it is declared here, at the one
+/// place a model is told what it may send, and read a layer up by
+/// [`crate::account`].
+///
+/// It is not required, and that is the whole of what keeps it optional in
+/// practice too: a call that says nothing about itself gets the panel it would
+/// have got before this existed, rather than a panel with a blank where an
+/// account of the command should be.
 const SCHEMA: &str = r#"{
   "description": "Runs a shell command in the workspace root and returns its output and exit status.",
   "type": "object",
@@ -70,6 +83,10 @@ const SCHEMA: &str = r#"{
       "type": "integer",
       "minimum": 1,
       "description": "How many seconds to allow before stopping it. Defaults to 120, and cannot exceed 600."
+    },
+    "description": {
+      "type": "string",
+      "description": "One short line saying what this call is for, shown under the command to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
     }
   },
   "required": ["command"]
