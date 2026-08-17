@@ -20,6 +20,12 @@
 //! the terminal's own theme has made, so it is the one colour worth deferring
 //! to rather than computing.
 //!
+//! Two slots carry an attribute and no hue at all, which is the same deferral
+//! read the other way: weight and a line through the text are the reader's own
+//! foreground, moved, and a foreground that is already legible on their ground
+//! is still legible bolder. A terminal that draws neither loses the emphasis
+//! and keeps the words, which is why nothing is ever said by weight alone.
+//!
 //! A diff is the one thing that takes the ground, and it takes it the only way
 //! that is safe: a slot painting a ground paints its ink in the same sequence,
 //! so the pair is a pair this palette chose whole and the reader's theme is
@@ -47,6 +53,22 @@ pub enum Slot {
     AllowEdits,
     /// The mode that asks about nothing at all.
     FullAccess,
+    /// The one task a plan is under way on.
+    ///
+    /// Weight rather than a hue, because the panel already spends its one warm
+    /// colour on the mark beside this. A row that took a second hue would be
+    /// two things asking to be looked at on a picture whose whole job is to
+    /// answer that in one.
+    Doing,
+    /// That task's mark, and the only warm colour on the screen.
+    DoingMark,
+    /// A task a plan has finished with.
+    ///
+    /// Struck through and subdued together: behind you, still legible,
+    /// deliberately easy to slide over.
+    Done,
+    /// That task's mark.
+    DoneMark,
     /// A line a change took out, on a ground of its own.
     Removed,
     /// That line's number, and the sign beside it, on the same ground.
@@ -92,6 +114,29 @@ const NONE: Ink = Ink {
     basic: "",
 };
 
+/// The narrowest permission mode, and the mark on a task a plan has finished
+/// with.
+///
+/// One colour under two names, and named here rather than written twice so it
+/// stays one. A second green a shade off this one would be two colours that are
+/// nearly the same, which reads worse than two that are exactly — and it would
+/// be a decision nobody made, arrived at by copying.
+const GREEN: Ink = Ink {
+    exact: "\x1b[38;2;53;145;90m",
+    indexed: "\x1b[38;5;65m",
+    basic: "\x1b[32m",
+};
+
+/// The widest permission mode, and the mark on the task a plan is under way on.
+///
+/// The same reuse as the green above, for the same reason. What the two have in
+/// common is that each is the one thing on its picture worth looking at first.
+const AMBER: Ink = Ink {
+    exact: "\x1b[38;2;176;132;22m",
+    indexed: "\x1b[38;5;136m",
+    basic: "\x1b[33m",
+};
+
 impl Slot {
     /// What this slot is worth, at each rung.
     const fn ink(self) -> Ink {
@@ -111,15 +156,26 @@ impl Slot {
                 basic: "\x1b[1;36m",
             },
             Self::Quiet => QUIET,
-            Self::AllowEdits => Ink {
-                exact: "\x1b[38;2;53;145;90m",
-                indexed: "\x1b[38;5;65m",
-                basic: "\x1b[32m",
+            Self::AllowEdits | Self::DoneMark => GREEN,
+            Self::FullAccess | Self::DoingMark => AMBER,
+            // Weight and nothing else, at every rung: the reader's own
+            // foreground, emphasised. There is no ladder to climb because there
+            // is no colour to spend -- an attribute is the same byte on a
+            // terminal with sixteen colours and on one with sixteen million.
+            Self::Doing => Ink {
+                exact: "\x1b[1m",
+                indexed: "\x1b[1m",
+                basic: "\x1b[1m",
             },
-            Self::FullAccess => Ink {
-                exact: "\x1b[38;2;176;132;22m",
-                indexed: "\x1b[38;5;136m",
-                basic: "\x1b[33m",
+            // Struck through and quiet together, and quiet is the terminal's own
+            // answer for the reason it always is. The line through the text is
+            // what carries the meaning where a terminal draws it and nothing
+            // where one does not -- so the grey is beside it rather than behind
+            // it, and a task that is finished still reads as subdued either way.
+            Self::Done => Ink {
+                exact: "\x1b[9;90m",
+                indexed: "\x1b[9;90m",
+                basic: "\x1b[9;90m",
             },
             // Ground and ink in one sequence, so neither can be written without
             // the other. The four below are the whole of the exception in this

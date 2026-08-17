@@ -206,6 +206,44 @@ impl Glyphs {
         }
     }
 
+    /// The mark on the one task a plan is under way on.
+    ///
+    /// Filled where the next one is hollow, which is the whole of what the two
+    /// have to say apart from each other. The three below are read down a
+    /// column of adjacent rows rather than met one at a time, so what matters
+    /// about them is that no two are alike — and the test at the bottom is
+    /// where that is checked, in both sets.
+    #[must_use]
+    pub fn doing(self) -> &'static str {
+        match self {
+            Self::Unicode => "■",
+            Self::Ascii => "*",
+        }
+    }
+
+    /// The mark on a task nobody has started.
+    #[must_use]
+    pub fn open(self) -> &'static str {
+        match self {
+            Self::Unicode => "□",
+            Self::Ascii => "-",
+        }
+    }
+
+    /// The mark on a task that is finished.
+    ///
+    /// The same letter as [`Glyphs::failed`] in the ascii set, and deliberately
+    /// so: `x` is what a box is ticked with where there is no tick to be had,
+    /// and the two never appear on the same picture — one is a plan and the
+    /// other is what a tool answered.
+    #[must_use]
+    pub fn done(self) -> &'static str {
+        match self {
+            Self::Unicode => "✓",
+            Self::Ascii => "x",
+        }
+    }
+
     /// The mark that stands on a track, pointing at the rung in force.
     ///
     /// One column either way, like the caret: it is drawn into a track of a
@@ -305,6 +343,32 @@ mod tests {
             let (left, right) = glyphs.stepping();
             let (up, down) = glyphs.walking();
             let marks = [left, right, up, down];
+
+            for mark in marks {
+                assert_eq!(columns(mark), 1, "{glyphs:?}: {mark:?}");
+            }
+            for (at, mark) in marks.iter().enumerate() {
+                assert!(
+                    !marks.iter().skip(at + 1).any(|other| other == mark),
+                    "{glyphs:?}: {mark:?} twice"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_three_states_of_a_task_are_three_different_marks_in_both_sets() {
+        // They are read down a column, one row apart, and the mark is the only
+        // thing on the row that says which state a task is in -- colour says it
+        // again and a terminal with none says it not at all. Two states drawn
+        // alike is a panel that cannot be read on that terminal, in that set
+        // only, which is the failure nobody sees on the one they are using.
+        //
+        // One column apiece for the reason the caret is: the words after the
+        // marks start in the column the gutter reserved, and a mark two columns
+        // wide in one set would indent that set's rows by one.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let marks = [glyphs.doing(), glyphs.open(), glyphs.done()];
 
             for mark in marks {
                 assert_eq!(columns(mark), 1, "{glyphs:?}: {mark:?}");
