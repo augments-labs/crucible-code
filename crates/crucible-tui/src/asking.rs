@@ -23,6 +23,20 @@
 //! list skimmed past on the way to the answers, so they are the last thing
 //! given up rather than the first — [`Spacing`] holds the order.
 //!
+//! **The description is a caption, and that is why it has no blank above it.**
+//! A blank is what separates one block here from the next, so withholding one
+//! is the whole of what joins that row to the command it describes.
+//!
+//! **The prose is the first thing to give way, and it says so.** A description
+//! and an explanation are written by whatever asked for the permission, so they
+//! are drawn quiet, they sit below the thing they are about, and they are what
+//! the height is taken out of: the explanation is cut to the rows left over and
+//! the row where it stops says how many are not on screen. What is about to run
+//! and the answers under it are never what gives way — and unlike a rung of
+//! [`Spacing`], the reader gets this back by pressing the key again. To keep
+//! the same argument on one row, a description is clipped rather than folded:
+//! a caption that folded would let whatever wrote it decide how tall this is.
+//!
 //! **Where the colour goes.** The frame and the mark are [`Slot::Accent`], the
 //! subject and the marked answer [`Slot::Strong`], the payload and the
 //! sentences the reader's own foreground, and the footer [`Slot::Quiet`]. The
@@ -47,6 +61,13 @@ const SAID: usize = 2;
 /// thing it indents may not be cut to fit — so it stays small.
 const PAYLOAD: usize = 4;
 
+/// The fewest rows worth opening the prose in: the blank that starts a
+/// paragraph, and the row saying how much of it is not on screen.
+///
+/// Under that there is nothing true to draw, so the panel stays the one the
+/// reader was already looking at and the window is what has to change.
+const AT_LEAST: usize = 2;
+
 /// One call, waiting for a verdict.
 ///
 /// Every string here is the caller's. This crate depends on nothing and cannot
@@ -56,9 +77,18 @@ const PAYLOAD: usize = 4;
 pub struct Question<'a> {
     /// The few words naming what is about to happen: `Bash command`.
     pub subject: &'a str,
-    /// One row each, and the part that is never clipped: the simple commands a
-    /// call decomposes into, or the path a change is about to be written to.
+    /// What is about to happen, word for word: the command as the call carried
+    /// it, or the path a change is about to be written to.
+    ///
+    /// Folded to the width and never clipped, reworded or joined. A compound
+    /// command keeps the operators that make it compound, because `&&` and `;`
+    /// are the difference between two commands and two commands *if the first
+    /// one worked*, and that difference is part of what is being consented to.
     pub payload: &'a [&'a str],
+    /// One row under the payload saying what the call is for, or empty.
+    pub description: &'a str,
+    /// The paragraphs a reader asked to see, or empty until they ask.
+    pub explanation: &'a [&'a str],
     /// The sentence under the payload, saying why this stopped.
     pub statement: &'a str,
     /// The question the answers answer.
@@ -80,8 +110,19 @@ impl Question<'_> {
     /// component exists to refuse.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        // The prose gives way before the spacing does, and before anything the
+        // ladder touches. It is the one thing here a reader can have back for
+        // the price of the key they pressed to see it.
+        if !self.explanation.is_empty() {
+            let bare = self.laid(columns, glyphs, Spacing::WHOLE, 0);
+            let spare = room.saturating_sub(bare.len());
+            if !bare.is_empty() && spare >= AT_LEAST {
+                return self.laid(columns, glyphs, Spacing::WHOLE, spare);
+            }
+        }
+
         for spacing in Spacing::LADDER {
-            let rows = self.laid(columns, glyphs, spacing);
+            let rows = self.laid(columns, glyphs, spacing, 0);
             if !rows.is_empty() && rows.len() <= room {
                 return rows;
             }
@@ -90,8 +131,8 @@ impl Question<'_> {
         Vec::new()
     }
 
-    /// The panel at one rung of the ladder.
-    fn laid(&self, columns: usize, glyphs: Glyphs, spacing: Spacing) -> Vec<Row> {
+    /// The panel at one rung of the ladder, with `spare` rows for the prose.
+    fn laid(&self, columns: usize, glyphs: Glyphs, spacing: Spacing, spare: usize) -> Vec<Row> {
         let inner = columns.saturating_sub(AROUND);
         let across = inner.saturating_sub(SAID);
         let payload = inner.saturating_sub(PAYLOAD);
@@ -121,6 +162,11 @@ impl Question<'_> {
                 rows.push(framed(said(PAYLOAD, Slot::Plain, line), inner, glyphs));
             }
         }
+        if !self.description.is_empty() {
+            let line = clip(self.description, payload);
+            rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
+        }
+        rows.extend(self.told(inner, payload, glyphs, spare));
         rows.push(framed(Row::new(), inner, glyphs));
 
         if spacing.statement {
@@ -142,6 +188,47 @@ impl Question<'_> {
             let room = columns.saturating_sub(SAID);
             rows.push(said(SAID, Slot::Quiet, clip(self.footer, room)));
         }
+
+        rows
+    }
+
+    /// The prose a reader asked for, in `spare` rows, saying so where it was
+    /// cut.
+    ///
+    /// Empty where nothing was asked for, and empty where `spare` is zero,
+    /// which is what leaves the unexplained panel exactly the panel it was.
+    fn told(&self, inner: usize, payload: usize, glyphs: Glyphs, spare: usize) -> Vec<Row> {
+        let mut rows = Vec::new();
+        if spare == 0 {
+            return rows;
+        }
+
+        for paragraph in self.explanation {
+            rows.push(framed(Row::new(), inner, glyphs));
+            for line in fold(paragraph, payload) {
+                rows.push(framed(said(PAYLOAD, Slot::Plain, line), inner, glyphs));
+            }
+        }
+
+        if rows.len() <= spare {
+            return rows;
+        }
+
+        // Counted in rows rather than paragraphs, because a row is what ran
+        // out, and the reader is deciding whether to make the window taller.
+        let keep = spare.saturating_sub(1);
+        let left = rows.len() - keep;
+        let counted = if left == 1 { "row" } else { "rows" };
+        rows.truncate(keep);
+        rows.push(framed(
+            said(
+                PAYLOAD,
+                Slot::Quiet,
+                &format!("{} {left} more {counted} of explanation", glyphs.dot()),
+            ),
+            inner,
+            glyphs,
+        ));
 
         rows
     }
@@ -197,13 +284,16 @@ struct Spacing {
 }
 
 impl Spacing {
+    /// Every blank drawn, which is the rung the prose is measured against.
+    const WHOLE: Self = Self {
+        footer: true,
+        statement: true,
+        opening: true,
+    };
+
     /// The rungs, in the order they are given up.
     const LADDER: [Self; 4] = [
-        Self {
-            footer: true,
-            statement: true,
-            opening: true,
-        },
+        Self::WHOLE,
         Self {
             footer: false,
             statement: true,
