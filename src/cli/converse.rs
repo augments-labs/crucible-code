@@ -31,7 +31,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Event, Post as _, Remember, Verdict, Workspace};
+use crucible_core::{
+    Cancel, Event, Post as _, Remember, Sensitivity, ToolCall, Verdict, Workspace,
+};
 use crucible_runner::Runner;
 use crucible_tools::Ledger;
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Terminal, pressed};
@@ -46,6 +48,7 @@ use command::Ran;
 use turning::Turning;
 use typing::Asked;
 
+mod asking;
 mod command;
 mod mode;
 mod picking;
@@ -710,9 +713,7 @@ fn shown<T: Terminal>(
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
             // the prompt offers only answers this process can honour.
-            let answer = draw::question(renderer, &call, &sensitivity, style)
-                .map_err(Fatal::from)
-                .and_then(|()| answered(renderer, answers));
+            let answer = asked(renderer, &call, &sensitivity, answers, style);
             let answer = match answer {
                 Ok(answer) => answer,
                 Err(problem) => {
@@ -731,6 +732,36 @@ fn shown<T: Terminal>(
     }
 
     Ok(())
+}
+
+/// Puts one question and waits for its answer.
+///
+/// The panel where there is a keyboard and room to stand one; otherwise the
+/// question a row at a time, which is what a redirected run and a window with
+/// four rows both get.
+fn asked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    call: &ToolCall,
+    sensitivity: &Sensitivity,
+    answers: &mut Answers<'_>,
+    style: Style,
+) -> Result<Answer, Fatal> {
+    if answers.keys {
+        match asking::ask(renderer, style, call, sensitivity)? {
+            asking::Answered::Said(answer, said) => {
+                draw::decided(renderer, call, sensitivity, said, style)?;
+                return Ok(answer);
+            }
+
+            // Nothing was drawn and no key was read, so the question still has
+            // to be put. Falling through rather than refusing: a window this
+            // small is not somebody saying no.
+            asking::Answered::Cramped => {}
+        }
+    }
+
+    draw::question(renderer, call, sensitivity, style)?;
+    answered(renderer, answers)
 }
 
 /// Reads one bounded line, or `None` at end of input.
