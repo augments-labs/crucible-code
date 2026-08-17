@@ -154,6 +154,16 @@ impl Style {
     pub(crate) fn plain() -> Self {
         Self::resolve(Output::default(), true, &|_| None)
     }
+
+    /// And what it uses when the glyph set *is* the thing being tested: the
+    /// same answers to everything else, so a test that loops over both sets
+    /// changes one thing between its two runs.
+    pub(crate) fn drawn(glyphs: Glyphs) -> Self {
+        Self {
+            glyphs,
+            ..Self::plain()
+        }
+    }
 }
 
 #[cfg(test)]

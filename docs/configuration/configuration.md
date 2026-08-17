@@ -162,6 +162,11 @@ bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
 
+It is one answer for the whole interface rather than one for the box: the mark
+that opens a tool call, the corner its result hangs off, the cross on a failure
+and the `…` that says a line was cut all come out of the same set as the border.
+Under `ascii` those are `*`, `+`, `x` and `...`.
+
 `mouse` is one trade with two ends rather than a preference. Left `off`, the
 terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
 the middle button pastes. Set to `click`, crucible asks the terminal to forward

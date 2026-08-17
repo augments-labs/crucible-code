@@ -4,11 +4,17 @@
 //! holds in display columns to know where to move the cursor back to, and a
 //! colour code is bytes it would count as width. Colour therefore goes only
 //! where nothing is ever redrawn: the prompt mark, written straight through.
+//!
+//! Every mark drawn into a line comes out of [`Glyphs`] rather than out of a
+//! literal here. A terminal whose font is missing a corner is missing the one a
+//! tool result hangs off as much as the one a box is drawn with, and a second
+//! set of marks in this file would be a second answer to a question the
+//! configuration asks in one word.
 
 use std::fmt;
 
 use crucible_core::{Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
-use crucible_tui::{Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
+use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
 use super::style::Style;
 
@@ -20,20 +26,6 @@ pub(crate) use opening::{Opening, opening};
 /// Dim, then back. Only for text that is written once and never redrawn.
 const DIM: &str = "\x1b[2m";
 const PLAIN: &str = "\x1b[0m";
-
-/// The mark that opens the line for a tool call.
-///
-/// Filled, where the small mark that parts one thing on a row from the next is
-/// not. The two would otherwise sit within a row of each other saying different
-/// things — this one opens a call and is the column its result hangs off, and
-/// that one is punctuation.
-const CALLED: &str = "●";
-
-/// The corner a call's result hangs under.
-///
-/// Square where the prompt frame's corner is round, so a result row and the
-/// bottom of the box never read as the same shape.
-const HANGS: &str = "└";
 
 /// What every row of a question after the first is written behind.
 ///
@@ -69,11 +61,11 @@ pub(crate) fn event<T: Terminal>(
             // Whatever the model was saying is finished; it said it to explain
             // the call that follows.
             renderer.settle()?;
-            renderer.commit(&requested(&call, &summary, style.args(columns)))
+            renderer.commit(&requested(&call, &summary, columns, style))
         }
 
         Event::ToolFinished { output, .. } => {
-            renderer.commit(&finished(&output, style.output(columns)))
+            renderer.commit(&finished(&output, style.output(columns), style.glyphs()))
         }
 
         // The tail is settled either way; an answer that stopped early is
@@ -92,7 +84,10 @@ pub(crate) fn event<T: Terminal>(
         // may become extra rows.
         Event::Failed { error } => {
             renderer.settle()?;
-            renderer.commit(&format!("! {}", clipped(error, style.output(columns))))
+            renderer.commit(&format!(
+                "! {}",
+                clipped(error, style.output(columns), style.glyphs())
+            ))
         }
     }
 }
@@ -163,7 +158,7 @@ pub(crate) fn trouble<T: Terminal>(
     renderer.settle()?;
     renderer.commit(&format!(
         "! this session has stopped being recorded: {}",
-        clipped(problem, width)
+        clipped(problem, width, style.glyphs())
     ))
 }
 
@@ -240,7 +235,12 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
 /// reading of a schema the tool already owns, and the two would drift. A call
 /// nobody could read is drawn as the bare name, because empty brackets would
 /// claim it was about nothing.
-fn requested(call: &ToolCall, summary: &Summary, width: usize) -> String {
+///
+/// The mark and the space after it are the window's rather than the words', so
+/// they come off the room before the ceiling does. A line as wide as the window
+/// with a mark still in front of it is a row the terminal wraps and the live
+/// tail never counted, and the cursor is a row off on every frame after it.
+fn requested(call: &ToolCall, summary: &Summary, window: usize, style: Style) -> String {
     let name = pascal(&call.name);
     let said = if summary.is_empty() {
         name
@@ -248,7 +248,23 @@ fn requested(call: &ToolCall, summary: &Summary, width: usize) -> String {
         format!("{name}({})", summary.as_str())
     };
 
-    format!("{CALLED} {}", clipped(said, width))
+    let glyphs = style.glyphs();
+    let mark = glyphs.called();
+    let room = style
+        .args(window)
+        .min(window.saturating_sub(columns(mark) + 1));
+    let said = clipped(said, room, glyphs);
+
+    // A window with no room for the mark and a space beside it has none for
+    // what the call was about either, and the space is then a column spent
+    // saying nothing in the one window with none to spend. The mark is what is
+    // left: it still says a call was made, which is the half of this line that
+    // the result hanging under it cannot say for itself.
+    if said.is_empty() {
+        return mark.to_owned();
+    }
+
+    format!("{mark} {said}")
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.
@@ -271,13 +287,13 @@ fn pascal(name: &str) -> String {
 }
 
 /// The line for a call that finished, hung under the call it answers.
-fn finished(output: &ToolOutput, width: usize) -> String {
+fn finished(output: &ToolOutput, width: usize, glyphs: Glyphs) -> String {
     let text = output.text();
     let mut lines = text.lines();
-    let first = clipped(lines.next().unwrap_or_default(), width);
+    let first = clipped(lines.next().unwrap_or_default(), width, glyphs);
     let rest = lines.count();
 
-    let under = gutter(output.is_failed());
+    let under = gutter(output.is_failed(), glyphs);
     match rest {
         0 => format!("{under}{first}"),
         more => format!("{under}{first} (+{more} lines)"),
@@ -295,11 +311,15 @@ fn finished(output: &ToolOutput, width: usize) -> String {
 /// A failure is marked here and nowhere else. The call line above it stands as
 /// it was — a call that was made is a call that was made, whatever came back —
 /// and one thing says the answer was a failure: the row that says what it was.
-fn gutter(failed: bool) -> String {
-    let indent = " ".repeat(columns(CALLED) + 1);
-    let cross = if failed { "✗ " } else { "" };
+fn gutter(failed: bool, glyphs: Glyphs) -> String {
+    let indent = " ".repeat(columns(glyphs.called()) + 1);
+    let cross = if failed {
+        format!("{} ", glyphs.failed())
+    } else {
+        String::new()
+    };
 
-    format!("{indent}{HANGS} {cross}")
+    format!("{indent}{} {cross}", glyphs.hangs())
 }
 
 /// What to say about a turn that ended, if anything.
@@ -419,23 +439,45 @@ fn answers() -> &'static str {
 ///
 /// Flattened before it is measured, for the reason [`flattened`] gives: what is
 /// counted has to be what will be drawn.
-fn clipped(text: impl fmt::Display, width: usize) -> String {
+fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> String {
     let mut line = flattened(text);
 
     if cut(&line, width).is_none() {
         return line;
     }
 
-    // The ellipsis is a column of the row rather than one past its end, so what
-    // is kept has to leave room for it — the reason for asking twice, since the
-    // first answer is also what says whether anything is owed at all. The offset
-    // falls on a character boundary and never between one and the selector that
-    // widens it, which is [`cut`]'s to guarantee and what this leans on.
-    if let Some(kept) = cut(&line, width.saturating_sub(1)) {
+    // The ellipsis is columns of the row rather than columns past its end, so
+    // what is kept has to leave room for it — the reason for asking twice, since
+    // the first answer is also what says whether anything is owed at all. The
+    // offset falls on a character boundary and never between one and the
+    // selector that widens it, which is [`cut`]'s to guarantee and what this
+    // leans on.
+    //
+    // Measured rather than assumed to be one: the ascii set spells it `...`,
+    // and a line that reserved a single column for it would be committed three
+    // columns wider than the window. The terminal wraps that itself, which is a
+    // row the live tail never counted and a cursor a row off on every frame
+    // after it.
+    let more = glyphs.ellipsis();
+
+    // A window with no room for the mark that says there is more has no room to
+    // say it either: what goes out is the line's own first columns, cut where
+    // they run out. Anything else is a mark three columns wide announcing that
+    // a one-column window was too narrow — the overflow it exists to prevent,
+    // committed by the thing preventing it.
+    if columns(more) > width {
+        if let Some(kept) = cut(&line, width) {
+            line.truncate(kept);
+        }
+
+        return line;
+    }
+
+    if let Some(kept) = cut(&line, width.saturating_sub(columns(more))) {
         line.truncate(kept);
     }
 
-    line.push('…');
+    line.push_str(more);
     line
 }
 
