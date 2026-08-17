@@ -3,9 +3,18 @@
 //! Ask the model, run what it asked for, tell it what happened, ask again —
 //! until it yields, the user stops it, or something goes wrong.
 //!
+//! A response that failed before it said a word is asked for once more rather
+//! than counted as the thing that went wrong. The socket a provider closed
+//! while the tools ran is the usual reason, and it is safe to ask again for
+//! exactly the reason it is worth doing: nothing arrived, so nothing has been
+//! drawn that a second answer could contradict.
+//!
 //! Progress leaves through events, because the thread that draws is not this
 //! one. The outcome leaves through the return value, because the caller is
 //! what decides whether the session continues.
+
+use std::thread;
+use std::time::Duration;
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
@@ -27,6 +36,24 @@ const MAX_PROVIDER_RESPONSES_PER_TURN: usize = 32;
 const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_TURN: usize = 128;
 const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
+
+/// How many more times one response may be asked for after it failed.
+///
+/// Small on purpose. What this recovers is the moment rather than the request —
+/// a connection the provider closed while the tools ran, a service busy for a
+/// second — and a failure that outlives two goes is one the user is better off
+/// being told about than waited through.
+const RETRIES: u8 = 2;
+
+/// How long to wait before the first of them, doubling for the next.
+///
+/// Short, because the failure this recovers is usually a socket that was
+/// already gone rather than a service asking to be left alone — and because a
+/// user watching a row that says `retrying` is watching this number.
+const FIRST_PAUSE: Duration = Duration::from_millis(250);
+
+/// How long a pause holds before it looks at the cancel again.
+const CANCEL_SLICE: Duration = Duration::from_millis(25);
 
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
@@ -523,6 +550,17 @@ impl Runner {
     /// A stream that ends without saying why is that same failure: the socket
     /// went quiet, and quiet is what a finished response and a truncated one
     /// have in common.
+    ///
+    /// A failure that reached none of that is asked again instead, up to
+    /// [`RETRIES`] times. The one it exists for is a connection the provider
+    /// closed while the tools ran — the turn's own pauses are exactly where a
+    /// pooled connection goes stale, so the request that fails is the one after
+    /// a tool pass rather than the first, and the discussion stops part way
+    /// through. Both halves of the condition carry weight: only a failure
+    /// [`ProviderError::transient`] calls a moment rather than a request, and
+    /// only a response that said nothing. Deltas are posted as they arrive, so
+    /// re-asking after one would put an answer on screen twice and leave the
+    /// transcript holding the half that was taken back.
     fn listen(
         &mut self,
         events: &dyn Post,
@@ -530,30 +568,93 @@ impl Runner {
         bounds: &TurnBounds,
         spent: &mut Spend,
     ) -> Result<(Answer, StopReason), TurnError> {
-        let mut stream = self.provider.stream(self.request(), cancel)?;
-        let mut answer = Answer::within(
-            self.provider.name(),
-            bounds.retained,
-            MAX_TURN_RESPONSE_BYTES,
-        );
+        let mut left = RETRIES;
+        let mut pause = FIRST_PAUSE;
 
-        let heard = Self::hear(stream.as_mut(), &mut answer, events, spent)
-            .and_then(|()| answer.reached().map_err(TurnError::from));
+        loop {
+            let mut answer = Answer::within(
+                self.provider.name(),
+                bounds.retained,
+                MAX_TURN_RESPONSE_BYTES,
+            );
 
-        match heard {
-            Ok(said) => Ok((answer, said)),
-            Err(problem) => {
-                let stop = answer.stop();
-                let (text, _) = answer.finish();
-                self.record(Message::Agent {
-                    text,
-                    calls: Vec::new(),
-                    stop,
-                });
+            let problem = match self.hearing(&mut answer, events, cancel, spent) {
+                Ok(said) => return Ok((answer, said)),
+                Err(problem) => problem,
+            };
 
-                Err(problem)
+            if left > 0 && Self::again(&problem, &answer) {
+                left -= 1;
+                events.post(Event::Retrying);
+
+                // A pause the user sat through and then had to interrupt would
+                // be this program keeping them waiting rather than the provider.
+                if Self::pausing(pause, cancel) {
+                    pause = pause.saturating_mul(2);
+                    continue;
+                }
             }
+
+            let stop = answer.stop();
+            let (text, _) = answer.finish();
+            self.record(Message::Agent {
+                text,
+                calls: Vec::new(),
+                stop,
+            });
+
+            return Err(problem);
         }
+    }
+
+    /// One request, read to the end, recording nothing either way.
+    ///
+    /// Separate from [`Self::listen`] because what a failed response leaves in
+    /// the transcript depends on whether it is going to be asked again, and that
+    /// question is asked once rather than at each place the reading can fail.
+    fn hearing(
+        &self,
+        answer: &mut Answer,
+        events: &dyn Post,
+        cancel: &Cancel,
+        spent: &mut Spend,
+    ) -> Result<StopReason, TurnError> {
+        let mut stream = self.provider.stream(self.request(), cancel)?;
+
+        Self::hear(stream.as_mut(), answer, events, spent)
+            .and_then(|()| answer.reached().map_err(TurnError::from))
+    }
+
+    /// Whether this failure, on this much of an answer, is worth asking again.
+    ///
+    /// The stop is checked beside the bytes because a response can fail after
+    /// one and hold nothing: what a stop reason has already told the turn is as
+    /// much a thing not to say twice as a sentence the user has read.
+    fn again(problem: &TurnError, answer: &Answer) -> bool {
+        matches!(problem, TurnError::Provider(failure) if failure.transient())
+            && answer.retained() == 0
+            && answer.stop().is_none()
+    }
+
+    /// Waits out a pause, and says whether it ran to the end.
+    ///
+    /// In slices, because the thread this runs on is the one holding the turn:
+    /// a user who presses Esc during a pause is answered at the next slice
+    /// rather than when the provider would have been asked again.
+    fn pausing(pause: Duration, cancel: &Cancel) -> bool {
+        let mut left = pause;
+
+        while !left.is_zero() {
+            if cancel.requested() {
+                return false;
+            }
+
+            let slice = left.min(CANCEL_SLICE);
+            thread::sleep(slice);
+            left -= slice;
+        }
+
+        !cancel.requested()
     }
 
     /// Reads deltas into `answer` until the stream ends.

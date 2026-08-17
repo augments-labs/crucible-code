@@ -88,6 +88,17 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+- **A turn no longer ends because a connection went away between rounds.** A
+  response that failed before it said a word is asked for again — twice at most,
+  a quarter of a second before the first and half a second before the second —
+  with `retrying` on the row above the box and <kbd>Esc</kbd> ending the wait.
+  Most often it is the socket a provider closed while the tools ran, which is
+  why it struck mid-conversation rather than at the first request. What it
+  costs: up to three quarters of a second before a genuine failure is reported.
+  A refusal about the request rather than the moment — a key without access, a
+  model nobody serves, a response that did not parse — is still reported the
+  first time, and an answer that had started arriving is never asked for twice.
+
 - **The prompt box stops disappearing under each tool result.** A result is rows
   crucible composed rather than text that arrived, and the frame that writes one
   ends the live region to make room above it — which took the box down with it

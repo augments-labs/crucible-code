@@ -75,6 +75,8 @@ enum Doing {
     Running,
     /// Esc has been pressed and the turn is stopping.
     Interrupting,
+    /// The response failed before it said anything and is being asked for again.
+    Retrying,
 }
 
 impl Doing {
@@ -85,6 +87,7 @@ impl Doing {
             Self::Writing => "writing",
             Self::Running => "running",
             Self::Interrupting => "interrupting",
+            Self::Retrying => "retrying",
         }
     }
 }
@@ -189,7 +192,10 @@ impl Turning {
             Event::ToolFinished { .. } | Event::TurnFinished { .. } | Event::Failed { .. } => {
                 self.calling.take()
             }
-            Event::TurnStarted { .. } | Event::Delta { .. } | Event::Spent { .. } => None,
+            Event::TurnStarted { .. }
+            | Event::Delta { .. }
+            | Event::Spent { .. }
+            | Event::Retrying => None,
         };
 
         // A turn that has been asked to stop is stopping whatever else it is
@@ -203,6 +209,7 @@ impl Turning {
             Event::Delta { .. } => Doing::Writing,
             Event::ToolRequested { .. } => Doing::Running,
             Event::ToolFinished { .. } => Doing::Thinking,
+            Event::Retrying => Doing::Retrying,
             Event::TurnStarted { .. }
             | Event::Spent { .. }
             | Event::TurnFinished { .. }
@@ -415,6 +422,20 @@ mod tests {
             }),
             "thinking"
         );
+    }
+
+    #[test]
+    fn a_response_being_asked_for_again_says_so_until_the_new_one_speaks() {
+        // The span it covers is the whole of the second ask — the pause and the
+        // request after it — and `thinking` over that span would be a row saying
+        // the first answer is still on its way.
+        let mut turning = Turning::started();
+        turning.saw(&Event::Retrying);
+
+        assert_eq!(turning.doing.word(), "retrying");
+
+        turning.saw(&Event::Delta { text: "hi".into() });
+        assert_eq!(turning.doing.word(), "writing");
     }
 
     #[test]

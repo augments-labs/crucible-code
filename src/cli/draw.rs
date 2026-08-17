@@ -97,7 +97,12 @@ pub(crate) fn event<T: Terminal>(
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
-        Event::Spent { .. } => Ok(()),
+        // Both belong to the row above the box, which says each of them only
+        // while it is true. A response nobody read a word of, asked for again
+        // and answered, left nothing behind worth a line in the transcript —
+        // and a line per hiccup is what a reader would have to look past to
+        // find the answer.
+        Event::Spent { .. } | Event::Retrying => Ok(()),
 
         // Asked on every delta because the first one is the only one worth
         // asking on, and nothing here can tell which that was: a turn opens

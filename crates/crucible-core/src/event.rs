@@ -94,6 +94,14 @@ pub enum Event {
         output: ToolOutput,
     },
 
+    /// The response the turn was waiting on failed before it said anything, and
+    /// the same request is going out again.
+    ///
+    /// Only ever posted about a response nobody read a word of, so nothing on
+    /// screen is being taken back. What it replaces is a turn that ended over a
+    /// socket the provider closed while the tools ran.
+    Retrying,
+
     /// What the turn has spent so far, every response of it added up.
     Spent {
         /// The running total, not the reading that moved it.

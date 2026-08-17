@@ -46,8 +46,10 @@ fn fingerprint(text: &str) -> u64 {
 pub(crate) struct Script {
     rounds: Mutex<VecDeque<Vec<Delta>>>,
     sent: Sent,
-    refuses: bool,
+    refuses: Option<u16>,
     breaks: bool,
+    /// How many more requests go away before they have said anything.
+    drops: Mutex<usize>,
 }
 
 impl Script {
@@ -57,16 +59,36 @@ impl Script {
         Self {
             rounds: Mutex::new(rounds.into()),
             sent: Sent::default(),
-            refuses: false,
+            refuses: None,
             breaks: false,
+            drops: Mutex::new(0),
         }
     }
 
-    /// A provider that refuses every request.
+    /// A provider that refuses every request, with a status nothing recovers
+    /// from.
     pub(crate) fn failing() -> Self {
+        Self::refusing(401)
+    }
+
+    /// A provider that refuses every request with `status`.
+    pub(crate) fn refusing(status: u16) -> Self {
         Self {
-            refuses: true,
+            refuses: Some(status),
             ..Self::new(Vec::new())
+        }
+    }
+
+    /// A provider whose first `drops` requests go away before they have said
+    /// anything, and which answers from the script after that.
+    ///
+    /// The connection a provider closed while the tools ran: the request is
+    /// accepted and the stream produces nothing at all, which is the one shape
+    /// the loop may ask for again.
+    pub(crate) fn dropping(drops: usize, rounds: Vec<Vec<Delta>>) -> Self {
+        Self {
+            drops: Mutex::new(drops),
+            ..Self::new(rounds)
         }
     }
 
@@ -115,13 +137,26 @@ impl Provider for Script {
             effort: request.effort,
         });
 
-        if self.refuses {
+        if let Some(status) = self.refuses {
             return Err(ProviderError::Refused {
                 provider: SCRIPT,
-                status: 401,
+                status,
                 message: "no".into(),
             });
         }
+
+        // Before a round is taken, because a response that went away said
+        // nothing and cost the script nothing: the answer it was going to give
+        // is still the next one.
+        let mut drops = self.drops.lock().unwrap();
+        if *drops > 0 {
+            *drops -= 1;
+            return Ok(Box::new(Recited {
+                deltas: VecDeque::new(),
+                breaks: true,
+            }));
+        }
+        drop(drops);
 
         let round = self.rounds.lock().unwrap().pop_front().unwrap_or_default();
         Ok(Box::new(Recited {
