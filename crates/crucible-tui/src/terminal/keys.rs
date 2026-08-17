@@ -49,6 +49,11 @@ pub enum Pressed {
     Key(Key),
     /// Shift+Tab: step the mode on to the next one.
     Cycle,
+    /// Ctrl+E: show what is on screen in full, or hide it again.
+    ///
+    /// A toggle rather than an action, so the same key is the way back — which
+    /// is what lets whatever it opens be as tall as it needs to be.
+    Explain,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -273,6 +278,13 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Char('c') if control => Pressed::Key(Key::Interrupt),
         KeyCode::Char('d') if control => Pressed::Key(Key::Eof),
 
+        // Named above the arm that ignores every other modified letter, which
+        // is where it would otherwise land. Ctrl+E is readline's end-of-line
+        // and this is not a line: nothing here reads a modified letter as
+        // editing, so the binding is free and the mnemonic is the one worth
+        // having.
+        KeyCode::Char('e') if control => Pressed::Explain,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -378,6 +390,32 @@ mod tests {
         // one that does is not sending a different key.
         let shifted = Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
         assert_eq!(meaning(shifted), Pressed::Cycle);
+    }
+
+    #[test]
+    fn the_key_that_asks_for_the_whole_of_something_is_read_before_the_arm_that_drops_it() {
+        // It is a modified letter, and every other modified letter here is a
+        // binding this release has not given a meaning to. Order is the whole
+        // of what keeps this one from joining them, so order is what this pins.
+        assert_eq!(meaning(control(KeyCode::Char('e'))), Pressed::Explain);
+
+        // Its neighbours in that arm, unbound and staying so. Typed as bare
+        // characters they would be the letters without the modifier, which is
+        // not what was pressed.
+        for letter in ['w', 'r', 'x'] {
+            assert_eq!(
+                meaning(control(KeyCode::Char(letter))),
+                Pressed::Ignored,
+                "ctrl+{letter}"
+            );
+        }
+
+        // And without the modifier it is the letter, which is what somebody
+        // typing `echo` into the box is sending.
+        assert_eq!(
+            meaning(press(KeyCode::Char('e'))),
+            Pressed::Key(Key::Char('e'))
+        );
     }
 
     #[test]
