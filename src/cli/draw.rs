@@ -247,6 +247,33 @@ pub(crate) fn question<T: Terminal>(
     mark(renderer, &answers(style.glyphs()), style)
 }
 
+/// Writes down a question a panel asked and the answer it was given.
+///
+/// The panel itself is not written down — it stood in the live region and the
+/// region was taken back. What is left behind is the question in the rows
+/// [`question`] would have used, and under it the answer in the words it was
+/// offered in.
+pub(crate) fn decided<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    call: &ToolCall,
+    sensitivity: &Sensitivity,
+    said: &str,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let columns = renderer.columns();
+
+    renderer.settle()?;
+    for row in asked(call, sensitivity, columns) {
+        renderer.commit(&row)?;
+    }
+
+    // Under the question rather than beside it, at the indent its own wrapped
+    // rows use — so an answer to a question three rows tall is still plainly
+    // the answer to it.
+    mark(renderer, &format!("{UNDER}{said}"), style)?;
+    answered(renderer, "")
+}
+
 /// Writes something the user is expected to type after.
 ///
 /// Through `prompt` rather than `commit`, because what is wanted here is a line
@@ -376,7 +403,7 @@ pub(crate) fn returned<T: Terminal>(
 /// The model's name for a tool is the wire's, chosen so a schema can carry it.
 /// A row is read by a person, and the capital is what separates the name from
 /// the words beside it at a glance.
-fn pascal(name: &str) -> String {
+pub(crate) fn pascal(name: &str) -> String {
     let mut written = String::with_capacity(name.len());
 
     for word in name.split('_') {
@@ -735,7 +762,7 @@ fn within(mut line: String, width: usize, glyphs: Glyphs) -> String {
 /// arguments is a second row nobody wrote. A space rather than nothing because
 /// that is what the row will show — [`cut`] and [`fold`] drop what a terminal
 /// will not draw, and this has already decided to draw something.
-fn flattened(text: impl fmt::Display) -> String {
+pub(crate) fn flattened(text: impl fmt::Display) -> String {
     text.to_string()
         .trim()
         .chars()
