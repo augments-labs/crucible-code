@@ -266,6 +266,22 @@ call that was made is a call that was made whatever came back — and that mark 
 the one thing on the row left in your terminal's own foreground, so it is where
 the eye goes.
 
+A result the row had no room for says how much it left over and names the key
+that gives it back: `(+128 lines · ctrl+o to expand)`. <kbd>Ctrl+O</kbd> at the
+prompt stands every result that was cut this way where the box was, newest
+first, each under the line of the call it answers. The arrow keys walk it where
+there is more of it than the window holds, and <kbd>Esc</kbd> or
+<kbd>Ctrl+O</kbd> again closes it — the box comes back with the line you were
+typing still in it, and nothing is written into your scrollback on either side
+of it. It is a key for between turns: a turn is writing its own results where
+the view would stand, so the key waits for the turn to yield.
+
+A call that changed a file is the exception, and says so by offering nothing. It
+is shown as the change itself, and a change too long for the block is cut where
+the change is built rather than where it is drawn — those lines are gone before
+anything is drawn at all, so the count of them is the whole of what is still
+true about them.
+
 The answer itself is read as markdown rather than printed with the markers still
 in it. A heading loses its hashes and stands out, `**` or `_` around a phrase
 leaves it emphasised, backticks leave a run of code toned down, and a fenced

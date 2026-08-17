@@ -22,6 +22,14 @@ Notable changes to crucible. Format follows
   first thing given up where the window is short. `↑` and `↓` read them where
   they run past the room there is, and `ctrl+e` again puts them away.
 
+- **A cut result gives the rest of itself back, and `ctrl+o` opens it.** A row
+  that had no room for what a tool said now names the key beside the count —
+  `(+128 lines · ctrl+o to expand)` — and the key stands every result cut that
+  way where the prompt box was, newest first, under the line of the call each
+  answers. What it costs: half a mebibyte held at most, oldest dropped first, so
+  a long session costs what a short one does. `esc` or the same key again closes
+  it and leaves nothing behind.
+
 - **A change to a file is shown rather than counted.** `edit` and `write` draw
   what they did under the call: the lines that went, the lines that came, and a
   few either side, each at the number the file gives it. What it costs: up to 64

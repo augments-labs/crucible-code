@@ -38,7 +38,7 @@ const READY_CHARACTERS: usize = 1024 * 1024;
 
 /// What arrived while the prompt was waiting.
 ///
-/// Four of these are keys the editor has no business seeing: they act on what
+/// Five of these are keys the editor has no business seeing: they act on what
 /// is drawn around the line rather than on the line. A line is a line whatever
 /// mode the session is in and whatever is listed above it, and the editor stays
 /// what its own module says it is — a string and an offset — rather than
@@ -54,6 +54,13 @@ pub enum Pressed {
     /// A toggle rather than an action, so the same key is the way back — which
     /// is what lets whatever it opens be as tall as it needs to be.
     Explain,
+    /// Ctrl+O: show in full whatever the transcript had to cut down to a row,
+    /// or hide it again.
+    ///
+    /// A toggle for the same reason [`Pressed::Explain`] is, and answering the
+    /// same want one step further out: that key is about the thing standing on
+    /// screen now, and this one is about what has already been written down.
+    Expand,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -285,6 +292,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // having.
         KeyCode::Char('e') if control => Pressed::Explain,
 
+        // Above the same arm and free for the same reason. Ctrl+O is readline's
+        // operate-and-get-next, which needs a history this prompt does not keep
+        // — so the letter is available and it is the letter the want is spelled
+        // with.
+        KeyCode::Char('o') if control => Pressed::Expand,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -398,6 +411,7 @@ mod tests {
         // binding this release has not given a meaning to. Order is the whole
         // of what keeps this one from joining them, so order is what this pins.
         assert_eq!(meaning(control(KeyCode::Char('e'))), Pressed::Explain);
+        assert_eq!(meaning(control(KeyCode::Char('o'))), Pressed::Expand);
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is

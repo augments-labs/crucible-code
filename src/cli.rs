@@ -17,6 +17,7 @@ mod converse;
 mod draw;
 #[cfg(test)]
 mod fake;
+mod kept;
 mod release;
 mod remember;
 #[cfg(test)]

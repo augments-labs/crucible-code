@@ -390,9 +390,15 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
 
-        Pressed::Key(_) | Pressed::Cycle | Pressed::Clicked { .. } | Pressed::Ignored => {
-            Moved::Still
-        }
+        // Ctrl+O among them. What it opens is the transcript's, and the panel
+        // stands over the transcript: the view would take the region this panel
+        // is in, leaving a question on screen with nothing left to answer it
+        // with.
+        Pressed::Key(_)
+        | Pressed::Cycle
+        | Pressed::Expand
+        | Pressed::Clicked { .. }
+        | Pressed::Ignored => Moved::Still,
     }
 }
 
