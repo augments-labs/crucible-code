@@ -141,6 +141,20 @@ impl Glyphs {
         }
     }
 
+    /// The keys that walk down a list, drawn as marks: up, then down.
+    ///
+    /// A pair of its own rather than [`Glyphs::stepping`] read sideways. A list
+    /// is walked down where a track is stepped along, and a set that spelled
+    /// both with the one pair would name a direction the picture does not have —
+    /// which is how somebody learns not to trust the picture.
+    #[must_use]
+    pub fn walking(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("↑", "↓"),
+            Self::Ascii => ("^", "v"),
+        }
+    }
+
     /// The long mark that stands between a thing and what is said about it.
     ///
     /// Two columns under `ascii` where [`Glyphs::dot`] is one, and that is the
@@ -278,6 +292,29 @@ mod tests {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn the_two_pairs_of_arrows_are_four_different_marks_in_both_sets() {
+        // Each pair is named under the thing it moves, so a mark shared between
+        // them would put the same key under two pictures that move differently.
+        // The one column apiece is what lets a footer name either pair without
+        // the row it sits on being measured twice.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (left, right) = glyphs.stepping();
+            let (up, down) = glyphs.walking();
+            let marks = [left, right, up, down];
+
+            for mark in marks {
+                assert_eq!(columns(mark), 1, "{glyphs:?}: {mark:?}");
+            }
+            for (at, mark) in marks.iter().enumerate() {
+                assert!(
+                    !marks.iter().skip(at + 1).any(|other| other == mark),
+                    "{glyphs:?}: {mark:?} twice"
+                );
+            }
         }
     }
 
