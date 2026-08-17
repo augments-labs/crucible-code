@@ -1,10 +1,17 @@
 //! What a call says it is for, read out of the call.
 //!
-//! One argument, spelled `description`, in every schema that invites one — and
-//! that sameness is the whole design rather than a coincidence worth tidying
-//! later. The panel a call waits behind draws this the same way whichever tool
-//! is about to run, so a tool free to name the field its own way would be a
-//! panel that is uniform by luck. One name, and one place that reads it.
+//! Two arguments, spelled `description` and `explanation`, in every schema that
+//! invites them — and that sameness is the whole design rather than a
+//! coincidence worth tidying later. The panel a call waits behind draws these
+//! the same way whichever tool is about to run, so a tool free to name the
+//! fields its own way would be a panel that is uniform by luck. Two names, and
+//! one place that reads them.
+//!
+//! They stay two rather than becoming one because they are shown at different
+//! times: the line is on the panel from the moment it opens, and the paragraphs
+//! are behind a key somebody has to press. Joining them would put a page of
+//! prose where a caption goes, and asking a model to fit both jobs into one
+//! string is asking it to guess where the panel will cut.
 //!
 //! Which is why this is a function of the crate rather than a method on the
 //! trait: a method would hand every tool the freedom the paragraph above says
@@ -21,7 +28,10 @@ use crucible_core::{Account, ToolArgs};
 use crate::args::Args;
 
 /// The argument a call accounts for itself in.
-const FIELD: &str = "description";
+const SAID: &str = "description";
+
+/// The argument it explains itself at length in.
+const TOLD: &str = "explanation";
 
 /// The name a rejection would carry if one could get out of here.
 ///
@@ -34,13 +44,19 @@ const NOBODY: &str = "";
 /// What this call said it was for, or nothing where it said nothing.
 ///
 /// Optional whatever the schema says, because the schema is not what arrived.
+/// Each field is read on its own and dropped on its own, so a call that got one
+/// of them wrong still shows the other: the two answer different questions and
+/// nothing here has to hold them to a bargain the schema never made.
 #[must_use]
 pub fn of(args: &ToolArgs) -> Account {
-    let said = Args::parse(NOBODY, args)
-        .ok()
-        .and_then(|args| args.optional_text(FIELD).ok().flatten().map(str::to_owned));
+    let Ok(args) = Args::parse(NOBODY, args) else {
+        return Account::none();
+    };
 
-    Account::new(said.unwrap_or_default())
+    let said = args.optional_text(SAID).ok().flatten().unwrap_or_default();
+    let told = args.texts(TOLD).unwrap_or_default();
+
+    Account::explained(said, told)
 }
 
 #[cfg(test)]

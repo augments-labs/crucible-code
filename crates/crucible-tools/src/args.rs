@@ -103,6 +103,44 @@ impl Args {
             .map(Some)
     }
 
+    /// The strings of a list field, in the order they were written.
+    ///
+    /// [`Args::list`] is the neighbouring reader and takes a list of objects,
+    /// which is the shape of a tool's own repeated arguments. This one takes a
+    /// list of plain strings, which is the shape of prose: one element per
+    /// paragraph, because a paragraph break is a thing the writer decided and
+    /// not something to work out from the text afterwards.
+    ///
+    /// Absent, null and empty all come back as no strings. So does a blank
+    /// element, which is dropped rather than kept: it draws as a paragraph with
+    /// nothing in it, and a gap in the middle of somebody's reading is not what
+    /// the call meant by leaving it empty.
+    pub(crate) fn texts(&self, field: &str) -> Result<Vec<&str>, ToolError> {
+        let Some(found) = self.value.get(field) else {
+            return Ok(Vec::new());
+        };
+        if found.is_null() {
+            return Ok(Vec::new());
+        }
+
+        let items = found
+            .as_array()
+            .ok_or_else(|| self.wrong(format!("{field} must be a list")))?;
+
+        let mut texts = Vec::with_capacity(items.len());
+        for (at, item) in items.iter().enumerate() {
+            let text = item
+                .as_str()
+                .ok_or_else(|| self.wrong(format!("{field}[{at}] must be a string")))?;
+
+            if !text.trim().is_empty() {
+                texts.push(text);
+            }
+        }
+
+        Ok(texts)
+    }
+
     /// A field that must be there and must not be blank.
     pub(crate) fn text(&self, field: &str) -> Result<&str, ToolError> {
         match self.optional_text(field)? {
@@ -409,6 +447,58 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "test: mode must be one of content, files"
+        );
+    }
+
+    #[test]
+    fn a_list_of_strings_comes_back_in_the_order_it_was_written() {
+        let args = args(r#"{"explanation":["It builds.","It takes a while."]}"#).unwrap();
+
+        assert_eq!(
+            args.texts("explanation").unwrap(),
+            ["It builds.", "It takes a while."]
+        );
+    }
+
+    #[test]
+    fn a_list_of_strings_nobody_filled_is_no_strings_rather_than_a_rejection() {
+        // Every way of saying nothing, and one way of saying nothing at length:
+        // a field that invites prose is one a call is free to leave alone, and
+        // a blank paragraph draws as a gap in the middle of the reading.
+        for arguments in [
+            "{}",
+            r#"{"explanation":null}"#,
+            r#"{"explanation":[]}"#,
+            r#"{"explanation":["","   "]}"#,
+        ] {
+            assert!(
+                args(arguments)
+                    .unwrap()
+                    .texts("explanation")
+                    .unwrap()
+                    .is_empty(),
+                "{arguments}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_list_of_strings_says_which_element_is_not_one() {
+        assert_eq!(
+            args(r#"{"explanation":"one paragraph"}"#)
+                .unwrap()
+                .texts("explanation")
+                .unwrap_err()
+                .to_string(),
+            "test: explanation must be a list"
+        );
+        assert_eq!(
+            args(r#"{"explanation":["fine",7]}"#)
+                .unwrap()
+                .texts("explanation")
+                .unwrap_err()
+                .to_string(),
+            "test: explanation[1] must be a string"
         );
     }
 
