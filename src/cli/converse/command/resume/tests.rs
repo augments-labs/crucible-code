@@ -254,3 +254,27 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
     let recovered = std::fs::read_to_string(&left).expect("the log it was recording to");
     assert!(recovered.contains("said in passing"), "{recovered}");
 }
+
+#[test]
+fn what_stands_between_the_count_and_the_age_comes_out_of_the_glyph_set() {
+    // The row is two facts about the session picked up, and what says they are
+    // two is the mark between them. A terminal that cannot draw that mark gets
+    // the one the setting names rather than a question mark standing where the
+    // sentence divides.
+    let sample = Sample::new("resume-mark");
+    drop(recorded(&sample, "the one picked up"));
+
+    let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
+    let picked = listed.first().expect("the session just recorded");
+    let now = SystemTime::now();
+
+    let said = |glyphs| {
+        picked_up(picked, 2, now, 70, glyphs)
+            .get(1)
+            .map(Row::text)
+            .unwrap_or_default()
+    };
+
+    assert!(said(Glyphs::Unicode).starts_with("2 messages · started"));
+    assert!(said(Glyphs::Ascii).starts_with("2 messages - started"));
+}

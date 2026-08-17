@@ -54,6 +54,12 @@ Notable changes to crucible. Format follows
   costs: two more rows of the window while a tool is out, given up before the
   working row on a window too short for both.
 
+- **The mark between the halves of a line comes out of the `glyphs` setting.**
+  What `/clear`, `/resume` and `/model` stand between the two things a row says
+  is `·` where the terminal draws it and `-` under `ascii`, rather than a
+  character chosen once and left. What it costs: those rows read differently
+  under `ascii` than they did.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**

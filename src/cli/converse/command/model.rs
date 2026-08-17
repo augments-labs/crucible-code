@@ -16,7 +16,7 @@
 //! is asking it for ever.
 
 use crucible_runner::Runner;
-use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::picking::{self, Taken};
@@ -165,16 +165,9 @@ fn chosen<T: Terminal>(
         ),
     };
 
-    // The other way to the same model, which is the one thing that differs
-    // between rows that would otherwise be a name and nothing else.
     let says: Vec<String> = offered
         .iter()
-        .map(|selected| {
-            format!(
-                "{} · --model {}/{}",
-                selected.provider.shown, selected.provider.name, selected.model.name
-            )
-        })
+        .map(|selected| beside(*selected, terms.style.glyphs()))
         .collect();
 
     let shown: Vec<Offered<'_>> = offered
@@ -206,6 +199,23 @@ fn chosen<T: Terminal>(
     };
 
     Ok(picking::pick(renderer, terms.style, panel)?.of(&offered))
+}
+
+/// What a row says beside the model's name: who serves it, and the other way
+/// to the same model.
+///
+/// The one thing that differs between rows that would otherwise be a name and
+/// nothing else. The mark between the two halves is the setting's, since a
+/// terminal that cannot draw it would otherwise be given a question mark in the
+/// middle of a line somebody is reading a flag off.
+fn beside(selected: Selected, glyphs: Glyphs) -> String {
+    format!(
+        "{} {} --model {}/{}",
+        selected.provider.shown,
+        glyphs.dot(),
+        selected.provider.name,
+        selected.model.name
+    )
 }
 
 /// Asks it from the next turn on, and writes it down for the next run.
@@ -296,4 +306,37 @@ fn listed<T: Terminal>(
         .collect();
 
     Ok(renderer.present(&rows, terms.style.palette())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_tui::Glyphs;
+
+    use super::{PROVIDERS, Selected, beside};
+
+    #[test]
+    fn what_stands_between_the_vendor_and_the_flag_comes_out_of_the_glyph_set() {
+        // The row names who serves the model and the flag that asks for it
+        // without the panel, and what says they are two is the mark between
+        // them. A terminal that cannot draw that mark gets the one the setting
+        // names rather than a question mark in the middle of a flag.
+        let provider = PROVIDERS.into_iter().next().expect("a served provider");
+        let model = provider.models.first().copied().expect("a served model");
+        let selected = Selected { provider, model };
+
+        assert_eq!(
+            beside(selected, Glyphs::Unicode),
+            format!(
+                "{} · --model {}/{}",
+                provider.shown, provider.name, model.name
+            )
+        );
+        assert_eq!(
+            beside(selected, Glyphs::Ascii),
+            format!(
+                "{} - --model {}/{}",
+                provider.shown, provider.name, model.name
+            )
+        );
+    }
 }

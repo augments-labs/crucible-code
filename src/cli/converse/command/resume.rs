@@ -17,7 +17,7 @@
 use std::time::SystemTime;
 
 use crucible_runner::{Recorded, Runner, Session, recent};
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::draw::when;
@@ -112,7 +112,7 @@ fn picking<T: Terminal>(
     }
 
     renderer.present(
-        &picked_up(picked, held, now, columns),
+        &picked_up(picked, held, now, columns, terms.style.glyphs()),
         terms.style.palette(),
     )?;
     Ok(())
@@ -122,7 +122,13 @@ fn picking<T: Terminal>(
 ///
 /// It names the session rather than the number that reached it, because the
 /// list is read again between being printed and being picked from.
-fn picked_up(picked: &Recorded, held: usize, now: SystemTime, columns: usize) -> Vec<Row> {
+fn picked_up(
+    picked: &Recorded,
+    held: usize,
+    now: SystemTime,
+    columns: usize,
+    glyphs: Glyphs,
+) -> Vec<Row> {
     let said = match held {
         1 => "1 message".to_owned(),
         _ => format!("{held} messages"),
@@ -133,7 +139,11 @@ fn picked_up(picked: &Recorded, held: usize, now: SystemTime, columns: usize) ->
         Row::new().then(
             Slot::Quiet,
             clip(
-                &format!("{said} · started {}", when::ago(picked.started(), now)),
+                &format!(
+                    "{said} {} started {}",
+                    glyphs.dot(),
+                    when::ago(picked.started(), now)
+                ),
                 columns,
             ),
         ),
