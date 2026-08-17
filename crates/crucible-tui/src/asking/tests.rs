@@ -15,6 +15,10 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
     Question {
         subject: "Bash command",
         payload,
+        description: "",
+        explanation: &[],
+        from: 0,
+        more: "↑↓ to see more",
         statement: "This command needs your verdict.",
         question: "Do you want to proceed?",
         answers: &ANSWERS,
@@ -22,6 +26,16 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
         footer: "esc to cancel · ctrl+e to explain",
     }
 }
+
+/// The paragraphs a reader sees after asking for them, long enough that the
+/// three of them cannot fit a short window.
+const PARAGRAPHS: [&str; 3] = [
+    "Runs the workspace's whole test suite with every feature turned on, which \
+     builds each crate in the workspace and then runs its tests in turn.",
+    "I want to know the suite is green before I touch the module the next change \
+     is in, so that a failure afterwards belongs to that change.",
+    "It reads and compiles; nothing outside the target directory is written.",
+];
 
 /// What each row says with its side edges taken off, so a test reads the
 /// rhythm rather than the frame.
@@ -58,13 +72,14 @@ fn the_common_case_is_thirteen_rows_and_every_one_of_them_reaches_the_edge() {
 }
 
 #[test]
-fn the_rhythm_is_three_blanks_and_one_row_for_each_simple_command() {
-    // The whole of what this component is for: the permission engine already
-    // knows a compound call is several commands, and each of them gets a row.
+fn the_rhythm_is_three_blanks_and_a_command_that_keeps_its_operators() {
+    // The whole of what this component is for. The permission engine knows a
+    // compound call is several commands and reasons about each of them, and
+    // this row is still the call as it was written — `&&` is the difference
+    // between three commands and three commands *if the one before worked*,
+    // and a panel that quietly listed them would have dropped it.
     let rows = asking(&[
-        "cargo fmt --all",
-        "cargo test --workspace --all-features",
-        "git push origin HEAD",
+        "cargo fmt --all && cargo test --workspace --all-features && git push origin HEAD",
     ])
     .within(WIDE, 24, Glyphs::Unicode);
 
@@ -73,9 +88,8 @@ fn the_rhythm_is_three_blanks_and_one_row_for_each_simple_command() {
         [
             "  Bash command",
             "",
-            "    cargo fmt --all",
-            "    cargo test --workspace --all-features",
-            "    git push origin HEAD",
+            "    cargo fmt --all && cargo test --workspace --all-features && git push",
+            "    origin HEAD",
             "",
             "  This command needs your verdict.",
             "",
@@ -223,6 +237,171 @@ fn below_the_floor_there_is_no_panel_rather_than_a_short_one() {
 
     // And a call with nothing to show is not a question anyone can answer.
     assert!(asking(&[]).within(WIDE, 24, Glyphs::Unicode).is_empty());
+}
+
+#[test]
+fn the_description_is_a_caption_on_the_command_rather_than_a_block_under_it() {
+    // A blank is what separates one block from the next in this panel, so
+    // withholding one is the whole of what makes this row a caption. Getting it
+    // wrong reads as a second paragraph that happens to be short.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.description = "Run the suite before touching the module";
+    let said = inside(&question.within(WIDE, 24, Glyphs::Unicode));
+
+    let at = said
+        .iter()
+        .position(|row| row == "    cargo test --workspace --all-features")
+        .expect("the command");
+
+    assert_eq!(
+        said.get(at + 1).map(String::as_str),
+        Some("    Run the suite before touching the module"),
+        "{said:?}"
+    );
+    assert_eq!(said.get(at + 2).map(String::as_str), Some(""), "{said:?}");
+}
+
+#[test]
+fn a_description_is_one_row_however_much_the_model_wrote() {
+    // Provider-controlled text on the render path. A caption that folded would
+    // let whatever wrote it decide how tall this panel is, and the row it would
+    // push off the bottom is one of the answers.
+    let mut question = asking(&["cargo fmt --all"]);
+    question.description = "Format every crate in the workspace, and then the \
+                            binary beside them, so the gate has nothing to say \
+                            about whitespace when it runs afterwards";
+    let rows = question.within(WIDE, 24, Glyphs::Unicode);
+
+    assert_eq!(rows.len(), 14);
+    let said = inside(&rows);
+    assert!(
+        said.iter()
+            .any(|row| row.starts_with("    Format every crate")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn each_paragraph_of_an_explanation_opens_with_a_blank_and_indents_alike() {
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+    let said = inside(&question.within(WIDE, 40, Glyphs::Unicode));
+
+    // Three blanks of the panel's own, and one opening each paragraph.
+    assert_eq!(said.iter().filter(|row| row.is_empty()).count(), 6);
+
+    for paragraph in PARAGRAPHS {
+        let opening = paragraph.split_whitespace().take(3).collect::<Vec<&str>>();
+        assert!(
+            said.iter().any(|row| {
+                row.starts_with("    ")
+                    && row.split_whitespace().take(3).eq(opening.iter().copied())
+            }),
+            "{paragraph:?} is not in {said:?}"
+        );
+    }
+}
+
+#[test]
+fn an_explanation_too_tall_for_the_window_is_cut_and_says_how_much_it_cut() {
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let whole = question.within(WIDE, 40, Glyphs::Unicode);
+    let short = question.within(WIDE, 20, Glyphs::Unicode);
+    assert_eq!(short.len(), 20);
+    assert!(whole.len() > short.len());
+
+    // The row that says so takes one the prose would have had, so the count is
+    // one more than the two panels differ by.
+    let said = inside(&short);
+    let dropped = whole.len() - short.len() + 1;
+    let told = format!("    · {dropped} more rows of explanation");
+    assert!(said.contains(&told), "{said:?}");
+}
+
+#[test]
+fn the_footer_offers_the_arrows_only_while_something_is_off_screen() {
+    // A key named on the footer has to do something when it is pressed. The
+    // component is the only party that knows whether the prose was cut, so it
+    // is the one that decides whether the item is drawn.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let whole = inside(&question.within(WIDE, 40, Glyphs::Unicode));
+    let short = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    let plain = "  esc to cancel · ctrl+e to explain".to_owned();
+    let scrolling = "  esc to cancel · ctrl+e to explain · ↑↓ to see more".to_owned();
+
+    assert!(whole.contains(&plain), "{whole:?}");
+    assert!(short.contains(&scrolling), "{short:?}");
+}
+
+#[test]
+fn scrolling_moves_the_window_over_the_prose_and_leaves_the_panel_alone() {
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let top = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+    question.from = 2;
+    let down = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    assert_eq!(top.len(), down.len());
+
+    // The two rows the window moved past are gone and two later ones have
+    // arrived, and the count of what is off screen does not change with it —
+    // the same rows are hidden, from the other end.
+    assert_ne!(top, down);
+    let opening = "    Runs the workspace's whole test suite with every feature turned on, which";
+    assert!(top.contains(&opening.to_owned()), "{top:?}");
+    assert!(!down.contains(&opening.to_owned()), "{down:?}");
+
+    for said in [&top, &down] {
+        assert!(
+            said.contains(&"    · 2 more rows of explanation".to_owned()),
+            "{said:?}"
+        );
+        assert!(said.contains(&"  › 1. Yes, once".to_owned()), "{said:?}");
+    }
+}
+
+#[test]
+fn scrolling_past_the_end_of_the_prose_stops_at_the_end() {
+    // What a held key does. Clamped here rather than by the caller, because the
+    // caller cannot see how many rows the prose folded into.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+    question.from = 2;
+    let last = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+
+    for from in [3, 9, usize::MAX] {
+        question.from = from;
+        assert_eq!(inside(&question.within(WIDE, 20, Glyphs::Unicode)), last);
+    }
+}
+
+#[test]
+fn what_is_about_to_run_outlives_an_explanation_that_will_not_fit() {
+    // The order the two are given up in is the argument for the whole feature:
+    // the command is what a verdict is about, and the prose is about the
+    // command. The reader gets the prose back by pressing the key again.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.description = "Run the suite";
+    question.explanation = &PARAGRAPHS;
+
+    for room in 14..=40 {
+        let said = inside(&question.within(WIDE, room, Glyphs::Unicode));
+        assert!(
+            said.iter()
+                .any(|row| row == "    cargo test --workspace --all-features"),
+            "{room}: {said:?}"
+        );
+        assert!(
+            said.iter().any(|row| row == "    3. No, and end the turn"),
+            "{room}: {said:?}"
+        );
+    }
 }
 
 #[test]
