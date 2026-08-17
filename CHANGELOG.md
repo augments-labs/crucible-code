@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The transcript is a column of blocks with a blank row between them.** What
+  was asked, what was answered, each call and the line hanging under it: one
+  block each, parted by a row of nothing, and the prompt box stands off the last
+  of them the same way. A result still hangs directly under the call it answers,
+  because the two are one block. What it costs: a row per block of the window
+  and of a redirected run's output, and a session piped to a file now has blank
+  lines in it where before it had none.
+
 ### Fixed
 
 - **OpenAI on a ChatGPT plan answers again.** Every turn signed in with a

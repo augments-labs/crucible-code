@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 11,4 scrolled 12
+80x24 cursor 12,4 scrolled 12
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -13,11 +13,11 @@ expression: window.picture()
 |                                                                                |
 |cancelled, nothing signed in                                                    |
 |                                                                                |
+|                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

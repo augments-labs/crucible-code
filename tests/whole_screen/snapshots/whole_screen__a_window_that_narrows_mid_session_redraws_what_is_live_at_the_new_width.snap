@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-52x20 cursor 15,47 scrolled 4
+52x20 cursor 16,47 scrolled 4
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
 |│                                  │ ───────────────|
 |│  /…/workspace                    │                |
@@ -17,9 +17,9 @@ expression: window.picture()
 |Warning: No models available. Use /login or set an A|
 |Then use /model to select a model.                  |
 |                                                    |
+|                                                    |
 |╭──────────────────────────────────────────────────╮|
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                    |
-|                                                    |
 |                                                    |
