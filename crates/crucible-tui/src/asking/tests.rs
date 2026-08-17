@@ -427,6 +427,42 @@ fn scrolling_past_the_end_of_the_prose_stops_at_the_end() {
 }
 
 #[test]
+fn the_panel_says_where_the_window_stops_so_a_key_held_past_it_costs_nothing() {
+    // Clamping what it is given is only half of it. The offset lives with
+    // whatever reads the arrows, and a caller whose own copy ran on past the
+    // end would owe a press coming back for every press that moved nothing.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let last = question.end(WIDE, 20, Glyphs::Unicode);
+
+    // Which is exactly the offset past which the picture stops changing, and
+    // the first one at which it has stopped. Asserted against the frames
+    // rather than against a number worked out here, because agreeing with the
+    // panel is the whole of what the answer is for.
+    assert_eq!(
+        scrolled(question, 20, last),
+        scrolled(question, 20, last + 9)
+    );
+    assert_ne!(
+        scrolled(question, 20, last),
+        scrolled(question, 20, last - 1)
+    );
+
+    // Nowhere to scroll to answers zero, at both of the reasons there can be
+    // none: prose that fitted, and a window with no room to open any in. So a
+    // caller clamps with it unconditionally rather than asking first whether
+    // there was anything to clamp.
+    assert_eq!(question.end(WIDE, 40, Glyphs::Unicode), 0);
+    assert_eq!(question.end(WIDE, 14, Glyphs::Unicode), 0);
+    assert_eq!(
+        asking(&["cargo test"]).end(WIDE, 24, Glyphs::Unicode),
+        0,
+        "a call that carried no explanation"
+    );
+}
+
+#[test]
 fn what_is_about_to_run_outlives_an_explanation_that_will_not_fit() {
     // The order the two are given up in is the argument for the whole feature:
     // the command is what a verdict is about, and the prose is about the
