@@ -50,6 +50,14 @@ fn inside(rows: &[Row]) -> Vec<String> {
         .collect()
 }
 
+/// The panel in a window of `room` rows, with the prose opened `from` rows
+/// down. Scrolling is read off two of these rather than off one mutated
+/// question, so what a test compares is two frames a reader could have seen.
+fn scrolled(question: Question<'_>, room: usize, from: usize) -> Vec<String> {
+    let opened = Question { from, ..question };
+    inside(&opened.within(WIDE, room, Glyphs::Unicode))
+}
+
 /// The top and bottom edges at `WIDE`, which no test writes out by hand.
 fn rule(corners: (&str, &str)) -> String {
     let (left, right) = corners;
@@ -343,27 +351,66 @@ fn scrolling_moves_the_window_over_the_prose_and_leaves_the_panel_alone() {
     let mut question = asking(&["cargo test --workspace --all-features"]);
     question.explanation = &PARAGRAPHS;
 
-    let top = inside(&question.within(WIDE, 20, Glyphs::Unicode));
-    question.from = 2;
-    let down = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+    // Two rows shorter than the window the rest of these tests use, so that
+    // moving two rows down the prose still leaves rows below it — the shape
+    // this test is about is the window mid-way, not the window at the end.
+    let top = scrolled(question, 18, 0);
+    let down = scrolled(question, 18, 2);
 
     assert_eq!(top.len(), down.len());
 
     // The two rows the window moved past are gone and two later ones have
-    // arrived, and the count of what is off screen does not change with it —
-    // the same rows are hidden, from the other end.
+    // arrived, and the count falls by the two that were read.
     assert_ne!(top, down);
+    assert!(
+        top.contains(&"    · 4 more rows of explanation".to_owned()),
+        "{top:?}"
+    );
+    assert!(
+        down.contains(&"    · 2 more rows of explanation".to_owned()),
+        "{down:?}"
+    );
     let opening = "    Runs the workspace's whole test suite with every feature turned on, which";
     assert!(top.contains(&opening.to_owned()), "{top:?}");
     assert!(!down.contains(&opening.to_owned()), "{down:?}");
 
     for said in [&top, &down] {
-        assert!(
-            said.contains(&"    · 2 more rows of explanation".to_owned()),
-            "{said:?}"
-        );
         assert!(said.contains(&"  › 1. Yes, once".to_owned()), "{said:?}");
     }
+}
+
+#[test]
+fn the_marker_counts_the_rows_below_the_window_and_goes_when_there_are_none() {
+    // What a reader presses ↓ for is the prose under the window, so that is
+    // what the row above the answers counts. A constant count would still read
+    // *5 more rows* at the end of the prose, where ↓ does nothing: a true
+    // statement about the whole explanation, read as a false one about the
+    // direction being pressed.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let counted = |from| {
+        scrolled(question, 20, from)
+            .into_iter()
+            .find_map(|row| row.strip_prefix("    · ").map(str::to_owned))
+    };
+
+    assert_eq!(counted(0).as_deref(), Some("2 more rows of explanation"));
+
+    // And at the end there is nothing below, so the row that counted it goes
+    // back to the prose — which is why the panel is exactly as tall either way,
+    // and why the last press of the arrow uncovers the two rows it promised.
+    assert_eq!(counted(1), None);
+    assert_eq!(counted(usize::MAX), None);
+
+    let end = scrolled(question, 20, 1);
+    assert_eq!(end.len(), scrolled(question, 20, 0).len());
+    let closing = "    It reads and compiles; nothing outside the target directory is written.";
+    assert!(
+        end.contains(&closing.to_owned()),
+        "the last row of the prose is on screen at the end: {end:?}"
+    );
+    assert!(!scrolled(question, 20, 0).contains(&closing.to_owned()));
 }
 
 #[test]
@@ -372,12 +419,10 @@ fn scrolling_past_the_end_of_the_prose_stops_at_the_end() {
     // caller cannot see how many rows the prose folded into.
     let mut question = asking(&["cargo test --workspace --all-features"]);
     question.explanation = &PARAGRAPHS;
-    question.from = 2;
-    let last = inside(&question.within(WIDE, 20, Glyphs::Unicode));
+    let last = scrolled(question, 20, 1);
 
-    for from in [3, 9, usize::MAX] {
-        question.from = from;
-        assert_eq!(inside(&question.within(WIDE, 20, Glyphs::Unicode)), last);
+    for from in [2, 3, 9, usize::MAX] {
+        assert_eq!(scrolled(question, 20, from), last);
     }
 }
 
