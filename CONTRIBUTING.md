@@ -107,39 +107,34 @@ INSTA_UPDATE=always cargo test --test whole_screen    # without it
 5. Open a pull request. The template asks what the change does and how you
    verified it — the second question is the one that matters.
 
-## Pull requests are 400 changed lines or fewer
+## A pull request has one reason to change
 
-Additions plus deletions across the diff, `Cargo.lock` and `schema/` aside since
-both are generated. CI measures it and a larger one is sent back — past that
-size a review turns into agreement, where the reader is checking that a change
-looks plausible rather than that it is right.
+There is no ceiling on how many lines that comes to. What decides whether a
+change is one pull request or several is whether it takes one summary to say
+what it does — a change that needs two is two, however short each of them turns
+out to be, and a module whose parts do not compile apart is one however long it
+runs, since `-D warnings` makes an unreached function a failed build and the
+only smaller pull request would be one that lands the code and leaves its tests
+for the next.
 
-Wherever it is going. A branch of your own that collects sub-branches used to be
-exempt, on the argument that it gets measured in turn when it asks for `main` —
-but that measures the collection and never the pieces, and the piece is what
-somebody sat down to read. The ceiling is about the reader in front of the diff,
-and every pull request has one.
+Nothing checks this, because nothing can. It is the judgement of the person
+opening the pull request and the person reading it, and the description is
+where it gets made: if saying what the change does takes more than a paragraph,
+that is the signal, and a sequence of pull requests that each stand on their
+own is the remedy — not one larger one with a note about its size.
 
-A change that does not fit is a sequence of pull requests that each stand on
-their own, not one larger one with a note about its size.
+CI still counts the diff and prints the number, additions plus deletions with
+`Cargo.lock` and `schema/` aside since both are generated. Nothing is sent back
+for it: the ceiling it counts against is temporarily off while the project is
+this young, because most of what arrives is still a whole module and that is
+the shape a line count measures worst. Off rather than gone — the ceiling, and
+the one line that enforces it again, are in `.github/workflows/ci.yml`.
 
-Two diffs are measured wrongly, and no diff can prove either about itself, so
-each is a label — somebody saying so, left visible on the pull request
-afterwards:
-
-- `moves-only`, for code that only moves. Nothing changed but where it lives.
-- `whole-module`, for a module whose parts do not compile apart. `-D warnings`
-  makes an unreached function a failed build, so a new provider, tool or
-  renderer arrives exported and working or it does not build at all. Where that
-  floor is already over the ceiling, the only smaller pull request is one that
-  lands the code and leaves its tests for the next — which is a worse thing to
-  ask a reviewer to approve than a long diff.
-
-The second is the narrower of the two and is meant to stay that way. It is not
-for a change that is merely large, or awkward to split, or all one topic: the
-question is whether an intermediate pull request would *compile*, and the answer
-has to be no. Say in the pull request where the floor is and what you measured
-it at, so the next reader can check the claim rather than take it.
+The number is there meanwhile so a reader knows what they are opening, and the
+`moves-only` and `whole-module` labels are still worth adding when they are
+true. They excuse nothing while the ceiling is off, and both say something
+about a diff that the diff cannot say about itself: that nothing changed but
+where the code lives, and that a module's parts do not compile apart.
 
 ## Commit messages
 

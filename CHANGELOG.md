@@ -72,6 +72,18 @@ Notable changes to crucible. Format follows
   plan, `maxTokens` no longer bounds a turn's generated tokens; nothing bounded
   them before either, since no such turn ever reached the model.
 
+### Internal
+
+- **The 400-line ceiling on a pull request reports instead of blocking.** A line
+  count is a proxy for how much a reader can hold at once, and at this age it
+  was measuring the wrong thing: most of what arrives is a whole module, which
+  `-D warnings` makes indivisible, so the ceiling kept sending back changes
+  whose only fault was the size of the thing they added. The job, the count and
+  the two labels all stay and the number is still printed on every pull request
+  — what is switched off is the verdict, and switching it back on is one line in
+  the workflow. The rule meanwhile is the one the count stood for: a pull
+  request has one reason to change.
+
 ## [0.2.0] - 2026-08-17
 
 ### Added
