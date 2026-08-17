@@ -108,6 +108,20 @@ impl Glyphs {
         }
     }
 
+    /// The long mark that stands between a thing and what is said about it.
+    ///
+    /// Two columns under `ascii` where [`Glyphs::dot`] is one, and that is the
+    /// difference between them rather than an accident of the set: this one
+    /// divides a name from a sentence, and a lone hyphen there reads as part of
+    /// whichever word it lands against.
+    #[must_use]
+    pub fn dash(self) -> &'static str {
+        match self {
+            Self::Unicode => "—",
+            Self::Ascii => "--",
+        }
+    }
+
     /// The mark that opens the line for a tool call.
     ///
     /// Filled, where [`Glyphs::dot`] is not. The two sit within a row of each

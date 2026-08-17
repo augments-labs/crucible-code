@@ -193,3 +193,23 @@ fn leaving_is_the_only_command_that_ends_the_session() {
 
     assert!(!leaves(Wanted::Unknown("/nope")));
 }
+
+#[test]
+fn the_mark_in_a_listing_row_comes_out_of_the_glyph_set() {
+    // The listing is what a run with no keyboard is given in place of a panel,
+    // and a piped run is exactly the run most likely to have the setting turned
+    // down. A mark drawn from the set is a mark that arrives; one written into
+    // the sentence is a question mark between the line and what it does.
+    assert_eq!(
+        about(
+            "/login openai",
+            "a key from OPENAI_API_KEY",
+            Glyphs::Unicode
+        ),
+        "/login openai — a key from OPENAI_API_KEY"
+    );
+    assert_eq!(
+        about("/login openai", "a key from OPENAI_API_KEY", Glyphs::Ascii),
+        "/login openai -- a key from OPENAI_API_KEY"
+    );
+}

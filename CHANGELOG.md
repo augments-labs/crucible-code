@@ -60,6 +60,12 @@ Notable changes to crucible. Format follows
   character chosen once and left. What it costs: those rows read differently
   under `ascii` than they did.
 
+- **The listing a run with no keyboard gets is drawn out of the same setting.**
+  What `/login`, `/logout` and `/model` put between the line to type and what
+  typing it reaches is `—` where the terminal draws it and `--` under `ascii`.
+  A piped run is the one most likely to have the setting turned down, and it
+  was the one being handed a character its terminal had no glyph for.
+
 ### Removed
 
 - **A release no longer carries `budgets.json` or `budget-environment.txt`.**

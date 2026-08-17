@@ -22,7 +22,7 @@ use crate::cli::{
     CredentialSource, Fatal, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, PROVIDERS, Served, served,
 };
 
-use super::{Terms, say};
+use super::{Terms, about, say};
 
 /// The sentence under the panel's title: which of the two places a key can be
 /// this reaches, since a panel of names cannot say it.
@@ -105,7 +105,11 @@ pub(super) fn run<T: Terminal>(
     let rows: Vec<Row> = held
         .into_iter()
         .map(|one| {
-            let said = format!("/logout {} — {}", one.name, reaches(one));
+            let said = about(
+                &format!("/logout {}", one.name),
+                &reaches(one),
+                terms.style.glyphs(),
+            );
 
             Row::new().then(Slot::Quiet, clip(&said, columns))
         })
