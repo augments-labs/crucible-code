@@ -49,6 +49,7 @@ use typing::Asked;
 mod command;
 mod mode;
 mod picking;
+mod region;
 mod secret;
 mod turning;
 mod typing;
