@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, ProviderError, Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs,
-    ToolError, ToolId, ToolOutput, Verdict,
+    Approved, Change, Diff, Line, ProviderError, Sensitivity, SessionId, Spend, Summary, Target,
+    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict,
 };
 
 use super::*;
@@ -958,4 +958,53 @@ fn a_turn_that_failed_reports_no_reason_because_it_reached_none() {
     scripted.turn("go").unwrap_err();
 
     assert_eq!(scripted.finished(), []);
+}
+
+#[test]
+fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
+    // The one thing here that goes to one of the two and not the other. A diff
+    // is drawn once; the transcript is replayed to the model every turn for the
+    // rest of the session, so a copy kept there would be paid for again on
+    // every turn after the edit it describes -- and paid for in the one value
+    // that is allowed to grow, against a bound that counts what was said.
+    let diff = Diff::new([Line::new(315, Change::Added, "budgets:")]);
+    let script = Script::new(vec![calling("a", "edit", "{}"), saying("done")]);
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("edit").showing(diff)]),
+        Verdict::Allow,
+    );
+
+    scripted.turn("go").unwrap();
+
+    let shown: Vec<Option<usize>> = scripted
+        .seen
+        .try_iter()
+        .filter_map(|event| match event {
+            Event::ToolFinished { output, .. } => Some(output.diff().map(Diff::added)),
+            Event::TurnStarted { .. }
+            | Event::Delta { .. }
+            | Event::ToolRequested { .. }
+            | Event::TurnFinished { .. }
+            | Event::Spent { .. }
+            | Event::Failed { .. } => None,
+        })
+        .collect();
+
+    assert_eq!(shown, [Some(1)]);
+
+    let kept: Vec<Option<&Diff>> = scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => Some(results),
+            Message::User(_) | Message::Agent { .. } => None,
+        })
+        .flatten()
+        .map(|result| result.output.diff())
+        .collect();
+
+    assert_eq!(kept, [None]);
 }

@@ -122,6 +122,13 @@ impl Work<'_> {
                 output: output.clone(),
             });
 
+            // And this is where the two copies part company. A diff is for the
+            // reader, it is drawn once, and the transcript is replayed every
+            // turn for the rest of the session — one that kept a diff per edit
+            // would grow with what had been shown, where the bound above counts
+            // what was said.
+            output.forget_diff();
+
             results.push(ToolResult {
                 id: call.id.clone(),
                 output,

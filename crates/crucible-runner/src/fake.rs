@@ -9,9 +9,9 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Ask, Cancel, Delta, DeltaStream, Effort, Message, Provider, ProviderError, Remember,
-    Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolCall, ToolError, ToolOutput,
-    ToolSchema, Verdict,
+    Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Provider, ProviderError,
+    Remember, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolCall, ToolError,
+    ToolOutput, ToolSchema, Verdict,
 };
 
 /// The name a scripted provider answers to.
@@ -162,6 +162,7 @@ pub(crate) struct Fixed {
     problem: Option<Box<str>>,
     cancels: bool,
     sensitivity: Sensitivity,
+    diff: Option<Diff>,
 }
 
 impl Fixed {
@@ -175,6 +176,7 @@ impl Fixed {
             sensitivity: Sensitivity::ReadOnly {
                 target: Target::unresolved(),
             },
+            diff: None,
         }
     }
 
@@ -200,6 +202,12 @@ impl Fixed {
     /// is asked.
     pub(crate) fn risking(mut self, sensitivity: Sensitivity) -> Self {
         self.sensitivity = sensitivity;
+        self
+    }
+
+    /// Makes it a tool that rewrote a file and has the change to show for it.
+    pub(crate) fn showing(mut self, diff: Diff) -> Self {
+        self.diff = Some(diff);
         self
     }
 }
@@ -234,7 +242,10 @@ impl Tool for Fixed {
                 tool: self.name,
                 problem: problem.clone(),
             }),
-            None => Ok(ToolOutput::ok(self.answer.clone())),
+            None => Ok(match &self.diff {
+                Some(diff) => ToolOutput::ok(self.answer.clone()).showing(diff.clone()),
+                None => ToolOutput::ok(self.answer.clone()),
+            }),
         }
     }
 }
