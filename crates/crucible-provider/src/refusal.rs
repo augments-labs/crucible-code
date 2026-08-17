@@ -1,9 +1,15 @@
 //! Turning a refused response into something a user can act on.
 //!
 //! Shared because a refusal is the one part of both protocols that is already
-//! the same: a status, and a sentence under `error.message` explaining it. A
-//! wrong model name and a key without access are both diagnosed from that
-//! sentence, so losing it costs a user the only clue they get.
+//! the same: a status, and a sentence explaining it. A wrong model name and a
+//! key without access are both diagnosed from that sentence, so losing it costs
+//! a user the only clue they get.
+//!
+//! Where the sentence sits is the part that is not quite shared. The vendors'
+//! published APIs put it under `error.message`; the backend a `ChatGPT` plan is
+//! served by answers a bare `detail`. Both are read here rather than in either
+//! provider, because which of the two shapes arrives is a fact about the
+//! service that answered rather than about the protocol it speaks.
 //!
 //! Every refusal ends the turn, and that includes the one saying the credential
 //! was not accepted. Renewing a credential happens earlier than here:
@@ -173,15 +179,24 @@ fn timed_out() -> io::Error {
 /// The sentence inside a refusal body.
 ///
 /// Falls back to the body itself, because a proxy or a gateway in front of the
-/// API refuses in its own shape and that text is still what a user needs.
+/// API refuses in its own shape and that text is still what a user needs. What
+/// that fallback costs is a line of JSON where a sentence belongs, which is why
+/// the shapes actually in front of a user are read rather than left to it.
 fn explain(body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .as_ref()
-        .and_then(|payload| payload.get("error"))
-        .and_then(|error| error.get("message"))
-        .and_then(serde_json::Value::as_str)
+        .and_then(sentence)
         .map_or_else(|| body.trim().to_owned(), ToOwned::to_owned)
+}
+
+/// The reason a refusal states, in whichever of the two shapes it arrived in.
+fn sentence(payload: &serde_json::Value) -> Option<&str> {
+    payload
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .or_else(|| payload.get("detail"))
+        .and_then(serde_json::Value::as_str)
 }
 
 #[cfg(test)]
@@ -218,6 +233,19 @@ mod tests {
         );
 
         assert_eq!(problem.to_string(), "test: HTTP 404: model: nope");
+    }
+
+    #[test]
+    fn a_refusal_that_states_its_reason_as_a_bare_detail_is_read_too() {
+        // The shape the backend a plan is served by answers in. Read only as
+        // `error.message`, this reached the user as the line of JSON around the
+        // sentence rather than as the sentence.
+        let problem = plain_refused(400, reading(r#"{"detail":"Unsupported parameter: x"}"#));
+
+        assert_eq!(
+            problem.to_string(),
+            "test: HTTP 400: Unsupported parameter: x"
+        );
     }
 
     #[test]
