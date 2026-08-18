@@ -6,6 +6,22 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A tool that asks you.** `ask_user` puts questions to the person at the
+  keyboard and waits, so the agent can settle a fork it cannot read its way out
+  of instead of guessing. Answers are chosen on a panel where the prompt box
+  was, with a specimen under any answer whose subject is a shape rather than a
+  word. Leaving it unanswered is a result rather than an error, and a run with
+  no terminal does not carry the tool at all.
+
+### Fixed
+
+- **A fixture is a directory of its own.** Two tests naming one fixture shared a
+  tree, so the second's setup deleted the first's workspace while it ran and a
+  command spawned inside it could not start. It read as a flaky `bash` test and
+  was not one.
+
 ## [0.9.1] - 2026-08-18
 
 **Nothing in crucible changed.** A contributor-facing tidy-up: the rules moved

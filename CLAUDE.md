@@ -92,6 +92,11 @@ column gets sent back in review.
 | One thing that happened, reported as it happens | **event** | entry, record, item |
 | One prompt, answer or tool result in a transcript, and one line of the session log | **message** | entry, record, item |
 | What a response or a turn has cost, counted in tokens produced | **spend** | usage, cost, consumption, spending |
+| What one call puts to the user, and everything it gets back | **ask** | dialog, form, survey, poll, questionnaire, wizard |
+| One thing a question offers to be chosen | **answer** | option, choice, item, candidate |
+| The questions of an ask, drawn across the top of it | **the questions row** | tabs, stepper, breadcrumbs, wizard |
+| What an answer would look like, drawn under it | **specimen** | preview, sample, example, mock |
+| The stop where every answer is read back before it is sent | **review** | summary, confirm, submit |
 
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.
