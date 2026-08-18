@@ -24,10 +24,10 @@
 //! is why it is held for the turn, and an identifier carried today would name a
 //! question nothing is competing with.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::time::Duration;
 
-use crucible_core::{Ask, Event, Post, Remember, Sensitivity, ToolCall, Verdict};
+use crucible_core::{Ask, Event, Post, Remember, Sensitivity, ToolCall, Verdict, Wrote};
 
 /// Events allowed to wait for the terminal.
 ///
@@ -144,31 +144,74 @@ impl Inbox {
             self.from.recv_timeout(wait)?
         };
 
-        let Seen::Turn(Event::Delta { text }) = first else {
-            return Ok(first);
-        };
-        let mut text = String::from(text);
+        // Two kinds of text arrive in runs and are drawn in one call each: the
+        // model's prose, and what a running command has printed. Nothing else
+        // merges, and neither of these merges into the other — a delta and a
+        // command's output are different things on screen and the renderer draws
+        // them differently.
+        match first {
+            Seen::Turn(Event::Delta { text }) => {
+                let joined = self.gather(&text, |seen| match seen {
+                    Seen::Turn(Event::Delta { text }) => Some(text),
+                    _ => None,
+                });
+
+                Ok(Seen::Turn(Event::Delta {
+                    text: joined.into(),
+                }))
+            }
+
+            // Only with what the same call wrote. Calls run one at a time today,
+            // so nothing yet produces two runs to keep apart; the comparison is
+            // what makes "one call's output is drawn together" a rule that can be
+            // stated rather than a coincidence of the dispatch order.
+            Seen::Turn(Event::Wrote { call, text }) => {
+                let joined = self.gather(text.as_str(), |seen| match seen {
+                    Seen::Turn(Event::Wrote { call: from, text }) if *from == call => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                });
+
+                Ok(Seen::Turn(Event::Wrote {
+                    call,
+                    text: Wrote::new(joined),
+                }))
+            }
+
+            other => Ok(other),
+        }
+    }
+
+    /// Takes `first` and everything already waiting that `mergeable` accepts.
+    ///
+    /// One place, because the rule is one rule: adjacent text merges up to a
+    /// ceiling, and the first thing that does not merge is put back rather than
+    /// dropped. What differs between the two callers is only which events count
+    /// as adjacent text, which is exactly what the closure answers.
+    fn gather(&mut self, first: &str, mergeable: impl Fn(&Seen) -> Option<&str>) -> String {
+        let mut text = String::from(first);
 
         while text.len() < BATCH_BYTES {
-            match self.from.try_recv() {
-                Ok(Seen::Turn(Event::Delta { text: next }))
-                    if text.len().saturating_add(next.len()) <= BATCH_BYTES =>
-                {
-                    text.push_str(&next);
+            let Ok(next) = self.from.try_recv() else {
+                break;
+            };
+
+            match mergeable(&next) {
+                Some(more) if text.len().saturating_add(more.len()) <= BATCH_BYTES => {
+                    text.push_str(more);
                 }
-                Ok(next @ Seen::Turn(Event::Delta { .. })) => {
+                // Either something else entirely, or more of the same that would
+                // cross the ceiling. Held either way: the next call takes it, and
+                // the terminal still sees what the runner reported in order.
+                Some(_) | None => {
                     self.held = Some(next);
                     break;
                 }
-                Ok(other) => {
-                    self.held = Some(other);
-                    break;
-                }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
 
-        Ok(Seen::Turn(Event::Delta { text: text.into() }))
+        text
     }
 }
 
@@ -179,7 +222,7 @@ mod tests {
     use std::sync::mpsc::{channel, sync_channel};
     use std::time::Duration;
 
-    use crucible_core::{Command, ToolArgs, ToolId, TurnId};
+    use crucible_core::{Command, ToolArgs, ToolId, TurnId, Wrote};
 
     use super::*;
 
@@ -287,6 +330,66 @@ mod tests {
         assert!(matches!(
             inbox.recv_timeout(Duration::ZERO).unwrap(),
             Seen::Turn(Event::Delta { text }) if &*text == "three"
+        ));
+    }
+
+    #[test]
+    fn what_one_call_wrote_is_drawn_together_and_never_joined_to_another_call() {
+        // The reason the event carries a call at all. Calls run one at a time
+        // today, so the second half of this is a rule about a future rather than
+        // a bug being fixed — but it is the rule the id exists to make statable,
+        // and it costs one comparison.
+        let (to, from) = sync_channel(8);
+        let piece = |call: &str, text: &str| {
+            Seen::Turn(Event::Wrote {
+                call: ToolId::new(call),
+                text: Wrote::new(text),
+            })
+        };
+
+        to.send(piece("a", "Compiling one\n")).unwrap();
+        to.send(piece("a", "Compiling two\n")).unwrap();
+        to.send(piece("b", "elsewhere\n")).unwrap();
+
+        let mut inbox = Inbox::new(from);
+
+        let Seen::Turn(Event::Wrote { call, text }) = inbox.recv_timeout(Duration::ZERO).unwrap()
+        else {
+            panic!("what arrived was not what one call wrote");
+        };
+        assert_eq!(call, ToolId::new("a"));
+        assert_eq!(text.as_str(), "Compiling one\nCompiling two\n");
+
+        let Seen::Turn(Event::Wrote { call, text }) = inbox.recv_timeout(Duration::ZERO).unwrap()
+        else {
+            panic!("the second call's output was swallowed by the first");
+        };
+        assert_eq!(call, ToolId::new("b"));
+        assert_eq!(text.as_str(), "elsewhere\n");
+    }
+
+    #[test]
+    fn output_is_never_drawn_across_the_event_that_ended_the_call() {
+        let (to, from) = sync_channel(8);
+        to.send(Seen::Turn(Event::Wrote {
+            call: ToolId::new("a"),
+            text: Wrote::new("last line\n"),
+        }))
+        .unwrap();
+        to.send(Seen::Turn(Event::TurnFinished {
+            turn: TurnId::FIRST,
+            stop: crucible_core::StopReason::Yielded,
+        }))
+        .unwrap();
+
+        let mut inbox = Inbox::new(from);
+        assert!(matches!(
+            inbox.recv_timeout(Duration::ZERO).unwrap(),
+            Seen::Turn(Event::Wrote { text, .. }) if text.as_str() == "last line\n"
+        ));
+        assert!(matches!(
+            inbox.recv_timeout(Duration::ZERO).unwrap(),
+            Seen::Turn(Event::TurnFinished { .. })
         ));
     }
 
