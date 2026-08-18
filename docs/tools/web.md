@@ -80,7 +80,7 @@ You can write them yourself, in the same file as every other rule:
 {
   "permissions": {
     "allow": ["web_search(*)", "web_fetch(docs.rs)", "web_fetch(*.rust-lang.org)"],
-    "deny": ["web_fetch(169.254.169.254)"]
+    "deny": ["web_fetch(pastebin.com)"]
   }
 }
 ```
@@ -97,6 +97,20 @@ crucible refuses to guess. An address it cannot read into a host plainly —
 anything with user information, anything with no host, anything that is not
 `http` or `https` — matches no rule except a blanket, so you are asked about it
 whatever you have allowed. `web_fetch` then refuses to send it at all.
+
+### A redirect somewhere else is a new question
+
+Allowing a host allows that host. If a page redirects to a different one,
+`web_fetch` does not hand back what it found there — it says where it was sent
+and stops. The verdict you gave was about the address that was asked for, and a
+site you trust can send a request anywhere; the page comes back only once you
+have allowed the host it actually came from. A redirect inside one host is still
+that host and is answered normally.
+
+Nothing here can reach your own machine. crucible does not fetch the page
+itself — the vendor does, from its own network — so `localhost`, a private
+address and anything else behind your firewall are all unreachable through this
+tool whatever rule you write.
 
 ## What comes back is not trusted
 

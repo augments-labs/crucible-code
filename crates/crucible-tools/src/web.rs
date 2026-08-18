@@ -200,6 +200,34 @@ impl Tool for WebFetch {
             Err(problem) => return failed(FETCH, &problem),
         };
 
+        // A verdict was reached about the host in the address that was asked
+        // for, and a redirect can land somewhere else entirely. Nothing has
+        // asked about *that* host, so the page does not come back: a rule
+        // saying `docs.rs` would otherwise carry content from wherever
+        // `docs.rs` chose to send the request, which is not what anyone
+        // allowed. Named rather than swallowed, so the model can ask for the
+        // address it actually reached and get its own verdict for it.
+        // The hosts, not the whole values: a `Host` carries the address it was
+        // read from, so two pages of one site would compare unequal and every
+        // ordinary redirect would be refused. Spelled out rather than compared
+        // through `Display`, and anything that is not two readable hosts is
+        // treated as a move — an address that cannot be read is one nobody can
+        // have allowed.
+        let asked = self.source.reaches(url);
+        let arrived = self.source.reaches(&page.url);
+        let same = match (&asked, &arrived) {
+            (Host::Named { host: from, .. }, Host::Named { host: to, .. }) => from == to,
+            _ => false,
+        };
+
+        if !same {
+            return Ok(ToolOutput::failed(format!(
+                "{url} redirected to {}, which is a different host. \
+                 Nobody has allowed that one. Call web_fetch with {} to ask about it.",
+                page.url, page.url,
+            )));
+        }
+
         // The address the source ended at, which is not always the one that was
         // asked for. A redirect is exactly the case where the model needs to be
         // told, because everything it does next with this page — including

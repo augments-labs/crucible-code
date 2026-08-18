@@ -203,6 +203,44 @@ fn a_fetch_nobody_could_read_an_address_out_of_matches_no_host_rule() {
 }
 
 #[test]
+fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict() {
+    // The verdict was about the host in the address that was asked for. A
+    // redirect elsewhere is a host nobody has been asked about, and answering
+    // with its content would let one allowed host carry any other.
+    let tool = fetching("https://evil.example/landed", None, "a page nobody allowed");
+
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+            &Unwatched,
+        )
+        .expect("a source that answers");
+
+    assert!(output.is_failed());
+    assert!(
+        !output.text().contains("a page nobody allowed"),
+        "the body of an unapproved host came back: {}",
+        output.text(),
+    );
+    assert!(output.text().contains("evil.example"), "{}", output.text());
+}
+
+#[test]
+fn a_redirect_inside_one_host_is_still_that_host_and_comes_back() {
+    let tool = fetching("https://docs.rs/serde/latest/", Some("Serde"), "the body");
+
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+            &Unwatched,
+        )
+        .expect("a source that answers");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("the body"), "{}", output.text());
+}
+
+#[test]
 fn a_page_says_where_it_actually_came_from() {
     // Not where it was asked for. Everything the model does next with this page
     // depends on where it ended up, a redirect being the case that matters.

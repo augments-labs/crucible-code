@@ -16,7 +16,9 @@ Notable changes to crucible. Format follows
   asked about in `ask` and in `allowEdits` and allowed under `fullAccess`, and
   answering *don't ask again* writes a rule naming the host: `web_fetch(docs.rs)`.
   An address crucible cannot read into a host plainly is never guessed at, so a
-  rule about `docs.rs` cannot be made to authorise `https://docs.rs@evil.example/`.
+  rule about `docs.rs` cannot be made to authorise `https://docs.rs@evil.example/`,
+  and a page that redirects to another host is reported rather than returned —
+  allowing one host allows that host.
   What it costs: on an API key a search is billed by your provider — $10 per 1 000
   on both Anthropic and OpenAI — and on a subscription it is part of the plan.
   Anthropic serves both tools; OpenAI on an API key serves the search alone, since
