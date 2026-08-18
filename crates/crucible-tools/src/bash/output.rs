@@ -6,6 +6,12 @@
 //! until somebody reads it, and either one turns a naive wait into a hang. So
 //! the pipes are drained on threads from the moment the command starts, and
 //! every wait in this module is bounded.
+//!
+//! A command can also outlive the *call* — that is [`super::background`], and it
+//! is the one path out of here that does not end what it was waiting on. What
+//! makes that safe is not this module: it is that the registry taking the command
+//! owns ending it, and that the two never both think they do. [`Waited`] is where
+//! the handover is, and it stops guarding the moment it hands over.
 
 use std::collections::VecDeque;
 use std::io;
@@ -16,6 +22,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, ToolError, ToolOutput, Watch, Wrote};
+
+use super::background::{Background, Taking};
 
 use super::platform::{Output, ReadState, Scope};
 use super::{NAME, TICK, io as tool_io};
@@ -49,27 +57,47 @@ const SETTLE: Duration = Duration::from_millis(200);
 /// pipe buffer holds, which is most commands worth running.
 pub(super) fn collect(
     child: Child,
-    scope: &Scope,
-    allowed: Duration,
-    cancel: &Cancel,
-    watch: &dyn Watch,
-) -> Result<ToolOutput, ToolError> {
+    scope: Scope,
+    waiting: &Waiting<'_>,
+) -> Result<Left, ToolError> {
+    let Waiting {
+        allowed,
+        cancel,
+        watch,
+        leaving,
+    } = waiting;
     // Own the child before the first fallible pipe operation. Any `?` below
     // therefore stops the process scope and performs only a bounded reap.
-    let mut running = Running::new(child, scope);
-    let mut out = Pipe::drain(running.child.stdout.take(), "stdout")?;
-    let mut err = Pipe::drain(running.child.stderr.take(), "stderr")?;
+    let started = Instant::now();
+    let mut running = Waited::new(child, scope);
+    let mut out = Pipe::drain(running.taking()?.stdout.take(), "stdout")?;
+    let mut err = Pipe::drain(running.taking()?.stderr.take(), "stderr")?;
 
-    let deadline = Instant::now() + allowed;
+    let deadline = started + *allowed;
     let mut expired = false;
 
     // A child is not one of this program's threads: nothing in it will notice
     // the flag, so the only way to stop it is to kill it.
     let status = loop {
-        match running.child.try_wait() {
+        match running.taking()?.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {}
             Err(source) => return Err(tool_io("could not wait for the command", source)),
+        }
+
+        // Asked before the deadline and before the cancel, because it is the one
+        // of the three that keeps the command: a press and a timeout landing in
+        // the same tick should leave the command running rather than kill it.
+        if leaving.as_ref().is_some_and(|leaving| leaving.now(started))
+            && let Some((child, scope)) = running.given()
+        {
+            return Ok(Left::Running(Taking {
+                child,
+                scope,
+                out,
+                err,
+                since: started,
+            }));
         }
 
         if cancel.requested() {
@@ -104,10 +132,12 @@ pub(super) fn collect(
         thread::sleep(TICK);
     };
 
-    // A shell can exit successfully while a background descendant continues.
-    // This tool has no handle it could return for such a process, so keeping it
-    // would make both its lifetime and its resources unbounded. The process
-    // group or job survives its leader and is ended here on every exit path.
+    // A shell can exit successfully while a descendant of it continues, and the
+    // process group or job survives its leader. Ended here on every path that
+    // leaves through this function — which is every path but one: a command let
+    // go of above is owned by the registry that took it, and that is what ends it
+    // instead. Nothing reaches the end of a command's life without somebody
+    // holding it.
     if !expired {
         running.finish_after_exit()?;
     }
@@ -116,13 +146,15 @@ pub(super) fn collect(
     out.close()?;
     err.close()?;
 
-    Ok(Finished {
-        code: status.and_then(|status| status.code()),
-        out: joined(&out, &err),
-        arriving: !ended,
-        expired,
-    }
-    .report())
+    Ok(Left::Answered(
+        Finished {
+            code: status.and_then(|status| status.code()),
+            out: joined(&out, &err),
+            arriving: !ended,
+            expired,
+        }
+        .report(),
+    ))
 }
 
 /// Stops a child that could not be handed to [`collect`].
@@ -131,8 +163,8 @@ pub(super) fn collect(
 /// waiting for it without first ending it would be just as unbounded as any
 /// other child wait.
 #[cfg(windows)]
-pub(super) fn discard(child: Child, scope: &Scope) {
-    drop(Running::new(child, scope));
+pub(super) fn discard(child: Child, scope: Scope) {
+    drop(Waited::new(child, scope));
 }
 
 /// A child whose scope is stopped and reaped on every return path.
@@ -153,26 +185,57 @@ pub(super) fn discard(child: Child, scope: &Scope) {
 ///
 /// Windows uses a kill-on-close job and Unix a process group; both live in the
 /// platform boundary so the wait never has a branch that stops only the shell.
-struct Running<'a> {
-    child: Child,
-    scope: &'a Scope,
+///
+/// It owns the scope rather than borrowing it, because one exit path from
+/// [`collect`] hands both on to whatever will end them later instead.
+struct Waited {
+    child: Option<Child>,
+    scope: Option<Scope>,
     released: bool,
 }
 
-impl<'a> Running<'a> {
-    fn new(child: Child, scope: &'a Scope) -> Self {
+impl Waited {
+    fn new(child: Child, scope: Scope) -> Self {
         Self {
-            child,
-            scope,
+            child: Some(child),
+            scope: Some(scope),
             released: false,
         }
     }
 
+    /// The child, for the wait to look at.
+    ///
+    /// An error rather than a panic where it has been handed on: every path that
+    /// asks has already returned by then, so this is the arm nothing takes, and a
+    /// session is worth more than a proof about a branch.
+    fn taking(&mut self) -> Result<&mut Child, ToolError> {
+        self.child.as_mut().ok_or_else(|| {
+            tool_io(
+                "the command was handed over while it was still being waited for",
+                io::Error::other("no child left to wait for"),
+            )
+        })
+    }
+
+    /// Hands the command and its containment to a caller that will end them.
+    ///
+    /// After this the guard ends nothing: what it was guarding against is a
+    /// command nobody owns, and somebody does.
+    fn given(&mut self) -> Option<(Child, Scope)> {
+        let taken = (self.child.take()?, self.scope.take()?);
+        self.released = true;
+
+        Some(taken)
+    }
+
     /// Stops the scope and gives the shell a bounded interval to become reapable.
     fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
-        stop_scope(self.scope, &mut self.child)
-            .map_err(|source| tool_io("could not stop the command", source))?;
-        let status = reap(&mut self.child, SETTLE)
+        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+            return Ok(None);
+        };
+
+        end(scope, child).map_err(|source| tool_io("could not stop the command", source))?;
+        let status = reap(self.taking()?, SETTLE)
             .map_err(|source| tool_io("could not inspect the stopped command", source))?;
         let Some(status) = status else {
             return Err(tool_io(
@@ -189,22 +252,31 @@ impl<'a> Running<'a> {
 
     /// Stops descendants after `try_wait` has already reaped the shell.
     fn finish_after_exit(&mut self) -> Result<(), ToolError> {
-        stop_scope(self.scope, &mut self.child)
+        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+            return Ok(());
+        };
+
+        end(scope, child)
             .map_err(|source| tool_io("could not stop command descendants", source))?;
         self.released = true;
         Ok(())
     }
 }
 
-impl Drop for Running<'_> {
+impl Drop for Waited {
     fn drop(&mut self) {
         if self.released {
             return;
         }
+
         // Destructors cannot report a second failure over the error already on
         // its way out. They can still guarantee that cleanup itself is bounded.
-        let _ = stop_scope(self.scope, &mut self.child);
-        let _ = reap(&mut self.child, SETTLE);
+        let Some((scope, child)) = self.scope.as_ref().zip(self.child.as_mut()) else {
+            return;
+        };
+
+        let _ = end(scope, child);
+        let _ = reap(child, SETTLE);
     }
 }
 
@@ -222,14 +294,67 @@ fn reap(child: &mut Child, allowed: Duration) -> io::Result<Option<ExitStatus>> 
     }
 }
 
+/// Ends a command's whole process group, whatever the platform calls one.
+///
+/// Named here rather than in two places because two modules end a command now:
+/// the wait that owns one, and the registry that took one over.
 #[cfg(unix)]
-fn stop_scope(_scope: &Scope, child: &mut Child) -> io::Result<()> {
+pub(super) fn end(_scope: &Scope, child: &mut Child) -> io::Result<()> {
     Scope::stop(child)
 }
 
+/// The same, for a job the shell was attached to.
 #[cfg(windows)]
-fn stop_scope(scope: &Scope, child: &mut Child) -> io::Result<()> {
+pub(super) fn end(scope: &Scope, child: &mut Child) -> io::Result<()> {
     scope.stop(child)
+}
+
+/// Everything the wait needs besides the command itself.
+///
+/// Gathered rather than passed one by one, for the reason the runner gathers a
+/// pass's worth: a call with six arguments beside it is a call nobody can read,
+/// and these four are one thing — the terms the command is being waited under.
+pub(super) struct Waiting<'a> {
+    /// How long it may take before it is stopped.
+    pub(super) allowed: Duration,
+    /// Whether the user has asked everything to stop.
+    pub(super) cancel: &'a Cancel,
+    /// Where what it prints goes while it runs.
+    pub(super) watch: &'a dyn Watch,
+    /// Whether it may be let go of, and when.
+    pub(super) leaving: Option<Leaving<'a>>,
+}
+
+/// When a command is to be let go of rather than waited for.
+///
+/// Two ways in and one answer, because the command cannot tell them apart: the
+/// call asked to leave it running, or somebody pressed the key while it ran.
+pub(super) struct Leaving<'a> {
+    /// Where it goes once it is let go of.
+    pub(super) left: &'a Background,
+    /// Let go of it once this much has passed, where the call asked to. `None`
+    /// where only the key can ask.
+    pub(super) after: Option<Duration>,
+}
+
+impl Leaving<'_> {
+    /// Whether the command should be let go of now.
+    ///
+    /// The key is asked about second and its answer is *spent* — read and
+    /// cleared — so one press cannot let go of two commands. Asking the clock
+    /// first is what keeps a call that asked to be left running from also
+    /// swallowing a press meant for the next command.
+    fn now(&self, started: Instant) -> bool {
+        self.after.is_some_and(|after| started.elapsed() >= after) || self.left.wanted()
+    }
+}
+
+/// What one call came back with: an answer, or a command still running.
+pub(super) enum Left {
+    /// The command is over, and this is what it said.
+    Answered(ToolOutput),
+    /// It is still going, and whoever asked for that now owns it.
+    Running(Taking),
 }
 
 /// What a command left behind.
@@ -309,11 +434,28 @@ struct Kept {
     /// the command run. Bounded by [`FRESH`] and emptied by
     /// [`Kept::hand_over`]; nothing accumulates here across a command.
     fresh: VecDeque<u8>,
+    /// How many lines have arrived, the ones since dropped included.
+    ///
+    /// Counted as they come rather than read off what is kept, because what is
+    /// kept has a hole in the middle of it: a count taken from the two ends would
+    /// miss every line that fell between them. It is what a command nobody is
+    /// waiting on is counted by, since there is no result to read a figure off.
+    lines: usize,
 }
 
 impl Kept {
     /// Takes what it can of `arrived` and counts the rest.
     fn push(&mut self, arrived: &[u8]) {
+        // The lint here asks for a crate whose whole subject is counting bytes
+        // quickly. This counts newlines in one pipe read — eight kilobytes at
+        // most — once per read, on a thread whose other job is waiting. A
+        // dependency is not what that is worth, and the ladder this project adds
+        // one by says so.
+        #[allow(clippy::naive_bytecount)]
+        let arrived_lines = arrived.iter().filter(|byte| **byte == b'\n').count();
+
+        self.lines = self.lines.saturating_add(arrived_lines);
+
         // The reader's window first, and bounded on its own: it is emptied every
         // tick, so what it holds is one tick's worth rather than a command's.
         let recent = arrived
@@ -351,6 +493,14 @@ impl Kept {
         self.tail.drain(..spill);
         self.dropped = self.dropped.saturating_add(spill);
         self.tail.extend(keep);
+    }
+
+    /// How many bytes have arrived, the ones since dropped included.
+    fn taken(&self) -> usize {
+        self.head
+            .len()
+            .saturating_add(self.tail.len())
+            .saturating_add(self.dropped)
     }
 
     /// What has arrived since this was last called, as far as the last whole
@@ -419,7 +569,7 @@ impl Kept {
 }
 
 /// One of a command's output pipes, being read on a thread of its own.
-struct Pipe {
+pub(super) struct Pipe {
     /// Shared rather than returned, so what has arrived can be taken without
     /// waiting for the end that may never come.
     kept: Arc<Mutex<Kept>>,
@@ -524,6 +674,25 @@ impl Pipe {
         self.kept
             .lock()
             .map(|kept| (kept.bytes(), kept.dropped))
+            .unwrap_or_default()
+    }
+
+    /// How many lines and bytes have arrived on this pipe.
+    ///
+    /// For a command nobody is waiting on: the row under the box counts what it
+    /// has printed, and there is no result to read the figure off yet.
+    pub(super) fn counted(&self) -> (usize, usize) {
+        self.kept
+            .lock()
+            .map(|kept| (kept.lines, kept.taken()))
+            .unwrap_or_default()
+    }
+
+    /// The end of what has arrived, for the view that stands one whole.
+    pub(super) fn text(&self) -> String {
+        self.kept
+            .lock()
+            .map(|kept| String::from_utf8_lossy(&kept.bytes()).into_owned())
             .unwrap_or_default()
     }
 

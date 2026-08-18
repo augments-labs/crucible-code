@@ -85,7 +85,7 @@ mod tree;
 mod write;
 
 pub use account::of as account;
-pub use bash::Bash;
+pub use bash::{Background, Bash, Ended, MOST, Standing};
 pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;
