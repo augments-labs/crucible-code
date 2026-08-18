@@ -268,7 +268,7 @@ fn a_rule_minted_from_a_host_names_the_host_and_not_the_page() {
         &call("web_fetch"),
         &Sensitivity::ReachesNetwork {
             host: Host::Named {
-                url: "https://docs.rs/serde/latest/serde/".into(),
+                sent: "https://docs.rs/serde/latest/serde/".into(),
                 host: "docs.rs".into(),
             },
         },

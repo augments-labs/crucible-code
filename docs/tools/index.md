@@ -8,7 +8,7 @@ about in every mode but `fullAccess`, and appear only where the session has
 something to answer them. The ninth changes nothing outside crucible:
 `todo_write` puts down the plan, and you read it above the prompt.
 
-- [What all seven hold themselves to](tools.md)
+- [What they all hold themselves to](tools.md)
 - [Reading and changing a file](files.md) — `read`, `edit`, `write`
 - [Searching the tree](searching.md) — `grep`, `glob`
 - [Running a command](commands.md) — `bash`

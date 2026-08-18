@@ -83,7 +83,7 @@ fn running(parts: &[&str]) -> Sensitivity {
 fn reaching(url: &str, host: &str) -> Sensitivity {
     Sensitivity::ReachesNetwork {
         host: Host::Named {
-            url: url.into(),
+            sent: url.into(),
             host: host.into(),
         },
     }

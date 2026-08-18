@@ -8,24 +8,15 @@ Notable changes to crucible. Format follows
 
 ### Added
 
-- **crucible can reach the web.** `web_search` takes a query and answers with
-  titles, addresses and extracts; `web_fetch` takes one address and answers with
-  the page as text. crucible makes the request itself, through the credential you
-  already set — there is no second service to sign up with and no second key to
-  store — so it is a call the permission engine can hold a verdict about. Both are
-  asked about in `ask` and in `allowEdits` and allowed under `fullAccess`, and
-  answering *don't ask again* writes a rule naming the host: `web_fetch(docs.rs)`.
-  An address crucible cannot read into a host plainly is never guessed at, so a
-  rule about `docs.rs` cannot be made to authorise `https://docs.rs@evil.example/`,
-  and a page that redirects to another host is reported rather than returned —
-  allowing one host allows that host.
-  What it costs: on an API key a search is billed by your provider — $10 per 1 000
-  on both Anthropic and OpenAI — and on a subscription it is part of the plan.
-  Anthropic serves both tools; OpenAI on an API key serves the search alone, since
-  reading a page is an action inside its own search tool rather than a tool of its
-  own. A tool with nothing to answer it does not appear rather than failing every
-  call. What comes back is a page somebody else wrote, and
-  [the docs](docs/tools/web.md) say plainly what that is and is not trusted to say.
+- **crucible can reach the web.** `web_search` answers a query with addresses and
+  extracts; `web_fetch` reads one page. crucible makes the request itself, through
+  the credential you already set, so both are calls the permission engine puts to
+  you — asked in `ask` and `allowEdits`, allowed under `fullAccess` — and a rule is
+  written about the host: `web_fetch(docs.rs)`. What it costs: on an API key a
+  search is billed by your provider, and on a subscription it is part of the plan.
+  Anthropic serves both tools and OpenAI serves the search; where nothing can
+  answer a tool, it does not appear. [Reaching the web](docs/tools/web.md) has the
+  prices, the rules and what a fetched page is not trusted to say.
 
 ## [0.6.0] - 2026-08-18
 

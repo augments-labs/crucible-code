@@ -725,11 +725,11 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<Stri
             format!("? {} wants to run: {}", call.name, command.sent())
         }
 
-        // The address as it was sent, for the reason the command line is: a
-        // rule is about the host, and a question showing only the host would
-        // be asking about something narrower than what is going out.
+        // Both facts, because neither alone is the question. The host is what a
+        // rule is written about; what is *sent* is the thing that leaves the
+        // machine, and for a search that is the query rather than any address.
         Sensitivity::ReachesNetwork { host } => {
-            format!("? {} wants to reach: {}", call.name, host.sent())
+            format!("? {} wants to reach {host}: {}", call.name, host.sent())
         }
     };
 

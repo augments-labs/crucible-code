@@ -1,7 +1,7 @@
 //! Building the runner the loop drives.
 //!
 //! Everything the command line and the configuration files decided arrives here
-//! as a [`Startup`], and leaves as a `Runner` holding a provider, seven tools, a
+//! as a [`Startup`], and leaves as a `Runner` holding a provider, its tools, a
 //! model and a session. This is where a provider's *name* becomes a type, so
 //! adding one is an arm in [`provider`] and nothing in any crate below.
 //!
@@ -126,10 +126,11 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         },
     )?;
 
-    // The same credential the provider got, resolved a second time. A source
-    // is a request crucible makes on the user's behalf and so needs its own
-    // authorisation; nothing is shared with the provider but the key the user
-    // set, and neither can see the other.
+    // Resolved the same way the provider's was, and separately: a source is a
+    // request crucible makes on the user's behalf and needs its own
+    // authorisation. Going through the same resolver is what keeps the two
+    // answers the same credential — a second, simpler lookup here would have
+    // billed a plan session's searches to whatever key the shell carried.
     let reaching = web(startup, settings);
 
     let (session, earlier) = if startup.resuming {
@@ -371,13 +372,6 @@ fn credential(
     }
 }
 
-/// Where a setting says this provider's requests should go, where one does.
-///
-/// The address is parsed here rather than carried as the string it was written
-/// as: this is the boundary, and what it decides is who receives the key. A
-/// value that cannot be one ends the run — a provider quietly left pointing at
-/// the vendor would be a setting that looks applied and does nothing, and this
-/// particular one is set by somebody who has a reason to not reach the vendor.
 /// What answers the two web tools, where this session has anything to.
 ///
 /// Two halves because the vendors do not serve one capability: Anthropic serves
@@ -440,24 +434,38 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
 
         // The published API only. A plan's token is served by a different
         // backend, and that one refuses a field it does not implement with a
-        // 400 that ends the turn — whether it accepts a hosted `web_search`
-        // is not answerable from any documentation, so it is not asked. A
-        // subscription session gets no web tools rather than a turn that dies
-        // on one.
+        // 400 that ends the turn — whether it accepts a hosted `web_search` is
+        // not answerable from any documentation, so it is not asked.
+        //
+        // Resolved through `credential`, which is the same resolution the
+        // provider used, rather than by reaching for the variable directly.
+        // Those two answer differently: a session logged in with `/login` runs
+        // its turns on the plan, and a key resolver would have found an
+        // `OPENAI_API_KEY` the shell happened to carry and billed every search
+        // to it — a credential the user did not choose for this session, at
+        // $10 per thousand, silently. Which credential answers is exactly what
+        // decides whether there is a source at all.
         "openai" => {
-            let endpoint = configured.unwrap_or(OpenAi::VENDOR);
-            if endpoint.as_str() != OpenAi::VENDOR.as_str() {
-                return nothing;
-            }
-
-            let Ok(credential) = key(
-                variable,
-                Header::bearer(),
-                startup.from,
-                startup.stored.get(serving.name),
+            let Ok((endpoint, credential)) = credential(
+                ApiAudience {
+                    provider: serving.name,
+                    variable,
+                    vendor: OpenAi::VENDOR,
+                },
+                configured,
+                ProviderAuth {
+                    settings,
+                    from: startup.from,
+                    stored: startup.stored,
+                    subscriptions: startup.subscriptions,
+                },
             ) else {
                 return nothing;
             };
+
+            if endpoint.as_str() != OpenAi::VENDOR.as_str() {
+                return nothing;
+            }
 
             Reaching {
                 searching: Some(Arc::new(OpenAiWeb::new(
@@ -478,6 +486,13 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
     }
 }
 
+/// Where a setting says this provider's requests should go, where one does.
+///
+/// The address is parsed here rather than carried as the string it was written
+/// as: this is the boundary, and what it decides is who receives the key. A
+/// value that cannot be one ends the run — a provider quietly left pointing at
+/// the vendor would be a setting that looks applied and does nothing, and this
+/// particular one is set by somebody who has a reason to not reach the vendor.
 fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fatal> {
     settings
         .base_url(named)
@@ -523,7 +538,9 @@ fn key(
 ///
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either. The plan
-/// is last, because it is the one that does nothing to the workspace.
+/// comes after those, being the one that does nothing to the workspace — and
+/// the two web tools last of all, because they are the only ones that are not
+/// always there and the only ones that leave the machine.
 fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tools {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody

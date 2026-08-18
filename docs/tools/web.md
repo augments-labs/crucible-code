@@ -94,9 +94,16 @@ an `@` is user information, and reading that address as `docs.rs` is how a rule
 you wrote about a documentation site ends up authorising somewhere else.
 
 crucible refuses to guess. An address it cannot read into a host plainly —
-anything with user information, anything with no host, anything that is not
-`http` or `https` — matches no rule except a blanket, so you are asked about it
-whatever you have allowed. `web_fetch` then refuses to send it at all.
+anything with user information, anything carrying whitespace, anything with no
+host, anything that is not `http` or `https` — matches no rule except a blanket.
+In `ask` and `allowEdits` that means you are asked about it whatever else you
+have allowed, and `web_fetch` refuses to send it in any case.
+
+One thing to know if you run in `fullAccess`: a narrow `deny` rule cannot catch
+an address like that either, because it matches no narrow rule of any kind. In
+that mode there is nothing left to ask, so the call is allowed and then refused
+by the tool. If you rely on `deny` rules, `ask` or `allowEdits` is where they
+do their work.
 
 ### A redirect somewhere else is a new question
 

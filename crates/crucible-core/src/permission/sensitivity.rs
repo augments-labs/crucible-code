@@ -65,11 +65,15 @@ pub enum Sensitivity {
 /// wrote about `docs.rs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Host {
-    /// A URL that parsed, and the host read off it.
+    /// A call whose destination could be read, and what it is sending there.
     Named {
-        /// The address as the call carried it. What a question shows.
-        url: Box<str>,
-        /// The host alone, lowercased. What a rule is matched against.
+        /// What the call is sending, as a question shows it: the address for a
+        /// fetch, the query for a search. Not always an address, because what
+        /// leaves the machine is not always one — and a question that showed
+        /// only the host would be asking about the destination of something it
+        /// never named.
+        sent: Box<str>,
+        /// Where it goes, lowercased. What a rule is matched against.
         host: Box<str>,
     },
 
@@ -81,15 +85,15 @@ pub enum Host {
 }
 
 impl Host {
-    /// The address the call carried, as it carried it.
+    /// What the call is sending, as it is sending it.
     ///
     /// What a question shows, the same split [`Command::sent`] draws: a rule is
-    /// about the host, and a prompt that showed only the host would be asking
-    /// about an address nobody sent.
+    /// about the host, and a prompt showing only the host would be asking about
+    /// the destination of something nobody named.
     #[must_use]
     pub fn sent(&self) -> &str {
         match self {
-            Self::Named { url, .. } | Self::Opaque(url) => url,
+            Self::Named { sent, .. } | Self::Opaque(sent) => sent,
         }
     }
 }
@@ -104,7 +108,7 @@ impl fmt::Display for Host {
             // This spelling is what a session-scoped answer is remembered by,
             // and one that wrote nothing would make every unreadable URL the
             // same call.
-            Self::Opaque(url) => f.write_str(url),
+            Self::Opaque(sent) => f.write_str(sent),
         }
     }
 }

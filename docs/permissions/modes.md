@@ -16,9 +16,12 @@ holds in every one, and a read runs in every one.
 | read | run | run | run |
 | change a file | ask | run | run |
 | run a program | ask | ask | run |
+| reach the web | ask | ask | run |
 
 `allowEdits` means what its name says: `write` and `edit` change files without
-asking, and anything that starts a process asks. It is for the stretch of work
+asking, and anything that starts a process or leaves the machine asks. Reaching
+the web is not an edit — it is the one thing whose effect is not on this
+computer, and the one that cannot be undone from here. It is for the stretch of work
 where being interrupted per edit costs more than the edits do. `fullAccess`
 asks about nothing, which makes a `deny` rule the only thing that can say no
 there — write those first.

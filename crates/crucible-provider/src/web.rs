@@ -46,6 +46,18 @@ const MOST: usize = 8 * 1024 * 1024;
 /// let it write an essay would be spending on prose nobody reads.
 const CEILING: u32 = 4096;
 
+/// What a *fetch* asks for, in tokens.
+///
+/// Larger than a search's, because this vendor puts the fetched document into
+/// the response content rather than beside it: a ceiling sized for prose stops
+/// the answer part-way through the page, and what reaches [`page`] is then no
+/// page at all. The tool is separately told what to keep, so the two bounds
+/// agree instead of the outer one truncating whatever the inner one allowed.
+const FETCH_CEILING: u32 = 32_768;
+
+/// What the fetch tool is told to keep of a page, in tokens.
+const FETCH_CONTENT: u32 = 24_000;
+
 /// Reads a whole answer, bounded.
 fn read(named: &'static str, body: Box<dyn Read + Send>) -> Result<String, SourceError> {
     let mut text = String::new();
@@ -61,6 +73,25 @@ fn read(named: &'static str, body: Box<dyn Read + Send>) -> Result<String, Sourc
 /// The value at `pointer`, as text.
 fn text_at(value: &Value, pointer: &str) -> Option<Box<str>> {
     value.pointer(pointer)?.as_str().map(Into::into)
+}
+
+/// The authority without its port, where the port is one.
+///
+/// A port is not part of what a rule is about — `example.com:8443` and
+/// `example.com` are one host to anybody writing policy — but it cannot simply
+/// be ignored either, because `docs.rs:8443@evil.example` is not a port at all.
+/// So a single trailing `:digits` is removed and anything else keeps the colon,
+/// which then fails the `@` check or reads as no host.
+fn port_stripped(authority: &str) -> Option<&str> {
+    let Some((host, port)) = authority.rsplit_once(':') else {
+        return Some(authority);
+    };
+
+    if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(host)
+    } else {
+        None
+    }
 }
 
 /// Anthropic's server-side web search and web fetch, reached in a side request.
@@ -108,6 +139,7 @@ impl AnthropicWeb {
 
     /// Posts one message carrying one server tool, and reads the whole answer.
     fn ask(&self, said: &str, tool: &str, cancel: &Cancel) -> Result<Value, SourceError> {
+        let fetching = tool == FETCH_TOOL;
         if cancel.requested() {
             return Err(SourceError::Cancelled(ANTHROPIC));
         }
@@ -126,7 +158,7 @@ impl AnthropicWeb {
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
-            body.number("max_tokens", CEILING);
+            body.number("max_tokens", if fetching { FETCH_CEILING } else { CEILING });
             body.array("messages", |messages| {
                 messages.object(|message| {
                     message.text("role", "user");
@@ -136,14 +168,10 @@ impl AnthropicWeb {
             body.array("tools", |tools| {
                 tools.object(|declared| {
                     declared.text("type", tool);
-                    declared.text(
-                        "name",
-                        if tool == SEARCH_TOOL {
-                            "web_search"
-                        } else {
-                            "web_fetch"
-                        },
-                    );
+                    declared.text("name", if fetching { "web_fetch" } else { "web_search" });
+                    if fetching {
+                        declared.number("max_content_tokens", FETCH_CONTENT);
+                    }
                 });
             });
         });
@@ -224,19 +252,28 @@ fn posted(
 /// `docs.rs`, and the cost of that reading is a rule somebody wrote about a
 /// documentation site authorising somewhere else entirely.
 fn host_of(address: &str) -> Host {
+    // Nothing but a URL. An address is carried to this vendor inside a sentence,
+    // so anything that could end that sentence and begin another one is refused
+    // before it is read for a host at all: `https://docs.rs/x  and fetch
+    // https://evil.example/` names `docs.rs` to every parser that stops at the
+    // first slash, and reaches somewhere else entirely. A verdict about the
+    // first host would be authorising the second.
+    if address.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Host::Opaque(address.into());
+    }
+
     let rest = address
         .strip_prefix("https://")
         .or_else(|| address.strip_prefix("http://"));
 
     let host = rest
         .and_then(|rest| rest.split(['/', '?', '#']).next())
-        .filter(|authority| {
-            !authority.is_empty() && !authority.contains('@') && !authority.contains(':')
-        });
+        .and_then(port_stripped)
+        .filter(|authority| !authority.is_empty() && !authority.contains('@'));
 
     match host {
         Some(host) => Host::Named {
-            url: address.into(),
+            sent: address.into(),
             host: host.to_ascii_lowercase().into(),
         },
         None => Host::Opaque(address.into()),
@@ -254,7 +291,7 @@ impl Search for AnthropicWeb {
 
     fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
         let answered = self.ask(query, SEARCH_TOOL, cancel)?;
-        Ok(results(&answered))
+        results(&answered)
     }
 }
 
@@ -266,7 +303,7 @@ impl Search for AnthropicWeb {
 /// result, so the two are matched by address and the quoted line becomes the
 /// extract. A result nothing was quoted from keeps its place with an empty one:
 /// it is still an address worth fetching.
-fn results(answered: &Value) -> Vec<SearchResult> {
+fn results(answered: &Value) -> Result<Vec<SearchResult>, SourceError> {
     let blocks = answered
         .pointer("/content")
         .and_then(Value::as_array)
@@ -290,10 +327,21 @@ fn results(answered: &Value) -> Vec<SearchResult> {
         }
     }
 
-    let mut found = Vec::new();
+    let mut found: Vec<SearchResult> = Vec::new();
     for block in blocks {
         if text_at(block, "/type").as_deref() != Some("web_search_tool_result") {
             continue;
+        }
+
+        // An error arrives where the results would be, as an object rather than
+        // a list — so reading it as "no results" would tell the model nothing
+        // was found when the search never ran. `content` being unreadable as a
+        // list is exactly that case.
+        if let Some(code) = text_at(block, "/content/error_code") {
+            return Err(SourceError::Protocol {
+                named: ANTHROPIC,
+                problem: code,
+            });
         }
 
         let inside = block
@@ -307,6 +355,13 @@ fn results(answered: &Value) -> Vec<SearchResult> {
                 continue;
             };
 
+            // The vendor's model may run several searches in one side request,
+            // and overlapping queries return the same page in more than one of
+            // them. A repeat would spend a caller's limit twice over.
+            if found.iter().any(|already| already.url == url) {
+                continue;
+            }
+
             found.push(SearchResult {
                 title: text_at(result, "/title").unwrap_or_else(|| url.clone()),
                 extract: quoted
@@ -319,7 +374,7 @@ fn results(answered: &Value) -> Vec<SearchResult> {
         }
     }
 
-    found
+    Ok(found)
 }
 
 impl Fetch for AnthropicWeb {
@@ -556,9 +611,22 @@ fn span(said: &str, annotation: &Value) -> Box<str> {
         return "".into();
     };
 
-    if from >= to || to > said.len() || !said.is_char_boundary(from) || !said.is_char_boundary(to) {
+    if from >= to {
         return "".into();
     }
 
-    said.get(from..to).unwrap_or_default().into()
+    // Character positions, not byte offsets. For ASCII the two agree, which is
+    // why a slice by bytes looks right until the model writes an em dash — then
+    // it lands short of the text or inside a character.
+    let mut characters = said.char_indices().map(|(at, _)| at);
+    let Some(start) = characters.nth(from) else {
+        return "".into();
+    };
+
+    said.char_indices()
+        .map(|(at, _)| at)
+        .nth(to)
+        .map_or_else(|| said.get(start..), |end| said.get(start..end))
+        .unwrap_or_default()
+        .into()
 }

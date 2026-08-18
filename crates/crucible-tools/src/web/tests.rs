@@ -17,7 +17,7 @@ impl Search for Answers {
 
     fn reaches(&self) -> Host {
         Host::Named {
-            url: "https://search.example/".into(),
+            sent: "https://search.example/".into(),
             host: "search.example".into(),
         }
     }
@@ -37,7 +37,7 @@ impl Search for Breaks {
 
     fn reaches(&self) -> Host {
         Host::Named {
-            url: "https://search.example/".into(),
+            sent: "https://search.example/".into(),
             host: "search.example".into(),
         }
     }
@@ -71,7 +71,7 @@ impl Fetch for Pages {
 
         match named {
             Some(host) => Host::Named {
-                url: url.into(),
+                sent: url.into(),
                 host: host.into(),
             },
             None => Host::Opaque(url.into()),
@@ -153,20 +153,34 @@ fn a_limit_keeps_that_many_and_counts_what_it_left() {
 }
 
 #[test]
-fn a_search_reaches_the_host_its_source_names() {
-    // Not the query and not an argument: what a search reaches was settled when
-    // the user chose whose credential answers it.
+fn a_search_question_shows_the_query_and_the_host_it_goes_to() {
+    // Both facts. The host was settled when the user chose a provider and is
+    // the same whatever is asked; the query is the thing that actually leaves
+    // the machine, and a question naming only the endpoint would be asking for
+    // approval without quoting a word of the request.
     let tool = searching(Vec::new());
 
     assert_eq!(
         tool.sensitivity(&ToolArgs::new(r#"{"query":"anything at all"}"#)),
         Sensitivity::ReachesNetwork {
             host: Host::Named {
-                url: "https://search.example/".into(),
+                sent: "anything at all".into(),
                 host: "search.example".into(),
             },
         },
     );
+}
+
+#[test]
+fn a_search_nobody_could_read_a_query_out_of_still_names_its_host() {
+    // The call is refused a moment later by `run`; what this must not do is
+    // lose the host a rule is written about while the arguments are unreadable.
+    let tool = searching(Vec::new());
+
+    let Sensitivity::ReachesNetwork { host } = tool.sensitivity(&ToolArgs::new("{}")) else {
+        panic!("a search reaches the network");
+    };
+    assert_eq!(host.to_string(), "search.example");
 }
 
 #[test]
@@ -279,4 +293,34 @@ fn a_cancelled_search_ends_the_call_rather_than_answering_it() {
         .expect_err("cancellation not to come back as an answer");
 
     assert!(matches!(problem, ToolError::Cancelled("web_search")));
+}
+
+#[test]
+fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
+    // It used to come back with nothing at all: the page went to the bound as
+    // one item, and `within` keeps whole items. Most pages worth fetching are
+    // over the bound, so `web_fetch` answered almost nothing with almost
+    // everything.
+    let long = "a line of some length that repeats\n".repeat(2_000);
+    let tool = fetching("https://example.com/long", Some("Long"), &long);
+
+    let output = tool
+        .run(
+            sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
+            &Unwatched,
+        )
+        .expect("a source that answers");
+
+    let said = output.text();
+    assert!(!output.is_failed(), "{said}");
+    assert!(
+        said.contains("a line of some length"),
+        "a long page came back with no content",
+    );
+    assert!(said.contains("not shown"), "nothing said what was cut");
+    assert!(
+        said.len() < 40_000,
+        "the bound did not hold: {}",
+        said.len()
+    );
 }

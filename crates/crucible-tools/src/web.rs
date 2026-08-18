@@ -95,14 +95,30 @@ impl Tool for WebSearch {
         SEARCH_SCHEMA
     }
 
-    /// Where a query goes, which is the same host whatever the query says.
+    /// The query, and where it goes.
     ///
-    /// Asked of the source and not of the arguments: what leaves the machine is
-    /// the query, and where it goes was settled when the user chose a provider.
-    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReachesNetwork {
-            host: self.source.reaches(),
-        }
+    /// The host is the source's — settled when the user chose a provider, and
+    /// the same whatever is asked. What varies, and what actually leaves the
+    /// machine, is the query, so that is what the question shows. A panel
+    /// naming only the endpoint would be asking the user to approve a request
+    /// without telling them a word of what is in it.
+    fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
+        let asked = Args::parse(SEARCH, args).ok().and_then(|args| {
+            args.optional_text("query")
+                .ok()
+                .flatten()
+                .map(str::to_owned)
+        });
+
+        let host = match (self.source.reaches(), asked) {
+            (Host::Named { host, .. }, Some(query)) => Host::Named {
+                sent: query.into(),
+                host,
+            },
+            (reached, _) => reached,
+        };
+
+        Sensitivity::ReachesNetwork { host }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
@@ -237,15 +253,21 @@ impl Tool for WebFetch {
             None => format!("{}\n\n", page.url),
         };
 
-        let (kept, _) = bound::within([page.text.to_string()]);
-        said.push_str(if kept.is_empty() {
-            // `within` keeps whole lines, so a single body over the bound keeps
-            // nothing at all. Saying so beats answering with a heading and an
-            // apparently empty page.
-            "This page is longer than one tool call may return."
+        // Line by line, because `within` keeps whole items: handing it the page
+        // as one item meant any page over the bound came back with *nothing* in
+        // it, which is most pages worth fetching. Cut at a line boundary and
+        // say what was left, the way every other bounded answer here does.
+        let (kept, left) = bound::within(page.text.lines().map(|line| format!("{line}\n")));
+
+        if kept.is_empty() {
+            said.push_str("The first line of this page is longer than one tool call may return.");
         } else {
-            &kept
-        });
+            said.push_str(&kept);
+            if left > 0 {
+                use std::fmt::Write as _;
+                let _ = write!(said, "\n[{left} more lines not shown.]");
+            }
+        }
 
         Ok(ToolOutput::ok(said))
     }
@@ -263,7 +285,20 @@ fn failed(
 ) -> Result<ToolOutput, ToolError> {
     match problem {
         crucible_core::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool)),
-        problem => Ok(ToolOutput::failed(problem.to_string())),
+
+        // Bounded like any other answer. A refusal carries the service's own
+        // reply, which is somebody else's bytes and can be a whole error page —
+        // and what a tool returns goes into the next request whole, so an
+        // unbounded failure grows the transcript that rule 6 budgets.
+        problem => {
+            let (said, _) =
+                bound::within(problem.to_string().lines().map(|line| format!("{line}\n")));
+            Ok(ToolOutput::failed(if said.is_empty() {
+                format!("{tool} could not answer.")
+            } else {
+                said
+            }))
+        }
     }
 }
 
