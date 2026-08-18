@@ -17,17 +17,13 @@ scripts/check.sh
 
 Run it before every commit. It is exactly what CI runs.
 
-Its thresholds are ceilings, not targets: 2000 lines for a file, 100 for a
-function. What a file owes is one reason to change, under a name that says what
-it holds, and its length follows from that. The ceiling is set where a file has
-plainly lost that name rather than where a careful one lands, because the
-opposite failure is the one no number can see — a directory of files too small
-to have a subject, each naming the next, where learning what one of them does
-means opening all of them.
+Its thresholds are ceilings rather than targets, and each is explained beside
+the number it governs in `scripts/check.sh` — which is where the number can
+change and the reasoning cannot be left behind.
 
-A threshold moves when the standard changes, and never so that a file fits.
-That is the one edit no gate can catch, because the gate is the thing being
-edited.
+The one thing that file cannot say about itself: a threshold moves when the
+standard changes, and never so that a file fits. That is the edit no gate can
+catch, because the gate is the thing being edited.
 
 ## Layout
 
@@ -58,87 +54,20 @@ its own `[dependencies]` names, and cycles are rejected. `crucible-runner`
 naming no concrete provider or tool is deliberate — the loop drives
 `dyn Provider` and `dyn Tool` and must never name one.
 
-## Hard rules
+## Rules
 
-1. **Result, never panic.** Every fallible function returns `Result<T, E>` with
-   a module-owned `thiserror` enum; `?` propagates. No `anyhow` — it erases the
-   type and invites string errors. `main` is the only place an error becomes an
-   exit code. Denied by lint; tests are exempt.
-2. **Parse once, at the boundary.** Model output, tool arguments, config, env
-   and file contents are parsed into domain types at the edge. Inner layers
-   never re-validate. Anything with domain meaning gets a newtype —
-   `SessionId`, `WorkspacePath`, `ApiKey` — never a bare `String`.
-3. **Permission is an argument, not a question.** A function that mutates a file
-   or spawns a process takes an `Approved`: the call itself, carried together
-   with the `Grant` that says a verdict was reached about *that* call. `Grant`
-   has a private field and is minted only by the permission engine, so it cannot
-   be forged, a `Deny` cannot be passed off as an allow, and proof reached about
-   one call cannot arrive beside another call's arguments. Code without one
-   cannot call the operation.
-4. **Secrets never surface.** Not in logs, errors, `Display`, `Debug`, session
-   files or panic payloads. Types holding a key implement `Debug` by hand and
-   redact. Config stores env var *names*, never values.
-5. **Ideas travel; a body of expression does not.** What another harness *does*
-   is free to learn from — its features, its documentation, its behaviour. Read
-   it to understand how it works; that understanding is yours. What it wrote is
-   not: its code, its prompts, its help pages, its art. Learn from it, never
-   copy it.
-6. **Performance is the feature.** First frame ≤20 ms, first input ≤60 ms, peak
-   RSS ≤35 MB after a 20-turn session, grep's worst paired median ≤1.25× `rg`
-   with p95 and dispersion as evidence, and ≥30 rendered frames/s under burst.
-   No blocking I/O on the startup path or the render path. The transcript is
-   held whole and is what that RSS figure bounds; nothing *else* may grow with
-   it, and a `.clone()` of a transcript-sized value needs a comment saying why.
+The rules live in `.claude/rules/`, one topic per file. `.agents/rules` is a
+symlink to that directory, so a harness looking for either name reads the same
+files — as with `AGENTS.md`, and with the skills.
 
-   **What redraws mid-turn is coalesced, and the rate is measured rather than
-   asserted.** Two things move while a turn runs and neither is caused by a
-   keystroke: text arriving in a run, and a clock. Text in a run — the model's
-   prose, and what a running command has printed — is merged into one frame
-   before it reaches the terminal, up to a byte ceiling, and never across
-   anything else, so the terminal still sees what the runner reported in the
-   order it reported it. A redraw with no event behind it happens only where the
-   picture it would draw has changed, which means every fact a live row states is
-   part of the value that decides it: a segment left out of that value reaches
-   the screen only when something else on the row happens to change with it.
-   Each rate is owned by a probe under `src/bin/` with a floor and a
-   sustained-to-opening ratio, because the way this gets slow is not a constant
-   factor — it is a redraw that grows with what came before, and that is fast in
-   the first second and hopeless in the hundredth.
-7. **No process memory in shipped artifacts.** Comments explain the code.
-   No requirement IDs, no design-doc citations, no references to planning
-   directories. Traceability lives in commit messages and test names. `docs/`
-   is shipped — it is published as a website — so this binds every page: one
-   documents what exists today and never what a later release will add.
-   `scripts/check.sh` greps the shipped tree for those shapes, because the
-   files that legitimately hold them sit one directory away.
-8. **Dependencies are `=`-pinned and justified.** A new one needs a comment in
-   `Cargo.toml` saying why it is needed; `scripts/check.sh` fails without both.
-   Pinning is also what hides an advisory published afterwards, so `deny.toml`
-   is scanned on a clock instead — that check cannot live in a script whose
-   whole promise is the same answer for the same tree.
-9. **The changelog and the commit message are brief.** A changelog entry is a
-   bold lead and a sentence or two: what changed, and what it costs the person
-   deciding whether to upgrade. A commit message is a subject line and a short
-   paragraph saying why, since the diff already says what. Neither carries the
-   alternatives weighed or the threat model — those have readers who went
-   looking for them, in the code comment and the docs page.
-10. **A change owes its documentation in the same commit.** `docs/` for anything
-    a user meets, `README.md` for the first minute of it, `CONTRIBUTING.md` and
-    `docs/building/` for what a contributor has to install, the changelog for
-    anything that ships. The module doc comment is on that list and is the one
-    most often left behind: this project states its invariants in the prose at
-    the top of a file, so one the code has outgrown is a false statement of the
-    invariant sitting where the next reader goes to learn it. Read the prose
-    above what you changed, and above whatever now behaves differently because
-    you changed it.
-11. **A pull request has one reason to change.** What decides whether a change
-    is one pull request or several is whether it takes one summary to say what
-    it does: a change that needs two is two, however short each of them turns
-    out to be, and a module that only compiles whole is one however long. The
-    line ceiling that used to answer this instead is temporarily off while the
-    project is this young: CI still counts a diff and prints the number, and
-    sends nothing back for it. Off rather than gone; `CONTRIBUTING.md` has the
-    rest.
+**If your harness does not load them, read them now, before anything else.**
+Two are unscoped and apply to every change — `writing-it-down.md` and
+`borrowed-ideas.md`. The rest name the files they govern in their own
+frontmatter: `rust-invariants.md`, `performance-budgets.md`,
+`shipped-artifacts.md`, `dependencies.md`, and one per crate beside them.
+
+They are not repeated here. A rule stated twice is a rule that will disagree
+with itself the first time one copy is edited.
 
 ## Vocabulary
 
