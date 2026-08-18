@@ -209,6 +209,8 @@ impl Tool for AskUser {
 /// Every question a call asked for, refused where it asked for something this
 /// cannot draw.
 fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
+    args.only(&[QUESTIONS])?;
+
     let Some(written) = args.list(QUESTIONS)? else {
         return Err(args.wrong(format!("{QUESTIONS} is required and must be a list")));
     };
@@ -229,6 +231,8 @@ fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
 
 /// One question, and the answers under it.
 fn question(args: &Args) -> Result<Question, ToolError> {
+    args.only(&[HEADING, QUESTION, SEVERAL, ANSWERS])?;
+
     let heading = bounded(args, HEADING, args.text(HEADING)?, SHORT)?;
     let asked = bounded(args, QUESTION, args.text(QUESTION)?, LONG)?;
 
@@ -257,6 +261,8 @@ fn question(args: &Args) -> Result<Question, ToolError> {
 
 /// One answer, with what it means and what it would look like.
 fn answer(args: &Args) -> Result<Answer, ToolError> {
+    args.only(&[ANSWER, SAYS, SHOWS])?;
+
     let name = bounded(args, ANSWER, args.text(ANSWER)?, SHORT)?;
     let mut answer = Answer::new(name);
 

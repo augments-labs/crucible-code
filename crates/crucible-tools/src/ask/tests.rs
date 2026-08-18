@@ -245,3 +245,37 @@ fn what_the_reader_is_shown_is_what_the_call_asked() {
     let saw = seen.saw.lock().expect("nothing else holds it");
     assert_eq!(saw.as_slice(), ["Which language?"]);
 }
+#[test]
+fn a_field_this_tool_does_not_know_is_refused_rather_than_dropped() {
+    // The defect this catches: a call meaning several answers spelled the field
+    // some other way, the field was ignored, and the reader met a panel offering
+    // one answer under a question that said "choose any you like". A refusal is
+    // something the model rewrites; a wrongly drawn panel is something the
+    // person answers wrongly.
+    let over = refused(
+        r#"{"questions":[{"heading":"H","question":"Q?","multiSelect":true,
+            "answers":[{"answer":"a"}]}]}"#,
+    );
+
+    assert!(over.contains("multiSelect"), "{over}");
+    assert!(
+        over.contains("several"),
+        "the refusal never named the field it has: {over}"
+    );
+
+    let over = refused(
+        r#"{"questions":[{"heading":"H","question":"Q?",
+            "answers":[{"answer":"a","preview":["x"]}]}]}"#,
+    );
+    assert!(over.contains("preview"), "{over}");
+    assert!(over.contains("shows"), "{over}");
+}
+
+#[test]
+fn the_fields_this_tool_does_know_are_all_accepted() {
+    let put = Arc::new(Whoever::saying(vec![Answered::new(["Rust"])]));
+    let args = r#"{"questions":[{"heading":"Language","question":"Which?","several":false,
+        "answers":[{"answer":"Rust","says":"the one","shows":["a","","b"]}]}]}"#;
+
+    ran(put, args).expect("every field the schema names");
+}

@@ -320,3 +320,83 @@ fn the_written_answer_is_what_comes_back_where_it_is_the_one_taken() {
         ["Zig"]
     );
 }
+
+#[test]
+fn a_specimen_reaches_the_panel_that_draws_it() {
+    // The defect this catches: every answer was handed to the panel with an
+    // empty specimen, so a question whose whole point was showing what an
+    // answer looks like drew nothing under it. The panel had tests and the
+    // wiring between them did not, which is exactly where it hid.
+    let questions = vec![Question::new(
+        "Status",
+        "Which status line?",
+        [
+            Answer::new("Compact").showing(["› ...", "", "crucible · main"]),
+            Answer::new("Nothing at all"),
+        ],
+    )];
+    let mut standing = Standing::new(&questions);
+
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, Style::plain());
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+
+    assert!(
+        art.iter().any(|row| row.contains("crucible · main")),
+        "the specimen never reached the panel: {art:#?}"
+    );
+
+    // And the answer beside it, which has none, still gets the box.
+    standing.held.first_mut().expect("the question").marked = 1;
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, Style::plain());
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+
+    assert!(
+        art.iter()
+            .any(|row| row.contains("nothing to show for this one")),
+        "{art:#?}"
+    );
+}
+
+#[test]
+fn a_question_taking_several_answers_reaches_the_panel_as_one() {
+    // The other half of the same hole: `several` decides both the boxes beside
+    // the answers and the key the footer names, so a question that lost it drew
+    // a single-choice panel under a question asking for any number.
+    let questions = vec![
+        Question::new("One", "Which?", [Answer::new("a"), Answer::new("b")]),
+        Question::new(
+            "Any",
+            "Which of these?",
+            [Answer::new("a"), Answer::new("b")],
+        )
+        .several(),
+    ];
+    let mut standing = Standing::new(&questions);
+
+    // The questions row carries a box of its own for a question nobody has
+    // answered, so what is read here is the numbered rows and nothing else.
+    let numbered = |art: &[String]| -> usize {
+        art.iter()
+            .filter(|row| row.contains(" 1. ") || row.contains(" 2. "))
+            .filter(|row| row.contains('□'))
+            .count()
+    };
+
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, Style::plain());
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+    assert_eq!(numbered(&art), 0, "{art:#?}");
+
+    standing.at = 1;
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, Style::plain());
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+
+    assert_eq!(
+        numbered(&art),
+        2,
+        "the boxes never reached the answers: {art:#?}"
+    );
+    assert!(
+        art.iter().any(|row| row.contains("space to choose")),
+        "the footer never named the key: {art:#?}"
+    );
+}

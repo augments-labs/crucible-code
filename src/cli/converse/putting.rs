@@ -63,6 +63,9 @@ const SEND: &str = "Send them?";
 /// The two answers the last stop offers.
 const SENT: [&str; 2] = ["Send", "Cancel"];
 
+/// What the last stop says a question was left with.
+const NOTHING: &str = "nothing chosen";
+
 /// Rows kept for the transcript above a panel nobody asked for.
 const KEPT: usize = 4;
 
@@ -115,7 +118,16 @@ impl Held {
     }
 
     /// Every answer this question offers, the written one last.
-    fn choices<'a>(&'a self, question: &'a Question, several: bool) -> Vec<Choice<'a>> {
+    ///
+    /// `shown` is the specimens, already gathered by the caller: a `Choice`
+    /// borrows its rows, so they have to outlive the panel and cannot be built
+    /// here.
+    fn choices<'a>(
+        &'a self,
+        question: &'a Question,
+        several: bool,
+        shown: &'a [Vec<&'a str>],
+    ) -> Vec<Choice<'a>> {
         let mut choices: Vec<Choice<'a>> = question
             .answers()
             .enumerate()
@@ -123,7 +135,7 @@ impl Held {
                 answer: answer.answer(),
                 says: answer.says(),
                 chosen: several.then(|| self.chosen.get(at).copied().unwrap_or_default()),
-                shows: &[],
+                shows: shown.get(at).map_or(&[][..], Vec::as_slice),
             })
             .collect();
 
@@ -306,55 +318,15 @@ fn drawn(
     let subject = if standing.reviews() { SUBJECT } else { ALONE };
 
     if standing.sending() {
-        let read: Vec<String> = questions
-            .iter()
-            .zip(&standing.held)
-            .map(|(question, held)| {
-                let answered = held.answered(question);
-                let chosen: Vec<&str> = answered.chosen().collect();
-                if chosen.is_empty() {
-                    "nothing chosen".to_owned()
-                } else {
-                    chosen.join(", ")
-                }
-            })
-            .collect();
-        let given: Vec<Given<'_>> = questions
-            .iter()
-            .zip(&read)
-            .map(|(question, answer)| Given {
-                question: question.question(),
-                answer,
-            })
-            .collect();
-
-        let answers: Vec<Choice<'_>> = SENT
-            .iter()
-            .map(|answer| Choice {
-                answer,
-                says: "",
-                chosen: None,
-                shows: &[],
-            })
-            .collect();
-
-        let panel = Asked {
-            subject,
+        let around = Around {
             stops: &stops,
-            at: standing.at,
-            statement: SENDING,
-            given: &given,
-            question: SEND,
-            answers: &answers,
-            marked: standing.sending,
-            note: "",
-            writing: None,
-            at_note: false,
-            leaves: "",
-            footer: LAST,
+            subject,
+            columns,
+            room,
+            style,
         };
 
-        return panel.within(columns, room, style.glyphs());
+        return sending(standing, questions, around);
     }
 
     let Some(question) = questions.get(standing.at) else {
@@ -365,7 +337,14 @@ fn drawn(
     };
 
     let several = question.takes_several();
-    let answers = held.choices(question, several);
+
+    // Gathered here rather than inside the answers, because a `Choice` borrows
+    // its specimen's rows and they have to outlive the panel that draws them.
+    let shown: Vec<Vec<&str>> = question
+        .answers()
+        .map(|answer| answer.shows().collect())
+        .collect();
+    let answers = held.choices(question, several, &shown);
     let writing = standing.writing.map(|writer| {
         let line = match writer {
             Writer::Wrote => &held.wrote,
@@ -392,6 +371,93 @@ fn drawn(
         at_note: standing.writing == Some(Writer::Note),
         leaves: LEAVE,
         footer: footer(standing, several),
+    };
+
+    panel.within(columns, room, style.glyphs())
+}
+
+/// Everything a panel is drawn around rather than out of: the row across the
+/// top, the words over it, and the window.
+///
+/// One value rather than five arguments, because they are worked out together
+/// and neither stop draws without all of them.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    stops: &'a [Stop<'a>],
+    subject: &'a str,
+    columns: usize,
+    room: usize,
+    style: Style,
+}
+
+/// The last stop: every answer read back, and the two answers that send or do
+/// not.
+///
+/// Its own function rather than a branch of the one above, because it draws
+/// different rows out of different values and shares only the frame around them.
+fn sending(
+    standing: &Standing,
+    questions: &[Question],
+    around: Around<'_>,
+) -> (Vec<Row>, Option<Caret>) {
+    let Around {
+        stops,
+        subject,
+        columns,
+        room,
+        style,
+    } = around;
+
+    // Joined here rather than in the panel, because how many answers a question
+    // took is this side's to know and the panel draws one row per question
+    // either way.
+    let read: Vec<String> = questions
+        .iter()
+        .zip(&standing.held)
+        .map(|(question, held)| {
+            let answered = held.answered(question);
+            let chosen: Vec<&str> = answered.chosen().collect();
+            if chosen.is_empty() {
+                NOTHING.to_owned()
+            } else {
+                chosen.join(", ")
+            }
+        })
+        .collect();
+
+    let given: Vec<Given<'_>> = questions
+        .iter()
+        .zip(&read)
+        .map(|(question, answer)| Given {
+            question: question.question(),
+            answer,
+        })
+        .collect();
+
+    let answers: Vec<Choice<'_>> = SENT
+        .iter()
+        .map(|answer| Choice {
+            answer,
+            says: "",
+            chosen: None,
+            shows: &[],
+        })
+        .collect();
+
+    let panel = Asked {
+        subject,
+        stops,
+        at: standing.at,
+        statement: SENDING,
+        given: &given,
+        question: SEND,
+        answers: &answers,
+        marked: standing.sending,
+        note: "",
+        writing: None,
+        at_note: false,
+        leaves: "",
+        footer: LAST,
     };
 
     panel.within(columns, room, style.glyphs())
