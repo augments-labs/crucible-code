@@ -157,10 +157,20 @@ impl Words {
             // against: the operators are the difference between two commands
             // and two commands *if the first one worked*, and that difference
             // is part of what is being agreed to.
+            // Two statements for one sensitivity, because a command that will
+            // outlive the turn is a different thing to consent to: allowing it is
+            // allowing a process to go on running after the answer that started it
+            // has been given, and a panel that did not say so would be asking
+            // about the wrong thing.
             Sensitivity::SpawnsProcess { command } => (
                 format!("{name} command"),
                 flattened(command.sent()),
-                "This command needs your verdict.",
+                if crucible_tools::backgrounded(&call.args) {
+                    "This command needs your verdict. It will be left running \
+                     after the turn that starts it has ended."
+                } else {
+                    "This command needs your verdict."
+                },
             ),
         };
 
@@ -395,7 +405,11 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         // is in, leaving a question on screen with nothing left to answer it
         // with. Ctrl+T is the same sentence about the plan, which stands in that
         // region too and is not on screen while this question is.
+        // The key about what is already running among them: this question is what
+        // decides whether the command runs at all, so there is nothing here for it
+        // to act on.
         Pressed::Key(_)
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Expand
         | Pressed::Plan

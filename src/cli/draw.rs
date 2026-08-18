@@ -44,6 +44,7 @@
 use std::fmt;
 
 use crucible_core::{Change, Diff, Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
+use crucible_tools::Ended;
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
 use super::kept::Kept;
@@ -98,11 +99,23 @@ pub(crate) fn event<T: Terminal>(
         Event::TurnStarted { .. } => renderer.apart(),
 
         // Both belong to the row above the box, which says each of them only
-        // while it is true. A response nobody read a word of, asked for again
-        // and answered, left nothing behind worth a line in the transcript —
-        // and a line per hiccup is what a reader would have to look past to
-        // find the answer.
+        // while it is true. What a turn has spent is a running total, and one
+        // line per reading would be a column of numbers each wrong the moment
+        // the next arrived. A response nobody read a word of, asked for again
+        // and answered, left nothing behind worth a line — a line per hiccup is
+        // what a reader would have to look past to find the answer.
         Event::Spent { .. } | Event::Retrying => Ok(()),
+
+        // Kept and not drawn. What a running command prints stands under the
+        // call it belongs to, in rows the footing lays out and hands back; what
+        // is kept here is the end of it, so the key that stands a result whole
+        // stands a call that has not answered yet as well. Committing it would
+        // put the tail of a build immediately above the same tail inside the
+        // result that follows it.
+        Event::Wrote { text, .. } => {
+            kept.wrote(text.as_str());
+            Ok(())
+        }
 
         // Asked on every delta because the first one is the only one worth
         // asking on, and nothing here can tell which that was: a turn opens
@@ -181,6 +194,50 @@ pub(crate) fn event<T: Terminal>(
             ))
         }
     }
+}
+
+/// Writes the line a command that ended on its own leaves behind.
+///
+/// Named apart from [`ended`], which is about the session: one word for two
+/// endings is what the vocabulary table exists to prevent.
+///
+/// A line rather than a block, and the only thing in this program written to the
+/// transcript outside a turn. It has to be written: the row under the box counts
+/// what is running, and a count that quietly went down with nothing said would
+/// leave a reader — and a model — believing a server is up. What it says is what
+/// the reader cannot ask for afterwards, since the command is gone: which one,
+/// how it ended, and how much it had printed.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn gone<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    ended: &Ended,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let glyphs = style.glyphs();
+    let (mark, how) = match ended.code {
+        Some(0) => (glyphs.done(), "finished".to_owned()),
+        Some(code) => (glyphs.failed(), format!("exit status {code}")),
+        None => (glyphs.failed(), "killed".to_owned()),
+    };
+
+    let said = clipped(
+        format!(
+            "{} ended on its own {} {how} {} {} lines",
+            spelled(ended.tool, &ended.called),
+            glyphs.dot(),
+            glyphs.dot(),
+            ended.lines
+        ),
+        style.output(renderer.columns()).saturating_sub(2),
+        glyphs,
+    );
+
+    renderer.settle()?;
+    renderer.apart()?;
+    renderer.commit(&format!("{mark} {said}"))
 }
 
 /// Says that there is nothing to ask, where a prompt was typed anyway.
@@ -398,6 +455,22 @@ pub(crate) fn returned<T: Terminal>(
     }
 
     renderer.present(&[row], style.palette())
+}
+
+/// A call as a row spells it, from the tool's own name and what the call was
+/// about.
+///
+/// The shape [`called`] makes out of a `ToolCall`, for the places that hold the two
+/// halves separately instead — a command still running, which has outlived the call
+/// that carried them together.
+pub(crate) fn spelled(tool: &str, about: &str) -> String {
+    let name = pascal(tool);
+
+    if about.is_empty() {
+        name
+    } else {
+        format!("{name}({about})")
+    }
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.
@@ -720,15 +793,17 @@ pub(crate) fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> 
     within(flattened(text), width, glyphs)
 }
 
-/// One line of a file, at most `width` display columns of it.
+/// One line of a file, or of a command's output, at most `width` display columns
+/// of it.
 ///
 /// Everything else here is a sentence written for a row, and [`flattened`] tidies
 /// a stray space off each end of it. A line of a file is read against the line
 /// above it, and what that comparison is made of first is where each of them
 /// starts — so this one keeps its indentation and loses only the end, where a
 /// carriage return the file was saved with would otherwise become a space the
-/// row is padded by.
-fn indented(text: &str, width: usize, glyphs: Glyphs) -> String {
+/// row is padded by. A build's output is read the same way, and indents its own
+/// lines to say what belongs to what.
+pub(crate) fn indented(text: &str, width: usize, glyphs: Glyphs) -> String {
     let line = text
         .trim_end()
         .chars()

@@ -4,19 +4,64 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Verdict};
+use crucible_core::{
+    Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched, Verdict,
+};
 
+use super::background::{Background, MOST};
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::bound::OUTPUT;
 use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = Bash::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args))
+    tool.run(allowed(&tool, args), &Unwatched)
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
     bash(sample, args).expect("the command ran")
+}
+
+/// A watcher that keeps what it was told, in the order it was told.
+#[derive(Default)]
+struct Watched(std::sync::Mutex<String>);
+
+impl crucible_core::Watch for Watched {
+    fn wrote(&self, text: crucible_core::Wrote) {
+        if let Ok(mut held) = self.0.lock() {
+            held.push_str(text.as_str());
+        }
+    }
+}
+
+impl Watched {
+    fn said(&self) -> String {
+        self.0.lock().map(|held| held.clone()).unwrap_or_default()
+    }
+}
+
+#[test]
+fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
+    // The command outlives its own output on purpose: what is handed over is
+    // handed over *during* the wait, and a command that prints and exits inside
+    // one tick has nothing to watch. That is not a gap — a result nobody had to
+    // wait for is a result, and this is the surface for the other kind.
+    let sample = Sample::new("bash-watched");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let watched = Watched::default();
+
+    let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
+    let output = tool
+        .run(allowed(&tool, args), &watched)
+        .expect("the command ran");
+
+    assert_eq!(
+        watched.said(),
+        "Compiling one\nCompiling two\n",
+        "what the command printed never reached the watcher"
+    );
+    // And the result is untouched by having been watched.
+    assert_eq!(output.text(), "Compiling one\nCompiling two");
 }
 
 #[test]
@@ -233,7 +278,7 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
     let started = Instant::now();
     let tool = Bash::new(sample.workspace(), cancel);
     let problem = tool
-        .run(allowed(&tool, r#"{"command":"sleep 30"}"#))
+        .run(allowed(&tool, r#"{"command":"sleep 30"}"#), &Unwatched)
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -251,7 +296,10 @@ fn a_turn_already_stopped_never_starts_the_command() {
 
     let tool = Bash::new(sample.workspace(), cancel);
     let problem = tool
-        .run(allowed(&tool, r#"{"command":"touch should-not-exist"}"#))
+        .run(
+            allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
+            &Unwatched,
+        )
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -284,7 +332,7 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
 
     let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
     let output = tool
-        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
+        .run(allowed(&tool, r#"{"command":"echo hello"}"#), &Unwatched)
         .expect("the command ran");
 
     assert_eq!(output.text(), "hello");
@@ -456,7 +504,9 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     let tool =
         Bash::new(sample.workspace(), Cancel::new()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
 }
@@ -489,7 +539,9 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     let tool = Bash::new(sample.workspace(), Cancel::new())
         .exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
 }
@@ -526,7 +578,9 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
 
     let tool = Bash::inheriting(sample.workspace(), Cancel::new(), crucibles_own);
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
     assert!(!output.text().contains("s3cr3t"), "{}", output.text());
@@ -559,4 +613,100 @@ fn a_name_crucible_has_no_value_for_is_left_unset_rather_than_given_one() {
     // makes it carry; a default written into this crate instead would be this
     // crate deciding where a command's programs come from.
     assert!(environment::inherited(|_| None).is_empty());
+}
+
+#[test]
+fn a_command_left_running_answers_at_once_and_keeps_running() {
+    // The whole point: a dev server is startable without spending the turn's
+    // timeout on it. The call comes back in the time it takes to see whether the
+    // command failed on the spot, and the process is still there afterwards.
+    let sample = Sample::new("bash-background");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    let started = Instant::now();
+    let output = tool
+        .run(
+            allowed(
+                &tool,
+                r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
+            ),
+            &Unwatched,
+        )
+        .expect("the command started");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the call waited for the command instead of leaving it running"
+    );
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().contains("left running as #1"),
+        "the result never said how to reach it: {}",
+        output.text()
+    );
+    assert_eq!(left.running().len(), 1);
+
+    // And it is ended by letting go of the registry, which is what the process
+    // leaving does.
+    left.stop(1);
+    assert!(left.running().is_empty());
+}
+
+#[test]
+fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
+    // A command that is over before anybody could watch it is not a background
+    // command, whatever the call asked for — and the model needs the failure now
+    // rather than in a panel it has no way to open.
+    let sample = Sample::new("bash-background-failed");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    let output = tool
+        .run(
+            allowed(&tool, r#"{"command":"exit 7","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the command started");
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().contains("[exit status 7]"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        left.running().is_empty(),
+        "a command that had exited was kept"
+    );
+}
+
+#[test]
+fn the_number_of_commands_left_running_is_capped() {
+    let sample = Sample::new("bash-background-cap");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    for _ in 0..MOST {
+        tool.run(
+            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the command started");
+    }
+
+    let over = tool
+        .run(
+            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the call was answered");
+
+    assert!(over.is_failed(), "{}", over.text());
+    assert!(
+        over.text().contains("already running"),
+        "the refusal never named what was in the way: {}",
+        over.text()
+    );
+    assert_eq!(left.running().len(), MOST);
 }

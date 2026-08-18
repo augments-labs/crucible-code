@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 18,4 scrolled 10
-|│                                  │ · shift+tab  steps the permission mode    │|
+80x24 cursor 17,4 scrolled 11
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
@@ -24,6 +23,7 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

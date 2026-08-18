@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
+use crucible_tools::Background;
 use crucible_tui::{
     Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot, Terminal,
     Typed, caret, characters, pressed, waiting,
@@ -45,6 +46,7 @@ use crate::cli::style::Style;
 
 use super::command;
 use super::expanding::{self, Standing};
+use super::leaving::Leaving;
 use super::mode::tone;
 use super::planning::Planning;
 use super::turning::Turning;
@@ -127,7 +129,8 @@ pub(crate) enum Asked {
     /// through the one door at the top of the loop above.
     Expand,
     /// A click on this row of the record, which stands the one result that row
-    /// offered to expand — or nothing, where it offered none.
+    /// offered to expand — or nothing, where it offered none. The box comes back
+    /// with the line still in it either way.
     ///
     /// Which of the two it is, is not decided here. What was cut belongs to the
     /// loop above and so does the view, and asking this module to hold either of
@@ -181,6 +184,9 @@ pub(crate) struct Between<'a> {
     pub(crate) editor: &'a mut Editor,
     /// The plan above the box, and whether the reader has opened it.
     pub(crate) planning: &'a mut Planning,
+    /// What is still running behind the box: the count on the row under it, and
+    /// what this loop wakes on a clock for while there is anything left to end.
+    pub(crate) left: &'a Background,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -195,13 +201,82 @@ pub(crate) fn between<'a>(
     runner: &'a mut Runner,
     editor: &'a mut Editor,
     planning: &'a mut Planning,
+    left: &'a Background,
     keys: bool,
 ) -> Between<'a> {
     Between {
         runner,
         editor,
         planning,
+        left,
         keys,
+    }
+}
+
+/// How often the prompt looks up from the keyboard while something is running.
+///
+/// The beat the row above a running turn already moves on, because it is the
+/// coarsest clock this program has and there is nothing here that needs a finer
+/// one: a command ends once, and a quarter of a second later is soon enough to
+/// hear about it.
+const BEAT: Duration = Duration::from_millis(250);
+
+/// Stands the list of what is running, and says the box is owed a frame.
+///
+/// One place, because the key and the count under the box are one door: the key
+/// names it and the row is it, and two call sites doing the same two things is how
+/// they come to do slightly different ones.
+///
+/// Stood here rather than handed back to the loop above, unlike the view of what
+/// the transcript cut: that key means the same thing while a turn runs, and this
+/// one means something else there entirely.
+fn stood<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    listing: &mut Leaving,
+    left: &Background,
+) -> Result<bool, Fatal> {
+    listing.stand(renderer, style, left)?;
+    Ok(true)
+}
+
+/// Waits for a key, reporting any command that ended while nobody was typing.
+///
+/// `None` where one did: the count under the box has moved and a line has been
+/// written above it, so the box is owed a frame rather than handed a key.
+///
+/// While nothing is running this waits on the keyboard exactly as it always did.
+/// The clock is only consulted while there is something that could end without a
+/// keystroke — a wake-up four times a second, and only then, because a row that
+/// silently went on saying `1 command` after the server behind it fell over is the
+/// stale fact the row exists to prevent.
+fn arriving<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    left: &Background,
+    says: &mut Says,
+    style: Style,
+) -> Result<Option<Pressed>, Fatal> {
+    loop {
+        if left.count() == 0 && says.running == 0 {
+            return Ok(Some(pressed()?));
+        }
+
+        if waiting(BEAT)? {
+            return Ok(Some(pressed()?));
+        }
+
+        let ended = left.reap();
+        let count = left.count();
+        if ended.is_empty() && count == says.running {
+            continue;
+        }
+
+        for one in &ended {
+            crate::cli::draw::gone(renderer, one, style)?;
+        }
+
+        says.running = count;
+        return Ok(None);
     }
 }
 
@@ -215,6 +290,7 @@ pub(crate) fn ask<T: Terminal>(
         runner,
         editor,
         planning,
+        left,
         keys,
     } = between;
 
@@ -231,6 +307,13 @@ pub(crate) fn ask<T: Terminal>(
     planning.moved();
 
     let mut says = saying(runner);
+    says.running = left.count();
+
+    // A local, because where the mark was in it is not worth keeping: a list of
+    // four things opened twice reads better from the top than from wherever it was
+    // left, and the scroll position that *is* worth keeping belongs to the view of
+    // one command's output, which is closed with the list.
+    let mut listing = Leaving::default();
 
     // When Ctrl-C was last pressed against an empty line, if it is still the
     // last key pressed. Taken by every other key, so the pair has to be two
@@ -244,9 +327,18 @@ pub(crate) fn ask<T: Terminal>(
 
     let mut following = None;
     loop {
-        let arrived = match following.take() {
-            Some(arrived) => arrived,
-            None => pressed()?,
+        // Nothing arriving means a command ended instead: the count under the box
+        // has moved and a line has been written above it, so what is owed is a
+        // frame rather than a key to act on.
+        let arrived = if let Some(arrived) = following.take() {
+            arrived
+        } else {
+            let Some(arrived) = arriving(renderer, left, &mut says, style)? else {
+                above = draw(renderer, editor, style, around(planning, &open, &says))?;
+                continue;
+            };
+
+            arrived
         };
 
         // Whatever arrived, the offer to leave was made to the key after the
@@ -259,6 +351,7 @@ pub(crate) fn ask<T: Terminal>(
         // a key that moved nothing costs no frame, and the arms that end the
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
+            Pressed::Background => stood(renderer, style, &mut listing, left)?,
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
@@ -293,6 +386,8 @@ pub(crate) fn ask<T: Terminal>(
                 match landed(renderer, editor, &says, above, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Line => true,
+
+                    Landed::Counted => stood(renderer, style, &mut listing, left)?,
                     Landed::Nothing => offered.is_some(),
                 }
             }
@@ -401,6 +496,9 @@ pub(super) struct Says {
     /// A row under that, for something waiting on the very next key. `None` in
     /// the ordinary state, where the mode is the last row there is.
     asking: Option<&'static str>,
+    /// How many commands are still running. Read per frame rather than per turn,
+    /// because a command ending is neither a keystroke nor a turn.
+    pub(super) running: usize,
 }
 
 impl Says {
@@ -516,6 +614,7 @@ pub(super) fn during<T: Terminal>(
         kept,
         opened,
         says,
+        background,
         style,
         cancel,
         leaving,
@@ -548,6 +647,7 @@ pub(super) fn during<T: Terminal>(
         }
 
         match meant(arrived) {
+            Meant::Background => background.ask(),
             // The rows on screen were laid out for a width the window no longer
             // has. The renderer takes them back; the redraw below puts the box
             // down again at the new one.
@@ -735,6 +835,14 @@ enum Meant {
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
     /// the turn that is still writing it.
     Expand,
+    /// Ctrl+B: the command the turn is waiting on is to be left running, and the
+    /// turn is to go on without it.
+    ///
+    /// Asked of the registry rather than done in the loop that reads the key. The
+    /// command is being waited on by the worker thread, so what this side can do
+    /// is put the request where that thread looks — the same shape, and the same
+    /// latency, as asking a turn to stop.
+    Background,
     /// Ctrl+T: the whole of the plan above the box, or the bounded list again.
     Plan,
     /// A click on this screen row, which stands the one result offered there.
@@ -768,6 +876,7 @@ fn meant(arrived: Pressed) -> Meant {
 
         Pressed::Expand => Meant::Expand,
         Pressed::Plan => Meant::Plan,
+        Pressed::Background => Meant::Background,
 
         // The column is dropped rather than carried: what a click means up in
         // the transcript is which row it landed on, and a row that offered to
@@ -805,6 +914,16 @@ pub(super) struct During<'a> {
     /// was opened under has ended.
     pub(super) opened: &'a mut Standing,
     pub(super) says: &'a Says,
+    /// Where a command the turn is waiting on is asked to be left running.
+    ///
+    /// The request only: the command is being waited on by the worker thread, so
+    /// what this side can do is put the ask where that thread looks — the same
+    /// shape as asking a turn to stop.
+    ///
+    /// Named for what it holds rather than for what a press does with it, because
+    /// the field below already carries the session's own use of that word: that
+    /// one is the offer to leave, made on one Ctrl-C and taken on the next.
+    pub(super) background: &'a Background,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
     /// When Ctrl-C was last pressed against an empty line, if it is still the
@@ -843,6 +962,9 @@ fn saying(runner: &Runner) -> Says {
         effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
+        // Filled in by the frame rather than by the session, because it changes
+        // while nothing else on this row does.
+        running: 0,
     }
 }
 
@@ -944,6 +1066,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         provider: says.provider,
         effort: says.effort,
         asking: says.asking,
+        running: Some(says.running),
         room,
     }
 }
@@ -979,6 +1102,9 @@ enum Landed {
     Record(usize),
     /// The line being typed, which now has the cursor where the pointer was.
     Line,
+    /// The row under the box naming what is still running, which is the one thing
+    /// on it that is an offer rather than a fact.
+    Counted,
     /// The border, a blank row, the shell's own output from before crucible
     /// started — or a terminal that would not say where its cursor is.
     Nothing,
@@ -1017,6 +1143,15 @@ fn landed<T: Terminal>(
     };
 
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
+
+    // Asked of the box, because which row the count came out on is the box's own
+    // arithmetic at this width. The column is not asked about: the row is the
+    // affordance, and nothing else on it is one, so a click anywhere along it
+    // means the one thing it could mean.
+    if prompt.counting(renderer.columns(), row) {
+        return Landed::Counted;
+    }
+
     let Some(into) = prompt.clicked(renderer.columns(), row, at.column) else {
         return Landed::Nothing;
     };

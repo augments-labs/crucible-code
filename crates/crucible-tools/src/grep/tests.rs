@@ -1,5 +1,7 @@
 //! What `grep` finds, and what it declines to look at.
 
+use crucible_core::Unwatched;
+
 use std::path::Path;
 
 use crucible_core::Disposition;
@@ -12,13 +14,13 @@ use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Grep::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args)).unwrap()
+    tool.run(allowed(&tool, args), &Unwatched).unwrap()
 }
 
 /// The same search, with rules standing about files below the one searched.
 fn grep_under(sample: &Sample, args: &str, rules: &[(Disposition, &str)]) -> ToolOutput {
     let tool = Grep::new(sample.workspace(), Cancel::new());
-    tool.run(under(&tool, args, rules)).unwrap()
+    tool.run(under(&tool, args, rules), &Unwatched).unwrap()
 }
 
 /// A tree with something to find in two files and something to skip.
@@ -80,7 +82,10 @@ fn a_mode_this_tool_does_not_have_is_refused_rather_than_guessed_at() {
     let tool = Grep::new(sample.workspace(), Cancel::new());
 
     let problem = tool
-        .run(allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#))
+        .run(
+            allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#),
+            &Unwatched,
+        )
         .unwrap_err()
         .to_string();
 
@@ -359,7 +364,9 @@ fn a_search_the_user_stopped_never_reaches_the_files() {
     cancel.request();
 
     let tool = Grep::new(sample.workspace(), cancel);
-    let output = tool.run(allowed(&tool, r#"{"pattern":"needle"}"#)).unwrap();
+    let output = tool
+        .run(allowed(&tool, r#"{"pattern":"needle"}"#), &Unwatched)
+        .unwrap();
 
     assert!(output.is_failed());
     assert!(

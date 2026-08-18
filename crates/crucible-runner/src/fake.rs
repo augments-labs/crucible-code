@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use crucible_core::{
     Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Provider, ProviderError,
     Remember, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolCall, ToolError,
-    ToolOutput, ToolSchema, Verdict,
+    ToolOutput, ToolSchema, Verdict, Watch, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -198,6 +198,7 @@ pub(crate) struct Fixed {
     cancels: bool,
     sensitivity: Sensitivity,
     diff: Option<Diff>,
+    writes: Vec<Box<str>>,
 }
 
 impl Fixed {
@@ -212,7 +213,14 @@ impl Fixed {
                 target: Target::unresolved(),
             },
             diff: None,
+            writes: Vec::new(),
         }
+    }
+
+    /// What it prints, one piece at a time, before it answers.
+    pub(crate) fn writing(mut self, pieces: &[&str]) -> Self {
+        self.writes = pieces.iter().map(|piece| (*piece).into()).collect();
+        self
     }
 
     /// What it produces when it succeeds.
@@ -267,7 +275,11 @@ impl Tool for Fixed {
         Summary::new(args.as_str())
     }
 
-    fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+        for piece in &self.writes {
+            watch.wrote(Wrote::new(piece.clone()));
+        }
+
         if self.cancels {
             return Err(ToolError::Cancelled(self.name));
         }

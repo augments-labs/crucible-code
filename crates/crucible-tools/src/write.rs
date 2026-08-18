@@ -10,7 +10,8 @@ use std::fs;
 use std::io::Read as _;
 
 use crucible_core::{
-    Approved, PathError, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, PathError, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Workspace,
 };
 
 use crate::args::Args;
@@ -94,7 +95,7 @@ impl Tool for Write {
         summary::field(NAME, args, "path")
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let content = args.exact("content")?;

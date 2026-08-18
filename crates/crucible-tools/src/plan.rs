@@ -33,7 +33,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Approved, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 use crate::args::Args;
@@ -295,7 +295,7 @@ impl Tool for TodoWrite {
         tally(args)
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
 
         match sent(&args)? {
@@ -455,13 +455,15 @@ fn tally(args: &ToolArgs) -> Summary {
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::Unwatched;
+
     use super::*;
     use crate::sample::allowed;
 
     /// Runs one call the only way a call can be run.
     fn write(plan: &Plan, args: &str) -> ToolOutput {
         let tool = TodoWrite::new(plan.clone());
-        tool.run(allowed(&tool, args)).unwrap()
+        tool.run(allowed(&tool, args), &Unwatched).unwrap()
     }
 
     /// The arguments a call with these tasks would carry.
@@ -658,10 +660,13 @@ mod tests {
         let tool = TodoWrite::new(Plan::new());
 
         let problem = tool
-            .run(allowed(
-                &tool,
-                r#"{"tasks":[{"task":"Build it","state":"blocked"}]}"#,
-            ))
+            .run(
+                allowed(
+                    &tool,
+                    r#"{"tasks":[{"task":"Build it","state":"blocked"}]}"#,
+                ),
+                &Unwatched,
+            )
             .unwrap_err();
 
         assert_eq!(
@@ -674,7 +679,7 @@ mod tests {
     fn a_call_with_no_tasks_at_all_ends_the_turn() {
         let tool = TodoWrite::new(Plan::new());
 
-        let problem = tool.run(allowed(&tool, "{}")).unwrap_err();
+        let problem = tool.run(allowed(&tool, "{}"), &Unwatched).unwrap_err();
 
         assert_eq!(problem.to_string(), "todo_write: tasks is required");
     }

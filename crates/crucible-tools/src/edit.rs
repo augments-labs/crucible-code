@@ -15,7 +15,7 @@
 use std::io::{self, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
 };
 
 use crate::args::Args;
@@ -130,7 +130,7 @@ impl Tool for Edit {
         summary::field(NAME, args, "path")
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let listed = args.list("edits")?;

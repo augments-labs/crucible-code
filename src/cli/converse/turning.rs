@@ -34,6 +34,7 @@
 //! for some of this and not all of it has to be divided somewhere, and dividing
 //! it in two places is how a footing comes to be a row taller than the window.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crucible_core::Event;
@@ -59,7 +60,13 @@ const ROWS: usize = 3;
 /// make it a second thing on the screen rather than a second line of the first.
 const QUEUED: usize = ROWS + 1;
 
-/// And with a call standing over it, the blank that parts them included.
+/// And with a call standing over it: the blank that parts them, the call, and the
+/// row under it offering to leave the command running.
+///
+/// Three rather than two, because the offer is drawn from the moment the call is
+/// out. It is one row and it is the only thing on screen that says what a key
+/// would do about the command in front of you, so it belongs with the call rather
+/// than with the sample the call's output gives way as.
 ///
 /// The call line is what a narrow window gives up first, because it is the one
 /// of the four that a second look gets back anyway: the tool answers and the
@@ -69,7 +76,38 @@ const QUEUED: usize = ROWS + 1;
 /// it is measured before either of the other two, so those are what a window
 /// short of rows drops on its behalf. The row saying a turn is running exists
 /// nowhere else and never gives way.
-const CALLING: usize = ROWS + 2;
+const CALLING: usize = ROWS + 3;
+
+/// What the row under a call offers to do about it.
+///
+/// Named beside the sample rather than in the key's own module, because it is the
+/// one place the offer is spelled and the row is where somebody reads it. The key
+/// itself is documented once in the keys page, which is why this says what it
+/// does about *this command* rather than repeating what the key is for.
+const BACKGROUND: &str = "(ctrl+b to background)";
+
+/// The most rows of a running command's output the footing shows at once.
+///
+/// Enough to see what a compiler is working through, and few enough that a
+/// twenty-four-row window still belongs to the conversation. It is the first
+/// thing the ladder below gives up, so on a short window this is a ceiling
+/// rather than a promise.
+const SAMPLE: usize = 5;
+
+/// How far in the sample stands, in columns.
+///
+/// The depth the panel that asks about a command already indents the command
+/// under its subject. It reads as the call's own output rather than as a second
+/// thing beside it.
+const INSET: usize = 4;
+
+/// The most one line of a command's output is held as, in bytes.
+///
+/// A row shows what fits in the window and no more, so what is held past that is
+/// held to be thrown away. A command printing a megabyte without a newline —
+/// which is one `find` over a large tree with its output on one line — must not
+/// make this grow while it does it.
+const LINE: usize = 1024;
 
 /// The one word for what a turn is doing at this moment.
 ///
@@ -119,9 +157,206 @@ pub(super) struct Turning {
     /// where none is. Cut on the way in rather than on the way out for the
     /// reason [`Turning::queueing`] gives.
     queued: Option<String>,
+    /// What the call whose tool is out has printed, kept to the last rows of
+    /// it. Emptied when the call comes back, so it holds one call's worth and
+    /// never a turn's.
+    printing: Printing,
     /// What the footing was last drawn from, so a redraw that would draw the
     /// same rows again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
+}
+
+/// What a running command has printed, as much of it as is shown.
+///
+/// Two things at once, and they are counted separately on purpose: the last few
+/// lines, which are what the reader is watching, and how much there has been,
+/// which is the only thing that keeps five rows from reading as everything the
+/// command has said.
+///
+/// Bounded in all three directions — the rows held, the length of the line still
+/// arriving, and nothing at all kept about the lines that have scrolled past
+/// except that they were counted. A command emitting megabytes a second is the
+/// one this has to cost nothing for.
+#[derive(Debug, Default)]
+struct Printing {
+    /// The last whole lines, oldest first, at most [`SAMPLE`] of them.
+    lines: VecDeque<String>,
+    /// The line still arriving, shown as the sample's last row. A command that
+    /// rewrites this line rather than ending it — a progress bar — replaces it.
+    partial: String,
+    /// How many lines there have been, including every one no longer held.
+    counted: usize,
+    /// How many bytes there have been, for the same reason.
+    bytes: usize,
+    /// Whether a carriage return is standing, so the next character written
+    /// starts the line again. A progress bar is the reason: it returns to the
+    /// start of the line and writes over what is there.
+    rewriting: bool,
+    /// Bumped by every piece that arrives, so the loop above can key a redraw on
+    /// it without holding a copy of the rows to compare against.
+    changed: u64,
+}
+
+impl Printing {
+    /// Takes what the call has printed since the last piece.
+    fn took(&mut self, text: &str) {
+        self.changed = self.changed.wrapping_add(1);
+        self.bytes = self.bytes.saturating_add(text.len());
+
+        for character in text.chars() {
+            match character {
+                '\n' => {
+                    self.counted = self.counted.saturating_add(1);
+                    self.rewriting = false;
+                    if self.lines.len() >= SAMPLE {
+                        self.lines.pop_front();
+                    }
+                    self.lines.push_back(std::mem::take(&mut self.partial));
+                }
+                // Not the line ending and not the line gone: a carriage return
+                // puts the next character back at the start of the line, and
+                // what is on the line stays there until something writes over
+                // it. That is what a progress bar does, and a return read as
+                // "clear it" would leave the sample blank between two frames of
+                // one.
+                '\r' => self.rewriting = true,
+                _ => {
+                    if self.rewriting {
+                        self.partial.clear();
+                        self.rewriting = false;
+                    }
+
+                    // Past the bound the rest of the line is dropped rather than
+                    // the front of it: the front is what a row shows.
+                    if self.partial.len() < LINE {
+                        self.partial.push(character);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Forgets it, which is what the call coming back means.
+    ///
+    /// The count moves only where something was on screen to take back. Every
+    /// turn ends, and a turn that never ran a command would otherwise get a frame
+    /// out of this — a redraw with nothing behind it, at the moment the region is
+    /// being handed back, which scrolls the terminal by a row nobody asked for.
+    fn clear(&mut self) {
+        let shown = !self.is_empty();
+
+        *self = Self {
+            changed: if shown {
+                self.changed.wrapping_add(1)
+            } else {
+                self.changed
+            },
+            ..Self::default()
+        };
+    }
+
+    /// Whether the command has printed anything at all.
+    fn is_empty(&self) -> bool {
+        self.lines.is_empty() && self.partial.is_empty()
+    }
+
+    /// How many lines there have been, the one still arriving included.
+    fn lines(&self) -> usize {
+        self.counted
+            .saturating_add(usize::from(!self.partial.is_empty()))
+    }
+
+    /// The sample and the count under it, in `spare` rows or not at all.
+    ///
+    /// Never the sample without the count: five rows out of forty-one, with
+    /// nothing saying so, is a reader who believes they are looking at the whole
+    /// of what the command has printed.
+    fn rows(&self, columns: usize, spare: usize, style: Style) -> Vec<Row> {
+        // One row for the offer, whatever else there is room for. It is drawn from
+        // the moment the call is out, because a command that has printed nothing
+        // for half a minute is the one somebody most wants to put down — and a
+        // command that has printed something is the one whose counts go in front
+        // of the same offer.
+        if spare == 0 {
+            return Vec::new();
+        }
+
+        let held = spare.saturating_sub(1).min(SAMPLE);
+
+        let glyphs = style.glyphs();
+        let room = columns.saturating_sub(INSET);
+        let inset = " ".repeat(INSET.min(columns));
+
+        // The line still arriving is the last row, where there is one: a command
+        // part way through writing a line has written it, and a reader watching
+        // wants what is on screen now rather than the last line it finished.
+        let mut shown: Vec<&String> = self.lines.iter().collect();
+        if !self.partial.is_empty() {
+            shown.push(&self.partial);
+        }
+        shown.truncate(shown.len().min(held.max(1)));
+
+        // The last of them. What a build is doing now is the question the sample
+        // answers, and its first five lines answered it a minute ago.
+        let from = shown.len().saturating_sub(held);
+        let mut rows: Vec<Row> = shown
+            .get(from..)
+            .unwrap_or_default()
+            .iter()
+            .map(|line| {
+                Row::new().then(
+                    Slot::Quiet,
+                    format!("{inset}{}", draw::indented(line, room, glyphs)),
+                )
+            })
+            .collect();
+
+        // What the row says, and what it always says: the counts where there are
+        // any, and the offer either way. A command silent for half a minute is the
+        // one somebody most wants to put down, so the offer cannot wait for output
+        // to justify itself.
+        let said = match self.lines() {
+            0 => BACKGROUND.to_owned(),
+            1 => format!("1 line {} {} {BACKGROUND}", glyphs.dot(), sized(self.bytes)),
+            lines => format!(
+                "{lines} lines {} {} {BACKGROUND}",
+                glyphs.dot(),
+                sized(self.bytes)
+            ),
+        };
+
+        // Indented with the sample, and cut the same way it is: it is a caption on
+        // the rows above it rather than a row of its own, so it starts in the
+        // column they start in. Clipped before the inset is put in front of it,
+        // because what tidies a row's ends would take the inset for one of them.
+        rows.push(Row::new().then(
+            Slot::Quiet,
+            format!("{inset}{}", draw::clipped(said, room, glyphs)),
+        ));
+
+        rows
+    }
+}
+
+/// A count of bytes, in the units somebody reads it in.
+///
+/// Deliberately the shape of the token count on the row below — exact while it
+/// is small, one decimal of the larger unit after that — because the two are
+/// read together and a pair of numbers written two ways reads as two kinds of
+/// fact. Not that function: this one carries a unit, and a space before it.
+fn sized(bytes: usize) -> String {
+    for (unit, over) in [("MB", 1_000_000), ("kB", 1_000)] {
+        if bytes >= over {
+            let (whole, tenth) = (bytes / over, (bytes % over) * 10 / over);
+
+            return match tenth {
+                0 => format!("{whole} {unit}"),
+                _ => format!("{whole}.{tenth} {unit}"),
+            };
+        }
+    }
+
+    format!("{bytes} B")
 }
 
 /// Everything the footing is drawn from, coarsened to what it is drawn *by*.
@@ -144,6 +379,9 @@ struct Drawn {
     calling: Option<String>,
     /// The prompt named under it, where one is waiting.
     queued: Option<String>,
+    /// How many pieces the running command had printed, which is what stands in
+    /// for the sample's rows.
+    printed: u64,
 }
 
 impl Turning {
@@ -155,6 +393,7 @@ impl Turning {
             spent: None,
             calling: None,
             queued: None,
+            printing: Printing::default(),
             drawn: None,
         }
     }
@@ -189,6 +428,13 @@ impl Turning {
             self.spent = Some(spend.tokens());
         }
 
+        // Before the guard below as well, and for the same reason: a turn asked
+        // to stop still has a command running, and what it prints while it is
+        // being stopped is the last thing anybody wants hidden.
+        if let Event::Wrote { text, .. } = event {
+            self.printing.took(text.as_str());
+        }
+
         // Before it as well, and for a sharper reason. A turn asked to stop
         // still has its tool out, and that tool still answers; a turn that ends
         // or fails with one out never gets an answer at all. Either way the
@@ -200,11 +446,17 @@ impl Turning {
                 None
             }
             Event::ToolFinished { .. } | Event::TurnFinished { .. } | Event::Failed { .. } => {
+                // The sample goes with the line it stood under. What the command
+                // printed is in the result about to be committed, and behind the
+                // key that stands a result whole — held here as well, it would be
+                // rows above the box describing a call that has answered.
+                self.printing.clear();
                 self.calling.take()
             }
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
+            | Event::Wrote { .. }
             | Event::Retrying => None,
         };
 
@@ -217,7 +469,7 @@ impl Turning {
 
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
-            Event::ToolRequested { .. } => Doing::Running,
+            Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
             Event::ToolFinished { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
             Event::TurnStarted { .. }
@@ -257,6 +509,13 @@ impl Turning {
             // before it was kept: what is cloned here is a row of it rather
             // than a megabyte of it.
             queued: self.queued.clone(),
+
+            // A number rather than the rows themselves. The rows change on every
+            // piece a command prints, so comparing them would mean holding a
+            // copy of the sample for the length of every frame — and a counter
+            // that moves whenever they do answers the only question the loop is
+            // asking.
+            printed: self.printing.changed,
         };
         let moved = self.drawn.as_ref() != Some(&now);
 
@@ -322,6 +581,19 @@ impl Turning {
         if let Some(said) = self.calling.as_deref().filter(|_| room > standing) {
             rows.push(Row::new());
             rows.push(self.call(said, columns, style));
+
+            // Measured last, against whatever every other row left. It is the one
+            // thing here a second look gets back whatever the window did — the
+            // key that stands a result whole stands this too — so it is the first
+            // to give way and it gives way without saying so.
+            // What is left after every row that never gives way has taken its
+            // own is the sample's, and the sample's alone: the offer under the
+            // call is counted in `standing` above, because a call with no way to
+            // put it down is the one thing this row must never be.
+            rows.extend(
+                self.printing
+                    .rows(columns, room.saturating_sub(standing), style),
+            );
         }
 
         rows.push(Row::new());
@@ -620,9 +892,215 @@ mod tests {
 
         assert!(at(0).is_empty(), "{standing:?}");
         assert!(at(1).contains("Read(src/main.rs)"), "{standing:?}");
-        assert!(at(2).is_empty(), "{standing:?}");
-        assert!(at(3).contains("running"), "{standing:?}");
-        assert!(at(4).is_empty(), "{standing:?}");
+        // Directly under the call with no blank between them: it is a caption on
+        // the call rather than a second thing beside it.
+        assert!(at(2).contains("(ctrl+b to background)"), "{standing:?}");
+        assert!(at(3).is_empty(), "{standing:?}");
+        assert!(at(4).contains("running"), "{standing:?}");
+        assert!(at(5).is_empty(), "{standing:?}");
+    }
+
+    /// What a running call has printed, as an event.
+    fn printed(text: &str) -> Event {
+        Event::Wrote {
+            call: ToolId::new("a"),
+            text: crucible_core::Wrote::new(text),
+        }
+    }
+
+    #[test]
+    fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+
+        for line in 1..=41 {
+            turning.saw(&printed(&format!("Compiling crate-{line} v0.5.0\n")));
+        }
+
+        let rows: Vec<String> = turning
+            .rows(&nothing(), 80, Style::plain(), 24)
+            .iter()
+            .map(Row::text)
+            .collect();
+        let sample: Vec<&String> = rows
+            .iter()
+            .filter(|row| row.contains("Compiling"))
+            .collect();
+
+        assert_eq!(sample.len(), SAMPLE, "{rows:?}");
+        // The last of them, not the first: what a build is doing now is the
+        // question, and the first five lines answered it a minute ago.
+        assert!(
+            sample.last().is_some_and(|row| row.contains("crate-41")),
+            "{rows:?}"
+        );
+        assert!(
+            sample.first().is_some_and(|row| row.contains("crate-37")),
+            "{rows:?}"
+        );
+
+        // And the count row is what keeps five rows from reading as everything
+        // the command has said. Indented with the sample, because it is a caption
+        // on those rows rather than a row of its own — the one thing here a row
+        // test can check and a reader would notice first.
+        let counted = rows
+            .iter()
+            .find(|row| row.contains("41 lines"))
+            .expect("the sample never said how much of it was not shown");
+
+        assert!(counted.starts_with("    41 lines"), "{counted:?}");
+        assert!(
+            counted.contains(" B") || counted.contains("kB") || counted.contains("MB"),
+            "the count never said how many bytes: {counted:?}"
+        );
+    }
+
+    #[test]
+    fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anything() {
+        // A command silent for thirty-eight seconds is the one most worth putting
+        // down, so the row that offers it cannot wait for output to justify
+        // itself. It gains the counts in front of the offer once there are any.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+
+        let rows = |turning: &Turning| {
+            turning
+                .rows(&nothing(), 80, Style::plain(), 24)
+                .iter()
+                .map(Row::text)
+                .collect::<Vec<_>>()
+        };
+
+        let quiet = rows(&turning);
+        assert!(
+            quiet
+                .iter()
+                .any(|row| row.contains("(ctrl+b to background)")),
+            "{quiet:?}"
+        );
+        assert!(
+            !quiet.iter().any(|row| row.contains("lines")),
+            "a command that has printed nothing was given a count: {quiet:?}"
+        );
+
+        turning.saw(&printed("Compiling one\n"));
+        let printing = rows(&turning);
+        let counted = printing
+            .iter()
+            .find(|row| row.contains("(ctrl+b to background)"))
+            .expect("the offer went away when the command spoke");
+
+        assert!(counted.contains("1 line"), "{counted:?}");
+        assert!(counted.starts_with("    1 line"), "{counted:?}");
+    }
+
+    #[test]
+    fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.saw(&printed("Compiling one\n"));
+
+        turning.saw(&Event::ToolFinished {
+            call: ToolId::new("a"),
+            output: ToolOutput::ok("done"),
+        });
+
+        let rows: Vec<String> = turning
+            .rows(&nothing(), 80, Style::plain(), 24)
+            .iter()
+            .map(Row::text)
+            .collect();
+
+        assert!(
+            !rows.iter().any(|row| row.contains("Compiling")),
+            "the sample outlived the call it belonged to: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_short_of_rows_drops_the_sample_before_the_call_line() {
+        // The order things give way. The sample is the one of them a second look
+        // gets back whatever the window did, so it goes first.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.saw(&printed("Compiling one\n"));
+
+        let rows: Vec<String> = turning
+            .rows(&nothing(), 80, Style::plain(), CALLING + 1)
+            .iter()
+            .map(Row::text)
+            .collect();
+
+        assert!(
+            rows.iter().any(|row| row.contains("Read(src/main.rs)")),
+            "the call line gave way before the sample: {rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains("Compiling")),
+            "the sample took room the call line needed: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn the_sample_is_on_the_value_the_loop_keys_a_redraw_on() {
+        // Otherwise a command's output reaches the screen only on the frames
+        // something else on the footing happens to change — a second at a time,
+        // when the clock ticks.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        assert!(turning.moved());
+
+        turning.saw(&printed("Compiling one\n"));
+        assert!(
+            turning.moved(),
+            "output arrived and the footing did not think it had changed"
+        );
+
+        assert!(!turning.moved(), "a frame nobody could tell from the last");
+    }
+
+    #[test]
+    fn a_turn_that_ran_no_command_gets_no_frame_out_of_the_sample() {
+        // Every turn ends, and the end empties the sample. A turn that never had
+        // a command running must not be redrawn for that: the region is being
+        // handed back at that moment, and a frame with nothing behind it scrolls
+        // the terminal by a row nobody asked for.
+        let mut turning = Turning::started();
+        turning.saw(&Event::Delta { text: "hi".into() });
+        assert!(turning.moved());
+
+        turning.saw(&Event::TurnFinished {
+            turn: TurnId::FIRST,
+            stop: StopReason::Yielded,
+        });
+
+        assert!(
+            !turning.moved(),
+            "the end of a turn with no command invented a frame"
+        );
+    }
+
+    #[test]
+    fn a_line_rewritten_in_place_replaces_the_row_rather_than_adding_one() {
+        // What a progress bar does: a carriage return and the line again. Kept as
+        // one row, because that is what the terminal it was written for would do.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+        turning.saw(&printed("Building [==>    ] 41/128\r"));
+        turning.saw(&printed("Building [====>  ] 96/128\r"));
+
+        let rows: Vec<String> = turning
+            .rows(&nothing(), 80, Style::plain(), 24)
+            .iter()
+            .map(Row::text)
+            .collect();
+        let building: Vec<&String> = rows.iter().filter(|row| row.contains("Building")).collect();
+
+        assert_eq!(building.len(), 1, "{rows:?}");
+        assert!(
+            building.first().is_some_and(|row| row.contains("96/128")),
+            "{rows:?}"
+        );
     }
 
     #[test]
@@ -953,12 +1431,14 @@ mod tests {
                 .collect::<String>()
         };
 
-        let whole = said(panel + 7);
+        // One taller than it used to be, because the call now carries the row
+        // offering to leave its command running.
+        let whole = said(panel + 8);
         assert!(whole.contains("Read"), "{whole:?}");
         assert!(whole.contains("Next:"), "{whole:?}");
         assert!(whole.contains("Task 2"), "{whole:?}");
 
-        let shorter = said(panel + 6);
+        let shorter = said(panel + 7);
         assert!(!shorter.contains("Read"), "{shorter:?}");
         assert!(shorter.contains("Next:"), "{shorter:?}");
         assert!(shorter.contains("Task 2"), "{shorter:?}");

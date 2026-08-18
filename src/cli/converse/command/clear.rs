@@ -139,6 +139,7 @@ mod tests {
             cancel: Cancel::new(),
             ledger: ledger.clone(),
             plan: plan.clone(),
+            leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
             choosing: sample.root().join("unwritten-home.json"),
             logins: Store::in_home(&sample.root()),

@@ -124,6 +124,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             runner: &mut runner,
             editor: &mut editor,
             planning: &mut nothing(),
+            left: &crucible_tools::Background::new(),
             keys: false,
         },
     )

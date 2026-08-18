@@ -38,6 +38,7 @@ use crate::cli::kept::{Kept, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
+use super::typing::Asked;
 
 /// What the view is standing over.
 ///
@@ -115,6 +116,23 @@ impl Standing {
     /// were cut, so a session with none of them has made no offer, and a frame
     /// put up in answer to a press nobody meant is one that took the prompt
     /// away for no reason.
+    /// Whether this is what the box was answered with, opening it if it is.
+    ///
+    /// Asked before the answer is read as a line, because the two keys that reach
+    /// this are answered by the state that holds what they stand over rather than
+    /// by the loop that read them.
+    pub(super) fn asked(&mut self, asked: &Asked, kept: &Kept) -> bool {
+        match asked {
+            Asked::Expand => self.open(kept),
+            Asked::Clicked(at) => self.one(kept, *at),
+
+            // Not this one's. A line and the end of a session are the loop's.
+            Asked::Said(_) | Asked::Ended | Asked::Untyped => return false,
+        }
+
+        true
+    }
+
     pub(super) fn open(&mut self, kept: &Kept) {
         if kept.is_empty() {
             return;
@@ -252,9 +270,15 @@ fn laying(
         // the other one: what arrived after the view opened is at the front of
         // `newest`, and what was dropped to stay under the ceiling has gone
         // from its back.
+        // The call still out first, where there is one, because it is the newest
+        // thing there is and it is what a reader pressing this while a command
+        // runs is asking about. Chained rather than folded into `newest`: the
+        // skip below steps over results that arrived since the view opened, and a
+        // call that has not answered has not been counted among them.
         Over::Everything(cut) => kept
-            .newest()
-            .skip(kept.cut().saturating_sub(cut))
+            .writing()
+            .into_iter()
+            .chain(kept.newest().skip(kept.cut().saturating_sub(cut)))
             .map(showing)
             .collect(),
 
@@ -262,7 +286,7 @@ fn laying(
         // the walk stops at it and nothing after it is looked at.
         Over::One(at) => kept
             .newest()
-            .find(|whole| whole.at() == at)
+            .find(|whole| whole.at() == Some(at))
             .map(showing)
             .into_iter()
             .collect(),
@@ -328,7 +352,11 @@ fn moving(arrived: Pressed, window: &mut Window) -> Moved {
         // the box the moment somebody meant to scroll. Ctrl+T for the reason
         // that is nearly the opposite: the plan it opens is in the rows this
         // view is standing over, so the key would move a panel nobody can see.
+        // The key about what is running among them: those have their own list,
+        // opened from the row under the box, and reached from in here it would be
+        // two things standing in one region.
         Pressed::Key(_)
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Explain
         | Pressed::Plan

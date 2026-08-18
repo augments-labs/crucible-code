@@ -3,7 +3,7 @@
 use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
 };
 
 use crate::args::Args;
@@ -178,7 +178,7 @@ impl Tool for Read {
         summary::field(NAME, args, "path")
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let requested = args.text("path")?;
         let from = args.count("offset", 1)?;
@@ -335,6 +335,8 @@ fn finish_utf8(
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::Unwatched;
+
     use super::*;
     use crate::sample::{Sample, allowed};
 
@@ -344,7 +346,7 @@ mod tests {
 
     fn reading(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
         let tool = Read::new(sample.workspace(), Cancel::new(), seen.clone());
-        tool.run(allowed(&tool, args)).unwrap()
+        tool.run(allowed(&tool, args), &Unwatched).unwrap()
     }
 
     #[test]
@@ -602,7 +604,7 @@ mod tests {
         let sample = Sample::new("read-nopath");
 
         let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
-        let problem = tool.run(allowed(&tool, "{}")).unwrap_err();
+        let problem = tool.run(allowed(&tool, "{}"), &Unwatched).unwrap_err();
 
         assert_eq!(problem.to_string(), "read: path is required");
     }

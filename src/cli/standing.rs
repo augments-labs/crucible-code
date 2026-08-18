@@ -9,7 +9,12 @@
 //! tools' own schemas — a system prompt that also describes each tool is a
 //! second place for that description to go stale.
 
+use std::fmt::Write as _;
+
 use crucible_core::{Effort, Workspace};
+use crucible_tools::Ended;
+
+use crate::cli::draw::spelled;
 
 /// The standing instructions every turn carries.
 const SYSTEM: &str = "\
@@ -50,10 +55,23 @@ const UNSAID: &str = "the vendor's own default effort";
 /// An unnamed model is a session that cannot take a turn, and it gets no
 /// identity at all — there is nothing true to say yet, and a sentence about
 /// nothing is worse than silence.
-pub(crate) fn under(model: &str, effort: Option<Effort>, workspace: &Workspace) -> String {
+pub(crate) fn under(
+    model: &str,
+    effort: Option<Effort>,
+    workspace: &Workspace,
+    ended: &[Ended],
+) -> String {
     let root = workspace.root().display();
     let standing =
         format!("{SYSTEM}\n\nThe workspace root is {root}. Every tool path is relative to it.");
+
+    // At the top of the turn rather than pushed into the last one: a turn already
+    // in flight has nowhere to put a new fact, and a command that fell over is
+    // something the model needs before it answers rather than after.
+    let standing = match said(ended) {
+        Some(said) => format!("{standing}\n\n{said}"),
+        None => standing,
+    };
 
     if model.is_empty() {
         return standing;
@@ -70,6 +88,39 @@ pub(crate) fn under(model: &str, effort: Option<Effort>, workspace: &Workspace) 
          thinking. Neither is something you can find out for yourself, and both \
          can change partway through a session."
     )
+}
+
+/// What ended since the last turn, in the words the model is told it in.
+///
+/// `None` where nothing did, which is almost every turn: a note about nothing is
+/// a sentence the model has to read past to find the ones that mean something.
+fn said(ended: &[Ended]) -> Option<String> {
+    if ended.is_empty() {
+        return None;
+    }
+
+    let mut said = String::from(
+        "Commands you left running have ended since your last turn. They are gone; \
+         nothing is waiting on them, and starting one again is a new call:",
+    );
+
+    for one in ended {
+        let how = match one.code {
+            Some(0) => "finished".to_owned(),
+            Some(code) => format!("failed with exit status {code}"),
+            None => "was killed".to_owned(),
+        };
+
+        let _ = write!(
+            said,
+            "\n- #{} {} — {how} after printing {} lines.",
+            one.number,
+            spelled(one.tool, &one.called),
+            one.lines
+        );
+    }
+
+    Some(said)
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 //! What `edit` changes, and what it declines to guess at.
 
+use crucible_core::Unwatched;
+
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -11,13 +13,13 @@ use crate::sample::{Sample, allowed};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Edit::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args)).unwrap()
+    tool.run(allowed(&tool, args), &Unwatched).unwrap()
 }
 
 /// A call the tool cannot read, which ends the turn rather than answering.
 fn refuse(sample: &Sample, args: &str) -> ToolError {
     let tool = Edit::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args)).unwrap_err()
+    tool.run(allowed(&tool, args), &Unwatched).unwrap_err()
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -302,10 +304,13 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
     let tool = Edit::new(sample.workspace(), cancel);
 
     let problem = tool
-        .run(allowed(
-            &tool,
-            r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
-        ))
+        .run(
+            allowed(
+                &tool,
+                r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
+            ),
+            &Unwatched,
+        )
         .unwrap_err();
 
     assert!(matches!(
@@ -376,7 +381,10 @@ fn a_call_with_no_find_says_what_is_missing() {
 
     let tool = Edit::new(sample.workspace(), Cancel::new());
     let problem = tool
-        .run(allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#))
+        .run(
+            allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
+            &Unwatched,
+        )
         .unwrap_err();
 
     assert_eq!(problem.to_string(), "edit: find is required");

@@ -133,7 +133,7 @@ fn a_result_is_found_by_the_record_row_that_offered_it() {
 
     assert!(cut.offered(41));
     assert_eq!(
-        cut.newest().next().map(Whole::at),
+        cut.newest().next().and_then(Whole::at),
         Some(41),
         "the row the offer went onto is not the row it is held under"
     );
@@ -174,4 +174,68 @@ fn nothing_cut_is_nothing_to_offer() {
 
     cut.finished("here".into(), 0);
     assert!(!cut.is_empty());
+}
+
+#[test]
+fn a_call_that_has_not_answered_is_reachable_under_the_line_it_is_running_on() {
+    // The whole point of holding it: a build that will take two minutes is
+    // something a reader wants to open now rather than in two minutes.
+    let mut cut = Kept::default();
+    assert!(cut.is_empty());
+
+    cut.calling("Bash(cargo build --release)".to_owned());
+    cut.wrote("   Compiling crucible-core v0.5.0\n");
+    cut.wrote("   Compiling crucible-tui v0.5.0\n");
+
+    let writing = cut.writing().expect("the running call was not held");
+    assert_eq!(writing.called(), "Bash(cargo build --release)");
+    assert_eq!(
+        writing.text(),
+        "   Compiling crucible-core v0.5.0\n   Compiling crucible-tui v0.5.0\n"
+    );
+
+    // No row of the record offered it, because no row for it has been committed:
+    // a click lands on rows the terminal owns, and this line is still live.
+    assert!(writing.at().is_none());
+    assert!(!cut.is_empty());
+}
+
+#[test]
+fn the_result_replaces_what_was_held_while_the_call_ran() {
+    // Otherwise the same call is standing twice in the one view — once as the
+    // tail somebody watched and once as the answer, which reads as two calls.
+    let mut cut = Kept::default();
+
+    cut.calling("Bash(cargo build)".to_owned());
+    cut.wrote("Compiling\n");
+    cut.finished("Compiling\nFinished in 1m 52s".into(), 4);
+
+    assert!(cut.writing().is_none());
+    assert_eq!(cut.newest().count(), 1);
+}
+
+#[test]
+fn what_is_held_of_a_running_call_is_its_end_and_is_bounded() {
+    // A command printing without stopping has no result yet to bound it against,
+    // so this is the bound — and it keeps the end, because where a build has got
+    // to is the question and its first lines are the part already watched.
+    let mut cut = Kept::default();
+    cut.calling("Bash(yes)".to_owned());
+
+    for line in 0..40_000 {
+        cut.wrote(&format!("line {line}\n"));
+    }
+
+    let writing = cut.writing().expect("the running call was not held");
+    assert!(writing.text().len() <= WRITING, "{}", writing.text().len());
+    assert!(
+        writing.text().ends_with("line 39999\n"),
+        "the end of the output was the part dropped"
+    );
+    // And it opens on a whole line rather than the tail of one.
+    assert!(
+        writing.text().starts_with("line "),
+        "{:?}",
+        writing.text().get(..12)
+    );
 }

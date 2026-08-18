@@ -33,6 +33,9 @@ const SAID: &str = "description";
 /// The argument it explains itself at length in.
 const TOLD: &str = "explanation";
 
+/// The argument a call asks to be left running in.
+const LEFT: &str = "background";
+
 /// The name a rejection would carry if one could get out of here.
 ///
 /// None can: every failure below is dropped, because the reading is for a
@@ -57,6 +60,22 @@ pub fn of(args: &ToolArgs) -> Account {
     let told = args.texts(TOLD).unwrap_or_default();
 
     Account::explained(said, told)
+}
+
+/// Whether the call asked for its command to be left running.
+///
+/// Read here for the reason the account above is: the panel where somebody decides
+/// whether the command may run has no provider to ask and no tool in reach, and
+/// what it needs to say is a fact about the arguments. A command that will outlive
+/// the turn is a different thing to consent to from one that will not, and a panel
+/// that did not say so would be asking about the wrong thing.
+///
+/// `false` for every tool that invites no such argument, and for a call whose
+/// arguments cannot be read at all — that one is refused by the tool a moment
+/// later, and a panel is not the place to learn it.
+#[must_use]
+pub fn backgrounded(args: &ToolArgs) -> bool {
+    Args::parse("", args).is_ok_and(|args| args.flag(LEFT, false).unwrap_or(false))
 }
 
 #[cfg(test)]
