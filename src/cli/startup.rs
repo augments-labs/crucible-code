@@ -10,16 +10,19 @@
 //! can fail without a key or a home directory anywhere near the test.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Message, Mode, Provider, Transcript,
-    Workspace,
+    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider, Search,
+    Transcript, Workspace,
 };
-use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
+use crucible_provider::{Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
-use crucible_tools::{Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, Write};
+use crucible_tools::{
+    Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, WebFetch, WebSearch, Write,
+};
 
 use super::standing;
 use super::subscription::Subscriptions;
@@ -121,6 +124,12 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         },
     )?;
 
+    // The same credential the provider got, resolved a second time. A source
+    // is a request crucible makes on the user's behalf and so needs its own
+    // authorisation; nothing is shared with the provider but the key the user
+    // set, and neither can see the other.
+    let reaching = web(startup, settings);
+
     let (session, earlier) = if startup.resuming {
         let (session, transcript) = Session::resume(sessions, workspace)?;
         (session, Some(transcript))
@@ -130,7 +139,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(
         provider,
-        tools(startup, settings),
+        tools(startup, settings, reaching),
         model(startup.model, startup.effort, workspace),
         session,
     )
@@ -367,6 +376,48 @@ fn credential(
 /// value that cannot be one ends the run — a provider quietly left pointing at
 /// the vendor would be a setting that looks applied and does nothing, and this
 /// particular one is set by somebody who has a reason to not reach the vendor.
+/// The source the web tools are answered by, where this session has one.
+///
+/// `None` is a session that advertises no web tools at all, which is the honest
+/// answer for a credential whose vendor crucible cannot yet ask: a tool that is
+/// registered and fails every call teaches the model to keep trying.
+///
+/// Anthropic alone today. The others are an `impl Search` away and nothing here
+/// or in `crucible-tools` changes when one arrives — the seam was built for it.
+///
+/// Nothing here fails the start. A source that cannot be built is a session
+/// without web tools, not a session that refuses to open: the user asked for a
+/// coding agent, and losing search is not losing that.
+fn web(startup: &Startup<'_>, settings: &Settings) -> Option<Arc<AnthropicWeb>> {
+    let serving = startup.provider?;
+    if serving.name != "anthropic" {
+        return None;
+    }
+
+    // The session's own model rather than a cheap one named here. A model name
+    // written into this file outlives the model behind it, and a credential
+    // that reaches crucible at all reaches whatever it is already using.
+    let model = startup.model?;
+
+    let variable = settings.api_key_env(serving.name).unwrap_or(serving.key);
+    let credential = key(
+        variable,
+        Header::bare("x-api-key"),
+        startup.from,
+        startup.stored.get(serving.name),
+    )
+    .ok()?;
+
+    Some(Arc::new(AnthropicWeb::new(
+        sending_to(settings, serving.name)
+            .ok()?
+            .unwrap_or(Anthropic::VENDOR),
+        credential,
+        Box::new(Https::new()),
+        model,
+    )))
+}
+
 fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fatal> {
     settings
         .base_url(named)
@@ -413,7 +464,7 @@ fn key(
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either. The plan
 /// is last, because it is the one that does nothing to the workspace.
-fn tools(startup: &Startup<'_>, settings: &Settings) -> Tools {
+fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Option<Arc<AnthropicWeb>>) -> Tools {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
@@ -460,6 +511,18 @@ fn tools(startup: &Startup<'_>, settings: &Settings) -> Tools {
     // rather than copying it, which is what makes a call on the worker thread
     // something the drawing thread sees on its next frame.
     tools.add(Box::new(TodoWrite::new(plan.clone())));
+
+    // Last, and only where this session has a source. One `Arc` serves both:
+    // the two tools ask it different questions, and a session whose vendor
+    // answers only one of them registers only that one the day such a source
+    // exists.
+    if let Some(reaching) = reaching {
+        let searching: Arc<dyn Search> = reaching.clone();
+        let fetching: Arc<dyn Fetch> = reaching;
+
+        tools.add(Box::new(WebSearch::new(searching, cancel.clone())));
+        tools.add(Box::new(WebFetch::new(fetching, cancel.clone())));
+    }
 
     tools
 }
