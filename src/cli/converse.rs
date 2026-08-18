@@ -35,7 +35,7 @@ use crucible_core::{
     Cancel, Event, Post as _, Remember, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
-use crucible_tools::{Ledger, Plan};
+use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pressed};
 
 use super::draw;
@@ -116,6 +116,14 @@ pub(crate) struct Terms {
     /// its session would be a panel above the prompt describing work the agent
     /// on the other side of it has no memory of.
     pub(crate) plan: Plan,
+    /// Every command left running, which the row under the box counts and the
+    /// panel behind it lists.
+    ///
+    /// Held for the reason the two above are, and emptied by nothing: a running
+    /// dev server is a fact about the machine rather than about the context, so
+    /// `/clear` leaves it alone where it empties the record and the plan. What
+    /// ends these is the run ending.
+    pub(crate) leaving: Background,
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
     /// there is no name to write it under.
@@ -465,7 +473,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let says = typing::under(&runner, terms.style.glyphs());
+    let mut says = typing::under(&runner, terms.style.glyphs());
 
     // Read here for the same reason and at the same moment: half of what a turn
     // is asked under is about the session — which model is answering, and how
@@ -585,6 +593,14 @@ fn take<T: Terminal>(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
+
+        // Reaped and counted before the box is drawn again, because the row under
+        // it says how many commands are still running and a command that has
+        // exited is not one of them. A number that only moved when something else
+        // on the row did would be exactly the stale fact this row exists to
+        // report.
+        drop(terms.leaving.reap());
+        says.running = terms.leaving.count();
 
         // After the event rather than before it, so what the turn said is on
         // screen before the box is drawn back underneath it. A line finished

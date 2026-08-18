@@ -68,6 +68,9 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         provider: "",
         effort: None,
         asking: None,
+        // Nothing, so that every test written before this row said what was
+        // running is still a test about what it said before.
+        running: None,
         room: ROOM,
     }
 }
@@ -665,4 +668,80 @@ fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
             assert_eq!(back, Some(column), "{said:?} at {column}");
         }
     }
+}
+
+/// The same box, with commands left running behind it.
+fn leaving(said: &'static str, running: usize) -> Prompt<'static> {
+    Prompt {
+        running: Some(running),
+        ..asking_of(said)
+    }
+}
+
+#[test]
+fn what_is_still_running_is_named_on_the_status_row_and_nowhere_else() {
+    // One row rather than two. Everything on that row is a fact that stays true
+    // until something changes it, and a command still running is one of those —
+    // where a notice under it is true until the next keystroke.
+    let rows = leaving("", 2).rows(80, Glyphs::Unicode);
+    let status = rows.last().map(Row::text).unwrap_or_default();
+
+    assert!(status.contains(MODE), "{status:?}");
+    assert!(status.contains("2 commands"), "{status:?}");
+    assert!(status.contains(NAMED), "{status:?}");
+    assert_eq!(
+        rows.len(),
+        asking_of("").rows(80, Glyphs::Unicode).len(),
+        "naming what is running cost the box a row"
+    );
+}
+
+#[test]
+fn nothing_running_says_nothing_about_it() {
+    let status = asking_of("")
+        .rows(80, Glyphs::Unicode)
+        .last()
+        .map(Row::text)
+        .unwrap_or_default();
+
+    assert!(!status.contains("command"), "{status:?}");
+}
+
+#[test]
+fn what_is_running_outlasts_the_keys_when_the_row_narrows() {
+    // The order things give way on this row. The keys after the mode are
+    // documentation and a second look gets them back; the count is the only way
+    // to find a process, so it is the last thing to go before the mode itself.
+    let narrow = leaving("", 2).rows(46, Glyphs::Unicode);
+    let status = narrow.last().map(Row::text).unwrap_or_default();
+
+    assert!(status.contains("2 commands"), "{status:?}");
+    assert!(
+        !status.contains(HINT),
+        "the keys took room the count needed: {status:?}"
+    );
+}
+
+#[test]
+fn what_is_running_is_the_one_thing_on_that_row_drawn_in_the_accent() {
+    // Because it is the one thing on it you can act on. Marked by colour and by
+    // being the only colour, which is what a reader picks out at a glance — and
+    // it holds in every mode, since the three a mode row is ever drawn in are the
+    // quiet one and the two a permission mode owns. The tone here is the one ask
+    // mode passes, rather than the helper's, because that is the row this claim is
+    // about.
+    let rows = Prompt {
+        tone: Slot::Quiet,
+        ..leaving("", 2)
+    }
+    .rows(80, Glyphs::Unicode);
+    let status = rows.last().expect("a status row");
+
+    let accented: Vec<&str> = status
+        .spans()
+        .filter(|(slot, _)| *slot == Slot::Accent)
+        .map(|(_, text)| text)
+        .collect();
+
+    assert_eq!(accented, ["2 commands"], "{:?}", status.text());
 }

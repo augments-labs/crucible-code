@@ -39,7 +39,7 @@ use crucible_config::{ConfigError, Home, Settings, Updates};
 use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
-use crucible_tools::{Ledger, Plan};
+use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
 
 use crate::cli::choice::Choice;
@@ -529,6 +529,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // one holder, the panel above the box is a second, and `/clear` is the
     // third.
     let plan = Plan::new();
+
+    // Made here for a fourth reason on top of theirs: this is what ends every
+    // command left running, and it ends them by being dropped. Held by the
+    // outermost scope there is, so the last thing that happens in this process is
+    // the processes it started going with it.
+    let leaving = Background::new();
     let from = |name: &str| std::env::var(name).ok();
 
     // Where crucible keeps its own files, read from the environment here and
@@ -606,6 +612,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         cancel: cancel.clone(),
         ledger: ledger.clone(),
         plan: plan.clone(),
+        leaving: leaving.clone(),
 
         // Who `/model` is choosing for, and where it writes the choice down.
         // The second is a fact about how this run was set up and the prompt is
@@ -676,6 +683,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     }
 
     let runner = assemble(&Startup {
+        leaving: &leaving,
         provider: launch.serving,
         unasked: launch.unasked,
         model: launch.model.as_deref(),

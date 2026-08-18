@@ -106,6 +106,19 @@ pub struct Prompt<'a> {
     /// mode because the two are not the same kind of fact: the mode is true
     /// until somebody changes it, and this is true until the next keystroke.
     pub asking: Option<&'a str>,
+    /// How many commands are still running behind this box.
+    ///
+    /// The number rather than the words, because the words are this component's:
+    /// [`crate::Working`] spells its own segments for the same reason, and a
+    /// caller that spelled this one would be a second place the sentence lives.
+    ///
+    /// Drawn in the accent, which is the one thing on this row that can be acted
+    /// on — every other segment is a fact, and this is a fact with a door behind
+    /// it. The three colours a mode is ever drawn in are the quiet one and the two
+    /// a permission mode owns, so the accent here is unmistakable in every mode.
+    ///
+    /// `None`, or zero, is the row as it was before any of this existed.
+    pub running: Option<usize>,
     /// How many rows of the line the box may show at once.
     ///
     /// The box grows to what the line needs and stops here. [`Prompt::room`] is
@@ -327,14 +340,38 @@ impl Prompt<'_> {
         // fact this row must never be read wrong.
         let at = (wide > 0 && row.columns() + APART + wide <= columns).then(|| columns - wide);
 
-        // What is left for the keys: up to the gap before the model, or to the
-        // width where there is no model. A hint that does not fit whole is not
-        // drawn at all — half of the keys to press is not half as useful as all
-        // of them, it is a fragment beside the facts this row carries.
+        // What is left for what stands between the mode and the model: up to the
+        // gap before the model, or to the width where there is no model.
         let room = at.map_or(columns, |at| at.saturating_sub(APART));
+
+        // What is running is measured before the keys and drawn after them, which
+        // is the whole of the order things give way in here. The keys are
+        // documentation and a second look gets them back; this is the only way to
+        // find a process somebody started, so it is the last thing to go before
+        // the mode itself. Both are whole or not at all, for the reason the model
+        // is: half of a count is a number, and a number that is not the count is
+        // worse than nothing.
+        let counted = self.running.filter(|running| *running > 0).map(|running| {
+            let plural = if running == 1 { "" } else { "s" };
+
+            format!("{running} command{plural}")
+        });
+
+        let parting = format!(" {} ", glyphs.dot());
+        let needed = counted.as_deref().map_or(0, |counted| {
+            width::columns(&parting).saturating_add(width::columns(counted))
+        });
+
         let wanted = width::columns(self.hint);
-        if wanted > 0 && wanted < room.saturating_sub(row.columns()) {
+        if wanted > 0 && wanted < room.saturating_sub(row.columns()).saturating_sub(needed) {
             row.push(Slot::Quiet, format!(" {}", self.hint));
+        }
+
+        // The mark parting it from the mode stays quiet with the rest of the row.
+        // Only the words naming a door are lit.
+        if let Some(counted) = counted.filter(|_| needed <= room.saturating_sub(row.columns())) {
+            row.push(Slot::Quiet, parting);
+            row.push(Slot::Accent, counted);
         }
 
         if let Some(at) = at {

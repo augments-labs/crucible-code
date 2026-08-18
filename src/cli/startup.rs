@@ -19,7 +19,7 @@ use crucible_core::{
 };
 use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
 use crucible_runner::{Model, Runner, Session, Tools};
-use crucible_tools::{Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, Write};
+use crucible_tools::{Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, Write};
 
 use super::standing;
 use super::subscription::Subscriptions;
@@ -78,6 +78,11 @@ pub(super) struct Startup<'a> {
     /// the ledger is: the loop draws it above the box, the tool writes into it,
     /// and `/clear` empties it.
     pub(super) plan: &'a Plan,
+    /// Where a command left running is kept. Made by the caller for the reason
+    /// the two above are, with one more: it is what ends every one of those
+    /// processes when the run is over, so the value that ends them has to outlive
+    /// every tool that started one.
+    pub(super) leaving: &'a Background,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
@@ -125,13 +130,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(
         provider,
-        tools(
-            workspace,
-            startup.cancel,
-            startup.ledger,
-            startup.plan,
-            settings,
-        ),
+        tools(startup, settings),
         model(startup.model, startup.effort, workspace),
         session,
     )
@@ -414,13 +413,19 @@ fn key(
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either. The plan
 /// is last, because it is the one that does nothing to the workspace.
-fn tools(
-    workspace: &Workspace,
-    cancel: &Cancel,
-    seen: &Ledger,
-    plan: &Plan,
-    settings: &Settings,
-) -> Tools {
+fn tools(startup: &Startup<'_>, settings: &Settings) -> Tools {
+    // Read off the wiring rather than taken one by one. Five things a tool is
+    // built with is five arguments beside the settings, which is a call nobody
+    // can read — and every one of them is already a field of the value that
+    // describes how this run was set up.
+    let Startup {
+        workspace,
+        cancel,
+        ledger: seen,
+        plan,
+        leaving,
+        ..
+    } = *startup;
     let mut tools = Tools::new();
 
     // Which files have been read is learned by one tool and asked by another,
@@ -442,8 +447,13 @@ fn tools(
     // crucible cannot put a variable in its own environment — writing to one is
     // `unsafe` in edition 2024 — and would not want to: what the block is for
     // is what `cargo test` sees, not what this process sees.
+    // And the other end of the row under the box. The clone shares one registry
+    // rather than copying it, which is what lets the loop draw what is running and
+    // stop one — and what makes the caller's copy the thing that ends them all.
     tools.add(Box::new(
-        Bash::new(workspace.clone(), cancel.clone()).exporting(settings.env()),
+        Bash::new(workspace.clone(), cancel.clone())
+            .exporting(settings.env())
+            .leaving(leaving.clone()),
     ));
 
     // The other end of the panel above the prompt. The clone shares one plan

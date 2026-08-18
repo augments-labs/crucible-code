@@ -401,6 +401,9 @@ pub(super) struct Says {
     /// A row under that, for something waiting on the very next key. `None` in
     /// the ordinary state, where the mode is the last row there is.
     asking: Option<&'static str>,
+    /// How many commands are still running. Read per frame rather than per turn,
+    /// because a command ending is neither a keystroke nor a turn.
+    pub(super) running: usize,
 }
 
 impl Says {
@@ -843,6 +846,9 @@ fn saying(runner: &Runner) -> Says {
         effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
+        // Filled in by the frame rather than by the session, because it changes
+        // while nothing else on this row does.
+        running: 0,
     }
 }
 
@@ -944,6 +950,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         provider: says.provider,
         effort: says.effort,
         asking: says.asking,
+        running: Some(says.running),
         room,
     }
 }

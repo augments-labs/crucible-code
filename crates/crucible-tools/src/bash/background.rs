@@ -197,6 +197,19 @@ impl Background {
         Some(number)
     }
 
+    /// How many commands are still running.
+    ///
+    /// Apart from [`Background::running`] because the row under the box asks this
+    /// on every frame and wants only the number: the other one copies a command
+    /// line per entry, and copying four of those sixty times a second to draw one
+    /// digit is work nobody asked for.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.standing
+            .lock()
+            .map_or(0, |standing| standing.left.len())
+    }
+
     /// What is running, for the row under the box and the panel behind it.
     #[must_use]
     pub fn running(&self) -> Vec<Standing> {
