@@ -486,3 +486,56 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // a rung this program chose on the vendor's behalf.
     assert_eq!(model(Some("claude-opus-5"), None, &workspace).effort, None);
 }
+
+/// A `Startup` for `named`, with `model` chosen and a key in the environment.
+fn reaching_for(named: &str, model: Option<&'static str>) -> Option<Arc<AnthropicWeb>> {
+    let sample = Sample::new(&format!("web-source-{named}"));
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    web(
+        &Startup {
+            provider: Some(serving(named)),
+            unasked: NO_MODEL_CHOSEN,
+            model,
+            effort: None,
+            resuming: false,
+            mode: Mode::Ask,
+            leaving: &crucible_tools::Background::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            cancel: &Cancel::new(),
+            ledger: &Ledger::new(),
+            plan: &Plan::new(),
+            from: &|_| Some("sk-ant-test".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(),
+        },
+        &Settings::default(),
+    )
+}
+
+#[test]
+fn an_anthropic_session_holding_a_key_has_something_to_reach_the_web_with() {
+    assert!(reaching_for("anthropic", Some("claude-opus-5")).is_some());
+}
+
+#[test]
+fn a_session_on_a_provider_with_no_source_advertises_no_web_tools() {
+    // Not a source that fails every call: a tool registered and always broken
+    // teaches the model to keep trying it, and there is nothing for it to learn
+    // from a failure that is really an absence.
+    for named in ["openai", "moonshot"] {
+        assert!(
+            reaching_for(named, Some("a-model")).is_none(),
+            "{named} was given a source it has no implementation for",
+        );
+    }
+}
+
+#[test]
+fn a_session_with_no_model_chosen_has_no_source_either() {
+    // A side request has to name a model, and the one it names is the session's.
+    // Nothing is chosen yet in the state `/model` exists to leave open.
+    assert!(reaching_for("anthropic", None).is_none());
+}
