@@ -2,9 +2,12 @@
 
 # Codex settings for working in this repository.
 #
-# The rules themselves are not here — Codex reads AGENTS.md, which is a symlink
-# to CLAUDE.md, and the skills under .agents/skills/ are symlinks to the
-# originals in .claude/skills/. This file only says how Codex should run.
+# The rules themselves are not here. They are in .claude/rules/, one topic per
+# file, reached as .agents/rules through a symlink; AGENTS.md is a symlink to
+# CLAUDE.md and points at that directory. Codex does not load a rules directory
+# of its own accord, so read them. The skills are the same arrangement:
+# originals under .claude/skills/, symlinked into .agents/skills/. This file
+# only says how Codex should run.
 
 # Keep commands inside the workspace sandbox. Eligible requests to cross that
 # boundary go to Codex's automatic reviewer; the sandbox still applies unless
@@ -13,9 +16,8 @@ approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 approvals_reviewer = "auto_review"
 
-# The rules in CLAUDE.md are stated once and enforced across every crate; a
-# change that respects them usually has to be reasoned about, not pattern
-# matched.
+# The rules are stated once and enforced across every crate; a change that
+# respects them usually has to be reasoned about, not pattern matched.
 model_reasoning_effort = "xhigh"
 
 # Rust answers age badly — a crate's API moves between minor versions and the

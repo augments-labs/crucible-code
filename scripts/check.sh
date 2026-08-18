@@ -326,26 +326,35 @@ if ((linked == 0)); then
     failed=1
 fi
 
-# The per-crate rules are the same idea one directory down: written once under
-# .agents/, and reached under whichever name a harness looks for. A copy is the
-# failure — two sets of rules that agree today and diverge on the first edit.
-if [[ ! -L .claude/rules ]]; then
-    printf '    FAIL .claude/rules must be a symlink to ../.agents/rules, not a directory\n'
+# The rules are the same idea one directory down: written once under .claude/,
+# and reached under whichever name a harness looks for. A copy is the failure —
+# two sets of rules that agree today and diverge on the first edit. The
+# direction matters and is checked, because both directories look plausible and
+# only one of them is where a file is edited; skills below point the same way.
+if [[ ! -L .agents/rules ]]; then
+    printf '    FAIL .agents/rules must be a symlink to ../.claude/rules, not a directory\n'
     failed=1
-elif [[ "$(readlink .claude/rules)" != "../.agents/rules" ]]; then
-    printf '    FAIL .claude/rules points at %s, expected ../.agents/rules\n' "$(readlink .claude/rules)"
+elif [[ "$(readlink .agents/rules)" != "../.claude/rules" ]]; then
+    printf '    FAIL .agents/rules points at %s, expected ../.claude/rules\n' "$(readlink .agents/rules)"
     failed=1
 fi
 
 section "agent rules scope"
-# A rule under .agents/rules/ is read only when a file it claims is opened, so
-# one without `paths:` is dead text that nothing ever loads — and it fails by
-# staying quiet, which is the same silent shape the symlink check above exists
-# to catch. The globs are checked too: a rule aimed at a crate that has since
-# been renamed stops applying without anyone noticing.
-rules=(.agents/rules/*.md)
+# Two kinds of rule live here and only one of them is checked for scope.
+#
+# A rule *with* `paths:` is read when a file it claims is opened, so a glob
+# aimed at a crate that has since been renamed stops applying without anyone
+# noticing — that is what the loop below catches.
+#
+# A rule *without* `paths:` is read every session instead, which is the harness
+# behaviour rather than an oversight, and is the only way to state something
+# that no file can trigger: what a commit message may say, what may be taken
+# from reading another project. Those have no glob that could ever match,
+# because the thing they govern is not a file. So an absent `paths:` passes
+# here and is left to be justified by the rule itself.
+rules=(.claude/rules/*.md)
 if ((${#rules[@]} == 0)); then
-    printf '    FAIL .agents/rules/ holds no rules file; every per-crate rule has stopped loading\n'
+    printf '    FAIL .claude/rules/ holds no rules file; every per-crate rule has stopped loading\n'
     failed=1
 fi
 
@@ -354,6 +363,7 @@ fi
 # rules file would let a crate named once in a sentence satisfy the requirement
 # while no frontmatter aims anything at it.
 claimed=""
+unscoped=0
 
 for rule in "${rules[@]}"; do
     globs=$(awk '
@@ -387,9 +397,10 @@ for rule in "${rules[@]}"; do
         paths && /^[^[:space:]]/ { paths = 0 }
     ' "$rule")
 
+    # Unscoped: loaded every session, nothing to validate. Counted so the
+    # summary can say how much of every session's context these cost.
     if [[ -z "$globs" ]]; then
-        printf '    FAIL %s: no paths: frontmatter, so nothing ever loads it\n' "$rule"
-        failed=1
+        unscoped=$((unscoped + 1))
         continue
     fi
 
