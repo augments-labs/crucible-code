@@ -18,6 +18,7 @@
 use std::fmt;
 
 /// One thing a question offers to be chosen.
+#[derive(Clone)]
 pub struct Answer {
     name: Box<str>,
     says: Box<str>,
@@ -72,6 +73,11 @@ impl Answer {
 }
 
 /// One question, and the answers it offers.
+///
+/// Cloned to cross a thread boundary, the way [`crate::ToolCall`] is: the tool
+/// asking holds a borrow of these and the thread that draws them is somewhere
+/// else entirely.
+#[derive(Clone)]
 pub struct Question {
     heading: Box<str>,
     asks: Box<str>,

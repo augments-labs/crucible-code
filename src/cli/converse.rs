@@ -26,7 +26,7 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
 use std::thread;
 use std::time::Duration;
 
@@ -40,7 +40,7 @@ use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pre
 
 use super::draw;
 use super::kept::Kept;
-use super::seen::{Answer, Asking, CAPACITY, Inbox, Relay, Seen};
+use super::seen::{Answer, Asking, CAPACITY, Given, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::subscription::Subscriptions;
 use super::unasked;
@@ -59,6 +59,7 @@ mod leaving;
 mod mode;
 mod picking;
 mod planning;
+mod putting;
 mod region;
 mod secret;
 mod turning;
@@ -115,6 +116,12 @@ pub(crate) struct Terms {
     /// the reason it empties the plan: what it would otherwise leave is a model
     /// holding tools this conversation never asked for.
     pub(crate) revealed: Revealed,
+    /// Where a tool's questions reach the thread that draws them.
+    ///
+    /// Held for the reason the ledger and the plan are: it is made once, beside
+    /// the tool that was built with it, and the loop holds the other end. What
+    /// it lends changes every turn; what holds it does not.
+    pub(crate) putting: Putting,
     /// The plan the agent is working to, which is what stands above the box.
     ///
     /// Held for the same reason the ledger is, and emptied by the same command:
@@ -454,14 +461,12 @@ fn take<T: Terminal>(
     prompt: String,
     mut taking: Taking<'_>,
 ) -> Result<Took, Fatal> {
-    // Both channels are made fresh for this turn. A reply channel that outlived
-    // its turn could hand the next question an answer meant for the last one.
     let (post, seen) = sync_channel(CAPACITY);
-    let (reply, hear) = channel();
+    let (answering, hear) = Answering::new(&terms.putting, &post);
     let mut seen = Inbox::new(seen);
 
     let mut asking = Asking::new(post.clone(), hear);
-    let relay = Relay::new(post);
+    let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 
     // The box stands under the turn, where it stands under the prompt the rest
@@ -586,17 +591,17 @@ fn take<T: Terminal>(
 
                 if held.is_ok() {
                     held = stop_if_failed(
-                        shown(one, renderer, terms, &mut taking, &reply),
+                        shown(one, renderer, terms, &mut taking, &answering),
                         &terms.cancel,
                     );
-                } else if matches!(one, Seen::Question { .. }) {
-                    // Nothing is drawn and nothing is read once the terminal or
-                    // the input has failed, but a question still has to be
-                    // answered: the worker waits on the reply channel, and this
-                    // loop waits on the worker. A refusal is what a drawing
-                    // thread that has stopped already means, said out loud
-                    // rather than by going quiet.
-                    let _ = reply.send(verdict(None));
+                } else if matches!(one, Seen::Question { .. } | Seen::Asked { .. }) {
+                    // Nothing is drawn and nothing is read once the terminal
+                    // has failed, and both kinds of question still have to be
+                    // answered or the worker waits for ever. A refusal and
+                    // nobody-answered are what a drawing thread that has
+                    // stopped means, said out loud rather than by going quiet.
+                    let _ = answering.reply.send(verdict(None));
+                    let _ = answering.give.send(None);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -775,6 +780,36 @@ struct Answers<'a> {
     keys: bool,
 }
 
+/// Where the two kinds of answer go back.
+///
+/// Two channels rather than one carrying both: a verdict and an ask's answers
+/// are different types, and one channel would need a union nothing keeps apart.
+/// One value rather than two arguments, because they are made together, handed
+/// over together, and neither is ever the other's.
+struct Answering {
+    /// Where a permission verdict goes.
+    reply: Sender<Answer>,
+    /// Where an ask's answers go.
+    give: Sender<Given>,
+}
+
+impl Answering {
+    /// Both reply channels for one turn, with the ask's end already lent to
+    /// whoever asks.
+    ///
+    /// Fresh for each turn, because a reply channel that outlived its turn could
+    /// hand the next question an answer meant for the last one. Making the
+    /// channel and lending its far end are one act here, so there is no state in
+    /// between where one exists and the other has not been given away.
+    fn new(putting: &Putting, post: &SyncSender<Seen>) -> (Self, Receiver<Answer>) {
+        let (reply, hear) = channel();
+        let (give, given) = channel();
+        putting.open(post.clone(), given);
+
+        (Self { reply, give }, hear)
+    }
+}
+
 /// One answer to one question.
 ///
 /// A key where there is a keyboard, because raw mode is held for the whole
@@ -885,8 +920,9 @@ fn shown<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     taking: &mut Taking<'_>,
-    reply: &Sender<Answer>,
+    answering: &Answering,
 ) -> Result<(), Fatal> {
+    let Answering { reply, give } = answering;
     let style = terms.style;
 
     match one {
@@ -911,6 +947,28 @@ fn shown<T: Terminal>(
 
             // A worker that stopped waiting has already denied itself.
             let _ = reply.send(answer);
+        }
+        Seen::Asked { questions } => {
+            let given = putting::put(renderer, style, &questions);
+            let given = match given {
+                Ok(given) => given,
+                Err(problem) => {
+                    // This ask has already left the channel, so the drain
+                    // cannot meet it again. Nobody answered is what the worker
+                    // has to hear, or it waits for ever beside the terminal
+                    // failure this returns.
+                    let _ = give.send(None);
+                    return Err(problem);
+                }
+            };
+
+            let _ = give.send(match given {
+                putting::Put::Said(answered) => Some(answered),
+                // Left, and no room to stand a panel, are the same answer to
+                // the worker: nobody answered. They differ in what is owed the
+                // reader, not in what the tool is told.
+                putting::Put::Left | putting::Put::Cramped => None,
+            });
         }
     }
 

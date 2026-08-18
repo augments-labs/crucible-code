@@ -536,6 +536,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // outermost scope there is, so the last thing that happens in this process is
     // the processes it started going with it.
     let leaving = Background::new();
+
+    // The other end of the panel a model's questions stand in. One value shared
+    // rather than copied, so a question put on the worker thread is one the
+    // thread that draws meets on its next frame — the same bargain the plan and
+    // the read record are made under.
+    let putting = seen::Putting::new();
     let from = |name: &str| std::env::var(name).ok();
 
     // Where crucible keeps its own files, read from the environment here and
@@ -614,6 +620,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ledger: ledger.clone(),
         revealed: revealed.clone(),
         plan: plan.clone(),
+        putting: putting.clone(),
         leaving: leaving.clone(),
 
         // Who `/model` is choosing for, and where it writes the choice down.

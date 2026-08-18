@@ -146,6 +146,7 @@ mod tests {
             ledger: ledger.clone(),
             revealed: Revealed::new(),
             plan: plan.clone(),
+            putting: crate::cli::seen::Putting::new(),
             leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
             choosing: sample.root().join("unwritten-home.json"),

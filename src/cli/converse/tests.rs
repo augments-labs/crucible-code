@@ -37,6 +37,7 @@ fn plain() -> Terms {
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
+        putting: crate::cli::seen::Putting::new(),
         leaving: crucible_tools::Background::new(),
         // A provider, so `/model` has a name to write its answer under, and a
         // file inside the same absent tree so nothing a test types reaches a
