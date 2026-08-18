@@ -950,6 +950,17 @@ fn shown<T: Terminal>(
             let _ = reply.send(answer);
         }
         Seen::Asked { questions } => {
+            // A loop reading lines rather than keys has nobody to put a panel
+            // to, and neither has one whose raw mode never came up. The tool is
+            // not registered in either, so this is the belt rather than the
+            // braces — but a panel that read keys nobody is at would wait for
+            // ever, and waiting for ever is the one failure this loop may not
+            // have.
+            if !taking.answers.keys {
+                let _ = give.send(None);
+                return Ok(());
+            }
+
             let given = putting::put(renderer, style, &questions);
             let given = match given {
                 Ok(given) => given,

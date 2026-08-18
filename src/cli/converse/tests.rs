@@ -543,6 +543,48 @@ fn calling(name: &str) -> Vec<Delta> {
     ]
 }
 
+#[test]
+fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
+    // The liveness half matters more than the words: a panel standing where no
+    // key will ever arrive is a turn that never ends, and this loop reads lines
+    // rather than keys. A test that hangs here has found exactly that.
+    // The *same* handle the loop lends its ends to. A tool built with a handle
+    // of its own would answer "nobody there" without the questions ever leaving
+    // the worker, and this test would prove nothing about the seam it is for.
+    let putting = crate::cli::seen::Putting::new();
+    let terms = Terms {
+        putting: putting.clone(),
+        ..plain()
+    };
+
+    let mut offered = Tools::new();
+    offered.add(Box::new(crucible_tools::AskUser::new(std::sync::Arc::new(
+        putting,
+    ))));
+
+    let asking = vec![
+        Delta::ToolStarted {
+            id: ToolId::new("a"),
+            name: "ask_user".into(),
+        },
+        Delta::ToolArgs(
+            r#"{"questions":[{"heading":"Language","question":"Which language?",
+                "answers":[{"answer":"Rust"},{"answer":"Python"}]}]}"#
+                .into(),
+        ),
+        Delta::Stopped(StopReason::WantsTools),
+    ];
+
+    let runner = scripted(Script::new(vec![asking, saying("carried on")]), offered);
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"go\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written().to_string();
+    assert!(written.contains("carried on"), "{written}");
+}
+
 mod command;
 mod question;
 
