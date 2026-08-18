@@ -22,6 +22,7 @@ mod event;
 mod ids;
 mod permission;
 mod provider;
+mod source;
 mod tool;
 mod transcript;
 mod workspace;
@@ -41,6 +42,7 @@ pub use provider::{
     Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
     Spend, ToolSchema,
 };
+pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use tool::{
     Account, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched, Watch, Wrote,
 };

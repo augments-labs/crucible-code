@@ -82,6 +82,7 @@ mod sample;
 mod summary;
 mod target;
 mod tree;
+mod web;
 mod write;
 
 pub use account::{backgrounded, of as account};
@@ -92,4 +93,5 @@ pub use grep::Grep;
 pub use ledger::Ledger;
 pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
+pub use web::{WebFetch, WebSearch};
 pub use write::Write;
