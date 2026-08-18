@@ -15,11 +15,26 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, ToolError, ToolOutput};
+use crucible_core::{Cancel, ToolError, ToolOutput, Watch, Wrote};
 
 use super::platform::{Output, ReadState, Scope};
 use super::{NAME, TICK, io as tool_io};
 use crate::bound::OUTPUT;
+
+/// The most one handover carries, in bytes.
+///
+/// A window on a live command rather than a record of it: the reader is being
+/// shown the last few rows of what a build is doing, and a command emitting
+/// megabytes a second would fill any figure chosen here between one tick and the
+/// next. So what does not fit is dropped **for the reader only** — the result the
+/// model is sent keeps its head, its tail and the count of what fell out of the
+/// middle, exactly as it did before any of this existed. The two losses are
+/// counted separately for that reason: `Kept::dropped` is about the answer, and
+/// nothing counts this one, because a window has never claimed to be complete.
+///
+/// One pipe read, so a command printing at a readable rate never loses a byte
+/// of what is shown.
+const FRESH: usize = 8 * 1024;
 
 /// How long the readers get to reach the end of their pipes once the command
 /// itself is over. Reading what is already buffered takes no time at all, so
@@ -37,6 +52,7 @@ pub(super) fn collect(
     scope: &Scope,
     allowed: Duration,
     cancel: &Cancel,
+    watch: &dyn Watch,
 ) -> Result<ToolOutput, ToolError> {
     // Own the child before the first fallible pipe operation. Any `?` below
     // therefore stops the process scope and performs only a bounded reap.
@@ -65,6 +81,24 @@ pub(super) fn collect(
             let status = running.stop()?;
             expired = true;
             break status;
+        }
+
+        // Handed over here rather than from the reader threads, and that is the
+        // load-bearing choice in this loop. A reader that blocked on a full
+        // channel would stop draining its pipe, the pipe would fill, and the
+        // command would stall behind the terminal — which is the deadlock the
+        // whole module is arranged to prevent. This thread is already the one
+        // doing nothing but waiting, so it is the one that can afford to wait
+        // again.
+        //
+        // Both pipes, in one order, every tick. A command writing to each of
+        // them can have its lines interleaved differently from how it wrote
+        // them; that is true of the answer as well, where they are joined the
+        // same way, and no reading of two pipes can be better than this.
+        for said in [out.hand_over(), err.hand_over()] {
+            if !said.is_empty() {
+                watch.wrote(Wrote::new(said));
+            }
         }
 
         thread::sleep(TICK);
@@ -271,11 +305,25 @@ struct Kept {
     head: Vec<u8>,
     tail: VecDeque<u8>,
     dropped: usize,
+    /// What has arrived since it was last handed over, for the reader watching
+    /// the command run. Bounded by [`FRESH`] and emptied by
+    /// [`Kept::hand_over`]; nothing accumulates here across a command.
+    fresh: VecDeque<u8>,
 }
 
 impl Kept {
     /// Takes what it can of `arrived` and counts the rest.
     fn push(&mut self, arrived: &[u8]) {
+        // The reader's window first, and bounded on its own: it is emptied every
+        // tick, so what it holds is one tick's worth rather than a command's.
+        let recent = arrived
+            .get(arrived.len().saturating_sub(FRESH)..)
+            .unwrap_or(arrived);
+        let spare = self.fresh.len().saturating_add(recent.len());
+        let over = spare.saturating_sub(FRESH).min(self.fresh.len());
+        self.fresh.drain(..over);
+        self.fresh.extend(recent);
+
         // The head fills once and then never moves again, which is what makes
         // it the *first* bytes rather than some later window of them.
         let room = OUTPUT.saturating_sub(self.head.len()).min(arrived.len());
@@ -303,6 +351,59 @@ impl Kept {
         self.tail.drain(..spill);
         self.dropped = self.dropped.saturating_add(spill);
         self.tail.extend(keep);
+    }
+
+    /// What has arrived since this was last called, as far as the last whole
+    /// character in it.
+    ///
+    /// A pipe is read in fixed blocks, so a block boundary can fall inside a
+    /// multi-byte character. Handing that over would put a replacement mark on
+    /// screen and then another one next tick, for a character that was never
+    /// damaged — so an incomplete sequence at the end is held back and joins the
+    /// next handover. A sequence that is genuinely not UTF-8 is handed over with
+    /// its bad bytes in it, because holding *that* back would stall the window
+    /// for as long as the command ran.
+    fn hand_over(&mut self) -> String {
+        if self.fresh.is_empty() {
+            return String::new();
+        }
+
+        // Bounded by `FRESH`, which is what makes collecting it whole safe.
+        let arrived: Vec<u8> = self.fresh.iter().copied().collect();
+
+        // Everything except a sequence still arriving at the end. Walked rather
+        // than answered in one step because a bad byte is not the end of the
+        // buffer: stopping at the first one would hand over a single mark per
+        // tick and leave the rest waiting, so a command printing anything
+        // binary would crawl instead of scrolling.
+        let mut whole = 0;
+        loop {
+            let rest = arrived.get(whole..).unwrap_or_default();
+            match std::str::from_utf8(rest) {
+                Ok(_) => {
+                    whole = arrived.len();
+                    break;
+                }
+                Err(problem) => match problem.error_len() {
+                    // Incomplete at the end, and it may be the front of a
+                    // character the next read completes.
+                    None => {
+                        whole = whole.saturating_add(problem.valid_up_to());
+                        break;
+                    }
+                    // Not UTF-8 anywhere. Step over it and keep looking; the
+                    // lossy conversion below is what says so on screen.
+                    Some(bad) => {
+                        whole = whole
+                            .saturating_add(problem.valid_up_to())
+                            .saturating_add(bad);
+                    }
+                },
+            }
+        }
+
+        self.fresh.drain(..whole);
+        String::from_utf8_lossy(arrived.get(..whole).unwrap_or_default()).into_owned()
     }
 
     /// The two ends, in order, with the gap between them unmarked — [`cut`] is
@@ -423,6 +524,17 @@ impl Pipe {
         self.kept
             .lock()
             .map(|kept| (kept.bytes(), kept.dropped))
+            .unwrap_or_default()
+    }
+
+    /// What has arrived on this pipe since the last time it was asked.
+    ///
+    /// Empty where nothing has, which is the ordinary answer for a command
+    /// between two lines of output.
+    fn hand_over(&self) -> String {
+        self.kept
+            .lock()
+            .map(|mut kept| kept.hand_over())
             .unwrap_or_default()
     }
 

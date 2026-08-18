@@ -21,6 +21,48 @@ fn ran(sample: &Sample, args: &str) -> ToolOutput {
     bash(sample, args).expect("the command ran")
 }
 
+/// A watcher that keeps what it was told, in the order it was told.
+#[derive(Default)]
+struct Watched(std::sync::Mutex<String>);
+
+impl crucible_core::Watch for Watched {
+    fn wrote(&self, text: crucible_core::Wrote) {
+        if let Ok(mut held) = self.0.lock() {
+            held.push_str(text.as_str());
+        }
+    }
+}
+
+impl Watched {
+    fn said(&self) -> String {
+        self.0.lock().map(|held| held.clone()).unwrap_or_default()
+    }
+}
+
+#[test]
+fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
+    // The command outlives its own output on purpose: what is handed over is
+    // handed over *during* the wait, and a command that prints and exits inside
+    // one tick has nothing to watch. That is not a gap — a result nobody had to
+    // wait for is a result, and this is the surface for the other kind.
+    let sample = Sample::new("bash-watched");
+    let tool = Bash::new(sample.workspace(), Cancel::new());
+    let watched = Watched::default();
+
+    let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
+    let output = tool
+        .run(allowed(&tool, args), &watched)
+        .expect("the command ran");
+
+    assert_eq!(
+        watched.said(),
+        "Compiling one\nCompiling two\n",
+        "what the command printed never reached the watcher"
+    );
+    // And the result is untouched by having been watched.
+    assert_eq!(output.text(), "Compiling one\nCompiling two");
+}
+
 #[test]
 fn output_and_a_zero_exit_come_back_as_the_result() {
     let sample = Sample::new("bash-ok");

@@ -1,6 +1,6 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{Finished, Kept, OUTPUT, cut};
+use super::{FRESH, Finished, Kept, OUTPUT, cut};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -177,4 +177,61 @@ fn an_early_return_guard_stops_the_whole_process_group() {
     std::thread::sleep(std::time::Duration::from_millis(450));
 
     assert!(!base.exists(), "a descendant survived early-return cleanup");
+}
+
+#[test]
+fn a_character_split_across_two_reads_is_handed_over_whole() {
+    // A pipe is read in fixed blocks, so this is not a rare case: any
+    // command printing anything but ASCII meets it. Handed over as it
+    // arrived, the reader would see a replacement mark and then another,
+    // for a character nothing damaged.
+    let mut kept = Kept::default();
+    let euro = "€".as_bytes();
+    let (front, rest) = euro.split_at(1);
+
+    kept.push(b"cost: ");
+    kept.push(front);
+    assert_eq!(kept.hand_over(), "cost: ");
+
+    kept.push(rest);
+    assert_eq!(kept.hand_over(), "€");
+}
+
+#[test]
+fn bytes_that_are_not_utf8_at_all_are_handed_over_rather_than_held_forever() {
+    // The difference that matters: an incomplete sequence may still be
+    // arriving, and a wrong one never will. Holding the second back would
+    // stop the window for as long as the command ran.
+    let mut kept = Kept::default();
+    kept.push(&[0xff, b'o', b'k']);
+
+    let said = kept.hand_over();
+    assert!(said.ends_with("ok"), "{said}");
+    assert!(kept.fresh.is_empty(), "a bad byte stalled the handover");
+}
+
+#[test]
+fn what_one_handover_carries_is_bounded_however_much_arrived() {
+    // The window is a window. A command emitting megabytes between two ticks
+    // must not make this grow, and what it loses is lost to the reader
+    // alone — the answer below still holds its head and its tail.
+    let mut kept = Kept::default();
+    kept.push(&b"x".repeat(FRESH * 4));
+
+    assert_eq!(kept.hand_over().len(), FRESH);
+    assert!(kept.fresh.is_empty());
+    assert_eq!(kept.head.len(), OUTPUT);
+}
+
+#[test]
+fn nothing_arriving_hands_nothing_over() {
+    let mut kept = Kept::default();
+    assert!(kept.hand_over().is_empty());
+
+    kept.push(b"one");
+    assert_eq!(kept.hand_over(), "one");
+    assert!(
+        kept.hand_over().is_empty(),
+        "the same bytes were handed twice"
+    );
 }

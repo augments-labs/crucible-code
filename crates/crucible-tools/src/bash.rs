@@ -224,7 +224,7 @@ impl Tool for Bash {
         summary::field(NAME, args, "command")
     }
 
-    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text("command")?;
         let seconds = args.count("timeout", SECONDS)?;
@@ -288,7 +288,7 @@ impl Tool for Bash {
         // rather than a decision.
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
 
-        output::collect(child, &scope, allowed, &self.cancel)
+        output::collect(child, &scope, allowed, &self.cancel, watch)
     }
 }
 
