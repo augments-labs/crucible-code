@@ -343,8 +343,21 @@ jobs:
 
   # The release is opened once, with everything attached, so there is never a
   # window where it is public and half the platforms are missing.
+  # `budgets` is deliberately not among these. It is the slowest job here — the
+  # grep probe alone runs twenty paired rounds across three workloads — and by
+  # its own note above its numbers never reach the release: they are
+  # shared-runner trend data, kept on the run for whoever goes looking. A
+  # measurement that contributes nothing to the download should not stand
+  # between a green build and the download, and it was standing there for
+  # minutes after every other job had passed.
+  #
+  # What that gives up, said plainly: a blown budget no longer blocks a release.
+  # The reading that decides that question is the quiet-machine one
+  # `RELEASING.md` requires before the tag exists, and a shared runner's numbers
+  # were never fit to overrule it — a red here still fails the run and is still
+  # there to be read.
   publish:
-    needs: [build, build-linux, freebsd-x86_64, smoke-linux, budgets]
+    needs: [build, build-linux, freebsd-x86_64, smoke-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write # creates the GitHub Release and uploads the archives
