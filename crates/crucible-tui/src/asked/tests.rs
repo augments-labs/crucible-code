@@ -424,3 +424,179 @@ fn the_whole_panel_with_no_box_drawing_to_hand() {
         80
     ));
 }
+
+/// A question whose answers are shapes: two with a specimen, one without, and
+/// the specimens deliberately different in width and in height.
+fn shapes() -> [Choice<'static>; 3] {
+    [
+        Choice {
+            answer: "Compact",
+            says: "",
+            chosen: None,
+            shows: &["› ...", "", "crucible · opus-5 · main"],
+        },
+        Choice {
+            answer: "With the workspace and the spend",
+            says: "",
+            chosen: None,
+            shows: &["crucible · opus-5 · main* · ~/src/crucible · 12.4k"],
+        },
+        Choice {
+            answer: "Nothing at all",
+            says: "",
+            chosen: None,
+            shows: &[],
+        },
+    ]
+}
+
+#[test]
+fn the_panel_is_the_same_height_whichever_answer_is_marked() {
+    // The block moves with the mark, so it is drawn at the size of the widest
+    // and tallest specimen in the question rather than of the one on screen.
+    // Otherwise every arrow would change the height of the panel under it.
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.question = "You have no status line. Which one shall I set up here?";
+
+    let mut heights = Vec::new();
+    let mut widths = Vec::new();
+    for marked in 0..answers.len() {
+        panel.marked = marked;
+        let rows = panel.within(80, 40, Glyphs::Unicode).0;
+
+        heights.push(rows.len());
+        widths.push(
+            rows.iter()
+                .filter(|row| row.text().contains('┌') || row.text().contains('└'))
+                .map(Row::columns)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    let one_height = heights
+        .first()
+        .is_some_and(|first| heights.iter().all(|height| height == first));
+    let one_width = widths
+        .first()
+        .is_some_and(|first| widths.iter().all(|width| width == first));
+
+    assert!(
+        one_height,
+        "the panel changed height as the mark moved: {heights:?}"
+    );
+    assert!(
+        one_width,
+        "the block changed width as the mark moved: {widths:?}"
+    );
+}
+
+#[test]
+fn an_answer_with_nothing_to_show_still_draws_the_box_and_says_so() {
+    // A block that vanished would move every row under it, which is the same
+    // defect as the panel changing height.
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 2;
+
+    let drawn = art(&panel, 80, 40);
+
+    assert!(drawn.iter().any(|row| row.contains('┌')), "{drawn:#?}");
+    assert!(
+        drawn
+            .iter()
+            .any(|row| row.contains("nothing to show for this one")),
+        "{drawn:#?}"
+    );
+}
+
+#[test]
+fn a_specimen_past_the_bound_is_cut_and_the_row_says_by_how_much() {
+    // Every tool here bounds what it hands back and says when it cut it. A
+    // block that could be any height would let whatever wrote the call decide
+    // how tall this panel is.
+    let many: Vec<String> = (1..=25).map(|at| format!("row {at}")).collect();
+    let rows: Vec<&str> = many.iter().map(String::as_str).collect();
+    let answers = [Choice {
+        answer: "Long",
+        says: "",
+        chosen: None,
+        shows: &rows,
+    }];
+    let stops = stops();
+    let panel = asked(&answers, &stops);
+
+    let drawn = art(&panel, 80, 60);
+
+    assert!(drawn.iter().any(|row| row.contains("row 1")), "{drawn:#?}");
+    assert!(
+        !drawn.iter().any(|row| row.contains("row 25")),
+        "the block ran past its bound: {drawn:#?}"
+    );
+    assert!(
+        drawn.iter().any(|row| row.contains("more rows")),
+        "it was cut and never said so: {drawn:#?}"
+    );
+}
+
+#[test]
+fn a_question_with_no_specimens_draws_no_block() {
+    let answers = languages();
+    let stops = stops();
+    let drawn = art(&asked(&answers, &stops), 80, 40);
+
+    assert!(
+        !drawn.iter().any(|row| row.contains('┌')),
+        "a block was drawn for a question that shows nothing: {drawn:#?}"
+    );
+}
+
+#[test]
+fn a_specimen_is_clipped_rather_than_folded() {
+    // A folded specimen is a picture of something else. Cut, it is at least a
+    // picture of the first columns of the right thing.
+    let wide = "x".repeat(200);
+    let rows = [wide.as_str()];
+    let answers = [Choice {
+        answer: "Wide",
+        says: "",
+        chosen: None,
+        shows: &rows,
+    }];
+    let stops = stops();
+
+    let drawn = art(&asked(&answers, &stops), 80, 40);
+
+    assert!(drawn.iter().all(|row| row.chars().count() <= 80));
+    assert_eq!(
+        drawn.iter().filter(|row| row.contains("xxx")).count(),
+        1,
+        "the specimen folded onto more rows than it was given: {drawn:#?}"
+    );
+}
+
+#[test]
+fn the_whole_panel_with_a_specimen_under_the_marked_answer() {
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.at = 2;
+    panel.question = "You have no status line. Which one shall I set up here?";
+    panel.marked = 1;
+
+    insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
+}
+
+#[test]
+fn the_whole_panel_on_an_answer_with_nothing_to_show() {
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.at = 2;
+    panel.question = "You have no status line. Which one shall I set up here?";
+    panel.marked = 2;
+
+    insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
+}
