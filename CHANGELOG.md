@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-18
+
+**Nothing in crucible changed.** A contributor-facing tidy-up: the rules moved
+out of `CLAUDE.md` into `.claude/rules/`, and a test that measured the CI
+machine rather than the code was rewritten.
+
+
 ## [0.9.0] - 2026-08-18
 
 ### Added
@@ -2048,7 +2055,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/augments-labs/crucible-code/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/augments-labs/crucible-code/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/augments-labs/crucible-code/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/augments-labs/crucible-code/compare/v0.7.0...v0.8.0
