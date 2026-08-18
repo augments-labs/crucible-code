@@ -152,6 +152,7 @@ column gets sent back in review.
 | A conversation bound to a working directory | **session** | chat, thread, context |
 | One piece of streamed output from the model | **delta** | chunk, token, fragment |
 | One piece of what a tool has printed, arriving while its call is still out | **wrote** | delta, chunk, log, tail, progress |
+| A command that goes on running after its call has answered | **background command** | job, task, daemon, service, process |
 | The model asking to run a tool | **tool call** | function call, invocation, action |
 | A permission decision | **verdict** | approval, grant, decision |
 | An LLM backend adapter | **provider** | backend, client, vendor, model |
