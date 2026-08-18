@@ -725,15 +725,17 @@ pub(crate) fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> 
     within(flattened(text), width, glyphs)
 }
 
-/// One line of a file, at most `width` display columns of it.
+/// One line of a file, or of a command's output, at most `width` display columns
+/// of it.
 ///
 /// Everything else here is a sentence written for a row, and [`flattened`] tidies
 /// a stray space off each end of it. A line of a file is read against the line
 /// above it, and what that comparison is made of first is where each of them
 /// starts — so this one keeps its indentation and loses only the end, where a
 /// carriage return the file was saved with would otherwise become a space the
-/// row is padded by.
-fn indented(text: &str, width: usize, glyphs: Glyphs) -> String {
+/// row is padded by. A build's output is read the same way, and indents its own
+/// lines to say what belongs to what.
+pub(crate) fn indented(text: &str, width: usize, glyphs: Glyphs) -> String {
     let line = text
         .trim_end()
         .chars()
