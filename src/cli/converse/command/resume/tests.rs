@@ -53,6 +53,7 @@ fn terms(sample: &Sample) -> Terms {
         cancel: Cancel::new(),
         ledger: Ledger::new(),
         plan: Plan::new(),
+        leaving: crucible_tools::Background::new(),
         provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),

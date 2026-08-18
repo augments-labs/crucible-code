@@ -327,3 +327,44 @@ fn a_digit_moves_the_mark_before_it_takes_what_the_mark_stands_on() {
         assert_eq!(standing.marked, 1);
     }
 }
+
+#[test]
+fn a_command_that_will_be_left_running_says_so_where_it_is_agreed_to() {
+    // Allowing it is allowing a process to go on after the answer that started it
+    // has been given. A panel that said only what the command was would be asking
+    // about the wrong thing.
+    let call = ToolCall {
+        id: ToolId::new("a"),
+        name: "bash".into(),
+        args: ToolArgs::new(r#"{"command":"npm run dev","background":true}"#),
+    };
+
+    let words = Words::of(
+        &call,
+        &running("npm run dev", &["npm", "run", "dev"]),
+        &Account::none(),
+    );
+
+    assert!(
+        words.statement.contains("left running"),
+        "{:?}",
+        words.statement
+    );
+}
+
+#[test]
+fn a_command_that_will_not_outlive_its_turn_says_nothing_about_it() {
+    let call = ToolCall {
+        id: ToolId::new("a"),
+        name: "bash".into(),
+        args: ToolArgs::new(r#"{"command":"ls"}"#),
+    };
+
+    let words = Words::of(&call, &running("ls", &["ls"]), &Account::none());
+
+    assert!(
+        !words.statement.contains("left running"),
+        "{:?}",
+        words.statement
+    );
+}

@@ -31,6 +31,19 @@ use super::ReadState;
 /// A kill-on-close job containing one command and all its descendants.
 pub(crate) struct Scope(HANDLE);
 
+// SAFETY: a job object is a kernel handle rather than anything owned by the
+// thread that made it. Every call this module makes through it —
+// `AssignProcessToJobObject`, `TerminateJobObject`, `CloseHandle` — is documented
+// as usable from any thread, and the handle is not duplicated: exactly one `Scope`
+// owns it and closes it once. What crossing a thread means here is that a command
+// left running is owned by the registry the whole process shares, and the thread
+// that started it has gone.
+//
+// `Sync` is deliberately *not* claimed. Nothing needs it: the registry keeps every
+// scope behind its own lock, so two threads never hold one at the same time, and a
+// claim nobody needs is a claim nobody has checked.
+unsafe impl Send for Scope {}
+
 impl std::fmt::Debug for Scope {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         out.write_str("Scope(<job>)")

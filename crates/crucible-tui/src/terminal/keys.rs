@@ -61,6 +61,16 @@ pub enum Pressed {
     /// same want one step further out: that key is about the thing standing on
     /// screen now, and this one is about what has already been written down.
     Expand,
+    /// Ctrl+B: move a command across the line between what a turn is waiting on
+    /// and what is merely running.
+    ///
+    /// A toggle for the reason the three above are, and the same key is the way
+    /// back — but only one of its two directions changes anything about the turn.
+    /// Pressed while a call is out it answers that call now, so the turn goes on
+    /// instead of waiting; pressed with nothing out it decides which running
+    /// command is being watched, and no key can un-answer a call.
+    Background,
+
     /// Ctrl+T: show the whole plan the agent is working to, or bound it again.
     ///
     /// Named for what it acts on rather than for what it does, which is what
@@ -310,6 +320,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // one the panel it opens is spelled with.
         KeyCode::Char('t') if control => Pressed::Plan,
 
+        // And once more. Ctrl+B is readline's backward-char, which is what the
+        // left arrow does here and what nothing else needs a letter for — so the
+        // letter is free and it is the letter the two things it moves between are
+        // both spelled with.
+        KeyCode::Char('b') if control => Pressed::Background,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -425,6 +441,11 @@ mod tests {
         assert_eq!(meaning(control(KeyCode::Char('e'))), Pressed::Explain);
         assert_eq!(meaning(control(KeyCode::Char('o'))), Pressed::Expand);
         assert_eq!(meaning(control(KeyCode::Char('t'))), Pressed::Plan);
+        assert_eq!(
+            meaning(control(KeyCode::Char('b'))),
+            Pressed::Background,
+            "the key that moves a command across the line was read as an edit"
+        );
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is

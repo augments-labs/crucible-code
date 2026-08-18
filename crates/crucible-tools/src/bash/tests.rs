@@ -8,6 +8,7 @@ use crucible_core::{
     Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched, Verdict,
 };
 
+use super::background::{Background, MOST};
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::bound::OUTPUT;
 use crate::sample::{Sample, allowed};
@@ -612,4 +613,100 @@ fn a_name_crucible_has_no_value_for_is_left_unset_rather_than_given_one() {
     // makes it carry; a default written into this crate instead would be this
     // crate deciding where a command's programs come from.
     assert!(environment::inherited(|_| None).is_empty());
+}
+
+#[test]
+fn a_command_left_running_answers_at_once_and_keeps_running() {
+    // The whole point: a dev server is startable without spending the turn's
+    // timeout on it. The call comes back in the time it takes to see whether the
+    // command failed on the spot, and the process is still there afterwards.
+    let sample = Sample::new("bash-background");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    let started = Instant::now();
+    let output = tool
+        .run(
+            allowed(
+                &tool,
+                r#"{"command":"printf 'up\n'; sleep 30","background":true}"#,
+            ),
+            &Unwatched,
+        )
+        .expect("the command started");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the call waited for the command instead of leaving it running"
+    );
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().contains("left running as #1"),
+        "the result never said how to reach it: {}",
+        output.text()
+    );
+    assert_eq!(left.running().len(), 1);
+
+    // And it is ended by letting go of the registry, which is what the process
+    // leaving does.
+    left.stop(1);
+    assert!(left.running().is_empty());
+}
+
+#[test]
+fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
+    // A command that is over before anybody could watch it is not a background
+    // command, whatever the call asked for — and the model needs the failure now
+    // rather than in a panel it has no way to open.
+    let sample = Sample::new("bash-background-failed");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    let output = tool
+        .run(
+            allowed(&tool, r#"{"command":"exit 7","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the command started");
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().contains("[exit status 7]"),
+        "{}",
+        output.text()
+    );
+    assert!(
+        left.running().is_empty(),
+        "a command that had exited was kept"
+    );
+}
+
+#[test]
+fn the_number_of_commands_left_running_is_capped() {
+    let sample = Sample::new("bash-background-cap");
+    let left = Background::new();
+    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+
+    for _ in 0..MOST {
+        tool.run(
+            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the command started");
+    }
+
+    let over = tool
+        .run(
+            allowed(&tool, r#"{"command":"sleep 30","background":true}"#),
+            &Unwatched,
+        )
+        .expect("the call was answered");
+
+    assert!(over.is_failed(), "{}", over.text());
+    assert!(
+        over.text().contains("already running"),
+        "the refusal never named what was in the way: {}",
+        over.text()
+    );
+    assert_eq!(left.running().len(), MOST);
 }

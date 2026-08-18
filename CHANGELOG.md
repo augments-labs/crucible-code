@@ -8,6 +8,18 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+- **A command can be left running.** A dev server no longer costs a turn its whole
+  timeout. `bash` takes `background`, and <kbd>Ctrl</kbd>+<kbd>B</kbd> puts down a
+  command you did not expect to be long — either way the call is answered, the turn
+  goes on, and the process keeps running. The row under the box counts what is
+  still running and the same key lists them, where <kbd>Enter</kbd> shows one and
+  <kbd>x</kbd> ends it. What it costs: at most four at once, and a fifth call is
+  refused rather than started where nobody can see it. `/clear` leaves them alone —
+  a running server is a fact about your machine, not about the conversation — and
+  crucible exiting ends every one of them, however it leaves, except on a signal
+  that runs no cleanup at all. One that ends on its own says so in a line at the
+  moment it happens, and the model is told at the top of its next turn.
+
 - **A running command says what it is doing.** A build that takes two minutes
   used to say only that it was running for two of them. Its last five lines now
   stand under the call, with a row under them counting every line and every byte

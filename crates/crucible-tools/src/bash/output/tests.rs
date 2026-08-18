@@ -173,7 +173,7 @@ fn an_early_return_guard_stops_the_whole_process_group() {
     let scope = super::Scope::new(&mut command);
     let child = command.spawn().unwrap();
 
-    drop(super::Running::new(child, &scope));
+    drop(super::Waited::new(child, scope));
     std::thread::sleep(std::time::Duration::from_millis(450));
 
     assert!(!base.exists(), "a descendant survived early-return cleanup");

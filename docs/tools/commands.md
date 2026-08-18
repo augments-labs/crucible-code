@@ -52,6 +52,12 @@ and every byte it has printed:
 ✳ running (43s · ↓ 1.2k · esc to interrupt)
 ```
 
+The row under the sample also names the one key that acts on the command itself:
+<kbd>Ctrl</kbd>+<kbd>B</kbd> answers the call now and leaves the command running,
+so the turn goes on without waiting for it. It is drawn from the moment the call is
+out, before the counts, because a command that has printed nothing for half a
+minute is the one you most want to put down.
+
 Five rows is a sample and the count is what says so. <kbd>Ctrl</kbd>+<kbd>O</kbd>
 stands the whole of what has arrived so far — the same key that shows a finished
 result the transcript had to cut down to a row — and <kbd>Esc</kbd> closes it
@@ -66,6 +72,94 @@ below and not a second copy of the build log.
 A command writing over one line rather than adding lines — a progress bar — stays
 one row. A command printing faster than the screen can be read has rows skipped:
 the count row is what tells you so, and what the model is sent is unaffected.
+
+## Leaving one running
+
+Two ways, and they answer different situations. The model sends `background` when
+it means to start something with no end of its own — a dev server, a file watcher,
+a tunnel. You press <kbd>Ctrl</kbd>+<kbd>B</kbd> when a command you did not expect
+to be long turns out to be. Either way the call is answered, the turn goes on, and
+the process keeps running.
+
+A call that asked for it is answered as soon as the command has had a moment to
+fail on the spot — two hundred milliseconds, which is long enough for
+`npm: command not found` to reach the model now rather than in a panel it cannot
+open. A command already over by then was never a background command and comes back
+as an ordinary result. The answer names the number it is running as:
+
+```
+VITE v5.4.2  ready in 412 ms
+➜  Local:   http://localhost:5173/
+
+[left running as #1]
+```
+
+`timeout` and `background` together are refused rather than one of them ignored: a
+command left running has no deadline, so a call that sent both asked for two
+different things.
+
+**At most four run at once.** A fifth call is refused, naming the four in the way,
+and the command it started is ended rather than left where nobody can see it.
+
+**The question says so.** Where a call asks to be left running, the panel where you
+allow it says the command will still be running after the turn ends — allowing it
+is allowing that, and a panel that said only what the command was would be asking
+about the wrong thing.
+
+## Finding them again
+
+The row under the box counts them, in the accent, because it is the one thing on
+that row you can act on:
+
+```
+  ask mode on (shift+tab to cycle) · 2 commands        anthropic/claude-opus-5
+```
+
+<kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was — the same
+key that put one down, which is how every other key here works — and so does
+clicking that row, since the count is the only thing on it that is an offer rather
+than a fact. Each row says how
+long it has been running, how many lines it has printed and how much:
+
+```
+──────────────────────────────────────────────────────────────────────────────
+
+Still running
+
+› 1. Bash(npm run dev)                       4m 12s · 84 lines · 6.4 kB
+  2. Bash(cargo watch -x test)               1m 03s · 512 lines · 48 kB
+
+esc to close · enter shows it · x stops it
+```
+
+<kbd>Enter</kbd> stands what one has printed, in the view a finished result is
+stood in. <kbd>x</kbd> ends it, with no confirmation: the command was started by a
+call you allowed, and stopping it is why the list is reachable.
+
+## When one ends on its own
+
+It says so, because the count going quietly down would leave you — and the model —
+believing a server is up:
+
+```
+✗ Bash(npm run dev) ended on its own · exit status 1 · 96 lines
+```
+
+The line is written the moment it happens, even between turns. The model is told at
+the top of its next turn instead, because a turn already in flight has nowhere to
+put a new fact.
+
+## What ends them
+
+`/clear` does not. A running dev server is a fact about your machine rather than
+about the conversation, and unlike a forgotten transcript a killed server cannot be
+resumed. <kbd>Esc</kbd> does not either: it stops the turn, and a command you
+deliberately let go of is not part of the turn that started it.
+
+What does: <kbd>x</kbd> in the list, and crucible exiting — every process group
+goes with it, however the process leaves, including a panic. The one case it cannot
+cover is a signal that kills crucible outright, which runs no cleanup at all; the
+commands survive that, and your own shell is what ends them then.
 
 ## What comes back
 

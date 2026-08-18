@@ -35,7 +35,7 @@ use crucible_core::{
     Cancel, Event, Post as _, Remember, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
-use crucible_tools::{Ledger, Plan};
+use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pressed};
 
 use super::draw;
@@ -50,10 +50,12 @@ use expanding::Standing;
 use planning::Planning;
 use turning::Turning;
 use typing::Asked;
+use typing::between;
 
 mod asking;
 mod command;
 mod expanding;
+mod leaving;
 mod mode;
 mod picking;
 mod planning;
@@ -116,6 +118,14 @@ pub(crate) struct Terms {
     /// its session would be a panel above the prompt describing work the agent
     /// on the other side of it has no memory of.
     pub(crate) plan: Plan,
+    /// Every command left running, which the row under the box counts and the
+    /// panel behind it lists.
+    ///
+    /// Held for the reason the two above are, and emptied by nothing: a running
+    /// dev server is a fact about the machine rather than about the context, so
+    /// `/clear` leaves it alone where it empties the record and the plan. What
+    /// ends these is the run ending.
+    pub(crate) leaving: Background,
     /// Which provider this session is set up to ask, where a key was found for
     /// one. `/model` writes its answer under this name, and where there is none
     /// there is no name to write it under.
@@ -160,6 +170,11 @@ pub(crate) fn converse<T: Terminal>(
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
     let style = terms.style;
+
+    // Named once here because the prompt asks for it every frame: it is what the
+    // row under the box counts, and what that loop wakes on a clock for while
+    // there is anything left to end.
+    let left = &terms.leaving;
 
     // Held for the whole session and dropped on the way out however this
     // returns. Between turns it is what draws the box; during one it is what
@@ -262,29 +277,23 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let between = typing::between(&mut runner, &mut editor, &mut planning, keys);
-        let prompt = match typing::ask(renderer, style, between)? {
+        let between = between(&mut runner, &mut editor, &mut planning, left, keys);
+        let asked = typing::ask(renderer, style, between)?;
+
+        // Answered by the state that holds what it stands over, because the loop
+        // that read the key holds neither. The box comes back either way, with the
+        // line still in it.
+        if opened.asked(&asked, &kept) {
+            continue;
+        }
+
+        let prompt = match asked {
             Asked::Said(said) => said,
             Asked::Ended => break,
 
-            // Opened here and stood at the top of the loop, where the one
-            // opened under a turn is stood as well.
-            Asked::Expand => {
-                opened.open(&kept);
-                continue;
-            }
+            // Taken above, by the state that holds what it stands over.
+            Asked::Expand | Asked::Clicked(_) => continue,
 
-            // The same view over the one result that row offered, which is a
-            // question about what was cut and so is answered where what was cut
-            // is held. A row that offered nothing opens nothing, and the box
-            // comes back with the line still in it.
-            Asked::Clicked(at) => {
-                opened.one(&kept, at);
-                continue;
-            }
-
-            // Nothing to type into: no terminal, or one at only one end. The
-            // line is read the way every other answer on this thread is.
             Asked::Untyped => match unboxed(renderer, &runner, style, input)? {
                 Some(said) => said,
                 None => break,
@@ -465,17 +474,21 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let says = typing::under(&runner, terms.style.glyphs());
+    let mut says = typing::under(&runner, terms.style.glyphs());
 
     // Read here for the same reason and at the same moment: half of what a turn
     // is asked under is about the session — which model is answering, and how
     // hard it was asked to think — and a model can find out neither for itself.
     // Written once at startup it would go on describing the session the first
     // turn was taken in, so it is written again for each.
+    // Drained here rather than when it happened: the reader was told at the
+    // moment, and this is the other audience being told at the one moment there
+    // is room for it. A turn already in flight has nowhere to put a new fact.
     runner.telling(&standing::under(
         runner.model(),
         runner.effort(),
         &terms.workspace,
+        &terms.leaving.reported(),
     ));
 
     // Whatever stopped the last turn is spent, and this is the last moment at
@@ -586,6 +599,14 @@ fn take<T: Terminal>(
             Err(RecvTimeoutError::Disconnected) => break,
         }
 
+        // Reaped and counted before the box is drawn again, because the row under
+        // it says how many commands are still running and a command that has
+        // exited is not one of them. A number that only moved when something else
+        // on the row did would be exactly the stale fact this row exists to
+        // report.
+        drop(terms.leaving.reap());
+        says.running = terms.leaving.count();
+
         // After the event rather than before it, so what the turn said is on
         // screen before the box is drawn back underneath it. A line finished
         // here is kept for the loop above: running it now would start a second
@@ -597,6 +618,7 @@ fn take<T: Terminal>(
             match typing::during(
                 renderer,
                 typing::During {
+                    background: &terms.leaving,
                     editor: taking.editor,
                     queued: taking.queued,
                     turning: &mut turning,
@@ -825,8 +847,10 @@ fn heard(arrived: Pressed) -> Heard {
 
         Pressed::Resized => Heard::Resized,
 
-        // An arrow, a click, a mode step, a key that means nothing here. None
-        // of them is an answer, and none of them may be read as one.
+        // An arrow, a click, a mode step, a key that means nothing here — the key
+        // about what is already running among them, since this question is what
+        // decides whether the command runs at all. None of them is an answer, and
+        // none of them may be read as one.
         //
         // Ctrl+E is here for now rather than because it belongs here: the
         // question is committed to scrollback a row at a time, and there is no
@@ -841,6 +865,7 @@ fn heard(arrived: Pressed) -> Heard {
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Explain
         | Pressed::Expand

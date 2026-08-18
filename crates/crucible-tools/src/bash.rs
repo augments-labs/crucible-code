@@ -24,6 +24,7 @@
 //! the mode that runs a command without a question is `fullAccess` and there
 //! is no other.
 
+mod background;
 mod command;
 mod environment;
 mod output;
@@ -35,6 +36,7 @@ use std::ffi::OsString;
 use std::process::Stdio;
 use std::time::Duration;
 
+pub use background::{Background, Ended, MOST, Standing};
 use crucible_core::{
     Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
 };
@@ -51,6 +53,14 @@ const SECONDS: usize = 120;
 /// The longest a call may ask for, in seconds. A command that needs longer
 /// than this wants a different tool, not a bigger number.
 const CEILING: usize = 600;
+
+/// How long a command asked to be left running is watched for before the call
+/// answers.
+///
+/// Long enough for `npm: command not found` to be a failure the model is told
+/// about now, and short enough that starting a dev server does not read as a
+/// pause. A command still going after this is the case the argument was sent for.
+const FIRST: Duration = Duration::from_millis(200);
 
 /// How often the command is checked on while it runs. Short enough that a
 /// cancelled turn stops promptly, long enough to cost nothing.
@@ -82,7 +92,11 @@ const SCHEMA: &str = r#"{
     "timeout": {
       "type": "integer",
       "minimum": 1,
-      "description": "How many seconds to allow before stopping it. Defaults to 120, and cannot exceed 600."
+      "description": "How many seconds to allow before stopping it. Defaults to 120, and cannot exceed 600. Cannot be sent with background."
+    },
+    "background": {
+      "type": "boolean",
+      "description": "Leave the command running and answer at once, for something with no end of its own: a dev server, a file watcher, a tunnel. The answer names the number it is running as and carries whatever it printed in its first moment. A command that has already exited by then is reported as an ordinary result instead, so a failure still reaches you now. At most four may run at once."
     },
     "description": {
       "type": "string",
@@ -103,6 +117,10 @@ const SCHEMA: &str = r#"{
 pub struct Bash {
     workspace: Workspace,
     cancel: Cancel,
+    /// Where a command that is left running goes. Empty in a run with nothing
+    /// holding the other end — a test, and a probe — and then a call asking to be
+    /// left running is refused rather than silently waited for.
+    leaving: Option<Background>,
     /// Where the shell is, resolved once and absolute — `None` on a machine
     /// that has none, which is a failure the first call reports.
     shell: Option<std::path::PathBuf>,
@@ -122,6 +140,7 @@ impl std::fmt::Debug for Bash {
         f.debug_struct("Bash")
             .field("workspace", &self.workspace)
             .field("cancel", &self.cancel)
+            .field("leaving", &self.leaving)
             .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
             .finish()
@@ -166,9 +185,21 @@ impl Bash {
         Self {
             workspace,
             cancel,
+            leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
         }
+    }
+
+    /// Where commands this tool is asked to leave running are kept.
+    ///
+    /// Handed in rather than made here, because the binary is what ends them on
+    /// the way out and what draws the row saying how many there are — the same
+    /// shape the read record has, and for the same reason.
+    #[must_use]
+    pub fn leaving(mut self, left: Background) -> Self {
+        self.leaving = Some(left);
+        self
     }
 
     /// Variables every command this tool runs is started with, on top of the
@@ -228,12 +259,44 @@ impl Tool for Bash {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text("command")?;
         let seconds = args.count("timeout", SECONDS)?;
+        let background = args.flag("background", false)?;
 
         if seconds > CEILING {
             return Ok(ToolOutput::failed(format!(
                 "timeout must be {CEILING} seconds or less"
             )));
         }
+
+        // Refused rather than one of them ignored. A command left running has no
+        // deadline — that is what it is for — so a call that sent both asked for
+        // two different things, and answering it with either would be answering a
+        // question nobody put.
+        if background && args.holds("timeout") {
+            return Ok(ToolOutput::failed(
+                "timeout does not apply to a command left running: send one or the other",
+            ));
+        }
+
+        // What decides whether this call ends up waiting. A run with nothing
+        // holding the other end cannot leave a command running and must not
+        // quietly wait for a dev server instead, so it says so.
+        let leaving = match (background, self.leaving.as_ref()) {
+            (true, None) => {
+                return Ok(ToolOutput::failed(
+                    "this run cannot leave a command running",
+                ));
+            }
+            // Let go of once it has had a moment to fail on the spot. A command
+            // that is already over by then was never a background command, and
+            // the model gets its failure now rather than in a panel.
+            (true, Some(left)) => Some(output::Leaving {
+                left,
+                after: Some(FIRST),
+            }),
+            // Nothing asked for, and the key can still ask.
+            (false, Some(left)) => Some(output::Leaving { left, after: None }),
+            (false, None) => None,
+        };
 
         if self.cancel.requested() {
             return Err(ToolError::Cancelled(NAME));
@@ -277,7 +340,10 @@ impl Tool for Bash {
         #[cfg(windows)]
         let child = {
             if let Err(source) = scope.attach(&child) {
-                output::discard(child, &scope);
+                // Consumed, because the job handle goes with the command it was
+                // holding: closing it is what ends anything the shell managed to
+                // start before the assignment failed.
+                output::discard(child, scope);
                 return Err(io("could not contain the command", source));
             }
             child
@@ -288,7 +354,36 @@ impl Tool for Bash {
         // rather than a decision.
         let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
 
-        output::collect(child, &scope, allowed, &self.cancel, watch)
+        let waiting = output::Waiting {
+            allowed,
+            cancel: &self.cancel,
+            watch,
+            leaving,
+        };
+
+        match output::collect(child, scope, &waiting)? {
+            output::Left::Answered(output) => Ok(output),
+
+            // Kept, or refused and ended — the registry owns both, because it is
+            // what knows the cap and what would have to end the command anyway.
+            output::Left::Running(taking) => {
+                let Some(left) = self.leaving.as_ref() else {
+                    return Ok(ToolOutput::failed(
+                        "this run cannot leave a command running",
+                    ));
+                };
+                let printed = taking.printed();
+
+                match left.keep(command, taking) {
+                    Some(number) => Ok(ToolOutput::ok(format!(
+                        "{printed}\n\n[left running as #{number}]"
+                    ))),
+                    None => Ok(ToolOutput::failed(format!(
+                        "{MOST} commands are already running; stop one before leaving another"
+                    ))),
+                }
+            }
+        }
     }
 }
 
