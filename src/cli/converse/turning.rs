@@ -297,12 +297,20 @@ impl Printing {
             format!("{lines} lines")
         };
 
+        // Indented with the sample, and cut the same way it is: the count is a
+        // caption on the rows above it rather than a row of its own, so it starts
+        // in the column they start in. Clipped before the inset is put in front of
+        // it, because what tidies a row's ends would take the inset for one of
+        // them.
         rows.push(Row::new().then(
             Slot::Quiet,
-            draw::clipped(
-                format!("{inset}{counted} {} {}", glyphs.dot(), sized(self.bytes)),
-                columns,
-                glyphs,
+            format!(
+                "{inset}{}",
+                draw::clipped(
+                    format!("{counted} {} {}", glyphs.dot(), sized(self.bytes)),
+                    room,
+                    glyphs,
+                )
             ),
         ));
 
@@ -905,10 +913,18 @@ mod tests {
         );
 
         // And the count row is what keeps five rows from reading as everything
-        // the command has said.
+        // the command has said. Indented with the sample, because it is a caption
+        // on those rows rather than a row of its own — the one thing here a row
+        // test can check and a reader would notice first.
+        let counted = rows
+            .iter()
+            .find(|row| row.contains("41 lines"))
+            .expect("the sample never said how much of it was not shown");
+
+        assert!(counted.starts_with("    41 lines"), "{counted:?}");
         assert!(
-            rows.iter().any(|row| row.contains("41 lines")),
-            "the sample never said how much of it was not shown: {rows:?}"
+            counted.ends_with('B'),
+            "the count never said how many bytes: {counted:?}"
         );
     }
 
