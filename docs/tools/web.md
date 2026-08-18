@@ -17,9 +17,22 @@ crucible does not run a search engine and does not ask you to sign up for one.
 It asks the vendor whose credential you already set, in a request of its own —
 separate from the turn, carrying nothing but the query or the address.
 
-Today that means **Anthropic**. Set `ANTHROPIC_API_KEY`, or log in, and both
-tools appear. With any other provider they do not appear at all: a tool that is
-registered and fails every call teaches the model to keep trying it.
+What you get depends on what your vendor serves:
+
+| Provider | `web_search` | `web_fetch` |
+| --- | --- | --- |
+| Anthropic | yes | yes |
+| OpenAI, on an API key | yes | — |
+| OpenAI, on a ChatGPT plan | — | — |
+| Moonshot | — | — |
+
+A tool with nothing to answer it does not appear at all, rather than appearing
+and failing every call. OpenAI serves no standalone fetch — reading a page is an
+action inside its search tool rather than a tool of its own — so `web_fetch` is
+absent there. On a ChatGPT plan crucible reaches a different backend, which
+refuses a field it does not implement by failing the whole turn; whether it
+takes a hosted search is not something the published documentation answers, so
+crucible does not try it.
 
 Because it is a request crucible makes rather than one the model makes for
 itself, there is a call for the permission engine to hold a verdict about — which
@@ -27,9 +40,10 @@ is what lets the rest of this page exist.
 
 ## What it costs
 
-A search runs against your own credential and is billed to it. Anthropic charges
-**$10 per 1 000 searches**, plus the tokens of the request that runs one. On a
-subscription, both tools are part of the plan and cost nothing at the margin.
+A search runs against your own credential and is billed to it. Anthropic and
+OpenAI both charge **$10 per 1 000 searches**, plus the tokens of the request
+that runs one. On a subscription, web search is part of the plan and costs
+nothing at the margin.
 
 `web_fetch` carries no charge of its own on Anthropic. You pay for the page as
 input tokens, the same as any other text a tool returns.

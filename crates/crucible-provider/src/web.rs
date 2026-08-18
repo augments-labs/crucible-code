@@ -123,8 +123,6 @@ impl AnthropicWeb {
                 problem: problem.to_string().into(),
             })?;
 
-        let redactions = outgoing.redactions();
-
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
@@ -150,40 +148,93 @@ impl AnthropicWeb {
             });
         });
 
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, json.finish(), cancel)
-            .map_err(|problem| SourceError::Transport {
+        posted(
+            Sending {
                 named: ANTHROPIC,
-                problem: redactions.redact(&problem.to_string()).into(),
-            })?;
-
-        let body = read(ANTHROPIC, response.body)?;
-
-        if response.status != 200 {
-            return Err(SourceError::Refused {
-                named: ANTHROPIC,
-                status: response.status,
-                message: redactions.redact(&body).into(),
-            });
-        }
-
-        serde_json::from_str(&body).map_err(|problem| SourceError::Protocol {
-            named: ANTHROPIC,
-            problem: problem.to_string().into(),
-        })
+                transport: self.transport.as_ref(),
+                endpoint: self.endpoint.as_str(),
+            },
+            outgoing,
+            json.finish(),
+            cancel,
+        )
     }
 }
 
-/// Where this vendor's own service is, for a verdict and for a rule.
-fn anthropic_host(endpoint: &Endpoint) -> Host {
-    let address = endpoint.as_str();
-    match address
+/// Who is sending, and where.
+///
+/// One value rather than three arguments, for the reason `ApiAudience` is one
+/// in the binary: a name, an address and the transport that reaches it are one
+/// fact about a source, and a call site free to pair them by hand is a call
+/// site that can post one vendor's body to another's address.
+#[derive(Clone, Copy)]
+struct Sending<'a> {
+    named: &'static str,
+    transport: &'a dyn Transport,
+    endpoint: &'a str,
+}
+
+/// Posts one body and reads the whole answer as JSON.
+///
+/// Shared because the difference between two vendors here is the body and the
+/// headers, and a second copy of the status-and-redaction handling is a second
+/// place for a key to escape.
+fn posted(
+    sending: Sending<'_>,
+    outgoing: Outgoing,
+    body: String,
+    cancel: &Cancel,
+) -> Result<Value, SourceError> {
+    let Sending {
+        named,
+        transport,
+        endpoint,
+    } = sending;
+
+    let redactions = outgoing.redactions();
+
+    let response = transport
+        .post(endpoint, outgoing, body, cancel)
+        .map_err(|problem| SourceError::Transport {
+            named,
+            problem: redactions.redact(&problem.to_string()).into(),
+        })?;
+
+    let answered = read(named, response.body)?;
+
+    if response.status != 200 {
+        return Err(SourceError::Refused {
+            named,
+            status: response.status,
+            message: redactions.redact(&answered).into(),
+        });
+    }
+
+    serde_json::from_str(&answered).map_err(|problem| SourceError::Protocol {
+        named,
+        problem: problem.to_string().into(),
+    })
+}
+
+/// The host an address names, or nothing a rule can be written about.
+///
+/// Strict on purpose, and the strictness is the point: anything carrying user
+/// information, anything with no host and anything that is not http or https
+/// comes back opaque. A lenient read of `https://docs.rs@evil.example/` says
+/// `docs.rs`, and the cost of that reading is a rule somebody wrote about a
+/// documentation site authorising somewhere else entirely.
+fn host_of(address: &str) -> Host {
+    let rest = address
         .strip_prefix("https://")
-        .or_else(|| address.strip_prefix("http://"))
-        .and_then(|rest| rest.split('/').next())
-        .filter(|host| !host.is_empty())
-    {
+        .or_else(|| address.strip_prefix("http://"));
+
+    let host = rest
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .filter(|authority| {
+            !authority.is_empty() && !authority.contains('@') && !authority.contains(':')
+        });
+
+    match host {
         Some(host) => Host::Named {
             url: address.into(),
             host: host.to_ascii_lowercase().into(),
@@ -198,7 +249,7 @@ impl Search for AnthropicWeb {
     }
 
     fn reaches(&self) -> Host {
-        anthropic_host(&self.endpoint)
+        host_of(self.endpoint.as_str())
     }
 
     fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
@@ -284,23 +335,7 @@ impl Fetch for AnthropicWeb {
     /// reading a lenient parse gets wrong, and the cost of being wrong is a
     /// rule somebody wrote about `docs.rs` reaching somewhere else entirely.
     fn reaches(&self, url: &str) -> Host {
-        let rest = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"));
-
-        let host = rest
-            .and_then(|rest| rest.split(['/', '?', '#']).next())
-            .filter(|authority| {
-                !authority.is_empty() && !authority.contains('@') && !authority.contains(':')
-            });
-
-        match host {
-            Some(host) => Host::Named {
-                url: url.into(),
-                host: host.to_ascii_lowercase().into(),
-            },
-            None => Host::Opaque(url.into()),
-        }
+        host_of(url)
     }
 
     fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
@@ -357,4 +392,173 @@ fn page(answered: &Value, asked: &str) -> Result<Page, SourceError> {
         named: ANTHROPIC,
         problem: "the answer carried no fetched page".into(),
     })
+}
+
+/// What OpenAI's source is called.
+const OPENAI: &str = "openai";
+
+/// OpenAI's hosted web search, reached in a side request to the Responses API.
+///
+/// Search alone. This vendor serves no standalone fetch — reading a page is an
+/// action *inside* its search tool rather than a tool of its own — so a session
+/// on this provider registers `web_search` and not `web_fetch`. That is the
+/// honest shape: a tool that is registered and cannot work is worse than one
+/// that is absent.
+#[derive(Debug)]
+pub struct OpenAiWeb {
+    credential: Box<dyn Credential>,
+    transport: Box<dyn Transport>,
+    endpoint: Endpoint,
+    model: Box<str>,
+}
+
+impl OpenAiWeb {
+    /// A source reaching `endpoint` with `credential`, asking `model`.
+    #[must_use]
+    pub fn new(
+        endpoint: Endpoint,
+        credential: Box<dyn Credential>,
+        transport: Box<dyn Transport>,
+        model: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            credential,
+            transport,
+            endpoint,
+            model: model.into(),
+        }
+    }
+}
+
+impl Search for OpenAiWeb {
+    fn name(&self) -> &'static str {
+        OPENAI
+    }
+
+    fn reaches(&self) -> Host {
+        host_of(self.endpoint.as_str())
+    }
+
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(OPENAI));
+        }
+
+        let mut outgoing = Outgoing::new();
+        outgoing.set_header("content-type", "application/json");
+        outgoing.set_header("accept", "application/json");
+        self.credential
+            .authorize(&mut outgoing)
+            .map_err(|problem| SourceError::Transport {
+                named: OPENAI,
+                problem: problem.to_string().into(),
+            })?;
+
+        let mut json = Json::new();
+        json.object(|body| {
+            body.text("model", &self.model);
+            body.text("input", query);
+            // This endpoint retains a response for retrieval unless told
+            // otherwise, and a query is the user's words.
+            body.boolean("store", false);
+            body.array("tools", |tools| {
+                tools.object(|declared| {
+                    declared.text("type", "web_search");
+                });
+            });
+        });
+
+        let answered = posted(
+            Sending {
+                named: OPENAI,
+                transport: self.transport.as_ref(),
+                endpoint: self.endpoint.as_str(),
+            },
+            outgoing,
+            json.finish(),
+            cancel,
+        )?;
+
+        Ok(cited(&answered))
+    }
+}
+
+/// Every address this answer cited, with the span of prose written off it.
+///
+/// This vendor reports its results as *annotations* on the text rather than as
+/// a block of their own: what comes back is the model's answer with a citation
+/// marking the run of characters each address supports. So the extract is that
+/// run, sliced out of the very text it annotates.
+///
+/// The indices are the vendor's and the string is this program's, so they are
+/// checked rather than trusted: an index past the end, or one that lands inside
+/// a character, yields no extract instead of a panic. A result with no readable
+/// span is still an address worth fetching.
+fn cited(answered: &Value) -> Vec<SearchResult> {
+    let mut found: Vec<SearchResult> = Vec::new();
+
+    let output = answered
+        .pointer("/output")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+
+    for item in output {
+        let parts = item
+            .pointer("/content")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        for part in parts {
+            let said = text_at(part, "/text").unwrap_or_default();
+            let annotations = part
+                .pointer("/annotations")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+
+            for annotation in annotations {
+                if text_at(annotation, "/type").as_deref() != Some("url_citation") {
+                    continue;
+                }
+
+                let Some(url) = text_at(annotation, "/url") else {
+                    continue;
+                };
+
+                if found.iter().any(|already| already.url == url) {
+                    continue;
+                }
+
+                found.push(SearchResult {
+                    title: text_at(annotation, "/title").unwrap_or_else(|| url.clone()),
+                    extract: span(&said, annotation),
+                    url,
+                });
+            }
+        }
+    }
+
+    found
+}
+
+/// The run of `said` an annotation points at, where it points at a real one.
+fn span(said: &str, annotation: &Value) -> Box<str> {
+    let at = |name: &str| {
+        annotation
+            .pointer(name)
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+    };
+
+    let (Some(from), Some(to)) = (at("/start_index"), at("/end_index")) else {
+        return "".into();
+    };
+
+    if from >= to || to > said.len() || !said.is_char_boundary(from) || !said.is_char_boundary(to) {
+        return "".into();
+    }
+
+    said.get(from..to).unwrap_or_default().into()
 }

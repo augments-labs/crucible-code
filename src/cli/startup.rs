@@ -18,7 +18,9 @@ use crucible_core::{
     ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider, Search,
     Transcript, Workspace,
 };
-use crucible_provider::{Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, OpenAi, Unavailable};
+use crucible_provider::{
+    Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, OpenAi, OpenAiWeb, Unavailable,
+};
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{
     Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, WebFetch, WebSearch, Write,
@@ -376,46 +378,104 @@ fn credential(
 /// value that cannot be one ends the run — a provider quietly left pointing at
 /// the vendor would be a setting that looks applied and does nothing, and this
 /// particular one is set by somebody who has a reason to not reach the vendor.
-/// The source the web tools are answered by, where this session has one.
+/// What answers the two web tools, where this session has anything to.
 ///
-/// `None` is a session that advertises no web tools at all, which is the honest
-/// answer for a credential whose vendor crucible cannot yet ask: a tool that is
-/// registered and fails every call teaches the model to keep trying.
+/// Two halves because the vendors do not serve one capability: Anthropic serves
+/// search and fetch, OpenAI serves search alone — reading a page is an action
+/// inside its search tool rather than a tool of its own. A session gets exactly
+/// the tools something can answer.
 ///
-/// Anthropic alone today. The others are an `impl Search` away and nothing here
-/// or in `crucible-tools` changes when one arrives — the seam was built for it.
+/// `None` on either side is a tool that is not advertised at all, which is the
+/// honest answer where nothing can serve it: a tool that is registered and
+/// fails every call teaches the model to keep trying it.
 ///
 /// Nothing here fails the start. A source that cannot be built is a session
-/// without web tools, not a session that refuses to open: the user asked for a
+/// without web tools, not a session that refuses to open — the user asked for a
 /// coding agent, and losing search is not losing that.
-fn web(startup: &Startup<'_>, settings: &Settings) -> Option<Arc<AnthropicWeb>> {
-    let serving = startup.provider?;
-    if serving.name != "anthropic" {
-        return None;
-    }
+struct Reaching {
+    searching: Option<Arc<dyn Search>>,
+    fetching: Option<Arc<dyn Fetch>>,
+}
 
-    // The session's own model rather than a cheap one named here. A model name
-    // written into this file outlives the model behind it, and a credential
-    // that reaches crucible at all reaches whatever it is already using.
-    let model = startup.model?;
+fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
+    let nothing = Reaching {
+        searching: None,
+        fetching: None,
+    };
+
+    let (Some(serving), Some(model)) = (startup.provider, startup.model) else {
+        // A side request has to name a model, and the one it names is the
+        // session's. Nothing is chosen yet in the state `/model` leaves open.
+        return nothing;
+    };
 
     let variable = settings.api_key_env(serving.name).unwrap_or(serving.key);
-    let credential = key(
-        variable,
-        Header::bare("x-api-key"),
-        startup.from,
-        startup.stored.get(serving.name),
-    )
-    .ok()?;
+    let Ok(configured) = sending_to(settings, serving.name) else {
+        return nothing;
+    };
 
-    Some(Arc::new(AnthropicWeb::new(
-        sending_to(settings, serving.name)
-            .ok()?
-            .unwrap_or(Anthropic::VENDOR),
-        credential,
-        Box::new(Https::new()),
-        model,
-    )))
+    match serving.name {
+        "anthropic" => {
+            let Ok(credential) = key(
+                variable,
+                Header::bare("x-api-key"),
+                startup.from,
+                startup.stored.get(serving.name),
+            ) else {
+                return nothing;
+            };
+
+            let source = Arc::new(AnthropicWeb::new(
+                configured.unwrap_or(Anthropic::VENDOR),
+                credential,
+                Box::new(Https::new()),
+                model,
+            ));
+
+            Reaching {
+                searching: Some(source.clone()),
+                fetching: Some(source),
+            }
+        }
+
+        // The published API only. A plan's token is served by a different
+        // backend, and that one refuses a field it does not implement with a
+        // 400 that ends the turn — whether it accepts a hosted `web_search`
+        // is not answerable from any documentation, so it is not asked. A
+        // subscription session gets no web tools rather than a turn that dies
+        // on one.
+        "openai" => {
+            let endpoint = configured.unwrap_or(OpenAi::VENDOR);
+            if endpoint.as_str() != OpenAi::VENDOR.as_str() {
+                return nothing;
+            }
+
+            let Ok(credential) = key(
+                variable,
+                Header::bearer(),
+                startup.from,
+                startup.stored.get(serving.name),
+            ) else {
+                return nothing;
+            };
+
+            Reaching {
+                searching: Some(Arc::new(OpenAiWeb::new(
+                    endpoint,
+                    credential,
+                    Box::new(Https::new()),
+                    model,
+                ))),
+                fetching: None,
+            }
+        }
+
+        // Moonshot serves a search its client has to echo an argument back to,
+        // and a plain search endpoint on the coding platform that no published
+        // documentation describes at path level. Neither is written until one
+        // has been reached with a real credential.
+        _ => nothing,
+    }
 }
 
 fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, Fatal> {
@@ -464,7 +524,7 @@ fn key(
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either. The plan
 /// is last, because it is the one that does nothing to the workspace.
-fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Option<Arc<AnthropicWeb>>) -> Tools {
+fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tools {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
@@ -516,11 +576,10 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Option<Arc<Anthro
     // the two tools ask it different questions, and a session whose vendor
     // answers only one of them registers only that one the day such a source
     // exists.
-    if let Some(reaching) = reaching {
-        let searching: Arc<dyn Search> = reaching.clone();
-        let fetching: Arc<dyn Fetch> = reaching;
-
+    if let Some(searching) = reaching.searching {
         tools.add(Box::new(WebSearch::new(searching, cancel.clone())));
+    }
+    if let Some(fetching) = reaching.fetching {
         tools.add(Box::new(WebFetch::new(fetching, cancel.clone())));
     }
 

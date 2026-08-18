@@ -289,3 +289,134 @@ fn a_fetch_the_vendor_refused_says_which_way_it_refused() {
         "{problem}"
     );
 }
+
+/// An answer shaped as the Responses API documents one: a search action, then
+/// prose whose citations mark which run each address supports.
+fn responded(text: &str, annotations: &serde_json::Value) -> String {
+    json!({
+        "output": [
+            { "type": "web_search_call", "id": "ws_1", "status": "completed" },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": text, "annotations": annotations.clone() }]
+            }
+        ]
+    })
+    .to_string()
+}
+
+fn openai(status: u16, body: impl Into<String>) -> (OpenAiWeb, Arc<Replay>) {
+    let replay = Arc::new(Replay::new(status, body));
+    let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+
+    (
+        OpenAiWeb::new(
+            Endpoint::fixed("https://api.openai.com/v1/responses"),
+            Box::new(credential),
+            Box::new(Arc::clone(&replay)),
+            "gpt-5.6",
+        ),
+        replay,
+    )
+}
+
+#[test]
+fn a_citation_becomes_a_result_whose_extract_is_the_run_it_marks() {
+    // This vendor reports results as annotations on its own prose rather than
+    // as a block of their own, so the extract is sliced out of the very text
+    // the citation annotates.
+    let said = "Rust 1.97 shipped in August.";
+    let body = responded(
+        said,
+        &json!([{
+            "type": "url_citation",
+            "url": "https://blog.rust-lang.org/2026/08/",
+            "title": "Announcing Rust 1.97",
+            "start_index": 0,
+            "end_index": 17
+        }]),
+    );
+
+    let found = openai(200, body)
+        .0
+        .search("rust release", &Cancel::new())
+        .expect("an answer that parses");
+
+    let first = found.first().expect("a result");
+    assert_eq!(first.url.as_ref(), "https://blog.rust-lang.org/2026/08/");
+    assert_eq!(first.title.as_ref(), "Announcing Rust 1.97");
+    assert_eq!(first.extract.as_ref(), "Rust 1.97 shipped");
+}
+
+#[test]
+fn an_index_that_would_panic_yields_no_extract_instead() {
+    // The indices are the vendor's and the string is this program's. One past
+    // the end, and one landing inside a multi-byte character, are both answers
+    // a slice would die on.
+    let said = "héllo";
+    let body = responded(
+        said,
+        &json!([
+            { "type": "url_citation", "url": "https://a.example", "start_index": 0, "end_index": 900 },
+            { "type": "url_citation", "url": "https://b.example", "start_index": 1, "end_index": 2 }
+        ]),
+    );
+
+    let found = openai(200, body)
+        .0
+        .search("x", &Cancel::new())
+        .expect("an answer that parses");
+
+    assert_eq!(found.len(), 2);
+    for result in &found {
+        assert_eq!(result.extract.as_ref(), "", "{}", result.url);
+    }
+}
+
+#[test]
+fn one_address_cited_twice_is_one_result() {
+    let body = responded(
+        "Two sentences. Both from one place.",
+        &json!([
+            { "type": "url_citation", "url": "https://one.example", "start_index": 0, "end_index": 14 },
+            { "type": "url_citation", "url": "https://one.example", "start_index": 15, "end_index": 35 }
+        ]),
+    );
+
+    let found = openai(200, body)
+        .0
+        .search("x", &Cancel::new())
+        .expect("an answer that parses");
+
+    assert_eq!(found.len(), 1);
+}
+
+#[test]
+fn a_search_declares_the_hosted_tool_and_keeps_the_query_off_the_vendor_store() {
+    let (source, replay) = openai(200, responded("x", &json!([])));
+    source.search("rust async traits", &Cancel::new()).ok();
+
+    let sent: serde_json::Value =
+        serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+
+    assert_eq!(sent.pointer("/tools/0/type").unwrap(), &json!("web_search"));
+    assert_eq!(sent.pointer("/input").unwrap(), &json!("rust async traits"));
+    assert_eq!(sent.pointer("/model").unwrap(), &json!("gpt-5.6"));
+
+    // A query is the user's words, and this endpoint retains a response for
+    // retrieval unless it is told not to.
+    assert_eq!(sent.pointer("/store").unwrap(), &json!(false));
+    assert!(!replay.sent().body.contains(SECRET));
+}
+
+#[test]
+fn an_openai_search_reaches_the_vendor_host_a_rule_would_name() {
+    assert_eq!(
+        Search::reaches(&openai(200, responded("x", &json!([]))).0),
+        Host::Named {
+            url: "https://api.openai.com/v1/responses".into(),
+            host: "api.openai.com".into(),
+        }
+    );
+}

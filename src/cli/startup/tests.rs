@@ -487,8 +487,8 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     assert_eq!(model(Some("claude-opus-5"), None, &workspace).effort, None);
 }
 
-/// A `Startup` for `named`, with `model` chosen and a key in the environment.
-fn reaching_for(named: &str, model: Option<&'static str>) -> Option<Arc<AnthropicWeb>> {
+/// What `named` gets to reach the web with, given a key and maybe a model.
+fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
     let sample = Sample::new(&format!("web-source-{named}"));
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
@@ -507,7 +507,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Option<Arc<Anthropi
             cancel: &Cancel::new(),
             ledger: &Ledger::new(),
             plan: &Plan::new(),
-            from: &|_| Some("sk-ant-test".to_owned()),
+            from: &|_| Some("sk-test".to_owned()),
             stored: &StoredCredentials::default(),
             subscriptions: &Subscriptions::production(),
         },
@@ -516,26 +516,43 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Option<Arc<Anthropi
 }
 
 #[test]
-fn an_anthropic_session_holding_a_key_has_something_to_reach_the_web_with() {
-    assert!(reaching_for("anthropic", Some("claude-opus-5")).is_some());
+fn anthropic_serves_both_halves_of_reaching_the_web() {
+    let reaching = reaching_for("anthropic", Some("claude-opus-5"));
+
+    assert!(reaching.searching.is_some());
+    assert!(reaching.fetching.is_some());
 }
 
 #[test]
-fn a_session_on_a_provider_with_no_source_advertises_no_web_tools() {
-    // Not a source that fails every call: a tool registered and always broken
-    // teaches the model to keep trying it, and there is nothing for it to learn
-    // from a failure that is really an absence.
-    for named in ["openai", "moonshot"] {
-        assert!(
-            reaching_for(named, Some("a-model")).is_none(),
-            "{named} was given a source it has no implementation for",
-        );
-    }
+fn openai_serves_a_search_and_no_fetch() {
+    // Reading a page is an action inside this vendor's search tool rather than
+    // a tool of its own, so there is nothing to answer `web_fetch` with — and a
+    // tool registered against nothing fails every call it is ever given.
+    let reaching = reaching_for("openai", Some("gpt-5.6"));
+
+    assert!(reaching.searching.is_some());
+    assert!(
+        reaching.fetching.is_none(),
+        "a fetch was advertised with nothing to serve it",
+    );
 }
 
 #[test]
-fn a_session_with_no_model_chosen_has_no_source_either() {
+fn a_provider_with_no_source_written_yet_advertises_neither() {
+    let reaching = reaching_for("moonshot", Some("kimi-k2"));
+
+    assert!(reaching.searching.is_none());
+    assert!(reaching.fetching.is_none());
+}
+
+#[test]
+fn a_session_with_no_model_chosen_reaches_nothing() {
     // A side request has to name a model, and the one it names is the session's.
     // Nothing is chosen yet in the state `/model` exists to leave open.
-    assert!(reaching_for("anthropic", None).is_none());
+    for named in ["anthropic", "openai"] {
+        let reaching = reaching_for(named, None);
+
+        assert!(reaching.searching.is_none(), "{named}");
+        assert!(reaching.fetching.is_none(), "{named}");
+    }
 }
