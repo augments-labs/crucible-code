@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-18
+
 ### Added
 
 - **A command can be left running.** A dev server no longer costs a turn its whole
@@ -1999,7 +2001,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/augments-labs/crucible-code/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/augments-labs/crucible-code/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/augments-labs/crucible-code/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/augments-labs/crucible-code/compare/v0.2.0...v0.3.0
