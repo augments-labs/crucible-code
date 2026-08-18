@@ -22,6 +22,7 @@ mod event;
 mod ids;
 mod permission;
 mod provider;
+mod source;
 mod tool;
 mod transcript;
 mod workspace;
@@ -34,13 +35,14 @@ pub use diff::{Change, Diff, Line};
 pub use event::{Event, Post, TurnError};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
 pub use permission::{
-    Approved, Ask, Command, Disposition, Grant, Minted, Mode, Permission, Remember, RuleError,
-    Rules, Sensitivity, Settled, Target, Verdict, narrowest,
+    Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
+    RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
 pub use provider::{
     Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
     Spend, ToolSchema,
 };
+pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use tool::{
     Account, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched, Watch, Wrote,
 };

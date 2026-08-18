@@ -42,7 +42,7 @@ pub use grant::{Approved, Grant};
 pub use mode::Mode;
 pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
-pub use sensitivity::{Command, Sensitivity, Target};
+pub use sensitivity::{Command, Host, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
 
 /// The directory the permission configuration is read from, and the files
@@ -215,10 +215,18 @@ impl Permission {
         // rules and the mode happened to say about it.
         match (sensitivity, stated) {
             (Sensitivity::ReadOnly { .. }, Disposition::Ask) => Disposition::Deny,
-            (Sensitivity::ReadOnly { .. }, settled) => settled,
-            (Sensitivity::MutatesFile { .. } | Sensitivity::SpawnsProcess { .. }, settled) => {
-                settled
-            }
+            // Everything else means what it says. Reaching the web is among
+            // them: unlike a read it *is* put to the user, so an `ask` rule
+            // about one needs no translating. Spelled out rather than closed
+            // with a wildcard, so a sensitivity added later still has to be
+            // decided about here.
+            (
+                Sensitivity::ReadOnly { .. }
+                | Sensitivity::MutatesFile { .. }
+                | Sensitivity::SpawnsProcess { .. }
+                | Sensitivity::ReachesNetwork { .. },
+                settled,
+            ) => settled,
         }
     }
 
@@ -285,6 +293,7 @@ impl Permission {
                 format!("{}:{target}", call.name).into()
             }
             Sensitivity::SpawnsProcess { command } => format!("{}:{command}", call.name).into(),
+            Sensitivity::ReachesNetwork { host } => format!("{}:{host}", call.name).into(),
         }
     }
 }

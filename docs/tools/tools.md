@@ -1,6 +1,8 @@
 # Tools
 
-Seven tools, advertised in the order a model tends to reach for them:
+Nine tools, advertised in the order a model tends to reach for them. Seven are
+always there; `web_search` and `web_fetch` appear only where the session has
+something to answer them, which depends on your provider.
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -11,10 +13,13 @@ Seven tools, advertised in the order a model tends to reach for them:
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
 | `todo_write` | Writes down the plan | no |
+| `web_search` | Searches the web | yes |
+| `web_fetch` | Reads one web page | yes |
 
-The list is fixed. There is nothing to install and nothing to switch off; what
-you configure is which calls get through, and that is
-[Permissions](../permissions/index.md).
+There is nothing to install. The seven above `web_search` are always there; the
+two web tools appear only where the session has something to answer them, which
+[Reaching the web](web.md) sets out. What you configure is which calls get
+through, and that is [Permissions](../permissions/index.md).
 
 ## Everything but `bash` stays in the working directory
 

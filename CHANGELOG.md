@@ -6,6 +6,18 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **crucible can reach the web.** `web_search` answers a query with addresses and
+  extracts; `web_fetch` reads one page. crucible makes the request itself, through
+  the credential you already set, so both are calls the permission engine puts to
+  you — asked in `ask` and `allowEdits`, allowed under `fullAccess` — and a rule is
+  written about the host: `web_fetch(docs.rs)`. What it costs: on an API key a
+  search is billed by your provider, and on a subscription it is part of the plan.
+  Anthropic serves both tools and OpenAI serves the search; where nothing can
+  answer a tool, it does not appear. [Reaching the web](docs/tools/web.md) has the
+  prices, the rules and what a fetched page is not trusted to say.
+
 ## [0.6.0] - 2026-08-18
 
 ### Added

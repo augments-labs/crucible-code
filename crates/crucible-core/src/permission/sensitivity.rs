@@ -41,6 +41,76 @@ pub enum Sensitivity {
         /// What is about to run.
         command: Command,
     },
+
+    /// Leaves the machine.
+    ///
+    /// The only kind of call whose effect is not on this computer at all: a
+    /// query, a URL or a page body crosses to somebody else's service and
+    /// cannot be recalled. That is why it is not a [`Self::ReadOnly`] however
+    /// much it reads — a read is allowed in every mode on the reasoning that a
+    /// question nobody could act on trains people to press yes, and *this went
+    /// to a host you have never named* is a question with an answer.
+    ReachesNetwork {
+        /// Where it is bound for.
+        host: Host,
+    },
+}
+
+/// The host a call is bound for.
+///
+/// Shaped like [`Command`] and for the same reason: a rule is written about the
+/// host, and a URL that could not be read into one must match no rule rather
+/// than be guessed into the nearest thing that looks like a host. Guessing is
+/// what would let `https://docs.rs@evil.example/` be covered by a rule somebody
+/// wrote about `docs.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Host {
+    /// A call whose destination could be read, and what it is sending there.
+    Named {
+        /// What the call is sending, as a question shows it: the address for a
+        /// fetch, the query for a search. Not always an address, because what
+        /// leaves the machine is not always one — and a question that showed
+        /// only the host would be asking about the destination of something it
+        /// never named.
+        sent: Box<str>,
+        /// Where it goes, lowercased. What a rule is matched against.
+        host: Box<str>,
+    },
+
+    /// A URL that named no host this engine could read.
+    ///
+    /// No rule matches it apart from a blanket, so the question is asked. The
+    /// text is carried so the prompt can still show what was sent.
+    Opaque(Box<str>),
+}
+
+impl Host {
+    /// What the call is sending, as it is sending it.
+    ///
+    /// What a question shows, the same split [`Command::sent`] draws: a rule is
+    /// about the host, and a prompt showing only the host would be asking about
+    /// the destination of something nobody named.
+    #[must_use]
+    pub fn sent(&self) -> &str {
+        match self {
+            Self::Named { sent, .. } | Self::Opaque(sent) => sent,
+        }
+    }
+}
+
+impl fmt::Display for Host {
+    /// The spelling a rule is about: the host for one that was read, and
+    /// nothing a rule can match for one that was not.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Named { host, .. } => f.write_str(host),
+            // The whole address, as [`Command::Opaque`] writes the whole line.
+            // This spelling is what a session-scoped answer is remembered by,
+            // and one that wrote nothing would make every unreadable URL the
+            // same call.
+            Self::Opaque(sent) => f.write_str(sent),
+        }
+    }
 }
 
 /// The path a call acts on.
@@ -320,6 +390,7 @@ impl fmt::Display for Sensitivity {
             Self::ReadOnly { target } => write!(f, "read {target}"),
             Self::MutatesFile { target } => write!(f, "change {target}"),
             Self::SpawnsProcess { command } => write!(f, "run {command}"),
+            Self::ReachesNetwork { host } => write!(f, "reach {host}"),
         }
     }
 }

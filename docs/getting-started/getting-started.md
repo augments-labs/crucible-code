@@ -532,7 +532,9 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Seven tools, advertised in the order a model tends to reach for them:
+Nine tools, advertised in the order a model tends to reach for them. Seven are
+always there; `web_search` and `web_fetch` appear only where the session has
+something to answer them, which depends on your provider.
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -543,6 +545,8 @@ Seven tools, advertised in the order a model tends to reach for them:
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
 | `todo_write` | Writes down the plan | no |
+| `web_search` | Searches the web | yes |
+| `web_fetch` | Reads one web page | yes |
 
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see

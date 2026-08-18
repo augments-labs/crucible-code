@@ -1,7 +1,7 @@
 //! Building the runner the loop drives.
 //!
 //! Everything the command line and the configuration files decided arrives here
-//! as a [`Startup`], and leaves as a `Runner` holding a provider, seven tools, a
+//! as a [`Startup`], and leaves as a `Runner` holding a provider, its tools, a
 //! model and a session. This is where a provider's *name* becomes a type, so
 //! adding one is an arm in [`provider`] and nothing in any crate below.
 //!
@@ -10,16 +10,21 @@
 //! can fail without a key or a home directory anywhere near the test.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Header, HeaderKey, Message, Mode, Provider, Transcript,
-    Workspace,
+    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider, Search,
+    Transcript, Workspace,
 };
-use crucible_provider::{Anthropic, Endpoint, Https, Moonshot, OpenAi, Unavailable};
+use crucible_provider::{
+    Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, OpenAi, OpenAiWeb, Unavailable,
+};
 use crucible_runner::{Model, Runner, Session, Tools};
-use crucible_tools::{Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, Write};
+use crucible_tools::{
+    Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, WebFetch, WebSearch, Write,
+};
 
 use super::standing;
 use super::subscription::Subscriptions;
@@ -121,6 +126,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         },
     )?;
 
+    // Resolved the same way the provider's was, and separately: a source is a
+    // request crucible makes on the user's behalf and needs its own
+    // authorisation. Going through the same resolver is what keeps the two
+    // answers the same credential — a second, simpler lookup here would have
+    // billed a plan session's searches to whatever key the shell carried.
+    let reaching = web(startup, settings);
+
     let (session, earlier) = if startup.resuming {
         let (session, transcript) = Session::resume(sessions, workspace)?;
         (session, Some(transcript))
@@ -130,7 +142,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     let mut runner = Runner::new(
         provider,
-        tools(startup, settings),
+        tools(startup, settings, reaching),
         model(startup.model, startup.effort, workspace),
         session,
     )
@@ -360,6 +372,120 @@ fn credential(
     }
 }
 
+/// What answers the two web tools, where this session has anything to.
+///
+/// Two halves because the vendors do not serve one capability: Anthropic serves
+/// search and fetch, OpenAI serves search alone — reading a page is an action
+/// inside its search tool rather than a tool of its own. A session gets exactly
+/// the tools something can answer.
+///
+/// `None` on either side is a tool that is not advertised at all, which is the
+/// honest answer where nothing can serve it: a tool that is registered and
+/// fails every call teaches the model to keep trying it.
+///
+/// Nothing here fails the start. A source that cannot be built is a session
+/// without web tools, not a session that refuses to open — the user asked for a
+/// coding agent, and losing search is not losing that.
+struct Reaching {
+    searching: Option<Arc<dyn Search>>,
+    fetching: Option<Arc<dyn Fetch>>,
+}
+
+fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
+    let nothing = Reaching {
+        searching: None,
+        fetching: None,
+    };
+
+    let (Some(serving), Some(model)) = (startup.provider, startup.model) else {
+        // A side request has to name a model, and the one it names is the
+        // session's. Nothing is chosen yet in the state `/model` leaves open.
+        return nothing;
+    };
+
+    let variable = settings.api_key_env(serving.name).unwrap_or(serving.key);
+    let Ok(configured) = sending_to(settings, serving.name) else {
+        return nothing;
+    };
+
+    match serving.name {
+        "anthropic" => {
+            let Ok(credential) = key(
+                variable,
+                Header::bare("x-api-key"),
+                startup.from,
+                startup.stored.get(serving.name),
+            ) else {
+                return nothing;
+            };
+
+            let source = Arc::new(AnthropicWeb::new(
+                configured.unwrap_or(Anthropic::VENDOR),
+                credential,
+                Box::new(Https::new()),
+                model,
+            ));
+
+            Reaching {
+                searching: Some(source.clone()),
+                fetching: Some(source),
+            }
+        }
+
+        // The published API only. A plan's token is served by a different
+        // backend, and that one refuses a field it does not implement with a
+        // 400 that ends the turn — whether it accepts a hosted `web_search` is
+        // not answerable from any documentation, so it is not asked.
+        //
+        // Resolved through `credential`, which is the same resolution the
+        // provider used, rather than by reaching for the variable directly.
+        // Those two answer differently: a session logged in with `/login` runs
+        // its turns on the plan, and a key resolver would have found an
+        // `OPENAI_API_KEY` the shell happened to carry and billed every search
+        // to it — a credential the user did not choose for this session, at
+        // $10 per thousand, silently. Which credential answers is exactly what
+        // decides whether there is a source at all.
+        "openai" => {
+            let Ok((endpoint, credential)) = credential(
+                ApiAudience {
+                    provider: serving.name,
+                    variable,
+                    vendor: OpenAi::VENDOR,
+                },
+                configured,
+                ProviderAuth {
+                    settings,
+                    from: startup.from,
+                    stored: startup.stored,
+                    subscriptions: startup.subscriptions,
+                },
+            ) else {
+                return nothing;
+            };
+
+            if endpoint.as_str() != OpenAi::VENDOR.as_str() {
+                return nothing;
+            }
+
+            Reaching {
+                searching: Some(Arc::new(OpenAiWeb::new(
+                    endpoint,
+                    credential,
+                    Box::new(Https::new()),
+                    model,
+                ))),
+                fetching: None,
+            }
+        }
+
+        // Moonshot serves a search its client has to echo an argument back to,
+        // and a plain search endpoint on the coding platform that no published
+        // documentation describes at path level. Neither is written until one
+        // has been reached with a real credential.
+        _ => nothing,
+    }
+}
+
 /// Where a setting says this provider's requests should go, where one does.
 ///
 /// The address is parsed here rather than carried as the string it was written
@@ -412,8 +538,10 @@ fn key(
 ///
 /// The order is the order they are advertised in, which is the order a model
 /// tends to reach for them: read before write, search before either. The plan
-/// is last, because it is the one that does nothing to the workspace.
-fn tools(startup: &Startup<'_>, settings: &Settings) -> Tools {
+/// comes after those, being the one that does nothing to the workspace — and
+/// the two web tools last of all, because they are the only ones that are not
+/// always there and the only ones that leave the machine.
+fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tools {
     // Read off the wiring rather than taken one by one. Five things a tool is
     // built with is five arguments beside the settings, which is a call nobody
     // can read — and every one of them is already a field of the value that
@@ -460,6 +588,17 @@ fn tools(startup: &Startup<'_>, settings: &Settings) -> Tools {
     // rather than copying it, which is what makes a call on the worker thread
     // something the drawing thread sees on its next frame.
     tools.add(Box::new(TodoWrite::new(plan.clone())));
+
+    // Last, and only where this session has a source. One `Arc` serves both:
+    // the two tools ask it different questions, and a session whose vendor
+    // answers only one of them registers only that one the day such a source
+    // exists.
+    if let Some(searching) = reaching.searching {
+        tools.add(Box::new(WebSearch::new(searching, cancel.clone())));
+    }
+    if let Some(fetching) = reaching.fetching {
+        tools.add(Box::new(WebFetch::new(fetching, cancel.clone())));
+    }
 
     tools
 }

@@ -96,6 +96,21 @@ impl Mode {
                 Self::Ask | Self::AllowEdits => Disposition::Ask,
                 Self::FullAccess => Disposition::Allow,
             },
+
+            // The only call whose effect is not on this machine, and the only
+            // direction anything can leave in. It reads and changes nothing
+            // here, so the arm it most resembles is the read above — and that
+            // arm allows in every mode, which would make the one call that
+            // cannot be recalled the one nobody is ever asked about.
+            //
+            // `allowEdits` asks, which is the half worth stating. That mode
+            // relaxes exactly one thing, writing files in a workspace already
+            // entrusted to crucible, and sending a query to somebody else's
+            // service is not that.
+            Sensitivity::ReachesNetwork { .. } => match self {
+                Self::Ask | Self::AllowEdits => Disposition::Ask,
+                Self::FullAccess => Disposition::Allow,
+            },
         }
     }
 }

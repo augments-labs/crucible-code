@@ -724,6 +724,13 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<Stri
         Sensitivity::SpawnsProcess { command } => {
             format!("? {} wants to run: {}", call.name, command.sent())
         }
+
+        // Both facts, because neither alone is the question. The host is what a
+        // rule is written about; what is *sent* is the thing that leaves the
+        // machine, and for a search that is the query rather than any address.
+        Sensitivity::ReachesNetwork { host } => {
+            format!("? {} wants to reach {host}: {}", call.name, host.sent())
+        }
     };
 
     wrapped(&said, columns)

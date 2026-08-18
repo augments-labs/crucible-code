@@ -155,6 +155,9 @@ column gets sent back in review.
 | A command that goes on running after its call has answered | **background command** | job, task, daemon, service, process |
 | The model asking to run a tool | **tool call** | function call, invocation, action |
 | A permission decision | **verdict** | approval, grant, decision |
+| A call whose effect is not on this machine | **reaches the network** | online, remote, external, outbound |
+| What answers a web search or a fetch | **source** | backend, engine, searcher, service, index |
+| One thing a search handed back | **result** | hit, match, document, snippet |
 | An LLM backend adapter | **provider** | backend, client, vendor, model |
 | What drives turns to completion | **runner** | engine, orchestrator, driver, executor |
 | One thing that happened, reported as it happens | **event** | entry, record, item |
@@ -163,6 +166,12 @@ column gets sent back in review.
 
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.
+
+A second, smaller concession of the same kind: `SearchResult` is spelled out
+because `Result` is Rust's own, and `SourceError`'s field naming a source is
+`named` because `thiserror` reserves `source` for the underlying error. Both are
+the *word* losing to a language feature rather than to a synonym, and in prose
+each is still a result and a source.
 
 The one exception: inside `crucible-provider`, **chunk** names the wire object a
 vendor sends — OpenAI's is literally typed `chat.completion.chunk`. It is not a

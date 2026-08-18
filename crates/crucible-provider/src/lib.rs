@@ -20,6 +20,7 @@ mod sse;
 mod stream;
 mod transport;
 mod unavailable;
+mod web;
 
 pub use anthropic::Anthropic;
 pub use endpoint::{Endpoint, EndpointError};
@@ -28,3 +29,4 @@ pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};
 pub use unavailable::Unavailable;
+pub use web::{AnthropicWeb, OpenAiWeb};

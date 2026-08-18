@@ -258,3 +258,35 @@ fn nothing_is_written_down_for_a_path_that_did_not_resolve() {
         None
     );
 }
+
+#[test]
+fn a_rule_minted_from_a_host_names_the_host_and_not_the_page() {
+    // A yes to one page is not a yes to the site, and a rule naming the page is
+    // a rule that never matches again — the next request carries another path.
+    // The host is the narrowest subject two calls can actually share.
+    let minted = narrowest(
+        &call("web_fetch"),
+        &Sensitivity::ReachesNetwork {
+            host: Host::Named {
+                sent: "https://docs.rs/serde/latest/serde/".into(),
+                host: "docs.rs".into(),
+            },
+        },
+    )
+    .expect("a host to mint a rule");
+
+    assert_eq!(minted.to_string(), "web_fetch(docs.rs)");
+}
+
+#[test]
+fn nothing_is_written_down_for_a_url_nobody_could_read() {
+    assert!(
+        narrowest(
+            &call("web_fetch"),
+            &Sensitivity::ReachesNetwork {
+                host: Host::Opaque("https://docs.rs@evil.example/".into()),
+            },
+        )
+        .is_none()
+    );
+}

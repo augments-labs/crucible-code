@@ -8,7 +8,7 @@
 use crate::tool::ToolCall;
 
 use super::super::sensitivity::Wanted;
-use super::super::{Command, Sensitivity, Target};
+use super::super::{Command, Host, Sensitivity, Target};
 use super::{Pattern, Rule};
 
 /// Whether any rule covers some part of this call.
@@ -20,8 +20,19 @@ pub(super) fn any(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
         Sensitivity::SpawnsProcess {
             command: Command::Understood { parts, .. },
         } => parts.iter().any(|part| runs(rules, call, part)),
+        Sensitivity::ReachesNetwork {
+            host: Host::Named { host, .. },
+        } => runs(rules, call, host),
+
+        // Spelled together rather than merged away: both are a call nobody
+        // could read, and a blanket is the only rule that can speak about
+        // something with no subject to match. Written with `|` so a third
+        // unreadable shape still stops the build.
         Sensitivity::SpawnsProcess {
             command: Command::Opaque(_),
+        }
+        | Sensitivity::ReachesNetwork {
+            host: Host::Opaque(_),
         } => blanketed(rules, call),
     }
 }
@@ -39,8 +50,17 @@ pub(super) fn all(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
             // rule covers, it is one nobody can say anything about.
             !parts.is_empty() && parts.iter().all(|part| runs(rules, call, part))
         }
+        // One host, so `any` and `all` are the same question — unlike a command
+        // line, which decomposes into parts a rule can cover only some of.
+        Sensitivity::ReachesNetwork {
+            host: Host::Named { host, .. },
+        } => runs(rules, call, host),
+
         Sensitivity::SpawnsProcess {
             command: Command::Opaque(_),
+        }
+        | Sensitivity::ReachesNetwork {
+            host: Host::Opaque(_),
         } => blanketed(rules, call),
     }
 }
