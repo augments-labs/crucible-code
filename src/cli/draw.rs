@@ -226,7 +226,7 @@ pub(crate) fn gone<T: Terminal>(
     let said = clipped(
         format!(
             "{} ended on its own {} {how} {} {} lines",
-            ended.called,
+            spelled(ended.tool, &ended.called),
             glyphs.dot(),
             glyphs.dot(),
             ended.lines
@@ -455,6 +455,22 @@ pub(crate) fn returned<T: Terminal>(
     }
 
     renderer.present(&[row], style.palette())
+}
+
+/// A call as a row spells it, from the tool's own name and what the call was
+/// about.
+///
+/// The shape [`called`] makes out of a `ToolCall`, for the places that hold the two
+/// halves separately instead — a command still running, which has outlived the call
+/// that carried them together.
+pub(crate) fn spelled(tool: &str, about: &str) -> String {
+    let name = pascal(tool);
+
+    if about.is_empty() {
+        name
+    } else {
+        format!("{name}({about})")
+    }
 }
 
 /// A tool's name as a row writes it: `web_fetch` becomes `WebFetch`.

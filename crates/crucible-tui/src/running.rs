@@ -27,6 +27,15 @@ use crate::menu::{Listed, Menu};
 use crate::row::Row;
 use crate::width::clip;
 
+/// What the list keeps in front of a name and between the two columns.
+///
+/// The figures [`Menu`] lays a chosen list out with — the mark and its space, and
+/// the gap before the second column. Named here because this is where a name is
+/// cut to leave the second column its room, and cutting it against the wrong
+/// figures would push the counts off the edge, which is the one thing on the row a
+/// reader cannot find anywhere else.
+const AROUND: usize = 5;
+
 /// Rows spent on everything that is not a command: the rule, the blanks around
 /// the heading, and the blank and the footer at the foot.
 const CHROME: usize = 6;
@@ -87,14 +96,23 @@ impl Running<'_> {
             return Vec::new();
         }
 
-        // Built first, because the two columns are laid out against each other
-        // and the width of the widest name is what decides where the second one
-        // starts. Owned, since a row's words are made here rather than borrowed
-        // from a caller that has the numbers and not the sentences.
+        // The counts first, because they decide how much of a name there is room
+        // for. A command line can be any length and it is already in the
+        // transcript above; how long one has been running and how much it has
+        // printed is on this row and nowhere else, so the name is what gives way.
+        let counts: Vec<String> = self.shown.iter().map(|one| one.says(glyphs)).collect();
+        let widest = counts
+            .iter()
+            .map(|says| crate::width::columns(says))
+            .max()
+            .unwrap_or_default();
+        let room = columns.saturating_sub(widest).saturating_sub(AROUND).max(1);
+
         let named: Vec<(String, String)> = self
             .shown
             .iter()
-            .map(|one| (one.name(), one.says(glyphs)))
+            .zip(counts)
+            .map(|(one, says)| (clip(&one.name(), room).to_owned(), says))
             .collect();
         let listed: Vec<Listed<'_>> = named
             .iter()

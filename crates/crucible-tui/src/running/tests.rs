@@ -146,3 +146,31 @@ fn how_long_and_how_much_are_read_the_way_the_row_above_the_box_reads_them() {
     assert_eq!(sized(48_000), "48 kB");
     assert_eq!(sized(1_200_000), "1.2 MB");
 }
+
+#[test]
+fn a_long_command_gives_way_so_the_counts_survive() {
+    // The command is in the transcript above either way. How long it has been
+    // running and how much it has printed is on this row and nowhere else, so a
+    // name long enough to push those off the edge is the thing that gets cut.
+    let long = "Bash(printf 'a very long command line that goes on and on'; sleep 20)";
+    let shown = [one(1, long, 252, 84, 6_400)];
+    let rows = text(
+        &Running {
+            shown: &shown,
+            at: 0,
+        }
+        .rows(WIDE, 24, Glyphs::Unicode),
+    );
+
+    let listed = rows
+        .iter()
+        .find(|row| row.contains("Bash("))
+        .expect("a row for the command");
+
+    assert!(listed.contains("4m 12s"), "{listed:?}");
+    assert!(listed.contains("6.4 kB"), "{listed:?}");
+    assert!(
+        crate::width::columns(listed) <= WIDE,
+        "the row ran past the window: {listed:?}"
+    );
+}

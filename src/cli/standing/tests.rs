@@ -65,14 +65,16 @@ fn a_command_that_ended_while_nobody_waited_is_in_the_note_the_next_turn_gets() 
     // after.
     let ended = [
         Ended {
+            tool: "bash",
             number: 1,
-            called: "Bash(npm run dev)".into(),
+            called: "npm run dev".into(),
             code: Some(1),
             lines: 96,
         },
         Ended {
+            tool: "bash",
             number: 2,
-            called: "Bash(cargo watch)".into(),
+            called: "cargo watch".into(),
             code: Some(0),
             lines: 4,
         },

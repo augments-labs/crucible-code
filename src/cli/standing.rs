@@ -14,6 +14,8 @@ use std::fmt::Write as _;
 use crucible_core::{Effort, Workspace};
 use crucible_tools::Ended;
 
+use crate::cli::draw::spelled;
+
 /// The standing instructions every turn carries.
 const SYSTEM: &str = "\
 You are crucible, a coding agent working in a terminal beside a developer.
@@ -112,7 +114,9 @@ fn said(ended: &[Ended]) -> Option<String> {
         let _ = write!(
             said,
             "\n- #{} {} — {how} after printing {} lines.",
-            one.number, one.called, one.lines
+            one.number,
+            spelled(one.tool, &one.called),
+            one.lines
         );
     }
 

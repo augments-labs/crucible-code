@@ -22,6 +22,7 @@ use crucible_tui::{
 };
 
 use crate::cli::Fatal;
+use crate::cli::draw;
 use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved};
@@ -226,11 +227,19 @@ fn listed(
     rows: usize,
     glyphs: Glyphs,
 ) -> Vec<Row> {
+    // The words a row spells a call in, which is this side's decision and not the
+    // tool's: `Bash(npm run dev)` rather than the line as it was sent.
+    let named: Vec<String> = running
+        .iter()
+        .map(|standing| draw::spelled(standing.tool, &standing.called))
+        .collect();
+
     let shown: Vec<Command<'_>> = running
         .iter()
-        .map(|standing| Command {
+        .zip(&named)
+        .map(|(standing, called)| Command {
             number: standing.number,
-            called: &standing.called,
+            called,
             running: standing.running,
             lines: standing.lines,
             bytes: standing.bytes,

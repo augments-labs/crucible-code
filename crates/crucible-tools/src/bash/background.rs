@@ -55,10 +55,19 @@ struct Left {
 
 /// One row of what is running, for whatever is drawing it.
 ///
+/// The tool's name travels beside the command for the reason a [`Summary`] travels
+/// beside a [`ToolCall`]: how a row spells a tool is the row's decision, and a
+/// name already capitalised here would be this crate deciding it.
+///
+/// [`Summary`]: crucible_core::Summary
+/// [`ToolCall`]: crucible_core::ToolCall
+///
 /// A copy of the facts rather than a borrow of the command: the thread that draws
 /// asks between frames and must not hold a lock across one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Standing {
+    /// The name of the tool that started it, as that tool knows it.
+    pub tool: &'static str,
     /// The number a call was answered with.
     pub number: usize,
     /// The command, as the call sent it.
@@ -78,6 +87,8 @@ pub struct Standing {
 /// over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ended {
+    /// The name of the tool that started it, as that tool knows it.
+    pub tool: &'static str,
     /// The number it was running as.
     pub number: usize,
     /// The command, as the call sent it.
@@ -224,6 +235,7 @@ impl Background {
                 let (lines, bytes) = left.counted();
 
                 Standing {
+                    tool: super::NAME,
                     number: left.number,
                     called: left.called.clone(),
                     running: left.since.elapsed(),
@@ -303,6 +315,7 @@ impl Background {
                     let (lines, _) = left.counted();
 
                     ended.push(Ended {
+                        tool: super::NAME,
                         number: left.number,
                         called: left.called.clone(),
                         code: status.code(),
