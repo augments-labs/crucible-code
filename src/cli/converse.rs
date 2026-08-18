@@ -50,6 +50,7 @@ use expanding::Standing;
 use planning::Planning;
 use turning::Turning;
 use typing::Asked;
+use typing::between;
 
 mod asking;
 mod command;
@@ -170,6 +171,11 @@ pub(crate) fn converse<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style;
 
+    // Named once here because the prompt asks for it every frame: it is what the
+    // row under the box counts, and what that loop wakes on a clock for while
+    // there is anything left to end.
+    let left = &terms.leaving;
+
     // Held for the whole session and dropped on the way out however this
     // returns. Between turns it is what draws the box; during one it is what
     // lets the box go on being typed into. `None` is a session with no terminal
@@ -210,8 +216,6 @@ pub(crate) fn converse<T: Terminal>(
     // than by either loop that draws it: a view opened while a turn ran is
     // still open when the turn ends, and the reader who opened it is reading.
     let mut opened = Standing::default();
-
-    let mut listing = leaving::Leaving::default();
 
     // This side of the plan the tools were built with. Made once for the
     // session, because what it holds is a copy of the plan and the setting of
@@ -273,13 +277,13 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let between = typing::between(&mut runner, &mut editor, &mut planning, keys);
+        let between = between(&mut runner, &mut editor, &mut planning, left, keys);
         let asked = typing::ask(renderer, style, between)?;
 
-        // Each of the two things that can stand where the box was answers for
-        // itself, because each holds what it stands over. Whichever of them takes
-        // the key, the box is asked for again with the line still in it.
-        if opened.asked(&asked, &kept) || listing.asked(renderer, style, &asked, &terms.leaving)? {
+        // Answered by the state that holds what it stands over, because the loop
+        // that read the key holds neither. The box comes back either way, with the
+        // line still in it.
+        if opened.asked(&asked, &kept) {
             continue;
         }
 
@@ -287,8 +291,8 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Said(said) => said,
             Asked::Ended => break,
 
-            // Taken above, by whichever of the two the key belongs to.
-            Asked::Expand | Asked::Leaving | Asked::Clicked(_) => continue,
+            // Taken above, by the state that holds what it stands over.
+            Asked::Expand | Asked::Clicked(_) => continue,
 
             Asked::Untyped => match unboxed(renderer, &runner, style, input)? {
                 Some(said) => said,
@@ -477,10 +481,14 @@ fn take<T: Terminal>(
     // hard it was asked to think — and a model can find out neither for itself.
     // Written once at startup it would go on describing the session the first
     // turn was taken in, so it is written again for each.
+    // Drained here rather than when it happened: the reader was told at the
+    // moment, and this is the other audience being told at the one moment there
+    // is room for it. A turn already in flight has nowhere to put a new fact.
     runner.telling(&standing::under(
         runner.model(),
         runner.effort(),
         &terms.workspace,
+        &terms.leaving.reported(),
     ));
 
     // Whatever stopped the last turn is spent, and this is the last moment at

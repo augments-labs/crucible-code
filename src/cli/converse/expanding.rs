@@ -126,9 +126,8 @@ impl Standing {
             Asked::Expand => self.open(kept),
             Asked::Clicked(at) => self.one(kept, *at),
 
-            // Not this one's. A line, the end of a session, the list of what is
-            // running: each is answered where what it is about is held.
-            Asked::Said(_) | Asked::Ended | Asked::Leaving | Asked::Untyped => return false,
+            // Not this one's. A line and the end of a session are the loop's.
+            Asked::Said(_) | Asked::Ended | Asked::Untyped => return false,
         }
 
         true

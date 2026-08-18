@@ -25,7 +25,6 @@ use crate::cli::Fatal;
 use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved};
-use super::typing::Asked;
 
 /// What the list is showing, between one key and the next.
 #[derive(Debug, Default)]
@@ -46,29 +45,6 @@ pub(super) struct Leaving {
 }
 
 impl Leaving {
-    /// Whether this is what the box was answered with, standing the list if it is.
-    ///
-    /// Answered here rather than in the loop that read the key, because the list
-    /// is drawn from the registry and this is what holds where in it the mark was.
-    ///
-    /// # Errors
-    ///
-    /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
-    pub(super) fn asked<T: Terminal>(
-        &mut self,
-        renderer: &mut Renderer<T>,
-        style: Style,
-        asked: &Asked,
-        left: &Background,
-    ) -> Result<bool, Fatal> {
-        if !matches!(asked, Asked::Leaving) {
-            return Ok(false);
-        }
-
-        self.stand(renderer, style, left)?;
-        Ok(true)
-    }
-
     /// Stands the list, and answers with whether it ended by taking a row.
     ///
     /// # Errors

@@ -483,7 +483,9 @@ fn model(name: Option<&str>, effort: Option<Effort>, workspace: &Workspace) -> M
     let name = name.unwrap_or_default();
 
     Model {
-        system: Some(standing::under(name, effort, workspace).into()),
+        // Nothing has ended yet: this is the note the first turn of a run is
+        // asked under, and no command has been left running to end.
+        system: Some(standing::under(name, effort, workspace, &[]).into()),
         name: name.into(),
         max_tokens: MAX_TOKENS,
         effort,

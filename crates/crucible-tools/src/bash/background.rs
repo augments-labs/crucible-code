@@ -262,6 +262,21 @@ impl Background {
         }
     }
 
+    /// Every command that has ended and not yet been reported to the model.
+    ///
+    /// Drained, because a note is written fresh before every turn and a fact
+    /// carried into two of them would be one server falling over twice. The
+    /// reader was told when it happened; this is the other audience, and it is
+    /// told at the top of the next turn because a turn already in flight has
+    /// nowhere to put a new fact.
+    #[must_use]
+    pub fn reported(&self) -> Vec<Ended> {
+        self.standing
+            .lock()
+            .map(|mut standing| standing.ended.drain(..).collect())
+            .unwrap_or_default()
+    }
+
     /// Reaps whatever has exited on its own, and says which.
     ///
     /// Called on the beat the row above the box already redraws on rather than on
