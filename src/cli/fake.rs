@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
-    Summary, Target, Tool, ToolArgs, ToolError, ToolOutput,
+    Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -215,7 +215,7 @@ impl Tool for Fixed {
         Summary::new(args.as_str())
     }
 
-    fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::ok(self.answer))
     }
 }

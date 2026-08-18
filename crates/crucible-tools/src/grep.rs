@@ -20,8 +20,8 @@ use std::str;
 use std::sync::Mutex;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
-    WorkspacePath,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Workspace, WorkspacePath,
 };
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -633,7 +633,7 @@ impl Tool for Grep {
         summary::field(NAME, args, "pattern")
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = crate::args::Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
         let limit = args.count("limit", MATCHES)?.min(CEILING);

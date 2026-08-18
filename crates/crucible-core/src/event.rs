@@ -10,7 +10,7 @@
 
 use crate::ids::{ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
-use crate::tool::{Summary, ToolCall, ToolError, ToolOutput};
+use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
 use crate::transcript::StopReason;
 
 /// Why a turn ended badly.
@@ -84,6 +84,25 @@ pub enum Event {
         /// asked where the tools are in reach, since the arguments are opaque
         /// to whatever draws the row.
         summary: Summary,
+    },
+
+    /// More of what a running tool has printed, in the order it arrived.
+    ///
+    /// One piece of it rather than all of it: a command that has printed a
+    /// megabyte has posted many of these, and nothing here holds on to what an
+    /// earlier one carried. What the model is finally sent is the
+    /// [`ToolOutput`] on [`Event::ToolFinished`], bounded by the tool; this is
+    /// for the reader, while there is still something to watch.
+    ///
+    /// Named by its call because a piece of output that did not say whose it
+    /// was could be drawn under the wrong call the moment two of them can run
+    /// at once — and because whatever coalesces these has to know where one
+    /// call's output stops.
+    Wrote {
+        /// Which call printed it.
+        call: ToolId,
+        /// The text, in the order the command produced it.
+        text: Wrote,
     },
 
     /// A tool finished.
@@ -183,6 +202,38 @@ mod tests {
         tx.post(Event::TurnStarted {
             turn: TurnId::FIRST,
         });
+    }
+
+    #[test]
+    fn what_a_call_wrote_arrives_under_the_call_that_wrote_it() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        tx.post(Event::Wrote {
+            call: ToolId::new("a"),
+            text: Wrote::new("Compiling crucible-core v0.5.0\n"),
+        });
+
+        let Event::Wrote { call, text } = rx.recv().unwrap() else {
+            panic!("the event that arrived was not the one posted");
+        };
+        assert_eq!(call, ToolId::new("a"));
+        assert_eq!(text.as_str(), "Compiling crucible-core v0.5.0\n");
+    }
+
+    #[test]
+    fn an_event_never_shows_what_a_command_printed() {
+        // A command is how a model reads a file it was refused and how it runs
+        // `env`, so what one prints is redacted for the reason a tool's result
+        // is. `Delta` is the neighbouring case and is deliberately not: that is
+        // the model's own prose on its way to the screen.
+        let event = Event::Wrote {
+            call: ToolId::new("a"),
+            text: Wrote::new("wrote-debug-canary"),
+        };
+
+        let shown = format!("{event:?}");
+        assert!(!shown.contains("wrote-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"));
     }
 
     #[test]

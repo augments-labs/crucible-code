@@ -8,7 +8,7 @@
 
 use crucible_core::{
     Approved, Ask, Cancel, Event, Permission, Post, Settled, StopReason, ToolCall, ToolError,
-    ToolOutput, ToolResult,
+    ToolId, ToolOutput, ToolResult, Watch, Wrote,
 };
 
 use crate::tools::Tools;
@@ -152,7 +152,17 @@ impl Work<'_> {
 
         let sensitivity = tool.sensitivity(&call.args);
         match self.permission.decide(call, &sensitivity, self.ask) {
-            Settled::Approved(approved) => self.run(approved),
+            // The watcher is made here, where the call is, and handed down. The
+            // tool is never told which call it is running, so output it reports
+            // cannot arrive under another call's name — the same shape as the
+            // approval it is passed beside, for the same reason.
+            Settled::Approved(approved) => self.run(
+                approved,
+                &Watching {
+                    call: call.id.clone(),
+                    events: self.events,
+                },
+            ),
             // Standing policy, which the model can read and work around. It
             // costs nothing to hit twice, so the turn carries on.
             Settled::Forbidden => Ran::Output(ToolOutput::failed(FORBIDDEN)),
@@ -171,7 +181,7 @@ impl Work<'_> {
     /// reached about one tool cannot arrive at another with that tool's
     /// arguments beside it — which is the guarantee the whole mechanism is for,
     /// and it should not rest on two lines staying next to each other.
-    fn run(&self, approved: Approved) -> Ran {
+    fn run(&self, approved: Approved, watch: &dyn Watch) -> Ran {
         let Some(tool) = self.tools.find(approved.tool()) else {
             // A name that reached a verdict is a name a lookup already
             // answered to, so this is the arm nothing takes. Answered rather
@@ -180,13 +190,39 @@ impl Work<'_> {
             return Ran::Output(failure(&ToolError::Unknown(approved.tool().into())));
         };
 
-        match tool.run(approved) {
+        match tool.run(approved, watch) {
             Ok(output) => Ran::Output(output),
             // Cancelling is not a result the model should reason about. The
             // user stopped the turn, so the turn stops.
             Err(ToolError::Cancelled(_)) => Ran::Stopped(StopReason::Cancelled),
             Err(problem) => Ran::Output(failure(&problem)),
         }
+    }
+}
+
+/// Where one call's output goes while its tool is still running.
+///
+/// The whole of the bridge between a tool, which knows what it has printed and
+/// not which call it is, and the channel, which needs both. It is made per call
+/// rather than per pass so that the identifier cannot be the wrong one: there is
+/// no moment at which this value exists beside a different call.
+///
+/// Nothing is held. A piece of output is turned into an event and posted, and
+/// what the drawing thread does with it is the drawing thread's business — which
+/// is what keeps a command printing a gigabyte from growing anything here.
+struct Watching<'a> {
+    /// The call whose output this is.
+    call: ToolId,
+    /// Where it goes.
+    events: &'a dyn Post,
+}
+
+impl Watch for Watching<'_> {
+    fn wrote(&self, text: Wrote) {
+        self.events.post(Event::Wrote {
+            call: self.call.clone(),
+            text,
+        });
     }
 }
 
@@ -203,6 +239,46 @@ mod tests {
 
     use super::*;
     use crate::fake::{Fixed, Says, changing};
+
+    #[test]
+    fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
+        // Ordered against the event that ends the call, because that is the
+        // whole of what a reader is owed: output while the call is out, then
+        // the result. A piece arriving after `ToolFinished` would be drawn
+        // under whatever call came next.
+        let mut proof = Proof::new(Verdict::Allow)
+            .offering(Fixed::new("bash").writing(&["Compiling one\n", "Compiling two\n"]));
+
+        let call = ToolCall {
+            id: ToolId::new("c-1"),
+            name: "bash".into(),
+            args: ToolArgs::new("{}"),
+        };
+        proof.pass(std::slice::from_ref(&call));
+
+        let mut wrote = Vec::new();
+        let mut finished = false;
+        while let Ok(event) = proof.seen.try_recv() {
+            match event {
+                Event::Wrote { call, text } => {
+                    assert!(!finished, "output arrived after the call had answered");
+                    assert_eq!(call, ToolId::new("c-1"));
+                    wrote.push(text.as_str().to_owned());
+                }
+                Event::ToolFinished { .. } => finished = true,
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::Retrying
+                | Event::Spent { .. }
+                | Event::TurnFinished { .. }
+                | Event::Failed { .. } => {}
+            }
+        }
+
+        assert_eq!(wrote, ["Compiling one\n", "Compiling two\n"]);
+        assert!(finished, "the call never answered");
+    }
 
     /// One pass, with everything it needed set up around it.
     struct Proof {
@@ -405,6 +481,7 @@ mod tests {
                 Event::TurnStarted { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
+                | Event::Wrote { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }

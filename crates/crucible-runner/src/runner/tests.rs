@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     Approved, Change, Diff, Line, ProviderError, Sensitivity, SessionId, Spend, Summary, Target,
-    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict,
+    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use super::*;
@@ -69,6 +69,7 @@ impl Scripted {
                 Event::TurnStarted { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -86,6 +87,7 @@ impl Scripted {
                 Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -104,6 +106,7 @@ impl Scripted {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
                 | Event::Retrying
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -121,6 +124,7 @@ impl Scripted {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
@@ -830,7 +834,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
     let log = session.path().to_owned();
 
     let mut offered = Tools::new();
-    offered.add(Box::new(Watching { log }));
+    offered.add(Box::new(Logged { log }));
 
     let script = Script::new(vec![calling("a", WATCH, "{}"), saying("done")]);
     let mut scripted = Scripted::recording(script, offered, Verdict::Allow, session);
@@ -853,11 +857,11 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
 }
 
 /// A tool that hands back the session log as it stood while the tool ran.
-struct Watching {
+struct Logged {
     log: PathBuf,
 }
 
-impl Tool for Watching {
+impl Tool for Logged {
     fn name(&self) -> &'static str {
         WATCH
     }
@@ -876,7 +880,7 @@ impl Tool for Watching {
         Summary::new("")
     }
 
-    fn run(&self, _approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, _approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let deadline = Instant::now() + SETTLE;
 
         loop {
@@ -955,6 +959,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
+            | Event::Wrote { .. }
             | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1104,6 +1109,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolRequested { .. }
+            | Event::Wrote { .. }
             | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }

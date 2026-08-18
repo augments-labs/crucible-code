@@ -5,7 +5,7 @@ use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
 use crucible_core::{
-    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Workspace,
+    Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
 };
 use globset::GlobBuilder;
 
@@ -224,7 +224,7 @@ impl Tool for Glob {
         summary::field(NAME, args, "pattern")
     }
 
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError> {
+    fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let pattern = args.text("pattern")?;
         let limit = args.count("limit", PATHS)?.min(CEILING);
@@ -352,6 +352,8 @@ fn halted(stopped: bool, sort: Sort) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crucible_core::Unwatched;
+
     use super::*;
     use crucible_core::Disposition;
 
@@ -359,7 +361,7 @@ mod tests {
 
     fn glob(sample: &Sample, args: &str) -> ToolOutput {
         let tool = Glob::new(sample.workspace(), Cancel::new());
-        tool.run(allowed(&tool, args)).unwrap()
+        tool.run(allowed(&tool, args), &Unwatched).unwrap()
     }
 
     /// One entry the way `Sort::Path` makes them: every age the same, so the
@@ -585,7 +587,10 @@ mod tests {
         let tool = Glob::new(sample.workspace(), Cancel::new());
 
         let problem = tool
-            .run(allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#))
+            .run(
+                allowed(&tool, r#"{"pattern":"**/*","sort":"size"}"#),
+                &Unwatched,
+            )
             .unwrap_err();
 
         assert_eq!(
@@ -686,7 +691,7 @@ mod tests {
 
         let tool = Glob::new(sample.workspace(), cancel);
         let output = tool
-            .run(allowed(&tool, r#"{"pattern":"**/*.rs"}"#))
+            .run(allowed(&tool, r#"{"pattern":"**/*.rs"}"#), &Unwatched)
             .unwrap();
 
         assert!(output.is_failed());
@@ -770,11 +775,14 @@ mod tests {
 
         let tool = Glob::new(sample.workspace(), Cancel::new());
         let output = tool
-            .run(under(
-                &tool,
-                r#"{"pattern":"**/*.rs"}"#,
-                &[(Disposition::Deny, "glob(private/**)")],
-            ))
+            .run(
+                under(
+                    &tool,
+                    r#"{"pattern":"**/*.rs"}"#,
+                    &[(Disposition::Deny, "glob(private/**)")],
+                ),
+                &Unwatched,
+            )
             .unwrap();
 
         assert!(!output.text().contains("private/"), "{}", output.text());
@@ -795,18 +803,24 @@ mod tests {
         let workspace = sample.reaching(&beside);
         let listing = Glob::new(workspace.clone(), Cancel::new());
         let listed = listing
-            .run(allowed(
-                &listing,
-                &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
-            ))
+            .run(
+                allowed(
+                    &listing,
+                    &format!(r#"{{"pattern":"**/*.md","path":"{beside}"}}"#),
+                ),
+                &Unwatched,
+            )
             .unwrap();
 
         let search = crate::Grep::new(workspace, Cancel::new());
         let searched = search
-            .run(allowed(
-                &search,
-                &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
-            ))
+            .run(
+                allowed(
+                    &search,
+                    &format!(r#"{{"pattern":"needle","path":"{beside}"}}"#),
+                ),
+                &Unwatched,
+            )
             .unwrap();
 
         assert!(!listed.is_failed(), "{}", listed.text());

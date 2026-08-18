@@ -205,6 +205,7 @@ impl Turning {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
+            | Event::Wrote { .. }
             | Event::Retrying => None,
         };
 
@@ -217,7 +218,7 @@ impl Turning {
 
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
-            Event::ToolRequested { .. } => Doing::Running,
+            Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
             Event::ToolFinished { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
             Event::TurnStarted { .. }

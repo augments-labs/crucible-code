@@ -214,6 +214,73 @@ impl fmt::Debug for Account {
     }
 }
 
+/// One piece of what a running tool has printed.
+///
+/// Redacted by `Debug` for the reason [`ToolOutput`] is, and it is the same
+/// material: a command's own output, which is how a model reads a file and how
+/// it runs `env`. A key printed once is a key in every `{:?}` this value reaches.
+///
+/// [`Delta`] is the neighbouring type and is deliberately not redacted, which is
+/// the distinction worth keeping: that is the model's prose, written to be put on
+/// screen, and this is whatever a program on this machine happened to print.
+///
+/// [`Delta`]: crate::Event::Delta
+#[derive(Clone, PartialEq, Eq)]
+pub struct Wrote(Box<str>);
+
+impl Wrote {
+    /// Takes what a tool has produced since it last said anything.
+    #[must_use]
+    pub fn new(text: impl Into<Box<str>>) -> Self {
+        Self(text.into())
+    }
+
+    /// The text, for whatever is drawing it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Wrote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Wrote([redacted])")
+    }
+}
+
+/// Where a tool reports what it has printed, while it is still running.
+///
+/// A trait for the reason [`crate::Post`] is one, and narrower than it on
+/// purpose: [`crate::Event`] can say that a turn finished, and a tool has no
+/// business saying so. The one sentence a running tool can utter is *here is
+/// more of my output*, and this is that sentence.
+///
+/// It carries no identifier. Which call wrote this is attached by the layer that
+/// dispatched the call, which is the layer that knows — so a tool cannot post
+/// output under another call's name, in the same way it cannot obtain an
+/// [`Approved`] for a call it was not given.
+pub trait Watch {
+    /// Reports what has been produced since the last time this was called.
+    ///
+    /// Cannot fail, for the reason [`crate::Post::post`] cannot: a tool that
+    /// stopped to handle nobody listening would be stopping for the one
+    /// condition that means nobody is waiting for it either.
+    fn wrote(&self, text: Wrote);
+}
+
+/// Nobody is reading.
+///
+/// What a caller with nothing to draw hands to [`Tool::run`] — a test, and any
+/// front end that does not put a running command on a screen. A tool writes into
+/// it exactly as it writes into a channel, so there is no absence for a tool to
+/// check for and no second path through it to get wrong.
+#[derive(Debug, Clone, Copy)]
+pub struct Unwatched;
+
+impl Watch for Unwatched {
+    fn wrote(&self, _text: Wrote) {}
+}
+
 /// What a tool produced, on its way back to the model.
 ///
 /// And on its way to the reader, which is not the same journey. The text is
@@ -355,12 +422,18 @@ pub trait Tool: Send + Sync {
     /// separate `args` parameter, and a handle found beside the call, both
     /// left that to the caller's care.
     ///
+    /// `watch` is where it reports what it has printed before it returns.
+    /// Most tools produce their answer at once and never touch it; a command
+    /// that runs for two minutes is the reason it is here. [`Unwatched`] is what
+    /// a caller with nothing to draw passes, so there is no absence to check
+    /// for.
+    ///
     /// # Errors
     ///
     /// [`ToolError`] when the call could not be carried out at all. A result
     /// the model should see, including a failure, comes back as a failed
     /// [`ToolOutput`].
-    fn run(&self, approved: Approved) -> Result<ToolOutput, ToolError>;
+    fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError>;
 }
 
 impl fmt::Debug for dyn Tool {
@@ -480,6 +553,48 @@ mod tests {
     fn a_result_that_changed_nothing_carries_no_diff_to_begin_with() {
         assert!(ToolOutput::ok("done").diff().is_none());
         assert!(ToolOutput::failed("no such file").diff().is_none());
+    }
+
+    #[test]
+    fn what_a_command_printed_is_never_shown_by_debug() {
+        let wrote = Wrote::new("wrote-debug-canary");
+        let shown = format!("{wrote:?}");
+
+        assert!(!shown.contains("wrote-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn a_watcher_is_told_what_was_written_in_the_order_it_was_written() {
+        #[derive(Default)]
+        struct Recorded(std::sync::Mutex<Vec<String>>);
+
+        impl Watch for Recorded {
+            fn wrote(&self, text: Wrote) {
+                if let Ok(mut said) = self.0.lock() {
+                    said.push(text.as_str().to_owned());
+                }
+            }
+        }
+
+        let recorded = Recorded::default();
+        recorded.wrote(Wrote::new("first"));
+        recorded.wrote(Wrote::new("second"));
+
+        assert_eq!(
+            recorded.0.into_inner().unwrap(),
+            ["first".to_owned(), "second".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_tool_nobody_is_watching_still_runs() {
+        // What a caller with nothing to draw hands over. It is not a failure
+        // and it is not an absence the tool has to check for: a tool writes
+        // into it exactly as it writes into a channel, and the words go
+        // nowhere.
+        let nobody = Unwatched;
+        nobody.wrote(Wrote::new("nobody is reading this"));
     }
 
     #[test]

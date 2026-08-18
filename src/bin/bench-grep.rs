@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{
     Approved, Ask, Disposition, Mode, Permission, Remember, RuleError, Rules, Sensitivity, Settled,
-    Tool, ToolArgs, ToolCall, ToolId, Verdict, Workspace,
+    Tool, ToolArgs, ToolCall, ToolId, Unwatched, Verdict, Workspace,
 };
 use crucible_tools::Grep;
 
@@ -251,7 +251,7 @@ fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Pr
     let mut engine = engine(ruled)?;
 
     let started = Instant::now();
-    let output = grep.run(approved(&grep, args, &mut engine)?)?;
+    let output = grep.run(approved(&grep, args, &mut engine)?, &Unwatched)?;
     let took = started.elapsed();
 
     let expected = match workload.expected {

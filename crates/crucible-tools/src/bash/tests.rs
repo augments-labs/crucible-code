@@ -4,7 +4,9 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Verdict};
+use crucible_core::{
+    Ask, Command, Mode, Permission, Remember, Rules, ToolCall, ToolId, Unwatched, Verdict,
+};
 
 use super::{Bash, Cancel, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::bound::OUTPUT;
@@ -12,7 +14,7 @@ use crate::sample::{Sample, allowed};
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = Bash::new(sample.workspace(), Cancel::new());
-    tool.run(allowed(&tool, args))
+    tool.run(allowed(&tool, args), &Unwatched)
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -233,7 +235,7 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
     let started = Instant::now();
     let tool = Bash::new(sample.workspace(), cancel);
     let problem = tool
-        .run(allowed(&tool, r#"{"command":"sleep 30"}"#))
+        .run(allowed(&tool, r#"{"command":"sleep 30"}"#), &Unwatched)
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -251,7 +253,10 @@ fn a_turn_already_stopped_never_starts_the_command() {
 
     let tool = Bash::new(sample.workspace(), cancel);
     let problem = tool
-        .run(allowed(&tool, r#"{"command":"touch should-not-exist"}"#))
+        .run(
+            allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
+            &Unwatched,
+        )
         .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled("bash")));
@@ -284,7 +289,7 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
 
     let tool = Bash::inheriting(sample.workspace(), Cancel::new(), empty_element_first);
     let output = tool
-        .run(allowed(&tool, r#"{"command":"echo hello"}"#))
+        .run(allowed(&tool, r#"{"command":"echo hello"}"#), &Unwatched)
         .expect("the command ran");
 
     assert_eq!(output.text(), "hello");
@@ -456,7 +461,9 @@ fn the_variables_the_tool_was_given_reach_the_command() {
     let tool =
         Bash::new(sample.workspace(), Cancel::new()).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
 }
@@ -489,7 +496,9 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
     let tool = Bash::new(sample.workspace(), Cancel::new())
         .exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
 }
@@ -526,7 +535,9 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
 
     let tool = Bash::inheriting(sample.workspace(), Cancel::new(), crucibles_own);
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
-    let output = tool.run(allowed(&tool, args)).expect("the command ran");
+    let output = tool
+        .run(allowed(&tool, args), &Unwatched)
+        .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
     assert!(!output.text().contains("s3cr3t"), "{}", output.text());
