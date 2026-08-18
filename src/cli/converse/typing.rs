@@ -126,8 +126,17 @@ pub(crate) enum Asked {
     /// turn runs opens the same view a row further down the screen. Both go
     /// through the one door at the top of the loop above.
     Expand,
+    /// Ctrl+B: what is still running is to be listed, and the box asked for again
+    /// once the list has been closed.
+    ///
+    /// Reported rather than acted on here for the reason [`Asked::Expand`] is:
+    /// the commands belong to the loop above, and so does the value that ends
+    /// them. The box is not written down on the way out — the list stands where it
+    /// stood, and the line being typed is underneath when this comes back.
+    Leaving,
     /// A click on this row of the record, which stands the one result that row
-    /// offered to expand — or nothing, where it offered none.
+    /// offered to expand — or nothing, where it offered none. The box comes back
+    /// with the line still in it either way.
     ///
     /// Which of the two it is, is not decided here. What was cut belongs to the
     /// loop above and so does the view, and asking this module to hold either of
@@ -259,6 +268,11 @@ pub(crate) fn ask<T: Terminal>(
         // a key that moved nothing costs no frame, and the arms that end the
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
+            // Handed back for the same reason `ctrl+o` is: what is running is the
+            // loop's, this module is the box's, and the two meet where the loop
+            // that holds both of them is. It is the other half of the count on the
+            // row under the box — that says how many, and the list says which.
+            Pressed::Background => return Ok(Asked::Leaving),
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
@@ -519,6 +533,7 @@ pub(super) fn during<T: Terminal>(
         kept,
         opened,
         says,
+        background,
         style,
         cancel,
         leaving,
@@ -551,6 +566,7 @@ pub(super) fn during<T: Terminal>(
         }
 
         match meant(arrived) {
+            Meant::Background => background.ask(),
             // The rows on screen were laid out for a width the window no longer
             // has. The renderer takes them back; the redraw below puts the box
             // down again at the new one.
@@ -738,6 +754,14 @@ enum Meant {
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
     /// the turn that is still writing it.
     Expand,
+    /// Ctrl+B: the command the turn is waiting on is to be left running, and the
+    /// turn is to go on without it.
+    ///
+    /// Asked of the registry rather than done in the loop that reads the key. The
+    /// command is being waited on by the worker thread, so what this side can do
+    /// is put the request where that thread looks — the same shape, and the same
+    /// latency, as asking a turn to stop.
+    Background,
     /// Ctrl+T: the whole of the plan above the box, or the bounded list again.
     Plan,
     /// A click on this screen row, which stands the one result offered there.
@@ -771,6 +795,7 @@ fn meant(arrived: Pressed) -> Meant {
 
         Pressed::Expand => Meant::Expand,
         Pressed::Plan => Meant::Plan,
+        Pressed::Background => Meant::Background,
 
         // The column is dropped rather than carried: what a click means up in
         // the transcript is which row it landed on, and a row that offered to
@@ -808,6 +833,16 @@ pub(super) struct During<'a> {
     /// was opened under has ended.
     pub(super) opened: &'a mut Standing,
     pub(super) says: &'a Says,
+    /// Where a command the turn is waiting on is asked to be left running.
+    ///
+    /// The request only: the command is being waited on by the worker thread, so
+    /// what this side can do is put the ask where that thread looks — the same
+    /// shape as asking a turn to stop.
+    ///
+    /// Named for what it holds rather than for what a press does with it, because
+    /// the field below already carries the session's own use of that word: that
+    /// one is the offer to leave, made on one Ctrl-C and taken on the next.
+    pub(super) background: &'a crucible_tools::Background,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
     /// When Ctrl-C was last pressed against an empty line, if it is still the

@@ -60,7 +60,13 @@ const ROWS: usize = 3;
 /// make it a second thing on the screen rather than a second line of the first.
 const QUEUED: usize = ROWS + 1;
 
-/// And with a call standing over it, the blank that parts them included.
+/// And with a call standing over it: the blank that parts them, the call, and the
+/// row under it offering to leave the command running.
+///
+/// Three rather than two, because the offer is drawn from the moment the call is
+/// out. It is one row and it is the only thing on screen that says what a key
+/// would do about the command in front of you, so it belongs with the call rather
+/// than with the sample the call's output gives way as.
 ///
 /// The call line is what a narrow window gives up first, because it is the one
 /// of the four that a second look gets back anyway: the tool answers and the
@@ -70,7 +76,15 @@ const QUEUED: usize = ROWS + 1;
 /// it is measured before either of the other two, so those are what a window
 /// short of rows drops on its behalf. The row saying a turn is running exists
 /// nowhere else and never gives way.
-const CALLING: usize = ROWS + 2;
+const CALLING: usize = ROWS + 3;
+
+/// What the row under a call offers to do about it.
+///
+/// Named beside the sample rather than in the key's own module, because it is the
+/// one place the offer is spelled and the row is where somebody reads it. The key
+/// itself is documented once in the keys page, which is why this says what it
+/// does about *this command* rather than repeating what the key is for.
+const BACKGROUND: &str = "(ctrl+b to background)";
 
 /// The most rows of a running command's output the footing shows at once.
 ///
@@ -258,10 +272,16 @@ impl Printing {
     /// nothing saying so, is a reader who believes they are looking at the whole
     /// of what the command has printed.
     fn rows(&self, columns: usize, spare: usize, style: Style) -> Vec<Row> {
-        let held = spare.saturating_sub(1).min(SAMPLE);
-        if held == 0 || self.is_empty() {
+        // One row for the offer, whatever else there is room for. It is drawn from
+        // the moment the call is out, because a command that has printed nothing
+        // for half a minute is the one somebody most wants to put down — and a
+        // command that has printed something is the one whose counts go in front
+        // of the same offer.
+        if spare == 0 {
             return Vec::new();
         }
+
+        let held = spare.saturating_sub(1).min(SAMPLE);
 
         let glyphs = style.glyphs();
         let room = columns.saturating_sub(INSET);
@@ -274,6 +294,7 @@ impl Printing {
         if !self.partial.is_empty() {
             shown.push(&self.partial);
         }
+        shown.truncate(shown.len().min(held.max(1)));
 
         // The last of them. What a build is doing now is the question the sample
         // answers, and its first five lines answered it a minute ago.
@@ -290,28 +311,27 @@ impl Printing {
             })
             .collect();
 
-        let lines = self.lines();
-        let counted = if lines == 1 {
-            "1 line".to_owned()
-        } else {
-            format!("{lines} lines")
+        // What the row says, and what it always says: the counts where there are
+        // any, and the offer either way. A command silent for half a minute is the
+        // one somebody most wants to put down, so the offer cannot wait for output
+        // to justify itself.
+        let said = match self.lines() {
+            0 => BACKGROUND.to_owned(),
+            1 => format!("1 line {} {} {BACKGROUND}", glyphs.dot(), sized(self.bytes)),
+            lines => format!(
+                "{lines} lines {} {} {BACKGROUND}",
+                glyphs.dot(),
+                sized(self.bytes)
+            ),
         };
 
-        // Indented with the sample, and cut the same way it is: the count is a
-        // caption on the rows above it rather than a row of its own, so it starts
-        // in the column they start in. Clipped before the inset is put in front of
-        // it, because what tidies a row's ends would take the inset for one of
-        // them.
+        // Indented with the sample, and cut the same way it is: it is a caption on
+        // the rows above it rather than a row of its own, so it starts in the
+        // column they start in. Clipped before the inset is put in front of it,
+        // because what tidies a row's ends would take the inset for one of them.
         rows.push(Row::new().then(
             Slot::Quiet,
-            format!(
-                "{inset}{}",
-                draw::clipped(
-                    format!("{counted} {} {}", glyphs.dot(), sized(self.bytes)),
-                    room,
-                    glyphs,
-                )
-            ),
+            format!("{inset}{}", draw::clipped(said, room, glyphs)),
         ));
 
         rows
@@ -566,6 +586,10 @@ impl Turning {
             // thing here a second look gets back whatever the window did — the
             // key that stands a result whole stands this too — so it is the first
             // to give way and it gives way without saying so.
+            // What is left after every row that never gives way has taken its
+            // own is the sample's, and the sample's alone: the offer under the
+            // call is counted in `standing` above, because a call with no way to
+            // put it down is the one thing this row must never be.
             rows.extend(
                 self.printing
                     .rows(columns, room.saturating_sub(standing), style),
@@ -868,9 +892,12 @@ mod tests {
 
         assert!(at(0).is_empty(), "{standing:?}");
         assert!(at(1).contains("Read(src/main.rs)"), "{standing:?}");
-        assert!(at(2).is_empty(), "{standing:?}");
-        assert!(at(3).contains("running"), "{standing:?}");
-        assert!(at(4).is_empty(), "{standing:?}");
+        // Directly under the call with no blank between them: it is a caption on
+        // the call rather than a second thing beside it.
+        assert!(at(2).contains("(ctrl+b to background)"), "{standing:?}");
+        assert!(at(3).is_empty(), "{standing:?}");
+        assert!(at(4).contains("running"), "{standing:?}");
+        assert!(at(5).is_empty(), "{standing:?}");
     }
 
     /// What a running call has printed, as an event.
@@ -923,9 +950,48 @@ mod tests {
 
         assert!(counted.starts_with("    41 lines"), "{counted:?}");
         assert!(
-            counted.ends_with('B'),
+            counted.contains(" B") || counted.contains("kB") || counted.contains("MB"),
             "the count never said how many bytes: {counted:?}"
         );
+    }
+
+    #[test]
+    fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anything() {
+        // A command silent for thirty-eight seconds is the one most worth putting
+        // down, so the row that offers it cannot wait for output to justify
+        // itself. It gains the counts in front of the offer once there are any.
+        let mut turning = Turning::started();
+        turning.saw(&requested());
+
+        let rows = |turning: &Turning| {
+            turning
+                .rows(&nothing(), 80, Style::plain(), 24)
+                .iter()
+                .map(Row::text)
+                .collect::<Vec<_>>()
+        };
+
+        let quiet = rows(&turning);
+        assert!(
+            quiet
+                .iter()
+                .any(|row| row.contains("(ctrl+b to background)")),
+            "{quiet:?}"
+        );
+        assert!(
+            !quiet.iter().any(|row| row.contains("lines")),
+            "a command that has printed nothing was given a count: {quiet:?}"
+        );
+
+        turning.saw(&printed("Compiling one\n"));
+        let printing = rows(&turning);
+        let counted = printing
+            .iter()
+            .find(|row| row.contains("(ctrl+b to background)"))
+            .expect("the offer went away when the command spoke");
+
+        assert!(counted.contains("1 line"), "{counted:?}");
+        assert!(counted.starts_with("    1 line"), "{counted:?}");
     }
 
     #[test]
@@ -1365,12 +1431,14 @@ mod tests {
                 .collect::<String>()
         };
 
-        let whole = said(panel + 7);
+        // One taller than it used to be, because the call now carries the row
+        // offering to leave its command running.
+        let whole = said(panel + 8);
         assert!(whole.contains("Read"), "{whole:?}");
         assert!(whole.contains("Next:"), "{whole:?}");
         assert!(whole.contains("Task 2"), "{whole:?}");
 
-        let shorter = said(panel + 6);
+        let shorter = said(panel + 7);
         assert!(!shorter.contains("Read"), "{shorter:?}");
         assert!(shorter.contains("Next:"), "{shorter:?}");
         assert!(shorter.contains("Task 2"), "{shorter:?}");

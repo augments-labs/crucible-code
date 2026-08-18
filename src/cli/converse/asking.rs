@@ -395,7 +395,11 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         // is in, leaving a question on screen with nothing left to answer it
         // with. Ctrl+T is the same sentence about the plan, which stands in that
         // region too and is not on screen while this question is.
+        // The key about what is already running among them: this question is what
+        // decides whether the command runs at all, so there is nothing here for it
+        // to act on.
         Pressed::Key(_)
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Expand
         | Pressed::Plan

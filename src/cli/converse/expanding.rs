@@ -38,6 +38,7 @@ use crate::cli::kept::{Kept, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
+use super::typing::Asked;
 
 /// What the view is standing over.
 ///
@@ -115,6 +116,24 @@ impl Standing {
     /// were cut, so a session with none of them has made no offer, and a frame
     /// put up in answer to a press nobody meant is one that took the prompt
     /// away for no reason.
+    /// Whether this is what the box was answered with, opening it if it is.
+    ///
+    /// Asked before the answer is read as a line, because the two keys that reach
+    /// this are answered by the state that holds what they stand over rather than
+    /// by the loop that read them.
+    pub(super) fn asked(&mut self, asked: &Asked, kept: &Kept) -> bool {
+        match asked {
+            Asked::Expand => self.open(kept),
+            Asked::Clicked(at) => self.one(kept, *at),
+
+            // Not this one's. A line, the end of a session, the list of what is
+            // running: each is answered where what it is about is held.
+            Asked::Said(_) | Asked::Ended | Asked::Leaving | Asked::Untyped => return false,
+        }
+
+        true
+    }
+
     pub(super) fn open(&mut self, kept: &Kept) {
         if kept.is_empty() {
             return;
@@ -334,7 +353,11 @@ fn moving(arrived: Pressed, window: &mut Window) -> Moved {
         // the box the moment somebody meant to scroll. Ctrl+T for the reason
         // that is nearly the opposite: the plan it opens is in the rows this
         // view is standing over, so the key would move a panel nobody can see.
+        // The key about what is running among them: those have their own list,
+        // opened from the row under the box, and reached from in here it would be
+        // two things standing in one region.
         Pressed::Key(_)
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Explain
         | Pressed::Plan

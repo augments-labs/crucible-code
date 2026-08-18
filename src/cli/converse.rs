@@ -54,6 +54,7 @@ use typing::Asked;
 mod asking;
 mod command;
 mod expanding;
+mod leaving;
 mod mode;
 mod picking;
 mod planning;
@@ -210,6 +211,8 @@ pub(crate) fn converse<T: Terminal>(
     // still open when the turn ends, and the reader who opened it is reading.
     let mut opened = Standing::default();
 
+    let mut listing = leaving::Leaving::default();
+
     // This side of the plan the tools were built with. Made once for the
     // session, because what it holds is a copy of the plan and the setting of
     // the key that opens it, and both outlive every turn.
@@ -271,28 +274,22 @@ pub(crate) fn converse<T: Terminal>(
         }
 
         let between = typing::between(&mut runner, &mut editor, &mut planning, keys);
-        let prompt = match typing::ask(renderer, style, between)? {
+        let asked = typing::ask(renderer, style, between)?;
+
+        // Each of the two things that can stand where the box was answers for
+        // itself, because each holds what it stands over. Whichever of them takes
+        // the key, the box is asked for again with the line still in it.
+        if opened.asked(&asked, &kept) || listing.asked(renderer, style, &asked, &terms.leaving)? {
+            continue;
+        }
+
+        let prompt = match asked {
             Asked::Said(said) => said,
             Asked::Ended => break,
 
-            // Opened here and stood at the top of the loop, where the one
-            // opened under a turn is stood as well.
-            Asked::Expand => {
-                opened.open(&kept);
-                continue;
-            }
+            // Taken above, by whichever of the two the key belongs to.
+            Asked::Expand | Asked::Leaving | Asked::Clicked(_) => continue,
 
-            // The same view over the one result that row offered, which is a
-            // question about what was cut and so is answered where what was cut
-            // is held. A row that offered nothing opens nothing, and the box
-            // comes back with the line still in it.
-            Asked::Clicked(at) => {
-                opened.one(&kept, at);
-                continue;
-            }
-
-            // Nothing to type into: no terminal, or one at only one end. The
-            // line is read the way every other answer on this thread is.
             Asked::Untyped => match unboxed(renderer, &runner, style, input)? {
                 Some(said) => said,
                 None => break,
@@ -613,6 +610,7 @@ fn take<T: Terminal>(
             match typing::during(
                 renderer,
                 typing::During {
+                    background: &terms.leaving,
                     editor: taking.editor,
                     queued: taking.queued,
                     turning: &mut turning,
@@ -841,8 +839,10 @@ fn heard(arrived: Pressed) -> Heard {
 
         Pressed::Resized => Heard::Resized,
 
-        // An arrow, a click, a mode step, a key that means nothing here. None
-        // of them is an answer, and none of them may be read as one.
+        // An arrow, a click, a mode step, a key that means nothing here — the key
+        // about what is already running among them, since this question is what
+        // decides whether the command runs at all. None of them is an answer, and
+        // none of them may be read as one.
         //
         // Ctrl+E is here for now rather than because it belongs here: the
         // question is committed to scrollback a row at a time, and there is no
@@ -857,6 +857,7 @@ fn heard(arrived: Pressed) -> Heard {
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
+        | Pressed::Background
         | Pressed::Cycle
         | Pressed::Explain
         | Pressed::Expand
