@@ -466,14 +466,16 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
                 return nothing;
             };
 
+            let source = Arc::new(OpenAiWeb::new(
+                endpoint,
+                credential,
+                Box::new(Https::new()),
+                model,
+            ));
+
             Reaching {
-                searching: Some(Arc::new(OpenAiWeb::new(
-                    endpoint,
-                    credential,
-                    Box::new(Https::new()),
-                    model,
-                ))),
-                fetching: None,
+                searching: Some(source.clone()),
+                fetching: Some(source),
             }
         }
 

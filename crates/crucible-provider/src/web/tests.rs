@@ -656,3 +656,72 @@ fn a_kimi_refusal_carries_its_status_and_never_the_key() {
     assert!(said.contains("401"), "{said}");
     assert!(!said.contains(SECRET), "{said}");
 }
+
+#[test]
+fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
+    // This vendor has no standalone fetch; opening a page is an action inside
+    // its search tool. The search is confined to the host a verdict was reached
+    // about, because a search let loose reaches hosts nobody approved.
+    let opened = json!({
+        "output": [
+            {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": { "type": "open_page", "url": "https://docs.rs/serde" }
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
+            }
+        ]
+    });
+
+    let (source, replay) = openai(200, opened.to_string());
+    let page = source
+        .fetch("https://docs.rs/serde", &Cancel::new())
+        .expect("a page");
+
+    assert_eq!(page.text.as_ref(), "the page text");
+
+    let sent: serde_json::Value =
+        serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+    assert_eq!(
+        sent.pointer("/tools/0/filters/allowed_domains/0").unwrap(),
+        &json!("docs.rs"),
+        "the search was not confined to the approved host: {sent}",
+    );
+}
+
+#[test]
+fn an_openai_fetch_that_never_opened_the_page_is_not_a_page() {
+    // This vendor will write about an address from memory. An answer that
+    // arrives with no search call behind it was not fetched, and handing it
+    // back as a page is the one failure the caller cannot see.
+    let invented = json!({
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "I know that site well.", "annotations": [] }]
+        }]
+    });
+
+    let problem = openai(200, invented.to_string())
+        .0
+        .fetch("https://docs.rs/serde", &Cancel::new())
+        .expect_err("an unfetched answer to be refused");
+
+    assert!(problem.to_string().contains("without opening"), "{problem}");
+}
+
+#[test]
+fn an_openai_fetch_refuses_an_address_that_names_no_host() {
+    let (source, replay) = openai(200, responded("x", &json!([])));
+
+    assert!(matches!(
+        source.fetch("https://docs.rs@evil.example/", &Cancel::new()),
+        Err(SourceError::Address(_))
+    ));
+    assert!(replay.sent().url.is_empty(), "an opaque address was sent");
+}

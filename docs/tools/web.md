@@ -22,16 +22,19 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
-| OpenAI — API key or ChatGPT plan | yes | — |
+| OpenAI — API key or ChatGPT plan | yes | yes |
 | Moonshot — Kimi Code | yes | yes |
 | Moonshot — open platform | — | — |
 
 A tool with nothing to answer it does not appear at all, rather than appearing
 and failing every call.
 
-OpenAI serves no standalone fetch: reading a page is an action inside its search
-tool rather than a tool of its own, so `web_fetch` is absent there and
-`web_search` will open a page itself when it needs one.
+One difference worth knowing. OpenAI has no standalone fetch — opening a page is
+an action inside its search tool — so `web_fetch` there asks that tool to open
+the one address, confined to its host. What comes back is the model's rendering
+of the page rather than the page itself. Anthropic and Kimi Code hand over the
+document; OpenAI hands over an account of it, which is fine for reading and
+poor for quoting exactly.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`

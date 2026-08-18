@@ -492,11 +492,15 @@ const OPENAI: &str = "openai";
 
 /// OpenAI's hosted web search, reached in a side request to the Responses API.
 ///
-/// Search alone. This vendor serves no standalone fetch — reading a page is an
-/// action *inside* its search tool rather than a tool of its own — so a session
-/// on this provider registers `web_search` and not `web_fetch`. That is the
-/// honest shape: a tool that is registered and cannot work is worse than one
-/// that is absent.
+/// One tool serves both jobs here. This vendor has no standalone fetch: reading
+/// a page is an *action* inside its search tool — `open_page`, alongside
+/// `search` and `find_in_page` — which is how its own agent models it too. So a
+/// fetch is the same tool asked to open one address, with the search confined
+/// to that address's host so it cannot wander off to another.
+///
+/// What that costs is fidelity, and it is worth knowing: what comes back is the
+/// model's rendering of the page rather than the page. Anthropic's fetch hands
+/// over the document; this hands over an account of it.
 #[derive(Debug)]
 pub struct OpenAiWeb {
     credential: Box<dyn Credential>,
@@ -819,4 +823,124 @@ impl Fetch for MoonshotWeb {
             text: text.into(),
         })
     }
+}
+
+impl Fetch for OpenAiWeb {
+    fn name(&self) -> &'static str {
+        OPENAI
+    }
+
+    fn reaches(&self, url: &str) -> Host {
+        host_of(url)
+    }
+
+    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        let reached = Fetch::reaches(self, url);
+        let Host::Named { host, .. } = &reached else {
+            return Err(SourceError::Address(
+                format!("{url} is not an http or https address naming a host").into(),
+            ));
+        };
+
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(OPENAI));
+        }
+
+        let mut outgoing = Outgoing::new();
+        outgoing.set_header("content-type", "application/json");
+        outgoing.set_header("accept", "application/json");
+        self.credential
+            .authorize(&mut outgoing)
+            .map_err(|problem| SourceError::Transport {
+                named: OPENAI,
+                problem: problem.to_string().into(),
+            })?;
+
+        let mut json = Json::new();
+        json.object(|body| {
+            body.text("model", &self.model);
+            body.text(
+                "input",
+                &format!("Open {url} and reproduce its contents as text."),
+            );
+            body.boolean("store", false);
+            body.array("tools", |tools| {
+                tools.object(|declared| {
+                    declared.text("type", "web_search");
+                    // Confined to the host a verdict was reached about. The
+                    // tool is free to search as well as open, and a search let
+                    // loose would reach hosts nobody approved — this is the
+                    // vendor's own control for saying which ones it may touch.
+                    declared.object("filters", |filters| {
+                        filters.array("allowed_domains", |domains| domains.text(host));
+                    });
+                });
+            });
+        });
+
+        let answered = posted(
+            Sending {
+                named: OPENAI,
+                transport: self.transport.as_ref(),
+                endpoint: self.endpoint.as_str(),
+            },
+            outgoing,
+            json.finish(),
+            cancel,
+        )?;
+
+        opened(&answered, url)
+    }
+}
+
+/// The page an answer accounts for.
+///
+/// Refused rather than answered where the tool never ran: this vendor will
+/// happily write about an address from memory, and a page that was never
+/// fetched arriving as though it had been is the one failure the caller cannot
+/// see. A `web_search_call` in the output is the evidence that it went.
+fn opened(answered: &Value, asked: &str) -> Result<Page, SourceError> {
+    let output = answered
+        .pointer("/output")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+
+    if !output
+        .iter()
+        .any(|item| text_at(item, "/type").as_deref() == Some("web_search_call"))
+    {
+        return Err(SourceError::Protocol {
+            named: OPENAI,
+            problem: "the answer was written without opening the page".into(),
+        });
+    }
+
+    let mut text = String::new();
+    for item in output {
+        let parts = item
+            .pointer("/content")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        for part in parts {
+            if let Some(said) = text_at(part, "/text") {
+                text.push_str(&said);
+            }
+        }
+    }
+
+    if text.is_empty() {
+        return Err(SourceError::Protocol {
+            named: OPENAI,
+            problem: "the answer carried no page".into(),
+        });
+    }
+
+    Ok(Page {
+        url: asked.into(),
+        title: None,
+        text: text.into(),
+    })
 }

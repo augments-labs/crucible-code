@@ -12,9 +12,11 @@ Notable changes to crucible. Format follows
   Code's own search and fetch services, and a ChatGPT plan gains search — it was
   withheld on the mistaken grounds that a refusal there would end the turn, which
   is true of a turn's own request and not of the separate one a search makes.
-  `web_fetch` is still absent on OpenAI, which serves no standalone fetch of its
-  own, and on a Moonshot key issued against the open platform rather than Kimi
-  Code.
+  OpenAI gains `web_fetch` too, through the one action its search tool has for
+  opening a page, confined to the host you approved — what comes back there is
+  the model's rendering of the page rather than the page. The only credential
+  left without either is a Moonshot key issued against the open platform rather
+  than Kimi Code.
 
 
 ## [0.7.0] - 2026-08-18
