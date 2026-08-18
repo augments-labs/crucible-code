@@ -32,7 +32,8 @@ use std::time::Duration;
 
 use crucible_auth::Store;
 use crucible_core::{
-    Cancel, Event, Post as _, Remember, Revealed, Sensitivity, ToolCall, Verdict, Workspace,
+    Answer as Chosen, Answered, Cancel, Event, Post as _, Question, Remember, Revealed,
+    Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -962,13 +963,22 @@ fn shown<T: Terminal>(
                 }
             };
 
-            let _ = give.send(match given {
+            let given = match given {
                 putting::Put::Said(answered) => Some(answered),
-                // Left, and no room to stand a panel, are the same answer to
-                // the worker: nobody answered. They differ in what is owed the
-                // reader, not in what the tool is told.
-                putting::Put::Left | putting::Put::Cramped => None,
-            });
+                putting::Put::Left => None,
+
+                // Nothing was drawn and no key was read, so the questions still
+                // have to be put: a window this small is not somebody saying no.
+                putting::Put::Cramped => match cramped(renderer, &questions, style) {
+                    Ok(given) => given,
+                    Err(problem) => {
+                        let _ = give.send(None);
+                        return Err(problem);
+                    }
+                },
+            };
+
+            let _ = give.send(given);
         }
     }
 
@@ -1010,6 +1020,57 @@ fn asked<T: Terminal>(
 
     draw::question(renderer, call, sensitivity, style)?;
     answered(renderer, answers)
+}
+
+/// Puts the questions a row at a time, where there was no room to stand a panel.
+///
+/// One key per question, which is what a window this small can offer: the panel
+/// adds an answer somebody writes themselves, and writing one wants a line
+/// editor and the rows to draw it in. Anything that is not one of the numbers
+/// leaves the whole ask, the way escape does on the panel.
+fn cramped<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    questions: &[Question],
+    style: Style,
+) -> Result<Given, Fatal> {
+    let mut given = Vec::new();
+
+    for (at, question) in questions.iter().enumerate() {
+        draw::asking(renderer, question, at, questions.len(), style)?;
+
+        let Some(taken) = took(question)? else {
+            return Ok(None);
+        };
+
+        draw::answered(renderer, taken.answer())?;
+        given.push(Answered::new([taken.answer()]));
+    }
+
+    Ok(Some(given))
+}
+
+/// Reads one key as one of `question`'s answers, or nothing where it means to
+/// leave.
+fn took(question: &Question) -> Result<Option<Chosen>, Fatal> {
+    loop {
+        let arrived = pressed()?;
+        let Pressed::Key(Key::Char(typed)) = arrived else {
+            if arrived == Pressed::Resized {
+                continue;
+            }
+            return Ok(None);
+        };
+
+        let at = usize::try_from(typed.to_digit(10).unwrap_or(0))
+            .ok()
+            .and_then(|digit| digit.checked_sub(1));
+
+        if let Some(answer) = at.and_then(|at| question.answers().nth(at)) {
+            return Ok(Some(answer.clone()));
+        }
+
+        return Ok(None);
+    }
 }
 
 /// Reads one bounded line, or `None` at end of input.
