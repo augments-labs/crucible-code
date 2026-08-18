@@ -178,6 +178,11 @@ impl Array<'_> {
     pub(crate) fn object(&mut self, fill: impl FnOnce(&mut Object<'_>)) {
         self.item(|json| json.object(fill));
     }
+
+    /// One string, escaped the way every other string here is.
+    pub(crate) fn text(&mut self, value: &str) {
+        self.item(|json| json.text(value));
+    }
 }
 
 /// JSON text as an object, or an empty one.

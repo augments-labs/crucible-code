@@ -19,7 +19,7 @@ use crucible_core::{
     Transcript, Workspace,
 };
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, OpenAi, OpenAiWeb, Unavailable,
+    Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
 };
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{
@@ -432,10 +432,13 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
             }
         }
 
-        // The published API only. A plan's token is served by a different
-        // backend, and that one refuses a field it does not implement with a
-        // 400 that ends the turn — whether it accepts a hosted `web_search` is
-        // not answerable from any documentation, so it is not asked.
+        // Whichever service the credential is for, plan or published API. An
+        // earlier version excluded the plan's backend on the grounds that it
+        // refuses an unimplemented field with a 400 that ends the turn — true
+        // of the *provider's* request, and not of this one. A source makes its
+        // own request, so a refusal there is a failed tool result and the turn
+        // carries on. Withholding the tool bought nothing and cost every plan
+        // session its search.
         //
         // Resolved through `credential`, which is the same resolution the
         // provider used, rather than by reaching for the variable directly.
@@ -463,25 +466,57 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
                 return nothing;
             };
 
-            if endpoint.as_str() != OpenAi::VENDOR.as_str() {
-                return nothing;
-            }
+            let source = Arc::new(OpenAiWeb::new(
+                endpoint,
+                credential,
+                Box::new(Https::new()),
+                model,
+            ));
 
             Reaching {
-                searching: Some(Arc::new(OpenAiWeb::new(
-                    endpoint,
-                    credential,
-                    Box::new(Https::new()),
-                    model,
-                ))),
-                fetching: None,
+                searching: Some(source.clone()),
+                fetching: Some(source),
             }
         }
 
-        // Moonshot serves a search its client has to echo an argument back to,
-        // and a plain search endpoint on the coding platform that no published
-        // documentation describes at path level. Neither is written until one
-        // has been reached with a real credential.
+        // Kimi Code's own two services, which are what this vendor's own client
+        // reaches. Not the `$web_search` builtin: that one answers with the
+        // model's prose rather than with addresses, so it fits no seam a result
+        // travels through.
+        //
+        // They belong to the coding platform, and a key issued against the open
+        // platform is refused by them — so a session whose address was moved
+        // elsewhere gets no web tools rather than two that always fail.
+        "moonshot" => {
+            let Ok((endpoint, credential)) = credential(
+                ApiAudience {
+                    provider: serving.name,
+                    variable,
+                    vendor: Moonshot::CODING,
+                },
+                configured,
+                ProviderAuth {
+                    settings,
+                    from: startup.from,
+                    stored: startup.stored,
+                    subscriptions: startup.subscriptions,
+                },
+            ) else {
+                return nothing;
+            };
+
+            if endpoint.as_str() != Moonshot::CODING.as_str() {
+                return nothing;
+            }
+
+            let source = Arc::new(MoonshotWeb::new(credential, Box::new(Https::new())));
+
+            Reaching {
+                searching: Some(source.clone()),
+                fetching: Some(source),
+            }
+        }
+
         _ => nothing,
     }
 }

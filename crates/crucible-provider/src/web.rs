@@ -244,6 +244,44 @@ fn posted(
     })
 }
 
+/// Posts one body and reads the whole answer as text.
+///
+/// The sibling of [`posted`] for a service whose answer is a page rather than a
+/// document: reading it as JSON would fail on the one shape it always has.
+fn posted_text(
+    sending: Sending<'_>,
+    outgoing: Outgoing,
+    body: String,
+    cancel: &Cancel,
+) -> Result<String, SourceError> {
+    let Sending {
+        named,
+        transport,
+        endpoint,
+    } = sending;
+
+    let redactions = outgoing.redactions();
+
+    let response = transport
+        .post(endpoint, outgoing, body, cancel)
+        .map_err(|problem| SourceError::Transport {
+            named,
+            problem: redactions.redact(&problem.to_string()).into(),
+        })?;
+
+    let answered = read(named, response.body)?;
+
+    if response.status != 200 {
+        return Err(SourceError::Refused {
+            named,
+            status: response.status,
+            message: redactions.redact(&answered).into(),
+        });
+    }
+
+    Ok(answered)
+}
+
 /// The host an address names, or nothing a rule can be written about.
 ///
 /// Strict on purpose, and the strictness is the point: anything carrying user
@@ -454,11 +492,15 @@ const OPENAI: &str = "openai";
 
 /// OpenAI's hosted web search, reached in a side request to the Responses API.
 ///
-/// Search alone. This vendor serves no standalone fetch — reading a page is an
-/// action *inside* its search tool rather than a tool of its own — so a session
-/// on this provider registers `web_search` and not `web_fetch`. That is the
-/// honest shape: a tool that is registered and cannot work is worse than one
-/// that is absent.
+/// One tool serves both jobs here. This vendor has no standalone fetch: reading
+/// a page is an *action* inside its search tool — `open_page`, alongside
+/// `search` and `find_in_page` — which is how its own agent models it too. So a
+/// fetch is the same tool asked to open one address, with the search confined
+/// to that address's host so it cannot wander off to another.
+///
+/// What that costs is fidelity, and it is worth knowing: what comes back is the
+/// model's rendering of the page rather than the page. Anthropic's fetch hands
+/// over the document; this hands over an account of it.
 #[derive(Debug)]
 pub struct OpenAiWeb {
     credential: Box<dyn Credential>,
@@ -629,4 +671,276 @@ fn span(said: &str, annotation: &Value) -> Box<str> {
         .map_or_else(|| said.get(start..), |end| said.get(start..end))
         .unwrap_or_default()
         .into()
+}
+
+/// What Moonshot's source is called.
+const MOONSHOT: &str = "moonshot";
+
+/// Kimi Code's own search and fetch services.
+///
+/// Not a side request to a model: these are two plain endpoints that take a
+/// query or an address and answer with results or a page. That makes this the
+/// simplest of the three sources and the one whose answer needs the least
+/// reading — the service has already pulled the text out of the page by the
+/// time crucible sees it.
+///
+/// They belong to the Kimi Code platform rather than to the open platform, and
+/// a key issued against the latter is refused by them. crucible's Moonshot arm
+/// already posts to the coding host unless a setting moves it, so the ordinary
+/// session reaches these; one pointed elsewhere gets no web tools rather than a
+/// pair that answer every call with somebody else's refusal.
+#[derive(Debug)]
+pub struct MoonshotWeb {
+    credential: Box<dyn Credential>,
+    transport: Box<dyn Transport>,
+    searching: Endpoint,
+    fetching: Endpoint,
+}
+
+impl MoonshotWeb {
+    /// Where Kimi Code answers a query.
+    pub const SEARCH: Endpoint = Endpoint::fixed("https://api.kimi.com/coding/v1/search");
+
+    /// Where Kimi Code answers an address.
+    pub const FETCH: Endpoint = Endpoint::fixed("https://api.kimi.com/coding/v1/fetch");
+
+    /// A source reaching Kimi Code's services with `credential`.
+    #[must_use]
+    pub fn new(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {
+        Self {
+            credential,
+            transport,
+            searching: Self::SEARCH,
+            fetching: Self::FETCH,
+        }
+    }
+
+    /// The headers both services take, including the secret.
+    fn headers(&self, accepting: &str) -> Result<Outgoing, SourceError> {
+        let mut outgoing = Outgoing::new();
+        outgoing.set_header("content-type", "application/json");
+        outgoing.set_header("accept", accepting);
+        self.credential
+            .authorize(&mut outgoing)
+            .map_err(|problem| SourceError::Transport {
+                named: MOONSHOT,
+                problem: problem.to_string().into(),
+            })?;
+        Ok(outgoing)
+    }
+}
+
+impl Search for MoonshotWeb {
+    fn name(&self) -> &'static str {
+        MOONSHOT
+    }
+
+    fn reaches(&self) -> Host {
+        host_of(self.searching.as_str())
+    }
+
+    fn search(&self, query: &str, cancel: &Cancel) -> Result<Vec<SearchResult>, SourceError> {
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(MOONSHOT));
+        }
+
+        let mut json = Json::new();
+        json.object(|body| body.text("text_query", query));
+
+        let answered = posted(
+            Sending {
+                named: MOONSHOT,
+                transport: self.transport.as_ref(),
+                endpoint: self.searching.as_str(),
+            },
+            self.headers("application/json")?,
+            json.finish(),
+            cancel,
+        )?;
+
+        let found = answered
+            .pointer("/search_results")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        Ok(found
+            .iter()
+            .filter_map(|result| {
+                let url = text_at(result, "/url")?;
+                Some(SearchResult {
+                    title: text_at(result, "/title").unwrap_or_else(|| url.clone()),
+                    extract: text_at(result, "/snippet").unwrap_or_default(),
+                    url,
+                })
+            })
+            .collect())
+    }
+}
+
+impl Fetch for MoonshotWeb {
+    fn name(&self) -> &'static str {
+        MOONSHOT
+    }
+
+    fn reaches(&self, url: &str) -> Host {
+        host_of(url)
+    }
+
+    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        if matches!(Fetch::reaches(self, url), Host::Opaque(_)) {
+            return Err(SourceError::Address(
+                format!("{url} is not an http or https address naming a host").into(),
+            ));
+        }
+
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(MOONSHOT));
+        }
+
+        let mut json = Json::new();
+        json.object(|body| body.text("url", url));
+
+        // The service answers with the page's text rather than a document
+        // describing it, so there is nothing to read a final address out of.
+        // What was asked for is what it fetched, as far as anything here can
+        // tell — and the tool compares the two, so saying otherwise would make
+        // every fetch look like a redirect.
+        let text = posted_text(
+            Sending {
+                named: MOONSHOT,
+                transport: self.transport.as_ref(),
+                endpoint: self.fetching.as_str(),
+            },
+            self.headers("text/markdown")?,
+            json.finish(),
+            cancel,
+        )?;
+
+        Ok(Page {
+            url: url.into(),
+            title: None,
+            text: text.into(),
+        })
+    }
+}
+
+impl Fetch for OpenAiWeb {
+    fn name(&self) -> &'static str {
+        OPENAI
+    }
+
+    fn reaches(&self, url: &str) -> Host {
+        host_of(url)
+    }
+
+    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        let reached = Fetch::reaches(self, url);
+        let Host::Named { host, .. } = &reached else {
+            return Err(SourceError::Address(
+                format!("{url} is not an http or https address naming a host").into(),
+            ));
+        };
+
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(OPENAI));
+        }
+
+        let mut outgoing = Outgoing::new();
+        outgoing.set_header("content-type", "application/json");
+        outgoing.set_header("accept", "application/json");
+        self.credential
+            .authorize(&mut outgoing)
+            .map_err(|problem| SourceError::Transport {
+                named: OPENAI,
+                problem: problem.to_string().into(),
+            })?;
+
+        let mut json = Json::new();
+        json.object(|body| {
+            body.text("model", &self.model);
+            body.text(
+                "input",
+                &format!("Open {url} and reproduce its contents as text."),
+            );
+            body.boolean("store", false);
+            body.array("tools", |tools| {
+                tools.object(|declared| {
+                    declared.text("type", "web_search");
+                    // Confined to the host a verdict was reached about. The
+                    // tool is free to search as well as open, and a search let
+                    // loose would reach hosts nobody approved — this is the
+                    // vendor's own control for saying which ones it may touch.
+                    declared.object("filters", |filters| {
+                        filters.array("allowed_domains", |domains| domains.text(host));
+                    });
+                });
+            });
+        });
+
+        let answered = posted(
+            Sending {
+                named: OPENAI,
+                transport: self.transport.as_ref(),
+                endpoint: self.endpoint.as_str(),
+            },
+            outgoing,
+            json.finish(),
+            cancel,
+        )?;
+
+        opened(&answered, url)
+    }
+}
+
+/// The page an answer accounts for.
+///
+/// Refused rather than answered where the tool never ran: this vendor will
+/// happily write about an address from memory, and a page that was never
+/// fetched arriving as though it had been is the one failure the caller cannot
+/// see. A `web_search_call` in the output is the evidence that it went.
+fn opened(answered: &Value, asked: &str) -> Result<Page, SourceError> {
+    let output = answered
+        .pointer("/output")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+
+    if !output
+        .iter()
+        .any(|item| text_at(item, "/type").as_deref() == Some("web_search_call"))
+    {
+        return Err(SourceError::Protocol {
+            named: OPENAI,
+            problem: "the answer was written without opening the page".into(),
+        });
+    }
+
+    let mut text = String::new();
+    for item in output {
+        let parts = item
+            .pointer("/content")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        for part in parts {
+            if let Some(said) = text_at(part, "/text") {
+                text.push_str(&said);
+            }
+        }
+    }
+
+    if text.is_empty() {
+        return Err(SourceError::Protocol {
+            named: OPENAI,
+            problem: "the answer carried no page".into(),
+        });
+    }
+
+    Ok(Page {
+        url: asked.into(),
+        title: None,
+        text: text.into(),
+    })
 }

@@ -569,3 +569,159 @@ fn a_fetch_asks_for_room_the_page_itself_will_take() {
         "the tool was not told what to keep: {sent}",
     );
 }
+
+fn kimi(status: u16, body: impl Into<String>) -> (MoonshotWeb, Arc<Replay>) {
+    let replay = Arc::new(Replay::new(status, body));
+    let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+
+    (
+        MoonshotWeb::new(Box::new(credential), Box::new(Arc::clone(&replay))),
+        replay,
+    )
+}
+
+#[test]
+fn kimi_code_answers_a_query_with_its_own_results() {
+    // A plain service rather than a side request to a model: the query goes in
+    // and addresses come back, already extracted.
+    let answered = json!({
+        "search_results": [
+            {
+                "title": "Serde",
+                "url": "https://serde.rs",
+                "snippet": "A framework for serializing Rust data structures."
+            },
+            { "url": "https://docs.rs/serde" }
+        ]
+    });
+
+    let (source, replay) = kimi(200, answered.to_string());
+    let found = source
+        .search("serde", &Cancel::new())
+        .expect("an answer that parses");
+
+    assert_eq!(found.len(), 2);
+    let first = found.first().expect("a first result");
+    assert_eq!(first.title.as_ref(), "Serde");
+    assert!(first.extract.contains("serializing"), "{}", first.extract);
+
+    // A result with no title of its own is still an address worth having.
+    let second = found.get(1).expect("a second result");
+    assert_eq!(second.title.as_ref(), "https://docs.rs/serde");
+
+    let sent: serde_json::Value =
+        serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+    assert_eq!(sent.pointer("/text_query").unwrap(), &json!("serde"));
+    assert_eq!(replay.sent().url, MoonshotWeb::SEARCH.as_str());
+    assert!(!replay.sent().body.contains(SECRET));
+}
+
+#[test]
+fn kimi_code_answers_an_address_with_the_page_it_extracted() {
+    // The body *is* the page: this service answers text rather than a document
+    // describing one, which is why it is read as text and not as JSON.
+    let (source, replay) = kimi(200, "# Serde\n\nA framework.");
+    let page = source
+        .fetch("https://serde.rs/", &Cancel::new())
+        .expect("a page");
+
+    assert!(page.text.contains("A framework."), "{}", page.text);
+    assert_eq!(page.url.as_ref(), "https://serde.rs/");
+    assert_eq!(replay.sent().url, MoonshotWeb::FETCH.as_str());
+
+    let sent: serde_json::Value =
+        serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+    assert_eq!(sent.pointer("/url").unwrap(), &json!("https://serde.rs/"));
+}
+
+#[test]
+fn kimi_code_refuses_an_address_that_names_no_host_before_sending_it() {
+    let (source, replay) = kimi(200, "text");
+
+    assert!(matches!(
+        source.fetch("https://docs.rs@evil.example/", &Cancel::new()),
+        Err(SourceError::Address(_))
+    ));
+    assert!(replay.sent().url.is_empty(), "an opaque address was sent");
+}
+
+#[test]
+fn a_kimi_refusal_carries_its_status_and_never_the_key() {
+    let problem = kimi(401, "unauthorized")
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("a 401 to be refused");
+
+    let said = problem.to_string();
+    assert!(said.contains("401"), "{said}");
+    assert!(!said.contains(SECRET), "{said}");
+}
+
+#[test]
+fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
+    // This vendor has no standalone fetch; opening a page is an action inside
+    // its search tool. The search is confined to the host a verdict was reached
+    // about, because a search let loose reaches hosts nobody approved.
+    let opened = json!({
+        "output": [
+            {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": { "type": "open_page", "url": "https://docs.rs/serde" }
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
+            }
+        ]
+    });
+
+    let (source, replay) = openai(200, opened.to_string());
+    let page = source
+        .fetch("https://docs.rs/serde", &Cancel::new())
+        .expect("a page");
+
+    assert_eq!(page.text.as_ref(), "the page text");
+
+    let sent: serde_json::Value =
+        serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+    assert_eq!(
+        sent.pointer("/tools/0/filters/allowed_domains/0").unwrap(),
+        &json!("docs.rs"),
+        "the search was not confined to the approved host: {sent}",
+    );
+}
+
+#[test]
+fn an_openai_fetch_that_never_opened_the_page_is_not_a_page() {
+    // This vendor will write about an address from memory. An answer that
+    // arrives with no search call behind it was not fetched, and handing it
+    // back as a page is the one failure the caller cannot see.
+    let invented = json!({
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "I know that site well.", "annotations": [] }]
+        }]
+    });
+
+    let problem = openai(200, invented.to_string())
+        .0
+        .fetch("https://docs.rs/serde", &Cancel::new())
+        .expect_err("an unfetched answer to be refused");
+
+    assert!(problem.to_string().contains("without opening"), "{problem}");
+}
+
+#[test]
+fn an_openai_fetch_refuses_an_address_that_names_no_host() {
+    let (source, replay) = openai(200, responded("x", &json!([])));
+
+    assert!(matches!(
+        source.fetch("https://docs.rs@evil.example/", &Cancel::new()),
+        Err(SourceError::Address(_))
+    ));
+    assert!(replay.sent().url.is_empty(), "an opaque address was sent");
+}

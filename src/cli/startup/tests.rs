@@ -524,25 +524,23 @@ fn anthropic_serves_both_halves_of_reaching_the_web() {
 }
 
 #[test]
-fn openai_serves_a_search_and_no_fetch() {
+fn openai_serves_both_through_one_tool() {
     // Reading a page is an action inside this vendor's search tool rather than
-    // a tool of its own, so there is nothing to answer `web_fetch` with — and a
-    // tool registered against nothing fails every call it is ever given.
+    // a tool of its own, which is a fact about the wire and not about what the
+    // model is offered: both tools appear and one service answers them.
     let reaching = reaching_for("openai", Some("gpt-5.6"));
 
     assert!(reaching.searching.is_some());
-    assert!(
-        reaching.fetching.is_none(),
-        "a fetch was advertised with nothing to serve it",
-    );
+    assert!(reaching.fetching.is_some());
 }
 
 #[test]
-fn a_provider_with_no_source_written_yet_advertises_neither() {
+fn moonshot_serves_both_halves_from_kimi_code() {
+    // Its own two services, which is what this vendor's own client reaches.
     let reaching = reaching_for("moonshot", Some("kimi-k2"));
 
-    assert!(reaching.searching.is_none());
-    assert!(reaching.fetching.is_none());
+    assert!(reaching.searching.is_some());
+    assert!(reaching.fetching.is_some());
 }
 
 #[test]
