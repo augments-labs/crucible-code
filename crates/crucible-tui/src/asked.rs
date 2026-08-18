@@ -71,6 +71,9 @@ const GAP: usize = 3;
 /// by whatever wrote the call rather than by the panel drawing it.
 const MOST: usize = 10;
 
+/// What opens the reader's own line about a question.
+const NOTED: &str = "Note: ";
+
 /// What the box says where an answer has nothing to show.
 ///
 /// The box is drawn anyway. One that vanished would move every row under it as
@@ -106,6 +109,21 @@ pub struct Choice<'a> {
     pub chosen: Option<bool>,
     /// The rows of what this answer would look like, or empty.
     pub shows: &'a [&'a str],
+}
+
+/// A line somebody is writing, and where their cursor sits in it.
+///
+/// The column is a display column rather than a count of characters, because a
+/// cursor placed by counting characters lands inside a glyph two columns wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Writing<'a> {
+    /// What has been typed so far.
+    pub text: &'a str,
+    /// How many columns from the start of the line the cursor is.
+    pub column: usize,
+    /// What the row says while nothing has been typed. Drawn quiet, because it
+    /// is not what the answer is called — it is what to do with the row.
+    pub placeholder: &'a str,
 }
 
 /// One question read back, with what was answered to it.
@@ -145,6 +163,13 @@ pub struct Asked<'a> {
     pub marked: usize,
     /// The reader's own line about this question, or empty.
     pub note: &'a str,
+    /// The line being written, or `None` where nothing is.
+    ///
+    /// Which row it belongs to is [`Asked::at_note`]'s answer: the note, or the
+    /// answer the mark is on.
+    pub writing: Option<Writing<'a>>,
+    /// Whether what is being written is the note rather than an answer.
+    pub at_note: bool,
     /// The answer under the rule, which answers the whole ask rather than this
     /// question. Empty draws neither it nor the rule.
     pub leaves: &'a str,
@@ -166,9 +191,12 @@ impl Asked<'_> {
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> (Vec<Row>, Option<Caret>) {
         for spacing in Spacing::LADDER {
-            let rows = self.laid(columns, glyphs, spacing);
+            let (rows, caret) = self.laid(columns, glyphs, spacing);
             if !rows.is_empty() && rows.len() <= room {
-                return (rows, None);
+                // A caret on a row that was given up would park the cursor
+                // where the frame does not go, and the next frame would rewind
+                // over the wrong rows.
+                return (rows, caret.filter(|caret| caret.row < room));
             }
         }
 
@@ -176,7 +204,7 @@ impl Asked<'_> {
     }
 
     /// The panel at one rung of the ladder.
-    fn laid(&self, columns: usize, glyphs: Glyphs, spacing: Spacing) -> Vec<Row> {
+    fn laid(&self, columns: usize, glyphs: Glyphs, spacing: Spacing) -> (Vec<Row>, Option<Caret>) {
         let inner = columns.saturating_sub(AROUND);
         let across = inner.saturating_sub(SAID);
 
@@ -186,11 +214,13 @@ impl Asked<'_> {
         // answer cannot do either — it is the mark, the number and the box, and
         // an answer drawn without them is not an answer anybody can take.
         if self.answers.is_empty() || inner <= self.gutter() {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         if !self.given.is_empty() && inner <= PAYLOAD + AROUND {
-            return Vec::new();
+            return (Vec::new(), None);
         }
+
+        let mut caret = None;
 
         let laid = Laid {
             inner,
@@ -228,7 +258,23 @@ impl Asked<'_> {
         }
 
         for (at, answer) in self.answers.iter().enumerate() {
+            if at == self.marked && !self.at_note && self.writing.is_some() {
+                caret = Some(Caret {
+                    row: rows.len(),
+                    column: 1 + self.written(at),
+                });
+            }
             rows.extend(self.answered(at, answer, laid));
+        }
+
+        if let Some(note) = self.noted(laid) {
+            if self.at_note && self.writing.is_some() {
+                caret = Some(Caret {
+                    row: rows.len(),
+                    column: 1 + PAYLOAD + wide(NOTED) + self.column(),
+                });
+            }
+            rows.push(note);
         }
 
         rows.extend(self.shown(laid));
@@ -249,7 +295,43 @@ impl Asked<'_> {
             rows.push(said(SAID, Slot::Quiet, clip(self.footer, room)));
         }
 
-        rows
+        (rows, caret)
+    }
+
+    /// Where the cursor sits on the answer at `at`, counted from the first
+    /// column inside the frame.
+    fn written(&self, at: usize) -> usize {
+        SAID + 1 + wide(&format!(" {}. ", at + 1)) + self.column()
+    }
+
+    /// How far into the line being written the cursor is, and zero where
+    /// nothing is being written.
+    fn column(&self) -> usize {
+        self.writing.map_or(0, |writing| writing.column)
+    }
+
+    /// The reader's own line about this question, or nothing where there is
+    /// none and none is being written.
+    ///
+    /// Drawn only once there is something to draw. The key that opens one is
+    /// named in the footer instead, so the offer costs no row.
+    fn noted(&self, laid: Laid) -> Option<Row> {
+        let writing = self.writing.filter(|_| self.at_note);
+        let text = writing.map_or(self.note, |writing| writing.text);
+        if text.is_empty() && writing.is_none() {
+            return None;
+        }
+
+        let room = laid
+            .inner
+            .saturating_sub(PAYLOAD + wide(NOTED))
+            .saturating_sub(SAID);
+        let row = Row::new()
+            .then(Slot::Plain, " ".repeat(PAYLOAD))
+            .then(Slot::Quiet, NOTED)
+            .then(Slot::Plain, clip(text, room));
+
+        Some(framed(row, laid.inner, laid.glyphs))
     }
 
     /// The one box every answer in this question is drawn in, and `None` where
@@ -527,6 +609,26 @@ impl Asked<'_> {
         let boxed = answer.chosen.is_some();
         let front = SAID + 1 + wide(&number) + usize::from(boxed) * 2;
         let slot = if marked { Slot::Strong } else { Slot::Plain };
+
+        if marked
+            && !self.at_note
+            && let Some(writing) = self.writing
+        {
+            let room = inner.saturating_sub(front);
+            let (slot, text) = if writing.text.is_empty() {
+                (Slot::Quiet, writing.placeholder)
+            } else {
+                (Slot::Plain, writing.text)
+            };
+
+            let row = Row::new()
+                .then(Slot::Plain, " ".repeat(SAID))
+                .then(Slot::Accent, glyphs.caret())
+                .then(Slot::Strong, &number)
+                .then(slot, clip(text, room));
+
+            return vec![framed(row, inner, glyphs)];
+        }
 
         let mut rows: Vec<Row> = fold(answer.answer, inner.saturating_sub(front))
             .into_iter()

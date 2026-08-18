@@ -43,7 +43,7 @@ mod welcome;
 mod width;
 mod working;
 
-pub use asked::{Asked, Choice, Given, Stop};
+pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use clear::{CLEARED, clear};
 pub use color::{Palette, Slot};

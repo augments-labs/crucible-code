@@ -88,6 +88,8 @@ fn asked<'a>(answers: &'a [Choice<'a>], stops: &'a [Stop<'a>]) -> Asked<'a> {
         answers,
         marked: 0,
         note: "",
+        writing: None,
+        at_note: false,
         leaves: "Say it in the prompt instead",
         footer: "esc to cancel · ←→ between questions · n for a note",
     }
@@ -597,6 +599,158 @@ fn the_whole_panel_on_an_answer_with_nothing_to_show() {
     panel.at = 2;
     panel.question = "You have no status line. Which one shall I set up here?";
     panel.marked = 2;
+
+    insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
+}
+
+#[test]
+fn an_empty_answer_being_written_shows_its_placeholder_and_parks_the_cursor_in_it() {
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 2;
+    panel.writing = Some(Writing {
+        text: "",
+        column: 0,
+        placeholder: "Something else",
+    });
+
+    let (rows, caret) = panel.within(80, 40, Glyphs::Unicode);
+    let caret = caret.expect("the cursor belongs in the line being written");
+
+    let row = rows.get(caret.row).expect("a row the panel drew");
+    assert!(row.text().contains("Something else"), "{:?}", row.text());
+
+    // The placeholder is not an answer's name, so it is drawn quiet — and the
+    // cursor sits on its first column rather than after it.
+    let quiet = row
+        .paint(colourful())
+        .contains(colourful().open(Slot::Quiet));
+    assert!(quiet, "{:?}", row.paint(colourful()));
+    assert_eq!(caret.column, 1 + 2 + 1 + " 3. ".len());
+}
+
+#[test]
+fn the_cursor_lands_on_the_column_the_editor_says() {
+    // Display columns, not characters: a CJK glyph is two columns wide, and a
+    // cursor placed by counting characters would sit inside one.
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 2;
+    panel.writing = Some(Writing {
+        text: "日本語",
+        column: 6,
+        placeholder: "Something else",
+    });
+
+    let (rows, caret) = panel.within(80, 40, Glyphs::Unicode);
+    let caret = caret.expect("the cursor belongs in the line being written");
+
+    assert_eq!(caret.column, 1 + 2 + 1 + " 3. ".len() + 6);
+    assert!(
+        rows.get(caret.row)
+            .is_some_and(|row| row.text().contains("日本語")),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_note_is_drawn_only_once_there_is_one() {
+    let answers = languages();
+    let stops = stops();
+    let bare = art(&asked(&answers, &stops), 80, 40);
+    assert!(
+        !bare.iter().any(|row| row.contains("Note:")),
+        "a row was spent on an offer the footer already makes: {bare:#?}"
+    );
+
+    let mut panel = asked(&answers, &stops);
+    panel.note = "the examples have to compile as they stand";
+    let noted = art(&panel, 80, 40);
+
+    assert!(
+        noted
+            .iter()
+            .any(|row| row.contains("Note: the examples have to compile as they stand")),
+        "{noted:#?}"
+    );
+}
+
+#[test]
+fn a_note_being_written_takes_the_cursor_rather_than_the_answer() {
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.at_note = true;
+    panel.writing = Some(Writing {
+        text: "compile as they stand",
+        column: 21,
+        placeholder: "",
+    });
+
+    let (rows, caret) = panel.within(80, 40, Glyphs::Unicode);
+    let caret = caret.expect("the cursor belongs in the note");
+    let row = rows.get(caret.row).expect("a row the panel drew");
+
+    assert!(
+        row.text().contains("Note: compile as they stand"),
+        "{row:?}"
+    );
+    assert_eq!(caret.column, 1 + 4 + "Note: ".len() + 21);
+}
+
+#[test]
+fn a_row_that_was_not_drawn_is_never_pointed_at() {
+    // A caret on a row the ladder gave up would park the cursor somewhere the
+    // frame does not go, and the next frame would rewind over the wrong rows.
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.writing = Some(Writing {
+        text: "Zig",
+        column: 3,
+        placeholder: "Something else",
+    });
+    panel.marked = 2;
+
+    for room in 0..=4 {
+        let (rows, caret) = panel.within(80, room, Glyphs::Unicode);
+        assert!(rows.is_empty(), "at {room}");
+        assert!(caret.is_none(), "at {room}");
+    }
+
+    // And wherever it does point, it points at a row that exists.
+    for room in 5..=40 {
+        let (rows, caret) = panel.within(80, room, Glyphs::Unicode);
+        if let Some(caret) = caret {
+            assert!(caret.row < rows.len(), "at {room}: {caret:?}");
+        }
+    }
+}
+
+#[test]
+fn the_whole_panel_with_an_answer_being_written() {
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 2;
+    panel.writing = Some(Writing {
+        text: "Zig",
+        column: 3,
+        placeholder: "Something else",
+    });
+    panel.footer = "esc to stop typing · enter to keep it";
+
+    insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
+}
+
+#[test]
+fn the_whole_panel_with_a_note_on_the_question() {
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.note = "the examples have to compile as they stand";
 
     insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
 }
