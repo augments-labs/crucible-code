@@ -312,10 +312,16 @@ jobs:
   # requires, and a reading nobody should compare against is worse sitting
   # beside the downloads than absent from them. The environment file says what
   # produced them, for whoever goes to the run to read the trend.
+  # `ubuntu-latest`, and the label is the whole point: on `ubuntu-22.04` this
+  # job ran `scripts/bench.sh` for eighty-five minutes without finishing, twice,
+  # while CI's identical invocation on `ubuntu-latest` takes under three. Same
+  # script, same ripgrep, same inputs — only the image differed. Nothing here
+  # diagnoses why; what it does is stop shipping a release behind a probe that
+  # only hangs on the image nothing else uses.
   budgets:
     name: release budgets
     needs: gate
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
