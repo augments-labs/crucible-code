@@ -340,7 +340,10 @@ impl Tool for Bash {
         #[cfg(windows)]
         let child = {
             if let Err(source) = scope.attach(&child) {
-                output::discard(child, &scope);
+                // Consumed, because the job handle goes with the command it was
+                // holding: closing it is what ends anything the shell managed to
+                // start before the assignment failed.
+                output::discard(child, scope);
                 return Err(io("could not contain the command", source));
             }
             child
