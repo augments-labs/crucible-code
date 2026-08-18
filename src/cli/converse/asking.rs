@@ -172,6 +172,16 @@ impl Words {
                     "This command needs your verdict."
                 },
             ),
+
+            // The whole address, never the host a rule is matched against. The
+            // host is what standing policy is written about; the path is what
+            // is actually being sent, and consent to a host is not consent to
+            // whatever page of it somebody names.
+            Sensitivity::ReachesNetwork { host } => (
+                format!("{name} request"),
+                flattened(host.sent()),
+                "This request needs your verdict. It leaves your machine.",
+            ),
         };
 
         Self {

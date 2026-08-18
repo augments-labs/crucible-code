@@ -80,6 +80,15 @@ fn running(parts: &[&str]) -> Sensitivity {
     }
 }
 
+fn reaching(url: &str, host: &str) -> Sensitivity {
+    Sensitivity::ReachesNetwork {
+        host: Host::Named {
+            url: url.into(),
+            host: host.into(),
+        },
+    }
+}
+
 fn with(mode: Mode, written: &[(Disposition, &str)]) -> Permission {
     let mut rules = Rules::new();
     for (kind, text) in written {
@@ -839,4 +848,123 @@ fn the_target_a_call_is_decided_about_holds_both_spellings() {
         target.absolute(),
         Some(&*written(&walk.workspace.root().join("sub/keys.txt")))
     );
+}
+
+#[test]
+fn no_mode_short_of_full_access_reaches_the_web_unasked() {
+    // The variant exists for this. A search or a fetch reads and changes
+    // nothing here, so the shape it most resembles is `ReadOnly` — and
+    // `ReadOnly` is allowed in every mode, which would mean the one call whose
+    // effect leaves the machine is the one nobody is ever asked about.
+    //
+    // `allowEdits` asks too, and that is the half worth stating: the mode
+    // relaxes writing files in a workspace already entrusted to crucible, and
+    // sending a query to somebody else's service is not that.
+    for mode in [Mode::Ask, Mode::AllowEdits] {
+        let mut permission = with(mode, &[]);
+        let mut answer = Answer::once(Verdict::Allow);
+
+        assert!(
+            permission
+                .decide(
+                    &call("web_search"),
+                    &reaching("https://example.com/q", "example.com"),
+                    &mut answer,
+                )
+                .ran(),
+            "{mode}",
+        );
+
+        assert_eq!(answer.asked, 1, "{mode} reached the web unasked");
+    }
+}
+
+#[test]
+fn full_access_reaches_the_web_without_asking() {
+    let mut permission = with(Mode::FullAccess, &[]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(
+                &call("web_search"),
+                &reaching("https://example.com/q", "example.com"),
+                &mut answer,
+            )
+            .ran()
+    );
+    assert_eq!(answer.asked, 0, "full access asked about a call");
+}
+
+#[test]
+fn a_rule_naming_a_host_reaches_it_without_asking() {
+    // The point of the variant. A host is a thing standing policy can be
+    // written about, the way a command is — which is what a call served by a
+    // provider's own tool could never have offered, because crucible would
+    // not have been the one making the request.
+    let mut permission = with(Mode::Ask, &[(Disposition::Allow, "web_fetch(docs.rs)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(
+                &call("web_fetch"),
+                &reaching("https://docs.rs/serde/latest", "docs.rs"),
+                &mut answer,
+            )
+            .ran()
+    );
+    assert_eq!(answer.asked, 0, "a rule named the host and it still asked");
+}
+
+#[test]
+fn a_rule_about_one_host_says_nothing_about_another() {
+    let mut permission = with(Mode::Ask, &[(Disposition::Allow, "web_fetch(docs.rs)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+
+    assert!(
+        permission
+            .decide(
+                &call("web_fetch"),
+                &reaching("https://evil.example/x", "evil.example"),
+                &mut answer,
+            )
+            .ran()
+    );
+    assert_eq!(
+        answer.asked, 1,
+        "a rule about docs.rs answered for another host"
+    );
+}
+
+#[test]
+fn a_url_nobody_could_read_is_covered_only_by_a_blanket() {
+    // The shape `Command::Opaque` has, for the same reason. A URL that named no
+    // host must match no host rule rather than be guessed into the nearest
+    // thing that looks like one — `https://docs.rs@evil.example/` is the
+    // reading that guessing would get wrong.
+    let unreadable = Sensitivity::ReachesNetwork {
+        host: Host::Opaque("https://docs.rs@evil.example/".into()),
+    };
+
+    let mut narrow = with(Mode::Ask, &[(Disposition::Allow, "web_fetch(docs.rs)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+    assert!(
+        narrow
+            .decide(&call("web_fetch"), &unreadable, &mut answer)
+            .ran()
+    );
+    assert_eq!(
+        answer.asked, 1,
+        "an unreadable URL was covered by a host rule"
+    );
+
+    let mut blanket = with(Mode::Ask, &[(Disposition::Allow, "web_fetch(*)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+    assert!(
+        blanket
+            .decide(&call("web_fetch"), &unreadable, &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 0, "a blanket did not cover an unreadable URL");
 }

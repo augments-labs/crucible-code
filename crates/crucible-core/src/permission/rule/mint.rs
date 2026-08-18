@@ -9,7 +9,7 @@ use std::fmt;
 
 use crate::tool::ToolCall;
 
-use super::super::{Command, Sensitivity};
+use super::super::{Command, Host, Sensitivity};
 
 /// The text of one rule, as it would be written in a configuration file.
 ///
@@ -62,8 +62,22 @@ pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
             _ => return None,
         },
 
+        // The host, never the URL. A yes to one page of a site is not a yes to
+        // the site — but a rule naming the page would be a rule that never
+        // matches again, since the next request carries a different path. The
+        // host is the narrowest subject a second call can actually share.
+        Sensitivity::ReachesNetwork {
+            host: Host::Named { host, .. },
+        } => host,
+
+        // Both are a call with no subject an honest rule could name. Spelled
+        // with `|` rather than merged away, so a third such shape still stops
+        // the build here.
         Sensitivity::SpawnsProcess {
             command: Command::Opaque(_),
+        }
+        | Sensitivity::ReachesNetwork {
+            host: Host::Opaque(_),
         } => return None,
     };
 

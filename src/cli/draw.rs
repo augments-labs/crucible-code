@@ -724,6 +724,13 @@ fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<Stri
         Sensitivity::SpawnsProcess { command } => {
             format!("? {} wants to run: {}", call.name, command.sent())
         }
+
+        // The address as it was sent, for the reason the command line is: a
+        // rule is about the host, and a question showing only the host would
+        // be asking about something narrower than what is going out.
+        Sensitivity::ReachesNetwork { host } => {
+            format!("? {} wants to reach: {}", call.name, host.sent())
+        }
     };
 
     wrapped(&said, columns)
