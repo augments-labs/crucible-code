@@ -16,6 +16,10 @@ use super::*;
 
 /// A registry with `count` commands running in it.
 ///
+/// `case` has to be this test's own and nobody else's: the tree it names is
+/// removed and remade, so two tests in one process sharing a name delete each
+/// other's workspace part way through.
+///
 /// Real ones, started through the real path: the registry only holds what it was
 /// handed, so a list of processes with no processes behind it would be a test
 /// about nothing. The verdict comes from the engine in the mode that asks about
@@ -39,8 +43,22 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
             panic!("full access asked about a command");
         };
 
-        drop(tool.run(approved, &Unwatched));
+        let output = tool.run(approved, &Unwatched).expect("the command started");
+        assert!(
+            !output.is_failed(),
+            "a command this test needs running was refused: {}",
+            output.text()
+        );
     }
+
+    // Asserted rather than assumed. What these tests are about is what a key does
+    // to a list, and a list one command short would fail them somewhere the reason
+    // is not written down.
+    assert_eq!(
+        left.count(),
+        count,
+        "the registry did not take every command this test started"
+    );
 
     (left, here)
 }
@@ -56,7 +74,7 @@ impl Ask for Nobody {
 
 #[test]
 fn the_arrows_walk_the_list_and_stop_at_its_ends() {
-    let (left, _here) = running("two", 2);
+    let (left, _here) = running("arrows", 2);
     let mut leaving = Leaving::default();
 
     assert_eq!(leaving.against(Pressed::Up, &left), Moved::Still);
@@ -73,7 +91,7 @@ fn the_arrows_walk_the_list_and_stop_at_its_ends() {
 fn the_key_that_opened_it_closes_it() {
     // What every other `ctrl+` key here does, and what makes it a toggle rather
     // than a door.
-    let (left, _here) = running("one", 1);
+    let (left, _here) = running("closing", 1);
 
     for closing in [Pressed::Background, Pressed::Escape] {
         let mut leaving = Leaving::default();
@@ -85,7 +103,7 @@ fn the_key_that_opened_it_closes_it() {
 fn stopping_the_last_one_takes_the_list_with_it() {
     // Nothing left to stand, and a frame of empty chrome is worse than the row
     // under the box that opened this.
-    let (left, _here) = running("one", 1);
+    let (left, _here) = running("stopping-last", 1);
     let mut leaving = Leaving::default();
 
     assert_eq!(
@@ -97,7 +115,7 @@ fn stopping_the_last_one_takes_the_list_with_it() {
 
 #[test]
 fn stopping_one_of_several_keeps_the_list_open() {
-    let (left, _here) = running("two", 2);
+    let (left, _here) = running("stopping-one", 2);
     let mut leaving = Leaving::default();
 
     assert_eq!(
@@ -109,7 +127,7 @@ fn stopping_one_of_several_keeps_the_list_open() {
 
 #[test]
 fn enter_shows_what_one_has_printed_and_the_way_back_is_the_list() {
-    let (left, _here) = running("one", 1);
+    let (left, _here) = running("showing", 1);
     let mut leaving = Leaving::default();
 
     assert_eq!(
@@ -126,7 +144,7 @@ fn enter_shows_what_one_has_printed_and_the_way_back_is_the_list() {
 
 #[test]
 fn a_command_that_ended_while_the_list_was_open_brings_the_mark_back_inside_it() {
-    let (left, _here) = running("two", 2);
+    let (left, _here) = running("ended-while-open", 2);
     let mut leaving = Leaving::default();
     leaving.against(Pressed::Down, &left);
     assert_eq!(leaving.at, 1);
