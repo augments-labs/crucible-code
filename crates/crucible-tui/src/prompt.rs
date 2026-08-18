@@ -243,6 +243,31 @@ impl Prompt<'_> {
         Some(shown.gone + above + into)
     }
 
+    /// Whether `row` of this component is the row naming what is still running,
+    /// with something there to name.
+    ///
+    /// Here rather than in the caller for the reason [`Prompt::clicked`] is here:
+    /// how tall the box came out at this width is this component's arithmetic, and
+    /// a caller that worked out which row the status ended up on would be a second
+    /// copy of it — wrong the first time either of them changed.
+    ///
+    /// `false` with nothing running, because then the row names no door and a
+    /// click on it is a click on the mode and the model, which are facts rather
+    /// than offers.
+    #[must_use]
+    pub fn counting(&self, columns: usize, row: usize) -> bool {
+        if self.running.is_none_or(|running| running == 0) {
+            return false;
+        }
+
+        let framed = columns >= FRAMED_AT;
+        let first = if framed { FRAMED_ROW } else { 0 };
+        let typed = self.window(inner(columns)).rows.len();
+        let border = usize::from(framed);
+
+        row == first.saturating_add(typed).saturating_add(border)
+    }
+
     /// The line as it is left in scrollback once it has been typed.
     ///
     /// The caret again, so the record reads the way the box did. Not clipped:

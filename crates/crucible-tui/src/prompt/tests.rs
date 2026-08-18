@@ -745,3 +745,41 @@ fn what_is_running_is_the_one_thing_on_that_row_drawn_in_the_accent() {
 
     assert_eq!(accented, ["2 commands"], "{:?}", status.text());
 }
+
+#[test]
+fn a_click_on_the_row_naming_what_is_running_lands_on_it() {
+    // The row is the affordance, and it is the component that knows which row it
+    // came out on: a caller working that out would be a second copy of this box's
+    // own arithmetic.
+    // Wide enough that the count is drawn at all: a row that gave it up has no
+    // door on it, which is what the ladder above already asserts.
+    for columns in [80, 120] {
+        let box_of = leaving("what I typed", 2);
+        let rows = box_of.rows(columns, Glyphs::Unicode);
+
+        let status = rows
+            .iter()
+            .position(|row| row.text().contains("2 commands"))
+            .expect("a row naming what is running");
+
+        assert!(box_of.counting(columns, status), "at {columns} columns");
+        assert!(
+            !box_of.counting(columns, status + 1),
+            "at {columns} columns"
+        );
+        assert!(
+            !box_of.counting(columns, status.saturating_sub(1)),
+            "at {columns} columns"
+        );
+    }
+}
+
+#[test]
+fn nothing_running_makes_that_row_no_door() {
+    // With nothing to name, the row is the mode and the model — facts rather than
+    // offers, and a click on a fact does nothing.
+    let box_of = asking_of("");
+    let rows = box_of.rows(80, Glyphs::Unicode);
+
+    assert!(!box_of.counting(80, rows.len() - 1));
+}

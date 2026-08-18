@@ -116,7 +116,9 @@ that row you can act on:
 ```
 
 <kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was — the same
-key that put one down, which is how every other key here works. Each row says how
+key that put one down, which is how every other key here works — and so does
+clicking that row, since the count is the only thing on it that is an offer rather
+than a fact. Each row says how
 long it has been running, how many lines it has printed and how much:
 
 ```

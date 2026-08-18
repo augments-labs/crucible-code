@@ -221,6 +221,25 @@ pub(crate) fn between<'a>(
 /// hear about it.
 const BEAT: Duration = Duration::from_millis(250);
 
+/// Stands the list of what is running, and says the box is owed a frame.
+///
+/// One place, because the key and the count under the box are one door: the key
+/// names it and the row is it, and two call sites doing the same two things is how
+/// they come to do slightly different ones.
+///
+/// Stood here rather than handed back to the loop above, unlike the view of what
+/// the transcript cut: that key means the same thing while a turn runs, and this
+/// one means something else there entirely.
+fn stood<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    listing: &mut Leaving,
+    left: &Background,
+) -> Result<bool, Fatal> {
+    listing.stand(renderer, style, left)?;
+    Ok(true)
+}
+
 /// Waits for a key, reporting any command that ended while nobody was typing.
 ///
 /// `None` where one did: the count under the box has moved and a line has been
@@ -332,14 +351,7 @@ pub(crate) fn ask<T: Terminal>(
         // a key that moved nothing costs no frame, and the arms that end the
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
-            // Stood here rather than handed back, unlike `ctrl+o`: that key means
-            // the same thing while a turn runs, and this one means something else
-            // there entirely. The list is the other half of the count on the row
-            // under the box — that says how many, and this says which.
-            Pressed::Background => {
-                listing.stand(renderer, style, left)?;
-                true
-            }
+            Pressed::Background => stood(renderer, style, &mut listing, left)?,
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
@@ -374,6 +386,8 @@ pub(crate) fn ask<T: Terminal>(
                 match landed(renderer, editor, &says, above, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Line => true,
+
+                    Landed::Counted => stood(renderer, style, &mut listing, left)?,
                     Landed::Nothing => offered.is_some(),
                 }
             }
@@ -1088,6 +1102,9 @@ enum Landed {
     Record(usize),
     /// The line being typed, which now has the cursor where the pointer was.
     Line,
+    /// The row under the box naming what is still running, which is the one thing
+    /// on it that is an offer rather than a fact.
+    Counted,
     /// The border, a blank row, the shell's own output from before crucible
     /// started — or a terminal that would not say where its cursor is.
     Nothing,
@@ -1126,6 +1143,15 @@ fn landed<T: Terminal>(
     };
 
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
+
+    // Asked of the box, because which row the count came out on is the box's own
+    // arithmetic at this width. The column is not asked about: the row is the
+    // affordance, and nothing else on it is one, so a click anywhere along it
+    // means the one thing it could mean.
+    if prompt.counting(renderer.columns(), row) {
+        return Landed::Counted;
+    }
+
     let Some(into) = prompt.clicked(renderer.columns(), row, at.column) else {
         return Landed::Nothing;
     };
