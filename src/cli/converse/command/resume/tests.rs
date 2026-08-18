@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Message, StopReason};
+use crucible_core::{Cancel, Message, Revealed, StopReason};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer};
@@ -52,6 +52,7 @@ fn terms(sample: &Sample) -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
+        revealed: Revealed::new(),
         plan: Plan::new(),
         leaving: crucible_tools::Background::new(),
         provider: std::cell::Cell::new(Some("anthropic")),

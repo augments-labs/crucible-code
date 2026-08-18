@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use crucible_auth::Store;
 use crucible_core::{
-    Cancel, Event, Post as _, Remember, Sensitivity, ToolCall, Verdict, Workspace,
+    Cancel, Event, Post as _, Remember, Revealed, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -111,6 +111,10 @@ pub(crate) struct Terms {
     /// were read in, and a record that outlived its session would let `write`
     /// replace a file the session in hand never saw.
     pub(crate) ledger: Ledger,
+    /// Which deferred tools this session has looked up. `/clear` empties it for
+    /// the reason it empties the plan: what it would otherwise leave is a model
+    /// holding tools this conversation never asked for.
+    pub(crate) revealed: Revealed,
     /// The plan the agent is working to, which is what stands above the box.
     ///
     /// Held for the same reason the ledger is, and emptied by the same command:

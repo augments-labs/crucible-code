@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
-    ProviderError, ProviderLimit, Request, Spend, StopReason, Summary, ToolCall, Transcript,
-    TurnError, TurnId,
+    ProviderError, ProviderLimit, Request, Spend, StopReason, Summary, ToolCall, ToolSchema,
+    Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -619,7 +619,11 @@ impl Runner {
         cancel: &Cancel,
         spent: &mut Spend,
     ) -> Result<StopReason, TurnError> {
-        let mut stream = self.provider.stream(self.request(), cancel)?;
+        // Read once per pass rather than once per turn: `tool_search` reveals a
+        // name while the turn is running, and what it revealed has to be in the
+        // very next request or the model cannot call what it just looked up.
+        let advertised = self.tools.advertised();
+        let mut stream = self.provider.stream(self.request(&advertised), cancel)?;
 
         Self::hear(stream.as_mut(), answer, events, spent)
             .and_then(|()| answer.reached().map_err(TurnError::from))
@@ -701,11 +705,16 @@ impl Runner {
     }
 
     /// What to send this pass.
-    fn request(&self) -> Request<'_> {
+    ///
+    /// The advertised schemas are handed in rather than read here, because they
+    /// are built per pass — a tool the model looked up mid-turn belongs in the
+    /// next request — and a `Request` borrows for as long as the caller holds
+    /// them.
+    fn request<'a>(&'a self, advertised: &'a [ToolSchema]) -> Request<'a> {
         Request {
             model: &self.model.name,
             transcript: &self.transcript,
-            tools: self.tools.schemas(),
+            tools: advertised,
             max_tokens: self.model.max_tokens,
             system: self.model.system.as_deref(),
             effort: self.model.effort,

@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 
 use crucible_auth::StoredCredentials;
 use crucible_core::{
-    Cancel, Delta, Message, Mode, Permission, Rules, StopReason, ToolId, Workspace,
+    Cancel, Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
 };
 use crucible_runner::{Session, Tools};
 use crucible_tools::Ledger;
@@ -31,6 +31,7 @@ use super::{over, plain, saying, scripted};
 fn recording(sample: &Sample, ledger: &Ledger) -> Terms {
     Terms {
         ledger: ledger.clone(),
+        revealed: Revealed::new(),
         sessions: sample.logs(),
         workspace: sample.workspace(),
         ..plain()

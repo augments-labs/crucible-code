@@ -75,6 +75,7 @@ mod edit;
 mod glob;
 mod grep;
 mod ledger;
+mod lookup;
 mod plan;
 mod read;
 #[cfg(test)]
@@ -91,6 +92,7 @@ pub use edit::Edit;
 pub use glob::Glob;
 pub use grep::Grep;
 pub use ledger::Ledger;
+pub use lookup::{Held, ToolSearch};
 pub use plan::{Plan, State, Task, TodoWrite};
 pub use read::Read;
 pub use web::{WebFetch, WebSearch};

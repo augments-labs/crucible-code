@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Tools the agent looks up rather than carries.** `todo_write`, `web_search` and
+  `web_fetch` are no longer sent with every request; the agent finds them with
+  `tool_search` when it needs them. That is 14% off what each request carries, at
+  the cost of one round trip the first time a session wants one.
+
 ## [0.8.1] - 2026-08-18
 
 **Nothing in crucible changed.** This republishes 0.8.0, whose release never

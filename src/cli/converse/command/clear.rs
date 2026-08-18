@@ -62,6 +62,12 @@ pub(super) fn run<T: Terminal>(
     // listing work the agent under it has no memory of.
     terms.plan.forget();
 
+    // The tools looked up belong to the conversation that looked them up. Left
+    // standing they would be advertised to a session that never asked, which is
+    // the schema cost this whole mechanism exists to avoid — paid, and for a
+    // model with no memory of why.
+    terms.revealed.forget();
+
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
     if let Some(problem) = left.finish() {
@@ -113,7 +119,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crucible_auth::Store;
-    use crucible_core::{Cancel, Message, StopReason, ToolArgs, Transcript};
+    use crucible_core::{Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
     use crucible_runner::{Model, Runner, Session, Tools, recent};
     use crucible_tools::{Ledger, Plan};
     use crucible_tui::{Glyphs, Recording, Renderer};
@@ -138,6 +144,7 @@ mod tests {
             style: Style::plain(),
             cancel: Cancel::new(),
             ledger: ledger.clone(),
+            revealed: Revealed::new(),
             plan: plan.clone(),
             leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
@@ -373,6 +380,23 @@ mod tests {
                 .map(String::as_str),
             Some("12 messages left behind - /resume picks that session up again")
         );
+    }
+
+    #[test]
+    fn clearing_forgets_the_tools_that_were_looked_up() {
+        // They belong to the conversation that looked them up. Left standing they
+        // would be advertised to a session that never asked — the schema cost this
+        // whole mechanism exists to avoid, paid for a model with no memory of why.
+        let sample = Sample::new("clear-forgets-the-lookups");
+        let mut runner = talking(&sample, "what was said before");
+        let terms = terms(&sample, &Ledger::new(), &Plan::new());
+
+        terms.revealed.reveal("web_search");
+        assert!(terms.revealed.holds("web_search"));
+
+        clearing(&terms, &mut runner);
+
+        assert!(!terms.revealed.holds("web_search"));
     }
 
     #[test]
