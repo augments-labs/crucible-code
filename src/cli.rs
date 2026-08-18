@@ -706,6 +706,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ledger: &ledger,
         revealed: &revealed,
         plan: &plan,
+        putting: &putting,
+        terminal: renderer.is_terminal(),
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,

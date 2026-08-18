@@ -23,10 +23,11 @@ use crucible_provider::{
 };
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{
-    Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
-    WebSearch, Write,
+    AskUser, Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
+    WebFetch, WebSearch, Write,
 };
 
+use super::seen::Putting;
 use super::standing;
 use super::subscription::Subscriptions;
 use super::{Fatal, PROVIDERS, Served};
@@ -93,6 +94,14 @@ pub(super) struct Startup<'a> {
     /// processes when the run is over, so the value that ends them has to outlive
     /// every tool that started one.
     pub(super) leaving: &'a Background,
+    /// Where a tool's questions reach the thread that draws them. Made by the
+    /// caller for the reason the plan is: the loop holds the other end.
+    pub(super) putting: &'a Putting,
+    /// Whether there is anybody at a keyboard to be asked.
+    ///
+    /// A redirected run has nobody, and a tool that can only ever answer "there
+    /// is no one here" is a schema spent saying so.
+    pub(super) terminal: bool,
     /// Reads the environment. A parameter because the real one cannot be
     /// written from a test: writing to it is `unsafe` in edition 2024, which
     /// this workspace forbids.
@@ -592,6 +601,8 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
         ledger: seen,
         plan,
         leaving,
+        putting,
+        terminal,
         ..
     } = *startup;
     // Registered and advertised are two different things. Everything the coding
@@ -658,6 +669,19 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
             &mut held,
             Box::new(WebFetch::new(fetching, cancel.clone())),
         );
+    }
+
+    // Advertised rather than deferred, and that is the one place this tool
+    // differs from every other one held back. A model that cannot see it will
+    // not go looking for it at the moment it realises it should ask, and that
+    // moment is the only thing it exists for — a tool nobody can find when they
+    // need it is a tool that is not there.
+    //
+    // And only where somebody is at a keyboard. A redirected run has nobody to
+    // ask, so the schema would be spent saying there is no one here — the same
+    // argument the search below makes about a session that defers nothing.
+    if terminal {
+        tools.add(Box::new(AskUser::new(Arc::new(putting.clone()))));
     }
 
     // Last, and only where there is anything to find. A search that can only
