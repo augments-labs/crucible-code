@@ -15,6 +15,7 @@
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
+mod ask;
 mod cancel;
 mod credential;
 mod diff;
@@ -28,6 +29,7 @@ mod tool;
 mod transcript;
 mod workspace;
 
+pub use ask::{Answer, Answered, Put, Question};
 pub use cancel::Cancel;
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
