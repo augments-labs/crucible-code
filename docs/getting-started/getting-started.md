@@ -532,9 +532,11 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Nine tools, advertised in the order a model tends to reach for them. Seven are
-always there; `web_search` and `web_fetch` appear only where the session has
-something to answer them, which depends on your provider.
+Ten tools, advertised in the order a model tends to reach for them. Six are
+always in the list. The rest are **held back**: they exist and they work, and the
+agent does not see them until it looks them up with `tool_search`. A schema the
+agent can see is one it pays for on every request of every turn, and most
+sessions never write a plan or ask a question about the world.
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -547,6 +549,7 @@ something to answer them, which depends on your provider.
 | `todo_write` | Writes down the plan | no |
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
+| `tool_search` | Finds a tool that is not in the list | no |
 
 Reads never ask. Anything that changes a file or starts a process does, until
 you configure rules or a mode that answer for you — see

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
-use crucible_core::{Delta, Mode, Permission, Rules, StopReason, ToolId};
+use crucible_core::{Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Recording, Size, Terminal, TerminalError};
 
@@ -35,6 +35,7 @@ fn plain() -> Terms {
         style: Style::plain(),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
+        revealed: Revealed::new(),
         plan: Plan::new(),
         leaving: crucible_tools::Background::new(),
         // A provider, so `/model` has a name to write its answer under, and a

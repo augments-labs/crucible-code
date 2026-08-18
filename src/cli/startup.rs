@@ -15,15 +15,16 @@ use std::sync::Arc;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider, Search,
-    Transcript, Workspace,
+    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider,
+    Revealed, Search, Tool, Transcript, Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
 };
 use crucible_runner::{Model, Runner, Session, Tools};
 use crucible_tools::{
-    Background, Bash, Edit, Glob, Grep, Ledger, Plan, Read, TodoWrite, WebFetch, WebSearch, Write,
+    Background, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
+    WebSearch, Write,
 };
 
 use super::standing;
@@ -79,6 +80,10 @@ pub(super) struct Startup<'a> {
     /// cancel is: the loop holds one too, and the commands that leave a
     /// session empty it.
     pub(super) ledger: &'a Ledger,
+    /// Which deferred tools this session has looked up. Held by the caller for
+    /// the same reason the ledger is: `/clear` empties it, and a session that
+    /// has not looked anything up must not inherit the last one's answers.
+    pub(super) revealed: &'a Revealed,
     /// The plan the agent is working to. Made by the caller for the same reason
     /// the ledger is: the loop draws it above the box, the tool writes into it,
     /// and `/clear` empties it.
@@ -589,7 +594,12 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
         leaving,
         ..
     } = *startup;
-    let mut tools = Tools::new();
+    // Registered and advertised are two different things. Everything the coding
+    // loop needs at once is shown; the rest is registered and left out until the
+    // model looks it up, because a schema it can see is one it pays for on every
+    // request of every turn and most sessions never touch most tools.
+    let mut tools = Tools::looking_up(startup.revealed.clone());
+    let mut held: Vec<Held> = Vec::new();
 
     // Which files have been read is learned by one tool and asked by another,
     // and this is the only place that may know they share it. The record itself
@@ -622,20 +632,77 @@ fn tools(startup: &Startup<'_>, settings: &Settings, reaching: Reaching) -> Tool
     // The other end of the panel above the prompt. The clone shares one plan
     // rather than copying it, which is what makes a call on the worker thread
     // something the drawing thread sees on its next frame.
-    tools.add(Box::new(TodoWrite::new(plan.clone())));
+    // Deferred from here down. `todo_write` is the largest of them and the one
+    // a short session never reaches for; the two web tools are the ones a
+    // session without a question about the world never touches at all.
+    defer(
+        &mut tools,
+        &mut held,
+        Box::new(TodoWrite::new(plan.clone())),
+    );
 
     // Last, and only where this session has a source. One `Arc` serves both:
     // the two tools ask it different questions, and a session whose vendor
     // answers only one of them registers only that one the day such a source
     // exists.
     if let Some(searching) = reaching.searching {
-        tools.add(Box::new(WebSearch::new(searching, cancel.clone())));
+        defer(
+            &mut tools,
+            &mut held,
+            Box::new(WebSearch::new(searching, cancel.clone())),
+        );
     }
     if let Some(fetching) = reaching.fetching {
-        tools.add(Box::new(WebFetch::new(fetching, cancel.clone())));
+        defer(
+            &mut tools,
+            &mut held,
+            Box::new(WebFetch::new(fetching, cancel.clone())),
+        );
+    }
+
+    // Last, and only where there is anything to find. A search that can only
+    // ever answer "nothing" is a schema spent saying so.
+    let looking = ToolSearch::new(held, startup.revealed.clone());
+    if !looking.is_empty() {
+        tools.add(Box::new(looking));
     }
 
     tools
+}
+
+/// Registers `tool` unadvertised, and records how a search would find it.
+///
+/// The two go together because they cannot disagree: a tool held back that no
+/// search knows about is one the model can never reach, and an entry with no
+/// tool behind it is a search that offers something that will not run.
+fn defer(tools: &mut Tools, held: &mut Vec<Held>, tool: Box<dyn Tool>) {
+    held.push(Held {
+        name: tool.name().into(),
+        about: about(tool.schema()),
+    });
+    tools.defer(tool);
+}
+
+/// The first sentence of what a schema says the tool does.
+///
+/// A sentence rather than the whole description, because this is what a search
+/// prints for every match and the descriptions run to paragraphs. The whole of
+/// it arrives with the schema a moment later, which is the point.
+fn about(schema: &str) -> Box<str> {
+    let said = serde_json::from_str::<serde_json::Value>(schema)
+        .ok()
+        .and_then(|schema| {
+            schema
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+
+    match said.split_once(". ") {
+        Some((first, _)) => format!("{first}.").into(),
+        None => said.into(),
+    }
 }
 
 /// Which model to ask, and what it is asked under.

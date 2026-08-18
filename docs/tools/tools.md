@@ -1,8 +1,10 @@
 # Tools
 
-Nine tools, advertised in the order a model tends to reach for them. Seven are
-always there; `web_search` and `web_fetch` appear only where the session has
-something to answer them, which depends on your provider.
+Ten tools, advertised in the order a model tends to reach for them. Six are
+always in the list. The rest are **held back**: they exist and they work, and the
+agent does not see them until it looks them up with `tool_search`. A schema the
+agent can see is one it pays for on every request of every turn, and most
+sessions never write a plan or ask a question about the world.
 
 | Tool | What it does | Asks first |
 | --- | --- | --- |
@@ -15,11 +17,17 @@ something to answer them, which depends on your provider.
 | `todo_write` | Writes down the plan | no |
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
+| `tool_search` | Finds a tool that is not in the list | no |
 
-There is nothing to install. The seven above `web_search` are always there; the
-two web tools appear only where the session has something to answer them, which
-[Reaching the web](web.md) sets out. What you configure is which calls get
-through, and that is [Permissions](../permissions/index.md).
+There is nothing to install. What you configure is which calls get through, and
+that is [Permissions](../permissions/index.md).
+
+`todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
+call `tool_search` before it uses one, which costs a round trip the first time
+and nothing after — the tool stays in its list for the rest of the session, and
+`/clear` empties that along with everything else the conversation knew. The two
+web tools are additionally absent where your provider has nothing to answer
+them, which [Reaching the web](web.md) sets out.
 
 ## Everything but `bash` stays in the working directory
 

@@ -36,7 +36,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings, Updates};
-use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Workspace};
+use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Revealed, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tools::{Background, Ledger, Plan};
@@ -524,6 +524,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // thing holds one: `/clear` and `/resume` empty it when they leave the
     // session those files were read in.
     let ledger = Ledger::new();
+    let revealed = Revealed::new();
 
     // And beside it for the same reason again: the tool that writes the plan is
     // one holder, the panel above the box is a second, and `/clear` is the
@@ -611,6 +612,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         ),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
+        revealed: revealed.clone(),
         plan: plan.clone(),
         leaving: leaving.clone(),
 
@@ -695,6 +697,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         workspace: &workspace,
         cancel: &cancel,
         ledger: &ledger,
+        revealed: &revealed,
         plan: &plan,
         from: &from,
         stored: &keys,
