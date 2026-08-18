@@ -40,6 +40,20 @@ use std::collections::VecDeque;
 /// transcript.
 const HELD: usize = 512 * 1024;
 
+/// The most held of a call that has not answered yet, in bytes.
+///
+/// A running command's output arrives a piece at a time and there is no result to
+/// bound it against yet, so this is the bound. It keeps the *end*: what a reader
+/// opening this while a command runs is looking for is where it has got to, and
+/// the beginning of a build is the part they have already watched go past.
+///
+/// Nothing here says how much went, and it does not have to. The row above the
+/// box counts every line and every byte the command has printed, so a reader who
+/// opens this has already been told the total by the row whose key they pressed —
+/// and when the call answers, the result replaces this with the tool's own
+/// bounded answer, which marks its own gap.
+const WRITING: usize = 64 * 1024;
+
 /// One result the transcript had to cut down to a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Whole {
@@ -51,14 +65,16 @@ pub(crate) struct Whole {
     called: String,
     /// The whole of what came back.
     text: Box<str>,
-    /// Which row of the record the offer to expand it was written on.
+    /// Which row of the record the offer to expand it was written on, or `None`
+    /// where the call has not answered yet — a live call has no committed row for
+    /// a click to land on, and nothing but a key reaches it.
     ///
     /// What a click is answered from. The renderer counts the rows it has let
     /// go of and this is the count at the moment that row went, so a pointer
     /// landing somewhere on the screen becomes a row of the record and a row of
     /// the record becomes this — or becomes nothing, which is a click on a row
     /// that made no offer.
-    at: usize,
+    at: Option<usize>,
 }
 
 impl Whole {
@@ -72,8 +88,8 @@ impl Whole {
         &self.text
     }
 
-    /// Which row of the record offered it.
-    pub(crate) fn at(&self) -> usize {
+    /// Which row of the record offered it, where one did.
+    pub(crate) fn at(&self) -> Option<usize> {
         self.at
     }
 }
@@ -95,6 +111,12 @@ pub(crate) struct Kept {
     /// knows the call by the line that was committed for it. The two meet here,
     /// one event apart, the same way they do on screen.
     calling: Option<String>,
+    /// What that call has printed so far, where it has printed anything.
+    ///
+    /// The end of it, bounded by [`WRITING`]. It is replaced by the result the
+    /// moment the call answers, so what is held here is one call's tail and
+    /// never a session's.
+    writing: Option<Whole>,
     /// How many results have been cut this session, counting the ones since
     /// dropped.
     ///
@@ -111,6 +133,47 @@ impl Kept {
         self.calling = Some(called);
     }
 
+    /// Keeps what the call still out has printed.
+    ///
+    /// The end of it: bounded by dropping from the front, and by whole lines
+    /// where it can, so what is held opens on a line rather than half of one.
+    pub(crate) fn wrote(&mut self, text: &str) {
+        let called = self.calling.clone().unwrap_or_default();
+        let writing = self.writing.get_or_insert_with(|| Whole {
+            called,
+            text: String::new().into(),
+            at: None,
+        });
+
+        let mut held = String::from(&*writing.text);
+        held.push_str(text);
+
+        if held.len() > WRITING {
+            // From the front, and from the line boundary after the ceiling —
+            // which is what keeps the first row of the view a row somebody wrote
+            // rather than the tail of one. Where there is no newline left to cut
+            // at, the next character boundary: a count of bytes into text is not
+            // always one, and taking the front off at the wrong offset is the one
+            // way this could end a session.
+            let over = held.len().saturating_sub(WRITING);
+            let from = held
+                .get(over..)
+                .and_then(|rest| rest.find('\n'))
+                .map_or_else(
+                    || {
+                        (over..=held.len())
+                            .find(|at| held.is_char_boundary(*at))
+                            .unwrap_or(held.len())
+                    },
+                    |at| over.saturating_add(at + 1),
+                );
+
+            held.drain(..from);
+        }
+
+        writing.text = held.into();
+    }
+
     /// Keeps what a row could not say.
     ///
     /// Called only where the row said less than the result did — a result that
@@ -122,9 +185,17 @@ impl Kept {
     pub(crate) fn finished(&mut self, text: Box<str>, at: usize) {
         let called = self.calling.take().unwrap_or_default();
 
+        // What the call printed is now in a result that says its own gap, so the
+        // tail held while it ran has nothing left to say.
+        self.writing = None;
+
         self.cut = self.cut.saturating_add(1);
         self.held = self.held.saturating_add(text.len());
-        self.whole.push_back(Whole { called, text, at });
+        self.whole.push_back(Whole {
+            called,
+            text,
+            at: Some(at),
+        });
 
         // After the push rather than before it, so that the newest result is
         // held whatever it costs. One longer than the ceiling on its own would
@@ -164,7 +235,16 @@ impl Kept {
     /// ceiling drops, which is a way for the two to disagree about what is
     /// still held.
     pub(crate) fn offered(&self, at: usize) -> bool {
-        self.whole.iter().any(|whole| whole.at == at)
+        self.whole.iter().any(|whole| whole.at == Some(at))
+    }
+
+    /// What the call still out has printed, where it has printed anything.
+    ///
+    /// Kept apart from [`Kept::newest`] rather than folded into it, because the
+    /// count of what has been cut is what a standing view steps over to keep its
+    /// rows still — and a call that has not answered has not been cut.
+    pub(crate) fn writing(&self) -> Option<&Whole> {
+        self.writing.as_ref()
     }
 
     /// Whether nothing has been cut.
@@ -173,7 +253,7 @@ impl Kept {
     /// nothing held there was no offer on screen to have prompted it, so the
     /// answer is no frame rather than an empty one.
     pub(crate) fn is_empty(&self) -> bool {
-        self.whole.is_empty()
+        self.whole.is_empty() && self.writing.is_none()
     }
 }
 

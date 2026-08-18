@@ -97,17 +97,24 @@ pub(crate) fn event<T: Terminal>(
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
-        // All three belong to the live region rather than to scrollback, and
-        // each says itself only while it is true. What a turn has spent is a
-        // running total, and one line per reading would be a column of numbers
-        // each wrong the moment the next arrived. A response nobody read a word
-        // of, asked for again and answered, left nothing behind worth a line —
-        // a line per hiccup is what a reader would have to look past to find the
-        // answer. And what a running command prints stands under the call it
-        // belongs to for as long as the call is out, then gives its rows back:
-        // committing it here as well would put the tail of a build immediately
-        // above the same tail inside the result that follows it.
-        Event::Spent { .. } | Event::Retrying | Event::Wrote { .. } => Ok(()),
+        // Both belong to the row above the box, which says each of them only
+        // while it is true. What a turn has spent is a running total, and one
+        // line per reading would be a column of numbers each wrong the moment
+        // the next arrived. A response nobody read a word of, asked for again
+        // and answered, left nothing behind worth a line — a line per hiccup is
+        // what a reader would have to look past to find the answer.
+        Event::Spent { .. } | Event::Retrying => Ok(()),
+
+        // Kept and not drawn. What a running command prints stands under the
+        // call it belongs to, in rows the footing lays out and hands back; what
+        // is kept here is the end of it, so the key that stands a result whole
+        // stands a call that has not answered yet as well. Committing it would
+        // put the tail of a build immediately above the same tail inside the
+        // result that follows it.
+        Event::Wrote { text, .. } => {
+            kept.wrote(text.as_str());
+            Ok(())
+        }
 
         // Asked on every delta because the first one is the only one worth
         // asking on, and nothing here can tell which that was: a turn opens

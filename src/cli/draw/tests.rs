@@ -964,3 +964,35 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
     );
     assert!(block(&Diff::new([]), 40, unicode()).is_empty());
 }
+
+#[test]
+fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
+    // The two halves of the arm, together: a piece of a running command's output
+    // reaches the key that stands a call whole, and reaches scrollback not at
+    // all. Committed, it would sit immediately above the same text inside the
+    // result that follows it.
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    let mut kept = Kept::default();
+    kept.calling("Bash(cargo build)".to_owned());
+
+    event(
+        &mut renderer,
+        Event::Wrote {
+            call: ToolId::new("a"),
+            text: crucible_core::Wrote::new("   Compiling crucible-core v0.5.0\n"),
+        },
+        Style::plain(),
+        &mut kept,
+    )
+    .expect("the piece to be taken");
+
+    assert_eq!(
+        kept.writing().map(Whole::text),
+        Some("   Compiling crucible-core v0.5.0\n")
+    );
+    assert_eq!(
+        renderer.record(),
+        0,
+        "a running command's output was committed to scrollback"
+    );
+}

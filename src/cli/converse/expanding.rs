@@ -252,9 +252,15 @@ fn laying(
         // the other one: what arrived after the view opened is at the front of
         // `newest`, and what was dropped to stay under the ceiling has gone
         // from its back.
+        // The call still out first, where there is one, because it is the newest
+        // thing there is and it is what a reader pressing this while a command
+        // runs is asking about. Chained rather than folded into `newest`: the
+        // skip below steps over results that arrived since the view opened, and a
+        // call that has not answered has not been counted among them.
         Over::Everything(cut) => kept
-            .newest()
-            .skip(kept.cut().saturating_sub(cut))
+            .writing()
+            .into_iter()
+            .chain(kept.newest().skip(kept.cut().saturating_sub(cut)))
             .map(showing)
             .collect(),
 
@@ -262,7 +268,7 @@ fn laying(
         // the walk stops at it and nothing after it is looked at.
         Over::One(at) => kept
             .newest()
-            .find(|whole| whole.at() == at)
+            .find(|whole| whole.at() == Some(at))
             .map(showing)
             .into_iter()
             .collect(),
