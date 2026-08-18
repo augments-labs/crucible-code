@@ -1,0 +1,22 @@
+---
+source: crates/crucible-tui/src/asked/tests.rs
+expression: "dump(&panel.within(80, 30, Glyphs::Unicode).0, 80)"
+---
+<Accent>╭──────────────────────────────────────────────────────────────────────────────╮</>
+<Accent>│</>  <Strong>Questions for you</>                                                           <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Accent> </> <DoneMark>✓</> <Quiet>Language</>   <Accent>›</> <Quiet>□</> <Strong>Support</>   <Accent> </> <Quiet>□</> <Quiet>Status line</>   <Accent> </> <Quiet>Review</>                     <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  Which of these should crucible support later?                               <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Accent>›</><Strong> 1. </><DoneMark>✓</> <Strong>Reading images</>                                                       <Accent>│</>
+<Accent>│</>         <Quiet>a vision-capable model is sent the image</>                             <Accent>│</>
+<Accent>│</>  <Accent> </> 2. <DoneMark>✓</> Pulling text out of PDFs                                             <Accent>│</>
+<Accent>│</>         <Quiet>the model is sent the text, not the file</>                             <Accent>│</>
+<Accent>│</>  <Accent> </> 3. <Quiet>□</> None of these                                                        <Accent>│</>
+<Accent>│</>         <Quiet>keep the tool surface small</>                                          <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Quiet>──────────────────────────────────────────────────────────────────────────</>  <Accent>│</>
+<Accent>│</>    4. Say it in the prompt instead                                           <Accent>│</>
+<Accent>╰──────────────────────────────────────────────────────────────────────────────╯</>
+  <Quiet>esc to cancel · space to choose · ←→ between questions · n for a note</>
