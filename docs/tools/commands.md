@@ -34,6 +34,39 @@ Anything else a command needs is named in
 [`env`](../configuration/configuration.md#env), which is you saying so. A
 command that prints its environment prints no key either way.
 
+## While it is running
+
+A command that takes two minutes used to say nothing for two minutes. Its last
+five lines now stand under the call, with a row under them counting every line
+and every byte it has printed:
+
+```
+● Bash(cargo build --release)
+    Compiling crucible-provider v0.5.0
+    Compiling crucible-session v0.5.0
+    Compiling crucible-tools v0.5.0
+    Compiling crucible-auth v0.5.0
+    Compiling crucible v0.5.0
+    41 lines · 3.1 kB
+
+✳ running (43s · ↓ 1.2k · esc to interrupt)
+```
+
+Five rows is a sample and the count is what says so. <kbd>Ctrl</kbd>+<kbd>O</kbd>
+stands the whole of what has arrived so far — the same key that shows a finished
+result the transcript had to cut down to a row — and <kbd>Esc</kbd> closes it
+again while the command carries on.
+
+The sample is the first thing a short window gives up: the call line, the row
+saying the turn is running, and the box all keep their rooms before it does,
+because what it shows is one keypress away either way. It is drawn and taken
+back rather than written down, so what ends up in your scrollback is the result
+below and not a second copy of the build log.
+
+A command writing over one line rather than adding lines — a progress bar — stays
+one row. A command printing faster than the screen can be read has rows skipped:
+the count row is what tells you so, and what the model is sent is unaffected.
+
 ## What comes back
 
 Standard output and standard error, joined. A command that succeeded is just its

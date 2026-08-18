@@ -327,7 +327,9 @@ is written into your scrollback on either side of it.
 The key works whether or not a turn is running. While one is, the view stands in
 the rows the box has and the turn goes on writing above it, so what you are
 reading stays where you left it rather than being pushed down the screen by the
-next result. What it holds is what had been cut when you opened it; a turn that
+next result. A command that has not answered yet stands there too, at the top,
+since it is the newest thing there is — the end of what it has printed so far,
+which is what the five rows over the box are a sample of. What it holds is what had been cut when you opened it; a turn that
 cut more while you were reading is one press away, since opening it again is
 what brings the newer results in.
 
