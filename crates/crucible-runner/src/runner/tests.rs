@@ -662,33 +662,52 @@ fn a_service_that_says_it_is_busy_is_asked_again_and_a_key_without_access_is_not
 }
 
 #[test]
-fn asking_to_stop_during_the_pause_stops_the_retry() {
+fn a_raised_cancel_ends_a_pause_instead_of_waiting_it_out() {
     // The pause is the one place a turn waits with nothing arriving, so it is
-    // the one place Esc could be swallowed. Measured from when the cancel was
-    // raised, because when the thread that raises it gets to run is not this
-    // loop's doing.
+    // the one place Esc could be swallowed.
+    //
+    // Asked of `pausing` directly, and with a pause far longer than any the
+    // runner uses, because that is what makes the two answers tell each other
+    // apart. Honoured, this returns in the time it takes to read a flag;
+    // ignored, it sleeps for a minute. Between those, a second of scheduler
+    // noise on a shared machine decides nothing.
+    //
+    // The turn-level version of this measured 125 ms against a real wait of
+    // about 225 ms, and failed four times on CI for want of the scheduler
+    // rather than for want of the behaviour. Widening it far enough to stop
+    // that made it stop failing when the cancel was ignored too, which is the
+    // worse of the two.
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let started = Instant::now();
+    let held = Runner::pausing(Duration::from_mins(1), &cancel);
+
+    assert!(!held, "the pause reported that it ran to the end");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the pause held for {:?} with the cancel already raised",
+        started.elapsed(),
+    );
+}
+
+#[test]
+fn asking_to_stop_during_the_pause_stops_the_retry() {
+    // What the turn does with the above: the attempts that were left are not
+    // made. Counted rather than timed — the count is the same on any machine,
+    // and it is the fact a user is complaining about when Esc seems ignored.
     let script = Script::dropping(usize::MAX, Vec::new());
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     let cancel = scripted.cancel.clone();
-    let (report, when) = channel();
     let esc = thread::spawn(move || {
         thread::sleep(CANCEL_SLICE);
-        let at = Instant::now();
         cancel.request();
-        report.send(at).unwrap();
     });
 
     scripted.turn("go").unwrap_err();
-    let returned = Instant::now();
     esc.join().unwrap();
 
-    let raised_at = when.recv().unwrap();
-    let waited = returned.saturating_duration_since(raised_at);
-    assert!(
-        waited <= CANCEL_SLICE * 5,
-        "the pause held for {waited:?} after the cancel was raised"
-    );
     assert!(
         scripted.asked().len() < 1 + usize::from(RETRIES),
         "every attempt went out anyway"
