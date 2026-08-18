@@ -538,11 +538,12 @@ fn openai_serves_a_search_and_no_fetch() {
 }
 
 #[test]
-fn a_provider_with_no_source_written_yet_advertises_neither() {
+fn moonshot_serves_both_halves_from_kimi_code() {
+    // Its own two services, which is what this vendor's own client reaches.
     let reaching = reaching_for("moonshot", Some("kimi-k2"));
 
-    assert!(reaching.searching.is_none());
-    assert!(reaching.fetching.is_none());
+    assert!(reaching.searching.is_some());
+    assert!(reaching.fetching.is_some());
 }
 
 #[test]

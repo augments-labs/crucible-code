@@ -6,6 +6,17 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Every provider reaches the web now.** Moonshot gains both tools through Kimi
+  Code's own search and fetch services, and a ChatGPT plan gains search — it was
+  withheld on the mistaken grounds that a refusal there would end the turn, which
+  is true of a turn's own request and not of the separate one a search makes.
+  `web_fetch` is still absent on OpenAI, which serves no standalone fetch of its
+  own, and on a Moonshot key issued against the open platform rather than Kimi
+  Code.
+
+
 ## [0.7.0] - 2026-08-18
 
 ### Added

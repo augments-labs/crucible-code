@@ -22,17 +22,21 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
-| OpenAI, on an API key | yes | — |
-| OpenAI, on a ChatGPT plan | — | — |
-| Moonshot | — | — |
+| OpenAI — API key or ChatGPT plan | yes | — |
+| Moonshot — Kimi Code | yes | yes |
+| Moonshot — open platform | — | — |
 
 A tool with nothing to answer it does not appear at all, rather than appearing
-and failing every call. OpenAI serves no standalone fetch — reading a page is an
-action inside its search tool rather than a tool of its own — so `web_fetch` is
-absent there. On a ChatGPT plan crucible reaches a different backend, which
-refuses a field it does not implement by failing the whole turn; whether it
-takes a hosted search is not something the published documentation answers, so
-crucible does not try it.
+and failing every call.
+
+OpenAI serves no standalone fetch: reading a page is an action inside its search
+tool rather than a tool of its own, so `web_fetch` is absent there and
+`web_search` will open a page itself when it needs one.
+
+Moonshot's two services belong to the Kimi Code platform, which is where
+crucible sends this provider unless you have set `providers.moonshot.baseUrl`
+yourself. A key issued against the open platform is refused by them, so a
+session pointed there gets neither tool.
 
 Because it is a request crucible makes rather than one the model makes for
 itself, there is a call for the permission engine to hold a verdict about — which
@@ -42,8 +46,9 @@ is what lets the rest of this page exist.
 
 A search runs against your own credential and is billed to it. Anthropic and
 OpenAI both charge **$10 per 1 000 searches**, plus the tokens of the request
-that runs one. On a subscription, web search is part of the plan and costs
-nothing at the margin.
+that runs one, because on those two the search is run by a model. Kimi Code's
+services are plain endpoints and are covered by the plan the credential is for.
+On any subscription, both tools are part of what you already pay for.
 
 `web_fetch` carries no charge of its own on Anthropic. You pay for the page as
 input tokens, the same as any other text a tool returns.
