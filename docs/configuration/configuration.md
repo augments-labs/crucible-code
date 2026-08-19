@@ -155,6 +155,7 @@ to put it in project configuration.
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `mouse` | `off`, `click` | Who the mouse belongs to for the length of a session. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
+| `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
@@ -175,6 +176,21 @@ background blended off *your* terminal's, a fixed step lighter on a dark one and
 darker on a light one. It is never a colour crucible chose, so it cannot fight a
 terminal theme crucible has not seen — and where your terminal will not say what
 its background is, the row simply does not take one.
+
+`syntaxTheme` is a separate answer because it is a separate question. The theme
+above decides the interface — borders, marks, the mode in force, the ground a
+diff takes. This decides what a fenced block of code in an answer looks like,
+and the two are chosen together on `/theme`, one axis each.
+
+The names are the ones you already have an opinion about: Monokai Extended,
+GitHub, Dracula, Nord, gruvbox, Solarized, one-half and the rest. `/theme` lists
+every one of them.
+
+A block is read only where its fence named a language crucible knows — ```` ```rust ````
+rather than a bare ```` ``` ````. One that named nothing, or named something it does
+not know, is drawn exactly as it was before any of this existed: quiet and
+whole. TypeScript is read as the JavaScript it extends, so a type annotation is
+drawn as ordinary words.
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
 is a font missing that character, and nothing about that reaches crucible — the

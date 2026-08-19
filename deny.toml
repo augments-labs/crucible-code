@@ -12,10 +12,31 @@
 # runs on one — see `.github/workflows/audit.yml`.
 
 [advisories]
-# No ignores. An advisory that genuinely does not reach us through crucible
-# still gets an entry here with the reasoning, rather than a silent pass: the
-# next person needs to know it was considered, not merely that the run is green.
-ignore = []
+# An advisory that genuinely does not reach us through crucible still gets an
+# entry here with the reasoning, rather than a silent pass: the next person
+# needs to know it was considered, not merely that the run is green.
+ignore = [
+    # bincode 1.x is unmaintained — the team stopped development after a
+    # harassment incident, and there is no safe upgrade. It arrives under
+    # `syntect`, whose `dump-load` feature is what reads the built-in syntax
+    # definitions, and there is no version of that which does not.
+    #
+    # Why it does not reach us. Unmaintained is a notice about the project, not
+    # a vulnerability in the code, and there is no advisory against what the
+    # code does. What crucible has it decode is
+    # `include_bytes!("assets/default_newlines.packdump")` — a blob compiled
+    # into this binary from the crate that also wrote it. It never sees a
+    # model's output, a file a reader supplied, or a byte off the network. A
+    # syntax theme, which *is* a file a reader supplied, is read by `plist`
+    # rather than by this.
+    #
+    # What would change the answer: an advisory against bincode's decoder
+    # itself, or crucible ever loading a dump it did not compile in. The second
+    # is the one to watch, because it would be an ordinary-looking feature —
+    # "let people bring their own syntaxes" — that quietly turns a trusted
+    # decoder into an untrusted one.
+    "RUSTSEC-2025-0141",
+]
 
 [licenses]
 # The binary is distributed under MIT, and that promise is only as true as what

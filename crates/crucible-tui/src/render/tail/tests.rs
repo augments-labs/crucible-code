@@ -300,7 +300,7 @@ fn a_slot_costs_the_row_it_is_worn_on_no_column_at_all() {
     // that follows moves back over the same number of rows.
     let mut plain = Tail::new(8, 5);
     let mut worn = Tail::new(8, 5);
-    worn.wear(Slot::Quiet, colourful());
+    worn.wear(Slot::Quiet, &colourful());
 
     push(&mut plain, "one two three four");
     push(&mut worn, "one two three four");
@@ -324,7 +324,7 @@ fn a_row_that_wrapped_opens_the_slot_again_rather_than_carrying_it_over() {
     // a time, so a row holding half of a pair would leave the other half
     // unwritten for good.
     let mut tail = Tail::new(4, 5);
-    tail.wear(Slot::Quiet, colourful());
+    tail.wear(Slot::Quiet, &colourful());
     push(&mut tail, "abcdefgh");
 
     assert_eq!(tail.len(), 2);
@@ -344,7 +344,7 @@ fn the_row_still_being_written_is_closed_like_every_other() {
     // them. Left open, the attribute would be set on the footing under the tail
     // and on the prompt after it.
     let mut tail = Tail::new(20, 5);
-    tail.wear(Slot::Quiet, colourful());
+    tail.wear(Slot::Quiet, &colourful());
     push(&mut tail, "half a sen");
     assert!(unbalanced(&tail).is_empty(), "{:?}", rows(&tail));
 
@@ -357,8 +357,8 @@ fn a_slot_worn_and_changed_before_anything_is_written_leaves_nothing_behind() {
     // An opening sequence around no text is bytes for nothing, and the pair a
     // reader would find if they looked at the row.
     let mut tail = Tail::new(20, 5);
-    tail.wear(Slot::Quiet, colourful());
-    tail.wear(Slot::Plain, colourful());
+    tail.wear(Slot::Quiet, &colourful());
+    tail.wear(Slot::Plain, &colourful());
     push(&mut tail, "text");
 
     assert_eq!(rows(&tail), ["text"]);
@@ -370,7 +370,7 @@ fn a_palette_with_no_colour_in_it_puts_no_bytes_in_a_row() {
     // is simply nothing to write it with, and an escape byte here would end up
     // in whatever kept the output.
     let mut tail = Tail::new(20, 5);
-    tail.wear(Slot::Quiet, Palette::plain());
+    tail.wear(Slot::Quiet, &Palette::plain());
     push(&mut tail, "text\nmore");
 
     assert_eq!(rows(&tail), ["text", "more"]);
@@ -381,7 +381,7 @@ fn a_row_holding_a_slot_and_no_text_is_still_an_empty_row() {
     // Measured in columns like everything else here. Counted as content, it
     // would settle into the record as a blank line nobody wrote.
     let mut tail = Tail::new(20, 5);
-    tail.wear(Slot::Quiet, colourful());
+    tail.wear(Slot::Quiet, &colourful());
     push(&mut tail, "said\n");
 
     assert!(!tail.is_empty());
@@ -393,7 +393,7 @@ fn the_slot_in_force_does_not_survive_the_turn() {
     // An answer that ended inside a code block ended there. Carried over, the
     // whole of the next answer would be painted as code.
     let mut tail = Tail::new(20, 5);
-    tail.wear(Slot::Quiet, colourful());
+    tail.wear(Slot::Quiet, &colourful());
     push(&mut tail, "code");
     tail.clear();
     push(&mut tail, "plain again");

@@ -220,7 +220,7 @@ fn a_question_already_answered_wears_the_green_a_finished_task_wears() {
         .within(80, 30, Glyphs::Unicode)
         .0
         .iter()
-        .map(|row| row.paint(colourful()))
+        .map(|row| row.paint(&colourful()))
         .collect();
 
     let row = painted
@@ -635,9 +635,9 @@ fn an_empty_answer_being_written_shows_its_placeholder_and_parks_the_cursor_in_i
     // The placeholder is not an answer's name, so it is drawn quiet — and the
     // cursor sits on its first column rather than after it.
     let quiet = row
-        .paint(colourful())
+        .paint(&colourful())
         .contains(colourful().open(Slot::Quiet).as_str());
-    assert!(quiet, "{:?}", row.paint(colourful()));
+    assert!(quiet, "{:?}", row.paint(&colourful()));
     assert_eq!(caret.column, 1 + 2 + 1 + " 3. ".len());
 }
 

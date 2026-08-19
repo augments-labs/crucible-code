@@ -28,7 +28,7 @@ mod startup;
 mod style;
 mod subscription;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
@@ -557,6 +557,21 @@ fn asked(
         .flatten()
 }
 
+/// What the `output` block said, gathered out of the settled layers.
+///
+/// Its own function because it is the one value in `run` that is only a list:
+/// six answers read out of one block, none of them decided here.
+fn drawn(settings: &crucible_config::Settings) -> style::Output {
+    style::Output {
+        color: settings.color(),
+        glyphs: settings.glyphs(),
+        detail: settings.tool_detail(),
+        mouse: settings.mouse(),
+        theme: settings.theme(),
+        syntax: settings.syntax_theme().map(str::to_owned),
+    }
+}
+
 /// Builds everything, then hands over to the loop.
 fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -650,13 +665,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // the render path may ask either of them again.
     let terms = Terms {
         style: Cell::new(Style::resolve(
-            style::Output {
-                color: settings.color(),
-                glyphs: settings.glyphs(),
-                detail: settings.tool_detail(),
-                mouse: settings.mouse(),
-                theme: settings.theme(),
-            },
+            drawn(&settings),
             renderer.is_terminal(),
             // What the terminal says its own background is. Asked once, here,
             // because a palette is settled once and this is what it is settled
@@ -670,11 +679,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             crucible_tui::ground::seeded(&from),
             &from,
         )),
-        // What the files named, so `/theme` opens with the mark on the row
+        // What the files named, so `/theme` opens with each mark on the row
         // already in force rather than on the first one. `None` here would make
         // a reader who configured a theme look at a panel that says they have
         // not chosen.
         chosen: Cell::new(settings.theme()),
+        reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),

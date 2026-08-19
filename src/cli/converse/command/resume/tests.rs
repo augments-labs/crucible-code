@@ -52,6 +52,7 @@ fn terms(sample: &Sample) -> Terms {
     Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
+        reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),

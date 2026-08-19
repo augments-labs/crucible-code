@@ -186,6 +186,6 @@ mod tests {
         let rows = update().rows(80, Glyphs::Unicode);
         let heading = rows.get(1).expect("a heading");
 
-        assert!(!heading.paint(palette).is_empty());
+        assert!(!heading.paint(&palette).is_empty());
     }
 }

@@ -195,6 +195,13 @@ const OUTPUT: &[Field] = &[
         widens: false,
     },
     Field {
+        name: "syntaxTheme",
+        about: "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
+        shape: Shape::Text,
+        examples: &["Monokai Extended", "GitHub"],
+        widens: false,
+    },
+    Field {
         name: "glyphs",
         about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
         shape: Shape::Choice(GLYPHS),

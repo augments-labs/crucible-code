@@ -206,7 +206,7 @@ impl<T: Terminal> Renderer<T> {
         let palette = *palette;
 
         markdown.read(delta, &mut |slot, text| {
-            tail.wear(slot, palette);
+            tail.wear(slot, &palette);
             tail.push(text, overflow);
         });
 
@@ -267,7 +267,7 @@ impl<T: Terminal> Renderer<T> {
         self.frame.plain();
         for row in rows {
             painted.clear();
-            row.paint_into(palette, &mut painted);
+            row.paint_into(&palette, &mut painted);
             self.frame.settled(&painted, terminal);
         }
 
@@ -324,7 +324,7 @@ impl<T: Terminal> Renderer<T> {
             self.settle()?;
         }
 
-        region::paint(rows, palette, &mut self.painted);
+        region::paint(rows, &palette, &mut self.painted);
 
         let region = self.region();
         self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
@@ -363,7 +363,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        region::paint(rows, palette, &mut self.footing);
+        region::paint(rows, &palette, &mut self.footing);
         self.footed = caret;
         self.draw()
     }

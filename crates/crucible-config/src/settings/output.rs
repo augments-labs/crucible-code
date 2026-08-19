@@ -32,6 +32,16 @@ impl Settings {
         ThemeChoice::read(self.output("theme")?)
     }
 
+    /// Which theme fenced code is drawn in.
+    ///
+    /// Free text rather than a closed set, because the answers are somebody
+    /// else's theme names and a reader may drop a `.tmTheme` beside them. A
+    /// name nothing knows is reported where it is read, not here.
+    #[must_use]
+    pub fn syntax_theme(&self) -> Option<&str> {
+        self.output("syntaxTheme")
+    }
+
     /// Whether crucible takes the mouse from the terminal.
     #[must_use]
     pub fn mouse(&self) -> Option<Mouse> {

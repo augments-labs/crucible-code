@@ -215,7 +215,9 @@ impl Panel<'_> {
         rows.push(Row::new());
 
         for (at, one) in shown.iter().enumerate() {
-            if at > 0 {
+            // A blank parts one entry from the next only where an entry is more
+            // than a name; a list of names parts itself.
+            if at > 0 && !one.says.is_empty() {
                 rows.push(Row::new());
             }
             rows.extend(entry(columns, front, glyphs, one, at == chosen));
@@ -230,7 +232,9 @@ impl Panel<'_> {
         }
 
         rows.push(Row::new());
-        rows.push(Row::new().then(Slot::Quiet, clip(self.footer, columns)));
+        if !self.footer.is_empty() {
+            rows.push(Row::new().then(Slot::Quiet, clip(self.footer, columns)));
+        }
         rows
     }
 
@@ -261,7 +265,7 @@ fn entry(
     glyphs: Glyphs,
     one: &Offered<'_>,
     marked: bool,
-) -> [Row; 2] {
+) -> Vec<Row> {
     let room = columns - front;
 
     let pointed = marked && front > 0;
@@ -270,11 +274,18 @@ fn entry(
     let slot = if marked { Slot::Strong } else { Slot::Plain };
     name.push(slot, clip(one.name, room));
 
+    // An entry with nothing to say costs no row for saying it. A list of names
+    // and nothing else — which is what a list of somebody else's theme names is
+    // — reads as a list rather than as a column of gaps.
+    if one.says.is_empty() {
+        return vec![name];
+    }
+
     let mut says = Row::new();
     says.pad(front);
     says.push(Slot::Quiet, shortened(one.says, room, glyphs));
 
-    [name, says]
+    vec![name, says]
 }
 
 /// `text` in at most `room` columns, ending in the ellipsis where it did not
@@ -513,7 +524,7 @@ mod tests {
         let hues = Palette::resolve(true, Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         });
-        let painted = passed.paint(hues);
+        let painted = passed.paint(&hues);
         assert!(
             !painted.contains(hues.open(Slot::Quiet).as_str()),
             "{painted:?}"

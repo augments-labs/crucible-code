@@ -120,6 +120,30 @@ pub enum Slot {
     /// The one ink the band carries, and the accent, so the mark reads as the
     /// same mark it is everywhere else.
     PromptMark,
+    /// A run of fenced code that is a comment.
+    ///
+    /// The six below are the whole of what a syntax theme gets to say, and they
+    /// are deliberately few. A `.tmTheme` distinguishes far more, and collapsing
+    /// it costs fidelity — what it buys is that the colour ladder still works,
+    /// so a terminal with sixteen colours gets a sane answer rather than none,
+    /// and that a hue from somebody else's theme file cannot enter a type whose
+    /// whole job is to carry meaning. Six is also about as many as a reader can
+    /// tell apart on such a terminal.
+    ///
+    /// Every one of them is *computed*, from the syntax theme in force, and is
+    /// held on the palette beside the prompt band for the same reason: nobody
+    /// could have written it down here.
+    Comment,
+    /// A word the language reserves.
+    Keyword,
+    /// Text between quotes.
+    Str,
+    /// A number written out.
+    Number,
+    /// What something is called: a function, a type, a constant.
+    Name,
+    /// The punctuation that joins the rest.
+    Operator,
 }
 
 /// One slot's answer at each rung of the ladder.
@@ -508,7 +532,18 @@ impl Slot {
             Self::RemovedNumber => tones.removed_number,
             Self::Added => tones.added,
             Self::AddedNumber => tones.added_number,
-            Self::Prompt | Self::PromptMark => return None,
+            // The band, and the six a syntax theme owns. Nothing in any table
+            // could have written any of them down: one is blended off the
+            // reader's own ground and the rest come out of somebody else's
+            // theme file, so the palette holds them instead.
+            Self::Prompt
+            | Self::PromptMark
+            | Self::Comment
+            | Self::Keyword
+            | Self::Str
+            | Self::Number
+            | Self::Name
+            | Self::Operator => return None,
         })
     }
 }
@@ -560,7 +595,7 @@ impl std::fmt::Display for Worn {
 /// The pair travels together for the reason every other ground-painting slot's
 /// does — a ground written without its ink leaves the reader's own foreground
 /// as the other half of a contrast nobody checked.
-fn painted(ground: (u8, u8, u8), ink: Option<Ink>, depth: Depth) -> Option<Sequence> {
+fn painted(ground: (u8, u8, u8), ink: Option<Ink>, depth: Depth) -> Option<Sequence<BAND>> {
     use std::fmt::Write as _;
 
     let mut sequence = Sequence::empty();
@@ -600,6 +635,28 @@ fn painted(ground: (u8, u8, u8), ink: Option<Ink>, depth: Depth) -> Option<Seque
     Some(sequence)
 }
 
+/// One computed foreground, at whatever rung the terminal takes.
+///
+/// No ground: a run of code sits on whatever is behind the rest of the row, and
+/// a block of code that took the ground would be the one thing on screen the
+/// reader could not read over their own theme.
+fn inked(colour: (u8, u8, u8), depth: Depth) -> Option<Sequence<INK>> {
+    use std::fmt::Write as _;
+
+    let mut sequence = Sequence::empty();
+    let (red, green, blue) = colour;
+
+    match depth {
+        Depth::Exact => write!(sequence, "\x1b[38;2;{red};{green};{blue}m"),
+        Depth::Indexed => write!(sequence, "\x1b[38;5;{}m", derived::nearest_indexed(colour)),
+        Depth::Basic => write!(sequence, "\x1b[{}m", derived::nearest_basic(colour)),
+        Depth::Off => return None,
+    }
+    .ok()?;
+
+    Some(sequence)
+}
+
 /// How much colour this terminal will take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Depth {
@@ -634,6 +691,27 @@ pub struct Palette {
     band: Option<Sequence>,
     /// The same ground, carrying the accent, for the mark on that row.
     band_mark: Option<Sequence>,
+    /// What the syntax theme in force says the six code slots are worth.
+    ///
+    /// Empty until something reads a fence, which is also the first moment a
+    /// syntax theme is loaded at all — a session that never shows code pays for
+    /// none of this.
+    code: Code,
+}
+
+/// What a syntax theme says the six code slots are worth, at this rung.
+///
+/// One value rather than six fields on the palette, so the whole of what a
+/// syntax theme decides arrives and leaves together — a palette holding four of
+/// six would draw one block in two themes at once.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Code {
+    comment: Option<Sequence<INK>>,
+    keyword: Option<Sequence<INK>>,
+    string: Option<Sequence<INK>>,
+    number: Option<Sequence<INK>>,
+    name: Option<Sequence<INK>>,
+    operator: Option<Sequence<INK>>,
 }
 
 /// How far a band is moved off the ground it was blended from, in hundredths.
@@ -644,13 +722,20 @@ pub struct Palette {
 const LIGHTEN: u8 = 12;
 const DARKEN: u8 = 4;
 
-/// The most bytes a computed sequence can come to.
+/// The most bytes a ground-and-ink sequence can come to.
 ///
-/// A ground and an ink at twenty-four bits, with the bold that a mark may
-/// carry: `\x1b[1;48;2;255;255;255;38;2;255;255;255m` is forty. The rest is
-/// room rather than a prediction, and [`Sequence`] refuses to overrun it
-/// instead of growing.
-const SEQUENCE: usize = 48;
+/// `\x1b[1;48;2;255;255;255;38;2;255;255;255m` is forty, and that is the
+/// longest of them: a ground, an ink and the bold a mark may carry.
+const BAND: usize = 40;
+
+/// The most bytes an ink on its own can come to.
+///
+/// `\x1b[38;2;255;255;255m` is nineteen. Held apart from the pair above rather
+/// than sharing its width, because there are six of these and two of those, and
+/// a palette is copied wherever it is read — six sequences carrying twenty
+/// bytes of room they can never use is the difference between a value passed
+/// cheaply and one worth borrowing.
+const INK: usize = 20;
 
 /// A sequence this palette worked out, held where a `&'static str` cannot go.
 ///
@@ -659,18 +744,30 @@ const SEQUENCE: usize = 48;
 /// behind a value that is copied on the render path, which is the one thing
 /// this file may not do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sequence {
-    bytes: [u8; SEQUENCE],
-    len: usize,
+pub struct Sequence<const N: usize = BAND> {
+    bytes: [u8; N],
+    /// A byte rather than a `usize`: nothing here is longer than forty, and
+    /// seven bytes of length beside forty of text is most of a palette.
+    len: u8,
 }
 
-impl Sequence {
+impl<const N: usize> Sequence<N> {
     /// An empty one, ready to be written into.
     const fn empty() -> Self {
         Self {
-            bytes: [0; SEQUENCE],
+            bytes: [0; N],
             len: 0,
         }
+    }
+
+    /// The same bytes, in a wider buffer.
+    ///
+    /// What an ink becomes on its way out: [`Worn`] carries one shape, and it
+    /// is the wider of the two.
+    fn widened(self) -> Sequence<BAND> {
+        let mut wider = Sequence::<BAND>::empty();
+        let _ = std::fmt::Write::write_str(&mut wider, self.as_str());
+        wider
     }
 
     /// What was written, as the terminal is sent it.
@@ -680,19 +777,20 @@ impl Sequence {
         // answer where it somehow did is a row without colour rather than a
         // panic on the render path.
         self.bytes
-            .get(..self.len)
+            .get(..usize::from(self.len))
             .and_then(|written| str::from_utf8(written).ok())
             .unwrap_or_default()
     }
 }
 
-impl std::fmt::Write for Sequence {
+impl<const N: usize> std::fmt::Write for Sequence<N> {
     fn write_str(&mut self, said: &str) -> std::fmt::Result {
-        let end = self.len.checked_add(said.len()).ok_or(std::fmt::Error)?;
-        let room = self.bytes.get_mut(self.len..end).ok_or(std::fmt::Error)?;
+        let at = usize::from(self.len);
+        let end = at.checked_add(said.len()).ok_or(std::fmt::Error)?;
+        let room = self.bytes.get_mut(at..end).ok_or(std::fmt::Error)?;
 
         room.copy_from_slice(said.as_bytes());
-        self.len = end;
+        self.len = u8::try_from(end).map_err(|_| std::fmt::Error)?;
         Ok(())
     }
 }
@@ -728,6 +826,7 @@ impl Palette {
             ground,
             band,
             band_mark,
+            code: Code::default(),
         }
     }
 
@@ -738,8 +837,8 @@ impl Palette {
     /// environment, and again every time the picker moves its mark — and the
     /// two disagreeing is a band that outlives the theme it was blended for.
     /// It hands back the pair rather than a whole palette so that what else a
-    /// palette carries stays the caller's to keep: a field added later cannot
-    /// be silently reset here.
+    /// palette carries stays the caller's to keep: the syntax theme survives a
+    /// change of table, and a field added later cannot be silently reset here.
     fn banding(
         depth: Depth,
         theme: Theme,
@@ -779,9 +878,50 @@ impl Palette {
     }
 
     /// Whether the row a prompt is left on takes a ground here.
+    ///
+    /// False where the terminal never said what its background is, and where
+    /// there is no colour at all — the two states in which the band resolves to
+    /// nothing and a row padded out to the width would be spaces and no more.
     #[must_use]
     pub fn bands(self) -> bool {
         self.band.is_some()
+    }
+
+    /// The same palette, reading code in a syntax theme.
+    ///
+    /// The six are given as colours rather than as sequences because who works
+    /// them out is not this file's business — a `.tmTheme` is somebody else's
+    /// format and is read where the parser is. What happens here is the ladder:
+    /// each is written exactly, or mapped to the nearest the terminal can show,
+    /// or dropped where there is no colour at all.
+    ///
+    /// Said once, when the first fence is read, and again when `/theme` takes a
+    /// different syntax theme.
+    #[must_use]
+    pub fn reading(self, code: [(u8, u8, u8); 6]) -> Self {
+        let ink = |at: usize| {
+            code.get(at)
+                .copied()
+                .and_then(|colour| inked(colour, self.depth))
+        };
+
+        Self {
+            code: Code {
+                comment: ink(0),
+                keyword: ink(1),
+                string: ink(2),
+                number: ink(3),
+                name: ink(4),
+                operator: ink(5),
+            },
+            ..self
+        }
+    }
+
+    /// Whether a syntax theme has been read into this palette yet.
+    #[must_use]
+    pub fn reads_code(self) -> bool {
+        self.code != Code::default()
     }
 
     /// Which table this palette spends.
@@ -824,6 +964,7 @@ impl Palette {
             ground: None,
             band: None,
             band_mark: None,
+            code: Code::default(),
         }
     }
 
@@ -837,12 +978,18 @@ impl Palette {
         let Some(ink) = slot.ink(self.theme) else {
             // The two the table has no answer for. Held on the palette because
             // they were worked out from the reader's ground rather than chosen.
-            let band = match slot {
+            let computed = match slot {
                 Slot::PromptMark => self.band_mark,
+                Slot::Comment => self.code.comment.map(Sequence::widened),
+                Slot::Keyword => self.code.keyword.map(Sequence::widened),
+                Slot::Str => self.code.string.map(Sequence::widened),
+                Slot::Number => self.code.number.map(Sequence::widened),
+                Slot::Name => self.code.name.map(Sequence::widened),
+                Slot::Operator => self.code.operator.map(Sequence::widened),
                 _ => self.band,
             };
 
-            return band.map_or(Worn::Chosen(""), Worn::Computed);
+            return computed.map_or(Worn::Chosen(""), Worn::Computed);
         };
 
         Worn::Chosen(match self.depth {

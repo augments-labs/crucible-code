@@ -71,7 +71,11 @@ impl Glyphs {
     }
 
     /// One column of an edge that runs across, and of a rule drawn inside one.
-    pub(crate) fn horizontal(self) -> &'static str {
+    /// Public because a picker draws a rule the width of the terminal across
+    /// the top of itself, and that rule is the whole picture's rather than any
+    /// one component's.
+    #[must_use]
+    pub fn horizontal(self) -> &'static str {
         match self {
             Self::Unicode => "─",
             Self::Ascii => "-",

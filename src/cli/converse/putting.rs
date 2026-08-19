@@ -336,7 +336,7 @@ fn drawn(
             style,
         };
 
-        return sending(standing, questions, around);
+        return sending(standing, questions, &around);
     }
 
     let Some(question) = questions.get(standing.at) else {
@@ -408,9 +408,9 @@ struct Around<'a> {
 fn sending(
     standing: &Standing,
     questions: &[Question],
-    around: Around<'_>,
+    around: &Around<'_>,
 ) -> (Vec<Row>, Option<Caret>) {
-    let Around {
+    let &Around {
         stops,
         subject,
         columns,

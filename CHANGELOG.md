@@ -8,12 +8,18 @@ Notable changes to crucible. Format follows
 
 ### Added
 
-- **Themes, and a prompt row you can find.** `/theme` picks the colours
-  crucible draws with — dark, light, either of them off the red-green axis, or
-  only the sixteen your terminal already has — and draws a diff under the list
-  in whichever one your mark is on. The row your own prompt is left on now takes
-  a background blended off your terminal's own, so it is never a colour crucible
-  chose, and a blank row parts it from the answer above.
+- **Themes, and a prompt row you can find.** `/theme` picks the colours crucible
+  draws with — dark, light, either of them off the red-green axis, or only the
+  sixteen your terminal already has — and stands a specimen beside the list,
+  redrawn in whichever one your mark is on; `auto` reads your terminal's own
+  background and follows it. The row your own prompt is left on now takes a
+  ground blended off that background, so it is never a colour crucible chose,
+  and a blank row parts it from the answer above.
+- **Fenced code is syntax-highlighted.** A block whose fence names a language —
+  ```` ```rust ```` — is read and drawn in more than one colour, and `/theme` has a
+  second list for which theme reads it: Monokai Extended, GitHub, Dracula, Nord,
+  gruvbox and the rest. A fence that named nothing, or something crucible does
+  not know, is drawn exactly as it was before.
 
 ## [0.10.0] - 2026-08-19
 

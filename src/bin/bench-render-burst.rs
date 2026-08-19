@@ -181,24 +181,33 @@ impl Terminal for PipeSink {
 /// measured loop is not timing a formatter.
 #[cfg(target_os = "linux")]
 fn burst() -> Vec<String> {
+    // A fenced block, opened once and never closed, so that most of what this
+    // streams is code being read rather than prose being scanned. Reading is
+    // the more expensive of the two by a wide margin — a parser and a theme
+    // against a marker scan — and it is the half that arrived most recently, so
+    // it is the half a burst has to cover. Without this the probe would go on
+    // measuring the cheaper path and report the budget held.
+    let opening = "```rust\n".to_owned();
+
     let words = [
-        "The ",
+        "let ",
         "runner ",
-        "drives ",
-        "turns ",
+        "= ",
+        "Runner::new(1); ",
+        "// ",
         "over ",
         "traits ",
-        "alone, ",
-        "so ",
-        "a ",
-        "provider ",
-        "never ",
-        "reaches ",
-        "a ",
-        "tool. ",
+        "alone ",
+        "fn ",
+        "provider() ",
+        "-> ",
+        "String ",
+        "{ ",
+        "\"tool\" } ",
     ];
 
-    let mut deltas = Vec::with_capacity(256);
+    let mut deltas = Vec::with_capacity(258);
+    deltas.push(opening);
 
     for (index, word) in words.iter().cycle().take(256).enumerate() {
         deltas.push((*word).to_owned());
@@ -234,6 +243,18 @@ fn measure() -> Result<Burst, ProbeError> {
     let deltas = burst();
     let (sink, drain) = PipeSink::open()?;
     let mut render = Renderer::new(sink);
+
+    // A palette that writes every hue it has. Without one the renderer takes
+    // the early path in `stream` and never reads the markdown at all — so the
+    // markers, the fence and the highlighter behind it would all go unmeasured,
+    // and this probe would report a budget held for a path nobody ran. A real
+    // terminal has colour; so does this.
+    render.wears(crucible_tui::Palette::resolve(
+        true,
+        crucible_tui::Theme::Dark,
+        Some((13, 13, 16)),
+        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
+    ));
 
     let stream = |render: &mut Renderer<PipeSink>, index: usize| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);

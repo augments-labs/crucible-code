@@ -1205,8 +1205,8 @@ mod tests {
         let (lit, dim) = (face(Duration::ZERO), face(Duration::from_millis(250)));
 
         assert_ne!(
-            lit.paint(palette),
-            dim.paint(palette),
+            lit.paint(&palette),
+            dim.paint(&palette),
             "the mark did not pulse"
         );
 

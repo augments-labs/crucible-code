@@ -143,6 +143,7 @@ mod tests {
         Terms {
             style: std::cell::Cell::new(Style::plain()),
             chosen: std::cell::Cell::new(None),
+            reading: std::cell::RefCell::default(),
             cancel: Cancel::new(),
             ledger: ledger.clone(),
             revealed: Revealed::new(),
