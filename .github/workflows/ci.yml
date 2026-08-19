@@ -184,7 +184,32 @@ jobs:
 
       # The grep budget is a ratio against the `rg` binary, so the binary has
       # to be here. A budget measured against something absent is not measured.
-      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      #
+      # Fetched and checksummed rather than installed, for two reasons. A
+      # package manager hands over whichever version the distribution is
+      # carrying this month, and a ratio whose denominator moves on somebody
+      # else's release schedule reports our own speed changing when it has not.
+      # And the mirror is a machine this repository does not own: it has hung
+      # for tens of minutes at a stretch, on the step before the one that does
+      # the measuring, which is a long way to travel to learn nothing.
+      #
+      # The version is the one a reader running the budgets on their own
+      # machine will have, so the two numbers mean the same thing. Pinned by
+      # digest as well as by version, like every action above.
+      - name: The rg the grep budget is measured against
+        env:
+          RIPGREP_VERSION: 15.0.0
+          RIPGREP_SHA256: 253ad0fd5fef0d64cba56c70dccdacc1916d4ed70ad057cc525fcdb0c3bbd2a7
+        run: |
+          stem=ripgrep-$RIPGREP_VERSION-x86_64-unknown-linux-musl
+          curl --proto '=https' --tlsv1.2 --fail --location --silent \
+            --show-error --output rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/$RIPGREP_VERSION/$stem.tar.gz"
+          printf '%s  rg.tar.gz\n' "$RIPGREP_SHA256" | sha256sum --check --strict -
+          tar xzf rg.tar.gz "$stem/rg"
+          sudo install -m 755 "$stem/rg" /usr/local/bin/rg
+          rm -rf rg.tar.gz "$stem"
+          rg --version | head -1
 
       - run: scripts/bench.sh > budgets.json
 
