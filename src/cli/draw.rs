@@ -746,7 +746,7 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
 /// Ruled above and below, like anything else that is true of the session rather
 /// than of the row above it. It says what caused it before what it came to,
 /// because the cause is the part a reader can do something about.
-fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
     let why = match compacted.why {
         Compacting::Asked => "you asked",

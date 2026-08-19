@@ -55,7 +55,7 @@ impl Runner {
     /// [`TurnError`] where the request for the recap failed. The transcript is
     /// untouched in that case: it is replaced once the answer is whole, so a
     /// failure part way through leaves the session exactly as it was.
-    pub(super) fn compact(
+    pub fn compact(
         &mut self,
         why: Compacting,
         events: &dyn Post,

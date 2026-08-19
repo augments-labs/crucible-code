@@ -29,6 +29,7 @@ use crate::cli::style::Style;
 use super::{Terms, mode};
 
 mod clear;
+mod compact;
 mod effort;
 mod login;
 mod logout;
@@ -58,6 +59,8 @@ pub(super) enum Command {
     Theme,
     /// The sessions recorded here, and picking one of them up.
     Resume,
+    /// Make room in the model's window now, rather than when it fills.
+    Compact,
     /// A new session with nothing said in it, this one left on `/resume`.
     Clear,
     /// End the session.
@@ -69,7 +72,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 10] = [
+const EVERY: [Command; 11] = [
     Command::Help,
     Command::Model,
     Command::Effort,
@@ -78,6 +81,7 @@ const EVERY: [Command; 10] = [
     Command::Mode,
     Command::Theme,
     Command::Resume,
+    Command::Compact,
     Command::Clear,
     Command::Exit,
 ];
@@ -117,6 +121,7 @@ impl Command {
             Self::Mode => "/mode",
             Self::Theme => "/theme",
             Self::Resume => "/resume",
+            Self::Compact => "/compact",
             Self::Clear => "/clear",
             Self::Exit => "/exit",
         }
@@ -139,6 +144,10 @@ impl Command {
             Self::Mode => mode::ring(glyphs),
             Self::Theme => "pick the colours crucible draws with",
             Self::Resume => "pick up an earlier session here",
+            // What it does to the session rather than what it is for: somebody
+            // reading this row is deciding whether to spend a request on it,
+            // and what they lose is the part they cannot get back.
+            Self::Compact => "replace what is behind you with notes on it",
             // What it is for rather than what it does to the session: the
             // row is read by somebody who wants the context empty, and
             // "leaving this one" is what they need warning of.
@@ -259,6 +268,11 @@ fn answer<T: Terminal>(
             command: Command::Help,
             ..
         } => renderer.present(&listing(columns, glyphs), style.palette())?,
+
+        Wanted::Known {
+            command: Command::Compact,
+            ..
+        } => compact::run(renderer, runner, terms)?,
 
         Wanted::Known {
             command: Command::Model,
