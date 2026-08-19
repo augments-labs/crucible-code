@@ -130,6 +130,14 @@ section as its body.
 | Windows ARM64 | `aarch64-pc-windows-msvc` | `crucible-<version>-windows-aarch64.tar.gz`, `.exe` |
 | FreeBSD x86-64 | `x86_64-unknown-freebsd` | `crucible-<version>-freebsd-x86_64.tar.gz` |
 
+Six of those seven block the release. FreeBSD does not: it is built in a
+virtual machine on a Linux runner, on infrastructure this project cannot pin or
+repair, and it has held six finished platforms for half an hour at a time
+waiting for that machine. So it is best-effort, and the publish job counts the
+other six before uploading anything — a release short of any of them fails, and
+a release short of this one carries a warning saying so. Read the warnings on a
+release run before announcing it.
+
 `install.sh` and `uninstall.sh` are standalone release assets and are also in
 every archive. The Bash installer is for Unix targets; Windows uses the bare
 executable and the manual checksum path documented in Getting started.

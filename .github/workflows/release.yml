@@ -238,6 +238,20 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The one platform allowed to be missing. There is no FreeBSD runner, so
+    # this builds inside a virtual machine an action brings up on a Linux one,
+    # and everything that machine needs is fetched on infrastructure nobody
+    # here can pin, bound or repair. It has hung on that step for half an hour
+    # at a stretch, twice in one afternoon, while the other six platforms were
+    # built and waiting.
+    #
+    # So it stops being able to hold them hostage. A release that ships six
+    # platforms today and seven tomorrow is worth more than one that ships
+    # nothing until a machine in somebody else's estate answers. What this may
+    # not become is quiet: the step below names every platform that must be
+    # present and fails without one, and says out loud when this is the one
+    # that is gone.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -427,6 +441,35 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+
+      # The upload below is a glob, and a glob ships whatever is there. That
+      # is fine for the one platform allowed to be absent and wrong for every
+      # other, so what must be present is written out and counted rather than
+      # trusted to a wildcard. Six required archives and two executables; the
+      # seventh is best-effort and its absence is a warning, loud enough to
+      # reach the release notes and quiet enough not to stop them.
+      - name: Every platform this release promises is here
+        working-directory: assets
+        env:
+          BEST_EFFORT: freebsd-x86_64
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          missing=
+          for stem in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64 \
+                      windows-x86_64 windows-aarch64; do
+            [ -f "crucible-$version-$stem.tar.gz" ] || missing="$missing $stem"
+          done
+          for stem in windows-x86_64 windows-aarch64; do
+            [ -f "crucible-$version-$stem.exe" ] || missing="$missing $stem.exe"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::required platforms missing:$missing"
+            exit 1
+          fi
+          if [ ! -f "crucible-$version-$BEST_EFFORT.tar.gz" ]; then
+            echo "::warning::$BEST_EFFORT did not build; this release ships without it"
+          fi
+          ls -1 crucible-*
 
       # One file rather than one `.sha256` per archive: a reader checking what
       # they downloaded wants a single line to look up, and `sha256sum -c`

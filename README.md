@@ -49,8 +49,10 @@ allocation; the transcript is what the peak-RSS figure bounds.
 ## Installing
 
 Every release attaches a binary for Linux, macOS and Windows on x86-64 and
-ARM64, and FreeBSD on x86-64, with one `SHA256SUMS` covering all of them, on the
+ARM64, usually with FreeBSD on x86-64 beside them, and one `SHA256SUMS`
+covering all of it, on the
 [releases page](https://github.com/augments-labs/crucible-code/releases).
+Getting started says why FreeBSD is the one that may be missing.
 
 Take the archive for your platform and that file, check one against the other,
 and put the binary on your `PATH`:

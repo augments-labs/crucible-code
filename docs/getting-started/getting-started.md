@@ -16,6 +16,12 @@ Seven builds, one per release:
 
 `SHA256SUMS` beside them covers all of it. Anything else builds from source.
 
+The FreeBSD archive is the one that may be absent from a release. There is no
+FreeBSD machine to build it on, so it is built in a virtual one, and when that
+does not come up the release goes out without it rather than not at all. Build
+from source, or take the archive from the release before it — the version it
+holds is the version it says.
+
 The Linux release workflow builds dynamically linked binaries against glibc
 2.34 — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older than
 that has to build from source. The already-published 0.1.6 Linux artifacts
