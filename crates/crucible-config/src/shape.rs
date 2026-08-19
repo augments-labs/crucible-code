@@ -154,6 +154,21 @@ pub(crate) const TOOL_DETAIL: &[&str] = &["compact", "full"];
 /// the field below.
 pub(crate) const MOUSE: &[&str] = &["off", "click"];
 
+/// Every answer `output.theme` accepts.
+///
+/// `auto` is not the absence of an answer: it is the answer "decide from the
+/// terminal", which a nearer layer may state to undo a theme a further one
+/// named. The four after it are tables, and `ansi` is the instruction to spend
+/// nothing but the sixteen the terminal already has.
+pub(crate) const THEME: &[&str] = &[
+    "auto",
+    "dark",
+    "light",
+    "colourblind-dark",
+    "colourblind-light",
+    "ansi",
+];
+
 /// Every answer `output.glyphs` accepts.
 ///
 /// Asked rather than detected. A terminal that draws a box-drawing character as
@@ -169,6 +184,13 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(COLOR),
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "theme",
+        about: "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
+        shape: Shape::Choice(THEME),
         examples: &[],
         widens: false,
     },

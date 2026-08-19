@@ -63,6 +63,18 @@
           ],
           "type": "string"
         },
+        "theme": {
+          "description": "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
+          "enum": [
+            "auto",
+            "dark",
+            "light",
+            "colourblind-dark",
+            "colourblind-light",
+            "ansi"
+          ],
+          "type": "string"
+        },
         "toolDetail": {
           "description": "How much of a tool call and its result one line shows",
           "enum": [
