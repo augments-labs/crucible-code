@@ -108,14 +108,14 @@ pub(super) fn run<T: Terminal>(
             let said = about(
                 &format!("/logout {}", one.name),
                 &reaches(one),
-                terms.style.glyphs(),
+                terms.style().glyphs(),
             );
 
             Row::new().then(Slot::Quiet, clip(&said, columns))
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// The providers this build serves that `stored` holds a credential for.
@@ -173,7 +173,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    Ok(picking::pick(renderer, terms.style, panel)?.of(held))
+    Ok(picking::pick(renderer, terms.style(), panel)?.of(held))
 }
 
 /// Forgets `named`'s key, and says what that reached.
@@ -219,7 +219,7 @@ fn forgetting<T: Terminal>(
         Row::new().then(Slot::Quiet, clip(&status, columns)),
     ];
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// What remains after the stored credential moved, without ever carrying the

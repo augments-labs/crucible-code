@@ -20,6 +20,8 @@
 //! key is about to act on is the last thing to leave to a hue.
 
 use crate::color::Slot;
+#[cfg(test)]
+use crate::color::Theme;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
@@ -240,7 +242,7 @@ mod tests {
 
     /// A palette that writes every hue it has.
     fn colourful() -> Palette {
-        Palette::resolve(true, &|name| {
+        Palette::resolve(true, Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
     }
@@ -349,7 +351,7 @@ mod tests {
         .expect("a row the component drew");
 
         assert!(
-            painted.starts_with(colourful().open(Slot::Strong)),
+            painted.starts_with(colourful().open(Slot::Strong).as_str()),
             "{painted:?}"
         );
         assert!(painted.ends_with("what these are"), "{painted:?}");
@@ -402,13 +404,16 @@ mod tests {
         let passed = painted.get(1).expect("a row it has passed over");
 
         assert!(
-            chosen.contains(colourful().open(Slot::Strong)),
+            chosen.contains(colourful().open(Slot::Strong).as_str()),
             "{chosen:?}"
         );
         assert!(
-            !passed.contains(colourful().open(Slot::Strong)),
+            !passed.contains(colourful().open(Slot::Strong).as_str()),
             "{passed:?}"
         );
-        assert!(passed.contains(colourful().open(Slot::Quiet)), "{passed:?}");
+        assert!(
+            passed.contains(colourful().open(Slot::Quiet).as_str()),
+            "{passed:?}"
+        );
     }
 }

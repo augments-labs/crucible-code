@@ -100,8 +100,18 @@ const QUEUED_BYTES: usize = Editor::MAX_BYTES;
 /// changes after it has started, so it is read from the engine that holds it
 /// every time it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
-    /// Whether to write colour, and how much of a tool call to show.
-    pub(crate) style: Style,
+    /// Whether to write colour, how much of a tool call to show, and which
+    /// table of colours to draw with.
+    ///
+    /// In a cell because one command changes it: `/theme` picks a different
+    /// table, and everything drawn after it is drawn in that one. Settled once
+    /// at startup and again only when somebody says so — never per event, which
+    /// is the thing `Style`'s own module doc is about.
+    pub(crate) style: Cell<Style>,
+    /// Which theme the files named, or `/theme` last took. `None` where no
+    /// layer said — which is not the same as `auto`, and is why the panel marks
+    /// nothing rather than marking the row `auto` happens to have resolved to.
+    pub(crate) chosen: Cell<Option<crucible_config::ThemeChoice>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// Which files this session has read, which is what `write` asks before it
@@ -170,6 +180,17 @@ pub(crate) struct Terms {
     pub(crate) workspace: Workspace,
 }
 
+impl Terms {
+    /// What the terminal is drawn with right now.
+    ///
+    /// A method rather than a field read because one command changes it, and
+    /// every caller wants whatever is in force at the moment it draws rather
+    /// than whatever was in force when the session opened.
+    pub(crate) fn style(&self) -> Style {
+        self.style.get()
+    }
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
@@ -181,8 +202,6 @@ pub(crate) fn converse<T: Terminal>(
     terms: &Terms,
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
-    let style = terms.style;
-
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
@@ -206,7 +225,10 @@ pub(crate) fn converse<T: Terminal>(
     // them itself, so scrolling back over the transcript stops working for as
     // long as this is held, and `output.mouse` left alone is how a reader who
     // scrolls more than they expand keeps it.
-    let _pointer = style.clicks().then(Reporting::on).transpose()?.flatten();
+    // Read once and not per turn, unlike the rest of the style: whether a click
+    // means anything is settled at startup and `/theme` does not touch it.
+    let clicks = terms.style().clicks();
+    let _pointer = clicks.then(Reporting::on).transpose()?.flatten();
 
     // One line for the whole session rather than one per prompt. What was typed
     // while a turn ran is still there when it ends, and the allocation the last
@@ -239,6 +261,17 @@ pub(crate) fn converse<T: Terminal>(
     let mut told = false;
 
     loop {
+        // Read here rather than before the loop, because one command changes
+        // it. `/theme` runs between turns, which is inside this loop, and a
+        // style captured above it would go on drawing the box in whatever was
+        // in force when the session opened — the transcript would follow the
+        // new theme and the box, the one thing the reader is looking straight
+        // at while they choose it, would not.
+        //
+        // Once per turn and not per frame: a `Cell::get` of a `Copy` value is
+        // a read, and what is between here and the next prompt is a whole turn.
+        let style = terms.style();
+
         // The window may have changed while the last turn was streaming. The
         // box notices a resize as it happens, because in raw mode the terminal
         // reports one; between turns there is nobody reading, so it is noticed
@@ -384,7 +417,7 @@ pub(crate) fn converse<T: Terminal>(
     if let Some(problem) = problem
         && !told
     {
-        draw::trouble(renderer, &problem, style)?;
+        draw::trouble(renderer, &problem, terms.style())?;
     }
 
     renderer.settle()?;
@@ -484,7 +517,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(&runner, terms.style.glyphs());
+    let mut says = typing::under(&runner, terms.style().glyphs());
 
     // Read here for the same reason and at the same moment: half of what a turn
     // is asked under is about the session — which model is answering, and how
@@ -516,7 +549,7 @@ fn take<T: Terminal>(
     // A turn can start with prompts already behind it: the loop above took one
     // of them and left the rest. Read before the first frame, so the row naming
     // what is coming is right on the frame it first appears in.
-    turning.queueing(taking.queued.waiting(), renderer.columns(), terms.style);
+    turning.queueing(taking.queued.waiting(), renderer.columns(), terms.style());
 
     let working = thread::Builder::new()
         .name("turn".to_owned())
@@ -544,7 +577,7 @@ fn take<T: Terminal>(
                 planning: taking.planning,
             },
             &says,
-            terms.style,
+            terms.style(),
         ),
         &terms.cancel,
     );
@@ -580,7 +613,7 @@ fn take<T: Terminal>(
                     && let Some(said) = returned
                 {
                     held = stop_if_failed(
-                        draw::returned(renderer, &said, terms.style).map_err(Fatal::from),
+                        draw::returned(renderer, &said, terms.style()).map_err(Fatal::from),
                         &terms.cancel,
                     );
 
@@ -636,7 +669,7 @@ fn take<T: Terminal>(
                     kept: taking.kept,
                     opened: taking.opened,
                     says: &says,
-                    style: terms.style,
+                    style: terms.style(),
                     cancel: &terms.cancel,
                     leaving: &mut leaving,
                 },
@@ -657,7 +690,7 @@ fn take<T: Terminal>(
     // would be one of them drawn twice.
     if held.is_ok() {
         held = renderer
-            .under(&[], None, terms.style.palette())
+            .under(&[], None, terms.style().palette())
             .map_err(Fatal::from);
     }
 
@@ -924,7 +957,7 @@ fn shown<T: Terminal>(
     answering: &Answering,
 ) -> Result<(), Fatal> {
     let Answering { reply, give } = answering;
-    let style = terms.style;
+    let style = terms.style();
 
     match one {
         Seen::Turn(event) => draw::event(renderer, event, style, taking.kept)?,

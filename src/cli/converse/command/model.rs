@@ -167,7 +167,7 @@ fn chosen<T: Terminal>(
 
     let says: Vec<String> = offered
         .iter()
-        .map(|selected| beside(*selected, terms.style.glyphs()))
+        .map(|selected| beside(*selected, terms.style().glyphs()))
         .collect();
 
     let shown: Vec<Offered<'_>> = offered
@@ -198,7 +198,7 @@ fn chosen<T: Terminal>(
         footer: "esc to cancel",
     };
 
-    Ok(picking::pick(renderer, terms.style, panel)?.of(&offered))
+    Ok(picking::pick(renderer, terms.style(), panel)?.of(&offered))
 }
 
 /// What a row says beside the model's name: who serves it, and the other way
@@ -272,7 +272,7 @@ fn taken<T: Terminal>(
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// What is being asked now, and the lines that would ask for something else.
@@ -302,14 +302,14 @@ fn listed<T: Terminal>(
                 about(
                     &format!("/model {}/{}", provider.name, model.name),
                     model.shown,
-                    terms.style.glyphs(),
+                    terms.style().glyphs(),
                 )
             };
             Row::new().then(Slot::Quiet, clip(&named, columns))
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 #[cfg(test)]

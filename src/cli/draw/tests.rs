@@ -948,7 +948,10 @@ fn a_change_reaches_the_terminal_on_the_ground_that_says_which_way_it_went() {
     ] {
         let ground = style.palette().open(slot);
 
-        assert!(written.contains(ground), "{written:?} is missing {slot:?}");
+        assert!(
+            written.contains(ground.as_str()),
+            "{written:?} is missing {slot:?}"
+        );
     }
 }
 

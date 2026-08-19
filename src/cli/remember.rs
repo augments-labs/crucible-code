@@ -43,6 +43,16 @@ fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
     })
 }
 
+/// Writes `theme` down as the table to draw with from now on.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the theme and nothing else.
+pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::drawing(text, named, theme)
+    })
+}
+
 /// Writes `provider` down as the one to ask from now on.
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
@@ -77,7 +87,7 @@ pub(crate) fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<()
 /// Reads the file, hands what it holds to `splice`, and puts back what comes
 /// out.
 ///
-/// The three above differ in that one call and in nothing else — which file is
+/// The five above differ in that one call and in nothing else — which file is
 /// opened, what a missing one means, and what a half-written one would cost are
 /// one answer for all of them, and three copies of it would be three places to
 /// fix the day the answer changes.

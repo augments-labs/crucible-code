@@ -5,8 +5,8 @@
 //! characters to draw with, and how much of a line to show. None of those may
 //! be asked per event — two are syscalls and the third is a file.
 
-use crucible_config::{Color, Glyphs as Wanted, Mouse, ToolDetail};
-use crucible_tui::{Glyphs, Palette};
+use crucible_config::{Color, Glyphs as Wanted, Mouse, ThemeChoice, ToolDetail};
+use crucible_tui::{Glyphs, Ground, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
 /// their say.
@@ -24,6 +24,8 @@ pub(crate) struct Output {
     pub(crate) detail: Option<ToolDetail>,
     /// Who the mouse belongs to while a prompt is up.
     pub(crate) mouse: Option<Mouse>,
+    /// Which table of colours to draw with.
+    pub(crate) theme: Option<ThemeChoice>,
 }
 
 /// How much of a tool's arguments a compact line shows.
@@ -40,6 +42,28 @@ const OUTPUT: usize = 96;
 /// set it in the first place.
 const NO_COLOR: &str = "NO_COLOR";
 
+/// Whether a run writes colour at all.
+///
+/// Named rather than inlined because two callers need the same answer and one
+/// of them needs it *before* a style exists: what decides whether the terminal
+/// is asked about its background is whether the answer would ever be drawn.
+///
+/// Both overrides mean it: `always` is how a run whose output is being captured
+/// on purpose — a recording, a pty in CI — asks for the colour it would have
+/// had, and it would be no override at all if the terminal check still had a
+/// veto.
+pub(crate) fn writes_colour(
+    wanted: Option<Color>,
+    terminal: bool,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    match wanted.unwrap_or(Color::Auto) {
+        Color::Always => true,
+        Color::Never => false,
+        Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
+    }
+}
+
 /// What the terminal is written with.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Style {
@@ -51,6 +75,8 @@ pub(crate) struct Style {
     glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
+    /// Which way the terminal said its ground goes, where it has said.
+    ground: Option<Ground>,
     /// Whether a click means anything to crucible. Off leaves the mouse to the
     /// terminal, which is where the transcript above the box lives.
     clicks: bool,
@@ -60,11 +86,19 @@ impl Style {
     /// Settles every question, from the files, the terminal and the environment.
     ///
     /// `terminal` is whether output is going to a terminal rather than a pipe;
-    /// `from` reads the environment, as a parameter because writing to the real
-    /// one is `unsafe` in edition 2024 and this workspace forbids it.
+    /// `exact` is what the terminal answered when asked what its background is,
+    /// and `seeded` is which way a variable it set at launch says that ground
+    /// goes. Two parameters rather than one because they are not the same
+    /// answer: which way is enough to pick a table, and only the channels are
+    /// enough to blend a band off. Either may be absent, and both absent is a
+    /// state everything downstream is correct in rather than a failure. `from` reads the environment, as a
+    /// parameter because writing to the real one is `unsafe` in edition 2024
+    /// and this workspace forbids it.
     pub(crate) fn resolve(
         output: Output,
         terminal: bool,
+        exact: Option<(u8, u8, u8)>,
+        seeded: Option<Ground>,
         from: &dyn Fn(&str) -> Option<String>,
     ) -> Self {
         let color = match output.color.unwrap_or(Color::Auto) {
@@ -77,12 +111,31 @@ impl Style {
             Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
         };
 
+        // The one place `auto` is answered, because this is the one place that
+        // holds both what was configured and what the terminal said. Past here
+        // it does not exist.
+        // What was measured outranks what was merely set at launch: a variable
+        // says what the terminal was configured with and the answer says what it
+        // is now, and the two disagree the moment somebody changes their theme.
+        let ground = exact
+            .map(|colour| {
+                if crucible_tui::is_light(colour) {
+                    Ground::Light
+                } else {
+                    Ground::Dark
+                }
+            })
+            .or(seeded);
+
+        let theme = Self::theme(output.theme, ground);
+
         Self {
             color,
             // Whether, then how much: the answer above is the veto, and the
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
-            palette: Palette::resolve(color, from),
+            palette: Palette::resolve(color, theme, exact, from),
+            ground,
             glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
                 Wanted::Unicode => Glyphs::Unicode,
                 Wanted::Ascii => Glyphs::Ascii,
@@ -93,6 +146,49 @@ impl Style {
             // forwarding buttons to crucible is one whose wheel no longer
             // scrolls the scrollback this program's transcript lives in.
             clicks: output.mouse.is_some_and(Mouse::places),
+        }
+    }
+
+    /// Which table a configured answer and a reported ground come to between
+    /// them.
+    ///
+    /// `auto` with nothing reported settles on dark. Not because dark is more
+    /// likely — it is the fallback that degrades best: the band is simply not
+    /// painted, and every hue in that table still clears a light ground at the
+    /// old three-to-one bar even though it is tuned for a dark one.
+    pub(crate) fn theme(chosen: Option<ThemeChoice>, ground: Option<Ground>) -> Theme {
+        match chosen {
+            None | Some(ThemeChoice::Auto) => match ground {
+                Some(Ground::Light) => Theme::Light,
+                Some(Ground::Dark) | None => Theme::Dark,
+            },
+            Some(ThemeChoice::Dark) => Theme::Dark,
+            Some(ThemeChoice::Light) => Theme::Light,
+            Some(ThemeChoice::ColourblindDark) => Theme::ColourblindDark,
+            Some(ThemeChoice::ColourblindLight) => Theme::ColourblindLight,
+            Some(ThemeChoice::Ansi) => Theme::Ansi,
+        }
+    }
+
+    /// Which way the terminal said its ground goes, where anything has said.
+    ///
+    /// Read by `/theme`, which has to answer `auto` a second time: the reader
+    /// may pick it after startup, and what it means is still whatever the
+    /// terminal reported then.
+    pub(crate) fn ground(self) -> Option<Ground> {
+        self.ground
+    }
+
+    /// The same style, drawn with a different table.
+    ///
+    /// The palette is settled again rather than patched, because a palette is
+    /// more than its table: the band was blended off the reader's own ground
+    /// and the ladder was settled from the terminal, and both have to be
+    /// carried across rather than recomputed from a guess.
+    pub(crate) fn wearing(self, theme: Theme) -> Self {
+        Self {
+            palette: self.palette.wearing(theme),
+            ..self
         }
     }
 
@@ -152,7 +248,7 @@ impl Style {
     /// What a test uses when the drawing is not the thing being tested: a
     /// terminal, nothing configured, nothing in the environment.
     pub(crate) fn plain() -> Self {
-        Self::resolve(Output::default(), true, &|_| None)
+        Self::resolve(Output::default(), true, None, None, &|_| None)
     }
 
     /// And what it uses when the glyph set *is* the thing being tested: the
@@ -170,7 +266,7 @@ impl Style {
     /// all — the right instrument for a test reading what a row says, and no
     /// instrument at all for one reading what a row is painted as.
     pub(crate) fn coloured() -> Self {
-        Self::resolve(Output::default(), true, &|name| {
+        Self::resolve(Output::default(), true, None, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
     }
@@ -197,7 +293,164 @@ mod tests {
     /// The style a run with nothing configured and nothing in the environment
     /// gets, on a terminal or not.
     fn plain(terminal: bool) -> Style {
-        Style::resolve(Output::default(), terminal, &environment(&[]))
+        Style::resolve(Output::default(), terminal, None, None, &environment(&[]))
+    }
+
+    /// A style that configured `theme` and nothing else, over a reported ground.
+    fn themed(chosen: Option<ThemeChoice>, ground: Option<Ground>) -> Style {
+        Style::resolve(
+            Output {
+                theme: chosen,
+                ..Output::default()
+            },
+            true,
+            None,
+            ground,
+            &environment(&[]),
+        )
+    }
+
+    #[test]
+    fn a_named_theme_wins_over_whatever_the_terminal_reported() {
+        // The reader said which table. Following the ground anyway would be
+        // this program overruling an answer it asked for.
+        let light = Some(Ground::Light);
+
+        assert_eq!(
+            themed(Some(ThemeChoice::Dark), light).palette().theme(),
+            Theme::Dark
+        );
+        assert_eq!(
+            themed(Some(ThemeChoice::ColourblindLight), Some(Ground::Dark))
+                .palette()
+                .theme(),
+            Theme::ColourblindLight
+        );
+    }
+
+    #[test]
+    fn auto_follows_the_ground_however_little_of_it_was_reported() {
+        // Which way it goes is all this question needs, so the variable that
+        // says only that is a whole answer here even though it is not one for
+        // the band.
+        // Both the way it can arrive: measured channels, and a variable that
+        // says only which way the ground goes. Which way is a whole answer to
+        // this question even though it is not one for the band.
+        let auto = |exact, seeded| {
+            Style::resolve(
+                Output {
+                    theme: Some(ThemeChoice::Auto),
+                    ..Output::default()
+                },
+                true,
+                exact,
+                seeded,
+                &environment(&[]),
+            )
+            .palette()
+            .theme()
+        };
+
+        assert_eq!(auto(None, Some(Ground::Light)), Theme::Light);
+        assert_eq!(auto(Some((255, 255, 255)), None), Theme::Light);
+        assert_eq!(auto(None, Some(Ground::Dark)), Theme::Dark);
+        assert_eq!(auto(Some((0, 0, 0)), None), Theme::Dark);
+    }
+
+    #[test]
+    fn a_run_that_named_no_theme_follows_the_ground_as_auto_would() {
+        // No layer said, so there is nothing to override -- and the answer to
+        // "decide from the terminal" is the same answer either way.
+        assert_eq!(
+            themed(None, Some(Ground::Light)).palette().theme(),
+            Theme::Light
+        );
+        assert_eq!(themed(None, None).palette().theme(), Theme::Dark);
+    }
+
+    #[test]
+    fn a_band_is_blended_only_where_the_terminal_answered_with_channels() {
+        // The distinction the two parameters exist for. A ground known only by
+        // which way it goes cannot be blended off, and guessing channels for it
+        // would paint a band against a colour nobody reported -- so that case
+        // gets the fallback the design calls correct: the prompt row keeps its
+        // mark and its blank row and takes no ground.
+        let painted = |exact, seeded| {
+            Style::resolve(
+                Output {
+                    theme: Some(ThemeChoice::Dark),
+                    ..Output::default()
+                },
+                true,
+                exact,
+                seeded,
+                &environment(&[("COLORTERM", "truecolor")]),
+            )
+            .palette()
+            .open(crucible_tui::Slot::Prompt)
+            .as_str()
+            .to_owned()
+        };
+
+        assert!(painted(None, None).is_empty());
+        assert!(painted(None, Some(Ground::Dark)).is_empty());
+        assert!(painted(None, Some(Ground::Light)).is_empty());
+        assert!(!painted(Some((13, 13, 16)), None).is_empty());
+        assert!(!painted(Some((255, 255, 255)), None).is_empty());
+    }
+
+    #[test]
+    fn what_the_terminal_answered_outranks_what_a_variable_said_at_launch() {
+        // They disagree the moment somebody changes their terminal theme
+        // without restarting their shell: the variable is what it was
+        // configured with, and the answer is what it is now.
+        let style = |exact, seeded| {
+            Style::resolve(
+                Output {
+                    theme: Some(ThemeChoice::Auto),
+                    ..Output::default()
+                },
+                true,
+                exact,
+                seeded,
+                &environment(&[]),
+            )
+            .palette()
+            .theme()
+        };
+
+        assert_eq!(
+            style(Some((255, 255, 255)), Some(Ground::Dark)),
+            Theme::Light
+        );
+        assert_eq!(style(Some((0, 0, 0)), Some(Ground::Light)), Theme::Dark);
+        // And the variable is what is left when nothing answered.
+        assert_eq!(style(None, Some(Ground::Light)), Theme::Light);
+    }
+
+    #[test]
+    fn a_run_with_no_colour_writes_nothing_whatever_theme_was_named() {
+        // The veto is above the ladder and above the theme alike.
+        let style = Style::resolve(
+            Output {
+                color: Some(Color::Never),
+                theme: Some(ThemeChoice::Dark),
+                ..Output::default()
+            },
+            true,
+            Some((13, 13, 16)),
+            None,
+            &environment(&[]),
+        );
+
+        assert!(
+            style
+                .palette()
+                .open(crucible_tui::Slot::Prompt)
+                .as_str()
+                .is_empty()
+        );
+        assert!(!style.palette().writes_color());
     }
 
     #[test]
@@ -211,7 +464,13 @@ mod tests {
 
     #[test]
     fn no_color_turns_it_off_on_a_terminal_that_would_otherwise_have_it() {
-        let style = Style::resolve(Output::default(), true, &environment(&[(NO_COLOR, "1")]));
+        let style = Style::resolve(
+            Output::default(),
+            true,
+            None,
+            None,
+            &environment(&[(NO_COLOR, "1")]),
+        );
 
         assert!(!style.color());
     }
@@ -221,7 +480,13 @@ mod tests {
         // The convention is that the variable's presence is the signal, but an
         // empty value is what a shell leaves behind when somebody unsets it the
         // wrong way, and reading that as "no colour" surprises them.
-        let style = Style::resolve(Output::default(), true, &environment(&[(NO_COLOR, "")]));
+        let style = Style::resolve(
+            Output::default(),
+            true,
+            None,
+            None,
+            &environment(&[(NO_COLOR, "")]),
+        );
 
         assert!(style.color());
     }
@@ -239,6 +504,8 @@ mod tests {
                     ..Output::default()
                 },
                 false,
+                None,
+                None,
                 &shouting
             )
             .color()
@@ -252,6 +519,8 @@ mod tests {
                     ..Output::default()
                 },
                 true,
+                None,
+                None,
                 &environment(&[])
             )
             .color()
@@ -273,6 +542,8 @@ mod tests {
                 ..Output::default()
             },
             true,
+            None,
+            None,
             &environment(&[]),
         );
         assert_eq!(asked.glyphs(), Glyphs::Ascii);
@@ -287,7 +558,7 @@ mod tests {
 
         let shouting = environment(&[(NO_COLOR, "1"), ("COLORTERM", "truecolor")]);
         assert!(
-            !Style::resolve(Output::default(), true, &shouting)
+            !Style::resolve(Output::default(), true, None, None, &shouting)
                 .palette()
                 .writes_color()
         );
@@ -301,6 +572,8 @@ mod tests {
                 ..Output::default()
             },
             false,
+            None,
+            None,
             &captured,
         );
         assert!(style.palette().writes_color());
@@ -322,6 +595,8 @@ mod tests {
                 ..Output::default()
             },
             true,
+            None,
+            None,
             &environment(&[]),
         );
 
@@ -341,6 +616,8 @@ mod tests {
                     ..Output::default()
                 },
                 true,
+                None,
+                None,
                 &environment(&[]),
             );
 

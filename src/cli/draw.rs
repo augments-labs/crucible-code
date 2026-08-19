@@ -275,8 +275,15 @@ pub(crate) fn queued<T: Terminal>(
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
+    let columns = renderer.columns();
+
+    // The same row a typed line is owed, for the same reason: what was asked is
+    // a block, and a block is parted from the one above it. A line queued during
+    // a turn lands under the answer that turn produced, which is exactly where
+    // the blank belongs.
+    renderer.apart()?;
     renderer.present(
-        &[crucible_tui::Prompt::committed(said, style.glyphs())],
+        &crucible_tui::Prompt::committed(said, columns, style.glyphs(), style.palette().bands()),
         style.palette(),
     )
 }

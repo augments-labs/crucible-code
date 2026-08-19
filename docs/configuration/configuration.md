@@ -154,7 +154,27 @@ to put it in project configuration.
 | `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `mouse` | `off`, `click` | Who the mouse belongs to for the length of a session. |
+| `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
+
+`theme` is a table of what each colour on screen means, tuned to one background.
+`auto` asks the terminal what its background is and picks the dark or the light
+table from the answer, which is the setting to leave alone unless you have a
+reason: it is the only one that keeps being right when you change your terminal.
+The two `colourblind` tables move the diff off the red-green axis — a line put
+in goes blue and a line taken out goes amber — and `ansi` spends nothing but the
+sixteen colours your terminal already has, so your own terminal theme decides
+every hue.
+
+`/theme` picks one at the prompt and writes it here. It draws a diff and a
+prompt row under the list in whatever your mark is standing on, because a theme
+is a list of colours and nobody can picture one from its name.
+
+One thing is not in any table: the row your own prompt is left on takes a
+background blended off *your* terminal's, a fixed step lighter on a dark one and
+darker on a light one. It is never a colour crucible chose, so it cannot fight a
+terminal theme crucible has not seen — and where your terminal will not say what
+its background is, the row simply does not take one.
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
 is a font missing that character, and nothing about that reaches crucible — the

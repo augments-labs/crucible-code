@@ -49,6 +49,30 @@ use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
 use crate::cli::subscription::Subscriptions;
 
+/// How long the terminal is given to say what colour its background is.
+///
+/// **This is blocking I/O on the startup path, which `performance-budgets.md`
+/// forbids outright.** It is written down here rather than argued away: the
+/// rule is absolute and this is an exception to it. What makes the exception
+/// defensible is that the cost is bounded by this constant rather than by the
+/// terminal — eight milliseconds of a twenty-millisecond budget, worst case,
+/// once per run — and `bench-first-frame` measures the whole path, so the
+/// budget is the thing that decides whether it stays affordable rather than
+/// this comment.
+///
+/// A terminal that implements the question answers in about a millisecond. One
+/// that does not costs this much once and is never asked again, and what it
+/// loses is the band behind the prompt rather than anything it needs. Terminals
+/// where the answer would be slow are not asked at all — see `RELAYED` in
+/// `crucible_tui::ground`, and the reason there is about a late reply becoming
+/// a keystroke rather than about the wait.
+///
+/// The way out, when it is worth the machinery: ask on a thread and let the
+/// answer land in `Terms::style` at the next prompt, which the loop already
+/// re-reads per turn. That trades this exception for a second writer to the
+/// terminal, which is its own rule.
+const PATIENCE: std::time::Duration = std::time::Duration::from_millis(8);
+
 /// The providers this is built with, and where each one's key is read from.
 ///
 /// One list rather than two: the sentence a wrong name gets back is written
@@ -514,6 +538,25 @@ pub(crate) fn start() -> ExitCode {
     }
 }
 
+/// What the terminal says its background is, where the answer would be used.
+///
+/// Asked only where a run is going to write colour at all. Colour off is not a
+/// slower answer, it is no question: `Palette::resolve` takes `Depth::Off`, the
+/// band resolves to nothing, and the reply is discarded — so asking first and
+/// discarding after spends the patience out of a twenty-millisecond budget on a
+/// value nobody reads. `NO_COLOR` and a redirected run are both that case, and
+/// so is the startup probe, which runs with `NO_COLOR` against a pty nothing
+/// answers on and would otherwise have paid the whole wait twenty times over.
+fn asked(
+    settings: &crucible_config::Settings,
+    terminal: bool,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Option<(u8, u8, u8)> {
+    style::writes_colour(settings.color(), terminal, from)
+        .then(|| crucible_tui::asked(PATIENCE, from))
+        .flatten()
+}
+
 /// Builds everything, then hands over to the loop.
 fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -606,16 +649,32 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // Settled once, here, from the files and the terminal together. Nothing on
     // the render path may ask either of them again.
     let terms = Terms {
-        style: Style::resolve(
+        style: Cell::new(Style::resolve(
             style::Output {
                 color: settings.color(),
                 glyphs: settings.glyphs(),
                 detail: settings.tool_detail(),
                 mouse: settings.mouse(),
+                theme: settings.theme(),
             },
             renderer.is_terminal(),
+            // What the terminal says its own background is. Asked once, here,
+            // because a palette is settled once and this is what it is settled
+            // from — and asked with a short patience because this is the
+            // startup path: an answer that arrives after the budget is worth
+            // less than the budget is. A terminal that will not say leaves the
+            // variable it set at launch, which says which way its ground goes
+            // and not what colour it is; that is enough to pick a table and not
+            // enough to blend a band off.
+            asked(&settings, renderer.is_terminal(), &from),
+            crucible_tui::ground::seeded(&from),
             &from,
-        ),
+        )),
+        // What the files named, so `/theme` opens with the mark on the row
+        // already in force rather than on the first one. `None` here would make
+        // a reader who configured a theme look at a panel that says they have
+        // not chosen.
+        chosen: Cell::new(settings.theme()),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),
@@ -652,7 +711,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
-    renderer.wears(terms.style.palette());
+    renderer.wears(terms.style().palette());
 
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
@@ -683,7 +742,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
-            style: terms.style,
+            style: terms.style(),
         },
     )?;
 

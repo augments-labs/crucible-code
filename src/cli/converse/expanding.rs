@@ -206,7 +206,7 @@ pub(super) fn stand<T: Terminal>(
     // same way out: the region goes back and the box comes up under it. A
     // window with no room to stand it in is one of them — a component that
     // never drew and read no key, which here is a view the reader never saw.
-    region::stand(renderer, style, window, picture, moving)?;
+    region::stand(renderer, |_| style, window, picture, moving)?;
     *standing = Standing::Closed;
     Ok(())
 }

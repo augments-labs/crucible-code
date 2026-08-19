@@ -1,3 +1,4 @@
+use crate::color::Theme;
 use unicode_width::UnicodeWidthStr;
 
 use super::*;
@@ -272,7 +273,7 @@ fn no_row_is_ever_wider_than_the_tail() {
 
 /// A palette that writes every hue it has, without an environment to say so.
 fn colourful() -> Palette {
-    Palette::resolve(true, &|name| {
+    Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     })
 }
@@ -283,11 +284,11 @@ fn colourful() -> Palette {
 /// everything drawn after it, which for the last row before scrollback is the
 /// reader's own terminal for the rest of the day.
 fn unbalanced(tail: &Tail) -> Vec<&str> {
-    let open = colourful().open(Slot::Quiet);
+    let open = colourful().open(Slot::Quiet).as_str().to_owned();
     let close = colourful().close();
 
     tail.rows()
-        .filter(|row| row.matches(open).count() != row.matches(close).count())
+        .filter(|row| row.matches(open.as_str()).count() != row.matches(close).count())
         .collect()
 }
 
@@ -311,7 +312,7 @@ fn a_slot_costs_the_row_it_is_worn_on_no_column_at_all() {
         rows(&worn)
             .iter()
             .map(|row| row
-                .replace(colourful().open(Slot::Quiet), "")
+                .replace(colourful().open(Slot::Quiet).as_str(), "")
                 .replace(colourful().close(), ""))
             .collect::<Vec<_>>()
     );
@@ -329,7 +330,10 @@ fn a_row_that_wrapped_opens_the_slot_again_rather_than_carrying_it_over() {
     assert_eq!(tail.len(), 2);
     assert!(unbalanced(&tail).is_empty(), "{:?}", rows(&tail));
     for row in rows(&tail) {
-        assert!(row.starts_with(colourful().open(Slot::Quiet)), "{row:?}");
+        assert!(
+            row.starts_with(colourful().open(Slot::Quiet).as_str()),
+            "{row:?}"
+        );
         assert!(row.ends_with(colourful().close()), "{row:?}");
     }
 }

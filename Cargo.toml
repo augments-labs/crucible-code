@@ -52,6 +52,16 @@ clap = { version = "=4.6.6", features = ["derive"] }
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.20"
 
+# Asks the terminal what colour its own background is, over OSC 11, and reads
+# the answer. `std` has no timed read on a file descriptor and `crossterm` has
+# neither the query nor a way to see the reply — its parser consumes stdin and
+# surfaces only keys, so a reply arriving there is swallowed. What is left is a
+# protocol, a timeout, and a different answer on every platform, which is more
+# than a few lines and exactly what this crate is. It is what lets the row a
+# prompt is left on take a ground blended off the reader's own, instead of one
+# this project guessed at.
+terminal-colorsaurus = "=1.0.3"
+
 # `insta` compares what a component drew against a file checked in beside it.
 # A test only reaches for it where the thing under test is a *picture*: what a
 # row looks like at forty columns, in ascii, under a mode's colour. Those are

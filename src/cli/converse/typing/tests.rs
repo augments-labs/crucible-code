@@ -238,6 +238,97 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
 }
 
 #[test]
+fn a_blank_row_parts_the_prompt_from_the_answer_above_it() {
+    // The transcript is a column of blocks and what separates one from the next
+    // is a row of nothing. Every block asks for that row on its way in; this is
+    // the one caller that was not asking, so a prompt landed against the last
+    // row of the answer it was replying to.
+    let mut renderer = drawing();
+    let mut editor = typed("hi");
+
+    renderer
+        .commit("whatever the last turn said")
+        .expect("a row to be committed");
+    let before = renderer.record();
+
+    said(
+        &mut renderer,
+        &mut editor,
+        &Opened::default(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+
+    assert_eq!(
+        renderer.record() - before,
+        2,
+        "the blank and the prompt, in that order"
+    );
+}
+
+#[test]
+fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
+    // The defect this closes: the row was handed over unwrapped, the terminal
+    // broke it, and the record counted one where the screen showed several. A
+    // caller that means to point at a row later reads this number, so a count
+    // short by two points two rows off.
+    let mut renderer = Renderer::new(Recording::new(24, 24));
+    let line = "why does the grep probe walk the whole tree before it reports";
+    let mut editor = typed(line);
+
+    let drawn = Prompt::committed(line, 24, Style::plain().glyphs(), true).len();
+    assert!(drawn > 1, "the fixture has to wrap to be testing anything");
+
+    said(
+        &mut renderer,
+        &mut editor,
+        &Opened::default(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+
+    assert_eq!(renderer.record(), drawn);
+}
+
+#[test]
+fn no_blank_row_is_spent_at_the_top_of_a_session() {
+    // The boundary there is the start of the session, and a transcript that
+    // opens on an empty row has spent one for nothing.
+    let mut renderer = drawing();
+    let mut editor = typed("hi");
+
+    said(
+        &mut renderer,
+        &mut editor,
+        &Opened::default(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+
+    assert_eq!(renderer.record(), 1, "the prompt and nothing above it");
+}
+
+#[test]
+fn a_second_prompt_in_a_row_is_parted_from_the_first_by_one_blank_and_no_more() {
+    // Two prompts with nothing between them: the rhythm is one blank row, never
+    // two, and `apart` is what holds that rather than each caller counting.
+    let mut renderer = drawing();
+
+    for _ in 0..2 {
+        let mut editor = typed("hi");
+        said(
+            &mut renderer,
+            &mut editor,
+            &Opened::default(),
+            Style::plain(),
+        )
+        .expect("the line to be taken");
+    }
+
+    assert_eq!(renderer.record(), 3, "prompt, blank, prompt");
+}
+
+#[test]
 fn the_editor_is_empty_afterwards_and_ready_for_the_next_line() {
     // It is held for the whole session rather than made per prompt, so a line
     // left in it would be the next prompt's opening text.

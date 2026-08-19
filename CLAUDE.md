@@ -133,6 +133,13 @@ rather than a coincidence. Everywhere above the wire, a delta is a delta.
   request against `SchemaStore/schemastore`, raised from the fork
   `NjoyimPeguy/schemastore`, which already exists — `RELEASING.md` has the
   commands and the formatter their gate insists on.
+- **A feature that needs a dependency gets the dependency.** The ladder in
+  `add-a-dependency` decides which rung the answer is on; it never decides
+  whether the work ships. Where the honest answer is a crate — a protocol, a
+  parser, platform branching, a timeout `std` cannot spell — add it, walk the
+  skill, and build the thing. Quietly scoping a feature down to avoid a
+  dependency is under-delivery, and it is worse than the dependency because
+  nothing records that it happened.
 - **Rendering is inline today, and that is a mechanism rather than a law.**
   Scrollback belongs to the terminal, which is what keeps rendering free as a
   transcript grows. A full-screen renderer would move that job into this

@@ -1269,8 +1269,19 @@ fn said<T: Terminal>(
     let typed = editor.take();
     let said = chosen.map_or(typed, str::to_owned);
 
+    let columns = renderer.columns();
+
     renderer.settle()?;
-    renderer.present(&[Prompt::committed(&said, style.glyphs())], style.palette())?;
+    // What was asked is a block like any other, and what parts one block from
+    // the next is a row of nothing. Asked on the way in rather than left behind
+    // on the way out, because this cannot know it was the last: a session that
+    // parted afterwards would end on a blank row under the final answer, and the
+    // shell's own prompt would come back one row lower than it left.
+    renderer.apart()?;
+    renderer.present(
+        &Prompt::committed(&said, columns, style.glyphs(), style.palette().bands()),
+        style.palette(),
+    )?;
 
     Ok(Asked::Said(said))
 }

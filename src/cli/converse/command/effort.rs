@@ -145,7 +145,7 @@ fn chosen<T: Terminal>(
     served: &[Effort],
 ) -> Result<Taken<Effort>, Fatal> {
     let words: Vec<&str> = served.iter().map(|one| one.as_str()).collect();
-    let glyphs = terms.style.glyphs();
+    let glyphs = terms.style().glyphs();
 
     // The model by name, because a rung is asked of one model and what it buys
     // differs between them. It is also the fact that stops this reading as a
@@ -161,7 +161,7 @@ fn chosen<T: Terminal>(
         footer: &footer,
     };
 
-    Ok(picking::adjust(renderer, terms.style, ladder)?.of(served))
+    Ok(picking::adjust(renderer, terms.style(), ladder)?.of(served))
 }
 
 /// Asks for it from the next turn on, and writes it down for the next run.
@@ -197,7 +197,7 @@ fn taken<T: Terminal>(
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// A word that is not a rung, said back with the rungs that are.
@@ -234,7 +234,7 @@ fn listed<T: Terminal>(
     };
     let row = Row::new().then(Slot::Plain, clip(saying, renderer.columns()));
 
-    renderer.present(&[row], terms.style.palette())?;
+    renderer.present(&[row], terms.style().palette())?;
 
     listing(renderer, terms, served)
 }
@@ -260,7 +260,7 @@ fn listing<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// Where on the ladder this rung stands.

@@ -34,6 +34,7 @@ mod login;
 mod logout;
 mod model;
 mod resume;
+mod theme;
 
 /// What a line beginning `/` can ask for.
 ///
@@ -53,6 +54,8 @@ pub(super) enum Command {
     Logout,
     /// The permission mode: the one in force, or the one named.
     Mode,
+    /// Which table of colours the terminal is drawn with.
+    Theme,
     /// The sessions recorded here, and picking one of them up.
     Resume,
     /// A new session with nothing said in it, this one left on `/resume`.
@@ -66,13 +69,14 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 9] = [
+const EVERY: [Command; 10] = [
     Command::Help,
     Command::Model,
     Command::Effort,
     Command::Login,
     Command::Logout,
     Command::Mode,
+    Command::Theme,
     Command::Resume,
     Command::Clear,
     Command::Exit,
@@ -111,6 +115,7 @@ impl Command {
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Mode => "/mode",
+            Self::Theme => "/theme",
             Self::Resume => "/resume",
             Self::Clear => "/clear",
             Self::Exit => "/exit",
@@ -132,6 +137,7 @@ impl Command {
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
             Self::Mode => mode::ring(glyphs),
+            Self::Theme => "pick the colours crucible draws with",
             Self::Resume => "pick up an earlier session here",
             // What it is for rather than what it does to the session: the
             // row is read by somebody who wants the context empty, and
@@ -237,7 +243,7 @@ fn answer<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
-    let style = terms.style;
+    let style = terms.style();
     let glyphs = style.glyphs();
 
     match wanted {
@@ -278,6 +284,11 @@ fn answer<T: Terminal>(
             command: Command::Mode,
             rest,
         } => moded(rest, renderer, runner, style)?,
+
+        Wanted::Known {
+            command: Command::Theme,
+            rest,
+        } => theme::run(rest, renderer, terms, keys)?,
 
         Wanted::Known {
             command: Command::Resume,
@@ -342,7 +353,7 @@ fn moded<T: Terminal>(
 fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Result<(), Fatal> {
     let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
 
-    Ok(renderer.present(&[row], terms.style.palette())?)
+    Ok(renderer.present(&[row], terms.style().palette())?)
 }
 
 /// A thing and what is said about it, parted by the mark that says they are two.

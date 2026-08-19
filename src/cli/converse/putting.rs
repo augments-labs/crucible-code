@@ -279,7 +279,7 @@ pub(super) fn put<T: Terminal>(
 
     let ended = region::stand(
         renderer,
-        style,
+        |_| style,
         &mut standing,
         |standing, columns, rows| {
             let room = rows.saturating_sub(KEPT);

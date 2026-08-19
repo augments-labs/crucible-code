@@ -270,16 +270,99 @@ impl Prompt<'_> {
 
     /// The line as it is left in scrollback once it has been typed.
     ///
-    /// The caret again, so the record reads the way the box did. Not clipped:
-    /// nothing is ever drawn over a settled row, so a line longer than the
-    /// terminal is wrapped by the terminal and costs no count this process is
-    /// keeping.
+    /// The caret again, so the record reads the way the box did, and the rows
+    /// under it indented to match — a line that wrapped reads as one line
+    /// rather than as a stack of separate ones, which is the arrangement
+    /// [`Prompt::typed`] already uses while it is being written.
+    ///
+    /// Wrapped here rather than left to the terminal. The renderer counts the
+    /// rows it drew so that it can move back over them, and `present` does not
+    /// wrap; a row handed over wider than the window is one the terminal breaks
+    /// itself, leaving that count short by however many rows it took.
+    ///
+    /// At a space rather than at the column, unlike the box. What an input box
+    /// owes the person typing into it is that the character just typed stays
+    /// where it was put, which breaking at a word would move; a line nobody is
+    /// typing into any more owes only that it reads well.
+    ///
+    /// `banded` is whether the palette this will be painted with writes a
+    /// ground for the row. Where it does not, the row stops where the words do:
+    /// padding it out would be trailing spaces that draw nothing and follow the
+    /// text into every copy taken out of the transcript.
+    ///
+    /// A window with no room for the line at all still gets the mark. There is
+    /// nothing true to draw of the line there, but a record with no mark in it
+    /// is one that does not say a prompt was ever asked.
+    ///
+    /// The row takes a ground, which almost nothing here does. It is allowed to
+    /// because the ground is not one this crate chose: it is the reader's own,
+    /// blended one step by the palette, so the words on it stay their own
+    /// foreground and stay exactly as legible as they were. Where the terminal
+    /// never said what its background is, the slot resolves to nothing and this
+    /// is the row it always was.
     #[must_use]
-    pub fn committed(said: &str, glyphs: Glyphs) -> Row {
-        Row::new()
-            .then(Slot::Accent, glyphs.caret())
-            .then(Slot::Plain, " ")
-            .then(Slot::Plain, said)
+    pub fn committed(said: &str, columns: usize, glyphs: Glyphs, banded: bool) -> Vec<Row> {
+        let mark = glyphs.caret();
+        let under = width::columns(mark) + 1;
+        let room = columns.saturating_sub(under);
+        // Broken at the column, the way the box breaks the line while it is
+        // being typed, rather than folded at a space. A record says what was
+        // asked: `fold` trims what it is given and drops the space it breaks
+        // at, so a pasted line arrives at the model with its indentation and
+        // reads back here without it — a transcript disagreeing with the
+        // request it is the record of.
+        let folded = if room == 0 {
+            Vec::new()
+        } else {
+            broken(said, room)
+        };
+
+        if folded.is_empty() {
+            // The one row a window this narrow can hold, and it carries the
+            // ground like every other where there is one to carry.
+            let mut row = Row::new().then(Slot::PromptMark, mark);
+            if banded {
+                row.fill(Slot::Prompt, columns);
+            }
+            return vec![row];
+        }
+
+        folded
+            .into_iter()
+            .enumerate()
+            .map(|(at, line)| {
+                // Clipped as well as broken, for the one row breaking cannot
+                // make fit: a glyph wider than the whole row takes no bytes off
+                // the front, so it comes back whole and would put the row past
+                // the last column. The terminal would wrap it and the count of
+                // what was drawn would be short by one.
+                let line = width::clip(line, room);
+
+                let mut row = match at {
+                    0 => Row::new()
+                        .then(Slot::PromptMark, mark)
+                        .then(Slot::Prompt, " ")
+                        .then(Slot::Prompt, line),
+                    _ => Row::new()
+                        .then(Slot::Prompt, " ".repeat(under))
+                        .then(Slot::Prompt, line),
+                };
+
+                // Out to the last column, in the ground rather than in the
+                // reader's own: a ground that stops where the text stops has a
+                // ragged right edge with theirs showing through it, and a
+                // wrapped line would show that on every row but the longest.
+                //
+                // Only where there is a ground to carry. A palette that writes
+                // nothing for the slot would pad the row with spaces that draw
+                // nothing at all — trailing whitespace in the record, and on
+                // every copy taken out of it.
+                if banded {
+                    row.fill(Slot::Prompt, columns);
+                }
+                row
+            })
+            .collect()
     }
 
     /// The rows the line is typed on, inside the frame.

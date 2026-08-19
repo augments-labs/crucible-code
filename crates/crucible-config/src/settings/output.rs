@@ -26,6 +26,12 @@ impl Settings {
         Glyphs::read(self.output("glyphs")?)
     }
 
+    /// Which table of colours crucible draws with.
+    #[must_use]
+    pub fn theme(&self) -> Option<ThemeChoice> {
+        ThemeChoice::read(self.output("theme")?)
+    }
+
     /// Whether crucible takes the mouse from the terminal.
     #[must_use]
     pub fn mouse(&self) -> Option<Mouse> {
@@ -64,6 +70,46 @@ impl Color {
             "auto" => Some(Self::Auto),
             "always" => Some(Self::Always),
             "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
+/// Which table of colours the terminal is drawn with.
+///
+/// `Auto` is a question about the terminal rather than a table, and it stops
+/// existing one layer up: the wiring answers it from the ground the terminal
+/// reported, and what reaches the renderer is always one of the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeChoice {
+    /// Follow the terminal's own background.
+    Auto,
+    /// For a dark ground.
+    Dark,
+    /// For a light one.
+    Light,
+    /// Dark, with the diff off the red-green axis.
+    ColourblindDark,
+    /// Light, with the same swap.
+    ColourblindLight,
+    /// The sixteen the terminal already has, and nothing else.
+    Ansi,
+}
+
+impl ThemeChoice {
+    /// Reads one of [`shape::THEME`](crate::shape::THEME).
+    ///
+    /// `None` for anything else, which the shape refused before this could be
+    /// reached — the test below is what keeps "cannot arrive" true as the set
+    /// changes.
+    fn read(found: &str) -> Option<Self> {
+        match found {
+            "auto" => Some(Self::Auto),
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            "colourblind-dark" => Some(Self::ColourblindDark),
+            "colourblind-light" => Some(Self::ColourblindLight),
+            "ansi" => Some(Self::Ansi),
             _ => None,
         }
     }
@@ -218,5 +264,50 @@ mod tests {
         for name in shape::MOUSE {
             assert!(Mouse::read(name).is_some(), "mouse: {name}");
         }
+        for name in shape::THEME {
+            assert!(ThemeChoice::read(name).is_some(), "theme: {name}");
+        }
+    }
+
+    #[test]
+    fn a_theme_is_read_back_as_the_table_it_names() {
+        let user = Document::sample(r#"{"output": {"theme": "light"}}"#, Origin::User);
+
+        assert_eq!(
+            Settings::resolve(vec![user]).theme(),
+            Some(ThemeChoice::Light)
+        );
+    }
+
+    #[test]
+    fn auto_is_an_answer_a_layer_can_state_rather_than_the_absence_of_one() {
+        // The same shape `output.color` has: a nearer layer says `auto` to
+        // undo a theme a further one named, and that is not the same as saying
+        // nothing at all.
+        let user = Document::sample(r#"{"output": {"theme": "colourblind-dark"}}"#, Origin::User);
+        let local = Document::sample(r#"{"output": {"theme": "auto"}}"#, Origin::ProjectLocal);
+
+        assert_eq!(
+            Settings::resolve(vec![user, local]).theme(),
+            Some(ThemeChoice::Auto)
+        );
+        assert_eq!(Settings::resolve(Vec::new()).theme(), None);
+    }
+
+    #[test]
+    fn every_theme_the_shape_accepts_is_a_different_one() {
+        // A reader that mapped two names onto one table would pass the check
+        // above and still lose a theme.
+        let read: Vec<ThemeChoice> = shape::THEME
+            .iter()
+            .filter_map(|name| ThemeChoice::read(name))
+            .collect();
+
+        for (at, one) in read.iter().enumerate() {
+            for other in read.iter().skip(at + 1) {
+                assert_ne!(one, other, "two names for one theme");
+            }
+        }
+        assert_eq!(read.len(), shape::THEME.len());
     }
 }

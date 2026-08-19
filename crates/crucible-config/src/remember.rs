@@ -26,6 +26,9 @@ const FRESH: &str = "{\n  \"permissions\": {\n    \"allow\": [\n      RULE\n    
 /// The file crucible writes when the provider to ask is all it has to say.
 const ASKED: &str = "{\n  \"provider\": PROVIDER\n}\n";
 
+/// The file crucible writes when the theme is all it has to say.
+const DRAWN: &str = "{\n  \"output\": {\n    \"theme\": THEME\n  }\n}\n";
+
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
 const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
@@ -148,6 +151,80 @@ pub fn asking(text: &str, file: &str, provider: &str) -> Result<String, ConfigEr
     }
 
     let was = splice::member(text, root, "provider").ok_or_else(refuse)?;
+    Ok(splice::over(text, was, &written))
+}
+
+/// The text of a configuration file that draws with `theme`.
+///
+/// `text` is what the file holds now, and empty for a file that is not there
+/// yet. The name goes to `output.theme`, and the `output` object is created
+/// along with it where the file has none. A theme already written there is
+/// written over rather than added beside: the same key twice is a document the
+/// parser reads one way and its author reads the other.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
+/// into without rewriting — which is the moment to tell somebody what to type
+/// rather than to guess at their file.
+pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigError> {
+    let written = Value::String(theme.to_owned()).to_string();
+
+    if text.trim().is_empty() {
+        return Ok(DRAWN.replace("THEME", &written));
+    }
+
+    let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })?;
+
+    if value.get("output").and_then(|output| output.get("theme"))
+        == Some(&Value::String(theme.to_owned()))
+    {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: "output.theme".into(),
+        written: written.clone().into(),
+    };
+    let root = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+
+    // No `output` block at all: the key and the object around it go in
+    // together. `insert` hands back the indentation of the line it is going on,
+    // and `None` where there is none to match — a line that already has other
+    // things on it. Written on one line there, the way `allowing` answers the
+    // same case: a block with a hard-coded indent inside a file that has none
+    // is this program deciding how somebody else's file is laid out, and a
+    // tab-indented file would get a mix of both.
+    let Some(output) = value.get("output") else {
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => {
+                format!("\"output\": {{\n{indent}  \"theme\": {written}\n{indent}}}")
+            }
+            None => format!("\"output\": {{\"theme\": {written}}}"),
+        }));
+    };
+
+    if !output.is_object() {
+        return Err(refuse());
+    }
+
+    let block = splice::member(text, root, "output").ok_or_else(refuse)?;
+    if output.get("theme").is_none() {
+        return Ok(splice::insert(text, block, |_| {
+            format!("\"theme\": {written}")
+        }));
+    }
+
+    let was = splice::member(text, block, "theme").ok_or_else(refuse)?;
     Ok(splice::over(text, was, &written))
 }
 

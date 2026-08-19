@@ -81,7 +81,7 @@ pub(super) enum Moved {
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
 pub(super) fn stand<T: Terminal, S>(
     renderer: &mut Renderer<T>,
-    style: Style,
+    style: impl Fn(&S) -> Style,
     state: &mut S,
     mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
@@ -91,7 +91,11 @@ pub(super) fn stand<T: Terminal, S>(
     loop {
         if changed {
             let (rows, caret) = laid(state, renderer.columns(), renderer.rows());
-            if !drawn(renderer, style, &rows, caret)? {
+            // Asked per frame rather than taken once, because one caller
+            // changes it between frames: `/theme` draws its specimen in
+            // whatever the mark is standing on, which is the whole of how a
+            // theme is chosen by seeing rather than by reading a name.
+            if !drawn(renderer, style(state), &rows, caret)? {
                 return Ok(Ended::Cramped);
             }
         }
