@@ -156,6 +156,39 @@ if [[ "$before" != "$(cksum "$schema" 2>/dev/null || true)" ]]; then
     failed=1
 fi
 
+section "component fit sweep"
+# The sweep in `fits.rs` asserts that no component draws past the window it was
+# given. It can only assert it about components it names, so what this checks is
+# not the rule but the *coverage* of it: a component written and never added
+# there passes a green suite while nothing has ever laid it out at twenty
+# columns. That is the failure the sweep exists to prevent, and the sweep cannot
+# catch it about itself.
+#
+# A component is a type that lays rows out against a width it was handed, which
+# is a signature rather than a naming convention. Coverage is asked as an import
+# of the module, because that is the one thing a sweep cannot have without
+# reaching the component behind it.
+sweep=crates/crucible-tui/src/fits.rs
+if [[ ! -f "$sweep" ]]; then
+    printf '    FAIL %s is missing; nothing holds the components to one width rule\n' "$sweep"
+    failed=1
+else
+    swept=0
+    for file in crates/crucible-tui/src/*.rs; do
+        module=$(basename "$file" .rs)
+        grep -qE '^[[:space:]]*pub fn (rows|row|within)\(&self, columns: usize' "$file" || continue
+        swept=$((swept + 1))
+        if ! grep -q "^use crate::$module::" "$sweep"; then
+            printf '    FAIL %s lays rows out against a width and %s never draws it\n' "$file" "$sweep"
+            failed=1
+        fi
+    done
+    if ((swept == 0)); then
+        printf '    FAIL no component found to sweep; the signature this looks for has moved\n'
+        failed=1
+    fi
+fi
+
 section "file length (<= ${MAX_FILE_LINES} lines)"
 # `find` printing nothing would walk this loop zero times and pass. The error
 # stream is not discarded either: a renamed source directory is exactly the way

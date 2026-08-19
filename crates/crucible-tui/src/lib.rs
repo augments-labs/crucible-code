@@ -26,6 +26,8 @@ mod dump;
 mod editor;
 mod escape;
 mod expanded;
+#[cfg(test)]
+mod fits;
 mod glyphs;
 pub mod ground;
 mod ladder;

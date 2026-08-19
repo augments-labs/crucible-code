@@ -456,7 +456,11 @@ impl Asked<'_> {
 
         if answer.shows.is_empty() {
             return if at == 0 {
-                (Slot::Quiet, NOTHING.to_owned())
+                // Clipped, because `boxed` measured this line clipped when it
+                // decided how wide the box is. Drawn whole it would reach past
+                // the edge that measurement drew, on the one window narrow
+                // enough for the sentence not to fit.
+                (Slot::Quiet, clip(NOTHING, room).to_owned())
             } else {
                 (Slot::Plain, String::new())
             };

@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every component is drawn for the window it is on.** A resize that arrived
+  while a view of a cut result stood over a running turn went to the view
+  instead of to the renderer, so the rest of that turn was drawn and rewound at
+  a width the terminal no longer had — and the same press was passed over
+  entirely by a question put a row at a time. Two panels also had one row apiece
+  built from a sentence and never cut to fit, which reached past the edge of a
+  narrow window.
+
 ## [0.11.1] - 2026-08-19
 
 ### Changed
