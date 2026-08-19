@@ -43,7 +43,7 @@ fn offering(
         // Nothing below to reach. Spelled out rather than closed with a
         // wildcard, so a shape that later does hold fields has to be decided
         // about here instead of dropping out of the walk in silence.
-        Shape::Text | Shape::Choice(_) | Shape::List(_) => {}
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::List(_) => {}
     }
 }
 
@@ -52,7 +52,9 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
     let mut value = match shape {
         // Examples are elements, so one goes in a list of its own.
         Shape::List(_) => json!([example]),
-        Shape::Text | Shape::Choice(_) | Shape::Fields(_) | Shape::Named(_) => json!(example),
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Fields(_) | Shape::Named(_) => {
+            json!(example)
+        }
     };
 
     for key in path.iter().rev() {

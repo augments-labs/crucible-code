@@ -17,12 +17,14 @@ use crate::document::Document;
 use crate::env;
 use crate::shape::{DOCUMENT, Shape};
 
+mod compaction;
 mod layers;
 mod output;
 mod permissions;
 mod updates;
 mod variables;
 
+pub use compaction::{Compaction, When};
 pub use layers::{local, user};
 pub use output::{Color, Glyphs, Mouse, ThemeChoice, ToolDetail};
 pub use updates::Updates;
