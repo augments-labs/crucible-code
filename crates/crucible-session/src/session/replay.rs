@@ -99,7 +99,7 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
         return Ok(false);
     }
 
-    if opening.format == wire::FORMAT {
+    if wire::readable(opening.format) {
         Ok(true)
     } else {
         Err(SessionError::Foreign {

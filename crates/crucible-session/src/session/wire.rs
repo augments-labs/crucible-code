@@ -23,6 +23,26 @@ use serde_json::{Value, json};
 /// a different one.
 pub(crate) const FORMAT: u32 = 4;
 
+/// The formats this build reads, newest first.
+///
+/// A log is refused rather than half-understood, and that is what this list is
+/// careful about: a format is on it only where every line an older build could
+/// have written still means here exactly what it meant there. Format 3 is,
+/// because 4 only *added* — a word for a stop reason that build never produced,
+/// and a line kind it never wrote. Nothing was renamed and nothing changed
+/// meaning, so a log from it replays whole.
+///
+/// A format that changed the meaning of a line does not go on this list however
+/// small the change looks. What it would buy is somebody's history; what it
+/// would cost is a session that looks fine and is missing turns, which is the
+/// failure the refusal exists for.
+pub(crate) const READS: &[u32] = &[4, 3];
+
+/// Whether this build can replay a log written under `format`.
+pub(crate) fn readable(format: u32) -> bool {
+    READS.contains(&format)
+}
+
 /// Whether this line says everything above it was forgotten.
 ///
 /// Read and never written. `/clear` forgot in place once, and a session that
