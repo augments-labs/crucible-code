@@ -83,8 +83,15 @@ impl Runner {
         let standing: Vec<Message> = messages.drain(replacing..).collect();
         drop(messages);
 
+        let standing_as = format!("{STANDS}{recap}");
+
+        // Written to the log before the transcript is replaced, so a crash
+        // between the two leaves a log that says what happened rather than one
+        // that quietly lost the messages.
+        self.session.compacted(replacing, &standing_as);
+
         let mut rebuilt = Transcript::new();
-        rebuilt.push(Message::User(format!("{STANDS}{recap}").into()));
+        rebuilt.push(Message::User(standing_as.into()));
         for message in standing {
             rebuilt.push(message);
         }

@@ -39,6 +39,33 @@ pub(crate) fn forgets(line: &str) -> bool {
         .unwrap_or_default()
 }
 
+/// A line saying room was made, and what the notes stand in place of.
+///
+/// Written where a compaction happened, the way the forgetting marker above is,
+/// and for the same reason: the log is append-only and cannot be rewritten, so
+/// what happened *to* the transcript is recorded as another thing that happened
+/// in it. Every message it replaced stays in the file — that is the record —
+/// and replay is what leaves them out of the transcript.
+///
+/// It carries **what it replaced** rather than standing for everything above
+/// it. A count is a fact about this compaction; a position is a fact about the
+/// file, and a file that ever holds more than one thread of messages has no
+/// meaningful "everything above".
+pub(crate) fn compacted(replaced: usize, recap: &str) -> String {
+    json!({ "compacted": { "replaced": replaced, "recap": recap } }).to_string()
+}
+
+/// What a compaction line says, or `None` if this is not one.
+pub(crate) fn made_room(line: &str) -> Option<(usize, String)> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let made = value.get("compacted")?;
+
+    Some((
+        usize::try_from(made.get("replaced")?.as_u64()?).ok()?,
+        made.get("recap")?.as_str()?.to_owned(),
+    ))
+}
+
 /// The first line, which says what the file is and what it belongs to.
 pub(crate) fn header(session: &SessionId, workspace: &Path) -> String {
     json!({

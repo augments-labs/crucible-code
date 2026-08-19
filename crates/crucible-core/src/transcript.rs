@@ -198,6 +198,18 @@ impl Transcript {
         self.messages.push(message);
     }
 
+    /// Drops the last `many` messages.
+    ///
+    /// What a compaction leaves behind, replayed: the notes that stood in for
+    /// them go on next, so this is the half that takes them off. Fewer than
+    /// `many` present is a log that says it replaced more than it holds, which
+    /// is damage rather than a shape to guess at — everything goes, and the
+    /// notes stand for the session so far.
+    pub fn behind(&mut self, many: usize) {
+        let keeping = self.messages.len().saturating_sub(many);
+        self.messages.truncate(keeping);
+    }
+
     /// Takes the last message back off.
     ///
     /// For the one caller that puts a message on to ask something and must not

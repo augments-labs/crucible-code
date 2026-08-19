@@ -182,6 +182,17 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
             continue;
         }
 
+        // Room having been made. The notes replace exactly the messages the
+        // line says they replace — counted back from here rather than taken to
+        // mean everything above, so a log that ever holds more than one thread
+        // of messages still reads correctly.
+        if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
+            transcript.behind(replaced);
+            transcript.push(Message::User(recap.into()));
+            through += read as u64;
+            continue;
+        }
+
         let Some(message) = whole.and_then(wire::message) else {
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before
