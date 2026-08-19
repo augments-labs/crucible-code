@@ -758,3 +758,78 @@ fn the_whole_panel_with_a_note_on_the_question() {
 
     insta::assert_snapshot!(dump(&panel.within(80, 40, Glyphs::Unicode).0, 80));
 }
+
+#[test]
+fn nothing_a_call_wrote_can_move_the_cursor_or_set_an_attribute() {
+    // The words on this panel are the model's, and a model reads files somebody
+    // else may have written. A terminal reads an escape as an instruction, so
+    // one carried through here could move the cursor out of the live region or
+    // leave an attribute set for every row after it — and the frame that rewinds
+    // over the region would erase the wrong lines.
+    let hostile = "\x1b[2Jwiped\x1b[31m";
+    let rows = "\x1b[Ainside".to_owned();
+    let shows = [rows.as_str()];
+    let answers = [
+        Choice {
+            answer: hostile,
+            says: hostile,
+            chosen: None,
+            shows: &shows,
+        },
+        Choice {
+            answer: "Plain",
+            says: "",
+            chosen: None,
+            shows: &[],
+        },
+    ];
+    let stops = [
+        Stop {
+            name: hostile,
+            done: false,
+            asks: true,
+        },
+        Stop {
+            name: "Other",
+            done: false,
+            asks: true,
+        },
+    ];
+
+    let panel = Asked {
+        subject: hostile,
+        stops: &stops,
+        at: 0,
+        statement: hostile,
+        given: &[Given {
+            question: hostile,
+            answer: hostile,
+        }],
+        question: hostile,
+        answers: &answers,
+        marked: 0,
+        note: hostile,
+        writing: Some(Writing {
+            text: hostile,
+            column: 0,
+            placeholder: hostile,
+        }),
+        at_note: true,
+        leaves: hostile,
+        footer: hostile,
+    };
+
+    let (drawn, _) = panel.within(80, 40, Glyphs::Unicode);
+
+    for row in &drawn {
+        let said = row.text();
+        assert!(
+            !said.contains('\x1b'),
+            "an escape reached the terminal: {said:?}"
+        );
+        assert!(
+            !said.chars().any(char::is_control),
+            "a control character reached the terminal: {said:?}"
+        );
+    }
+}

@@ -35,7 +35,6 @@
 //! obey come out of it.
 
 use crate::color::Slot;
-use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width::{self, clip};
@@ -346,12 +345,7 @@ fn line(said: &str, columns: usize) -> Row {
 ///
 /// Nothing here changes the width, because nothing dropped was ever counted.
 fn spoken(said: &str, columns: usize) -> String {
-    let mut escapes = Escapes::default();
-
-    clip(said, columns)
-        .chars()
-        .filter(|character| !escapes.holds(*character) && width::advance(*character).is_some())
-        .collect()
+    width::spoken(clip(said, columns))
 }
 
 #[cfg(test)]

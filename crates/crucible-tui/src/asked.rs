@@ -39,6 +39,15 @@
 //! question already answered and on an answer already chosen, because in both
 //! places it says the one thing: this one is settled.
 //!
+//! **Every word here is somebody else's.** The questions and answers are the
+//! model's, and a model reads files other people wrote — so a terminal
+//! instruction carried through in one of them would move the cursor out of the
+//! live region this process is tracking, or leave an attribute set for every row
+//! after it. Nothing a caller handed over reaches a row without going through
+//! [`spoken`] first, and the one place that is easy to get wrong is a string
+//! that is folded rather than clipped: it is made safe before it is folded, so
+//! the widths are measured on what will actually be drawn.
+//!
 //! Nothing paints a ground. The question in view is said by a mark and a weight
 //! rather than by a highlight, which is what keeps the ground behind every row
 //! the reader's own.
@@ -47,7 +56,7 @@ use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
 use crate::row::Row;
-use crate::width::{clip, columns as wide, fold};
+use crate::width::{clip, columns as wide, fold, spoken};
 
 /// What a row spends on the frame: one column of edge on each side.
 const AROUND: usize = 2;
@@ -241,9 +250,10 @@ impl Asked<'_> {
         let (close, closed) = glyphs.bottom();
         let bar = glyphs.horizontal().repeat(inner);
 
+        let subject = spoken(self.subject);
         let mut rows = vec![Row::new().then(Slot::Accent, format!("{open}{bar}{opened}"))];
         rows.push(framed(
-            said(SAID, Slot::Strong, clip(self.subject, across)),
+            said(SAID, Slot::Strong, clip(&subject, across)),
             inner,
             glyphs,
         ));
@@ -260,7 +270,8 @@ impl Asked<'_> {
         if spacing.opening {
             rows.push(framed(Row::new(), inner, glyphs));
         }
-        for line in fold(self.question, across) {
+        let question = spoken(self.question);
+        for line in fold(&question, across) {
             rows.push(framed(said(SAID, Slot::Plain, line), inner, glyphs));
         }
         if spacing.opening {
@@ -302,7 +313,8 @@ impl Asked<'_> {
 
         if spacing.footer && !self.footer.is_empty() {
             let room = columns.saturating_sub(SAID);
-            rows.push(said(SAID, Slot::Quiet, clip(self.footer, room)));
+            let footer = spoken(self.footer);
+            rows.push(said(SAID, Slot::Quiet, clip(&footer, room)));
         }
 
         (rows, caret)
@@ -339,7 +351,7 @@ impl Asked<'_> {
         let row = Row::new()
             .then(Slot::Plain, " ".repeat(PAYLOAD))
             .then(Slot::Quiet, NOTED)
-            .then(Slot::Plain, clip(text, room));
+            .then(Slot::Plain, clip(&spoken(text), room));
 
         Some(framed(row, laid.inner, laid.glyphs))
     }
@@ -460,7 +472,7 @@ impl Asked<'_> {
 
         answer.shows.get(at).map_or_else(
             || (Slot::Plain, String::new()),
-            |line| (Slot::Plain, clip(line, room).to_owned()),
+            |line| (Slot::Plain, clip(&spoken(line), room).to_owned()),
         )
     }
 
@@ -549,7 +561,10 @@ impl Asked<'_> {
                 row.push(Slot::Plain, " ");
             }
 
-            row.push(if here { Slot::Strong } else { Slot::Quiet }, stop.name);
+            row.push(
+                if here { Slot::Strong } else { Slot::Quiet },
+                spoken(stop.name),
+            );
         }
 
         row
@@ -570,7 +585,8 @@ impl Asked<'_> {
             if spacing.opening {
                 rows.push(framed(Row::new(), inner, glyphs));
             }
-            for line in fold(self.statement, across) {
+            let statement = spoken(self.statement);
+            for line in fold(&statement, across) {
                 rows.push(framed(said(SAID, Slot::Plain, line), inner, glyphs));
             }
         }
@@ -585,12 +601,13 @@ impl Asked<'_> {
                 .then(Slot::Plain, " ")
                 .then(
                     Slot::Quiet,
-                    clip(given.question, across.saturating_sub(AROUND)),
+                    clip(&spoken(given.question), across.saturating_sub(AROUND)),
                 );
             rows.push(framed(mark, inner, glyphs));
 
             let under = inner.saturating_sub(PAYLOAD + AROUND);
-            for line in fold(given.answer, under) {
+            let answer = spoken(given.answer);
+            for line in fold(&answer, under) {
                 rows.push(framed(
                     said(PAYLOAD + AROUND, Slot::Strong, line),
                     inner,
@@ -635,12 +652,13 @@ impl Asked<'_> {
                 .then(Slot::Plain, " ".repeat(SAID))
                 .then(Slot::Accent, glyphs.caret())
                 .then(Slot::Strong, &number)
-                .then(slot, clip(text, room));
+                .then(slot, clip(&spoken(text), room));
 
             return vec![framed(row, inner, glyphs)];
         }
 
-        let mut rows: Vec<Row> = fold(answer.answer, inner.saturating_sub(front))
+        let name = spoken(answer.answer);
+        let mut rows: Vec<Row> = fold(&name, inner.saturating_sub(front))
             .into_iter()
             .enumerate()
             .map(|(row, line)| {
@@ -673,7 +691,8 @@ impl Asked<'_> {
             .collect();
 
         if spacing.says && !answer.says.is_empty() {
-            let line = clip(answer.says, inner.saturating_sub(front));
+            let says = spoken(answer.says);
+            let line = clip(&says, inner.saturating_sub(front));
             rows.push(framed(said(front, Slot::Quiet, line), inner, glyphs));
         }
 
@@ -691,7 +710,7 @@ impl Asked<'_> {
             .then(Slot::Plain, &number)
             .then(
                 Slot::Plain,
-                clip(self.leaves, across.saturating_sub(front - SAID)),
+                clip(&spoken(self.leaves), across.saturating_sub(front - SAID)),
             )
     }
 }
