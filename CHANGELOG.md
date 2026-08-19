@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-08-19
+
 ### Fixed
 
 - **Every component is drawn for the window it is on.** A resize that arrived
@@ -2111,6 +2113,7 @@ that say what it is allowed to become.
 - Linux x86-64 only. The release builds one artifact.
 
 [Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...HEAD
+[0.11.2]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/augments-labs/crucible-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/augments-labs/crucible-code/compare/v0.9.1...v0.10.0
