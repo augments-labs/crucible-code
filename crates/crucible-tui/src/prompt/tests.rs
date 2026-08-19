@@ -7,6 +7,12 @@ use super::*;
 /// stretch on either side of each.
 const WIDTHS: std::ops::RangeInclusive<usize> = 1..=200;
 
+/// What a set of rows says, one string each, for an assertion about the art
+/// rather than about the colour.
+fn rows_of(rows: &[Row]) -> Vec<String> {
+    rows.iter().map(Row::text).collect()
+}
+
 /// What the status row says while this release is being typed into.
 const MODE: &str = "ask before edits";
 
@@ -592,19 +598,91 @@ fn the_border_is_drawn_in_the_tone_the_mode_was_given() {
 }
 
 #[test]
-fn a_line_that_was_committed_keeps_the_mark_and_is_not_clipped() {
-    // Nothing is ever drawn over a settled row, so a line longer than the
-    // terminal is the terminal's to wrap and costs no count this process keeps.
+fn a_line_that_was_committed_keeps_the_mark() {
     let said = "why does the grep probe walk the whole tree before it reports";
+    let wide = said.len() + 8;
 
     assert_eq!(
-        Prompt::committed(said, Glyphs::Unicode).text(),
-        format!("› {said}")
+        rows_of(&Prompt::committed(said, wide, Glyphs::Unicode)),
+        [format!("› {said}")]
     );
     assert_eq!(
-        Prompt::committed(said, Glyphs::Ascii).text(),
-        format!("> {said}")
+        rows_of(&Prompt::committed(said, wide, Glyphs::Ascii)),
+        [format!("> {said}")]
     );
+}
+
+#[test]
+fn a_committed_line_wider_than_the_window_is_wrapped_here_rather_than_by_the_terminal() {
+    // The renderer counts the rows it drew so it can move back over them, and
+    // `present` does not wrap. A row handed over wider than the window is one
+    // the terminal breaks itself, leaving the count short by however many rows
+    // it took -- which is the whole reason this returns more than one.
+    let said = "why does the grep probe walk the whole tree before it reports \
+                the first match it found";
+
+    for columns in 12..=60 {
+        let rows = Prompt::committed(said, columns, Glyphs::Unicode);
+
+        assert!(rows.len() > 1, "not wrapped at {columns}: {rows:?}");
+        for row in &rows {
+            assert!(
+                row.columns() <= columns,
+                "row past the last column at {columns}: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_rows_under_a_wrapped_line_stand_where_the_mark_left_off() {
+    // The same arrangement the box uses while the line is being typed: the mark
+    // on the first row and the ones under it indented to match, so a line that
+    // wrapped reads as one line rather than as a stack of separate ones.
+    let said = "why does the grep probe walk the whole tree before it reports";
+    let rows = rows_of(&Prompt::committed(said, 24, Glyphs::Unicode));
+    assert!(rows.len() > 1, "nothing wrapped, so nothing is under it");
+
+    let (first, rest) = rows.split_first().expect("a row");
+    assert!(first.starts_with("› "), "{first:?}");
+
+    for row in rest {
+        assert!(
+            row.starts_with("  "),
+            "not indented under the mark: {row:?}"
+        );
+        assert!(!row.starts_with("   "), "over-indented: {row:?}");
+    }
+}
+
+#[test]
+fn a_wide_glyph_is_two_of_the_columns_a_committed_line_is_wrapped_to() {
+    // Display width, not bytes and not characters. Getting this wrong is what
+    // corrupts a screen rather than what merely looks off.
+    let said = "日本語".repeat(20);
+
+    for columns in 12..=60 {
+        for row in Prompt::committed(&said, columns, Glyphs::Unicode) {
+            assert!(
+                row.columns() <= columns,
+                "row past the last column at {columns}: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_window_too_narrow_for_anything_still_leaves_the_mark() {
+    // There is no row to draw a line on at this width, and nothing true to say
+    // about the line either -- but a record with no mark in it is a record that
+    // does not say a prompt was ever there.
+    for columns in 0..=2 {
+        let rows = Prompt::committed("hello", columns, Glyphs::Unicode);
+
+        assert_eq!(rows_of(&rows), ["›"], "at {columns} columns");
+    }
 }
 
 #[test]

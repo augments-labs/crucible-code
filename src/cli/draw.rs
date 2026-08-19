@@ -275,8 +275,10 @@ pub(crate) fn queued<T: Terminal>(
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
+    let columns = renderer.columns();
+
     renderer.present(
-        &[crucible_tui::Prompt::committed(said, style.glyphs())],
+        &crucible_tui::Prompt::committed(said, columns, style.glyphs()),
         style.palette(),
     )
 }
