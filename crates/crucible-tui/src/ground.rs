@@ -84,7 +84,8 @@ pub fn replied(data: &str) -> Option<Ground> {
 /// about a string. One decision in one place: a second threshold elsewhere
 /// would be two answers about one terminal, free to disagree about which ink
 /// belongs on it.
-pub(crate) fn is_light(colour: (u8, u8, u8)) -> bool {
+#[must_use]
+pub fn is_light(colour: (u8, u8, u8)) -> bool {
     luminance(colour) > MIDPOINT
 }
 

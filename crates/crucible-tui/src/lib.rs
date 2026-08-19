@@ -51,7 +51,7 @@ pub use color::{Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Typed};
 pub use expanded::{Expanded, Shown};
 pub use glyphs::Glyphs;
-pub use ground::Ground;
+pub use ground::{Ground, is_light};
 pub use ladder::Ladder;
 pub use menu::{Listed, Menu};
 pub use notice::Notice;

@@ -612,8 +612,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
                 glyphs: settings.glyphs(),
                 detail: settings.tool_detail(),
                 mouse: settings.mouse(),
+                theme: settings.theme(),
             },
             renderer.is_terminal(),
+            // Which way the terminal says its ground goes, from a variable it
+            // set at launch. Free to read, so the first frame is drawn on it —
+            // which is the whole reason `auto` costs nothing on this path.
+            crucible_tui::ground::seeded(&from),
             &from,
         ),
         cancel: cancel.clone(),
