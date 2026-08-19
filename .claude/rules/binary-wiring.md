@@ -71,7 +71,12 @@ on.
 
 ## `src/bin/` is not shipped
 
-Those are bench probes: they exist so `scripts/bench.sh` has something to
-measure, and no release contains them. Code shared between probes belongs in a
-module under `src/bin/`, not in the binary's own tree, and nothing in the
-binary may reach for it.
+Nothing under it reaches a release. Most are bench probes, existing so
+`scripts/bench.sh` has something to measure; one writes a table that is checked
+in, run by hand and never by a build. Code shared between them belongs in a
+module under `src/bin/`, not in the binary's own tree, and nothing in the binary
+may reach for it.
+
+A generator there reads its input rather than fetching it. What reaches the
+network is a `curl` in the script beside it, written where somebody can see it —
+this program decides to talk to a server in one place, and that place is a turn.

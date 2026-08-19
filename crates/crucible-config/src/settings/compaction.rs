@@ -36,6 +36,26 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// How much this model accepts, where a layer said so.
+    ///
+    /// Keyed by the model name exactly as it is asked for, so a session that
+    /// changes model does not carry the last one's figure with it. `None` is
+    /// nobody having said, which is not the same as a window of nothing.
+    #[must_use]
+    pub fn context_window(&self, provider: &str, model: &str) -> Option<u32> {
+        u32::try_from(
+            self.value
+                .get("providers")?
+                .get(provider)?
+                .get("contextWindow")?
+                .get(model)?
+                .as_u64()?,
+        )
+        .ok()
+    }
+}
+
 /// What a session does when the window fills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compaction {
@@ -133,6 +153,26 @@ mod tests {
         let settings = Settings::resolve(vec![Document::sample(said, Origin::User)]);
 
         assert_eq!(settings.compaction().reserve, Some(0));
+    }
+
+    #[test]
+    fn a_window_is_read_back_under_the_model_it_was_written_for() {
+        let said = r#"{"providers": {"openai": {"contextWindow":
+            {"gpt-5.6-sol": 272000, "gpt-5.5": 1050000}}}}"#;
+        let settings = Settings::resolve(vec![Document::sample(said, Origin::User)]);
+
+        assert_eq!(
+            settings.context_window("openai", "gpt-5.6-sol"),
+            Some(272_000)
+        );
+        assert_eq!(
+            settings.context_window("openai", "gpt-5.5"),
+            Some(1_050_000)
+        );
+
+        // A model nobody wrote a figure for, and a provider nobody did either.
+        assert_eq!(settings.context_window("openai", "gpt-5.6-luna"), None);
+        assert_eq!(settings.context_window("anthropic", "gpt-5.6-sol"), None);
     }
 
     #[test]

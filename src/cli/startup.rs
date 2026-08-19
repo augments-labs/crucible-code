@@ -32,8 +32,25 @@ use super::standing;
 use super::subscription::Subscriptions;
 use super::{Fatal, PROVIDERS, Served};
 
-/// Ceiling on one response, in tokens.
-const MAX_TOKENS: u32 = 8192;
+/// The most crucible will ask any model to produce in one answer, in tokens.
+///
+/// A ceiling over the model's own rather than a number to use instead of it:
+/// what is asked for is whichever is smaller. Models now serve far more than
+/// this, and taking all of it would cost more than it buys — most vendors
+/// require the request and this ceiling to fit the window together, so every
+/// token reserved for an answer is a token of session that cannot be used, and
+/// the room kept free for the next exchange is worked out from this figure.
+/// Sixteen thousand is a long answer or a large edit, and a fraction of even a
+/// small window.
+const CEILING: u32 = 16_000;
+
+/// And where this build knows nothing about the model at all.
+///
+/// Lower, deliberately. An unknown name is one no table has limits for, so
+/// asking for a long answer risks a vendor refusing the request outright — and
+/// a conservative ceiling costs a truncated answer at worst, where an optimistic
+/// one costs the turn.
+const UNKNOWN_CEILING: u32 = 8192;
 
 /// The name the tool that writes the plan is called by.
 ///
@@ -154,10 +171,14 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         (Session::start(sessions, workspace)?, None)
     };
 
+    // Read before the provider is handed over, because which vendor is being
+    // written to is what says which model's limits are being asked about.
+    let asking = model(provider.name(), startup.model, startup.effort, workspace);
+
     let mut runner = Runner::new(
         provider,
         tools(startup, settings, reaching),
-        model(startup.model, startup.effort, workspace),
+        asking,
         session,
     )
     .permitting(settings.permission(startup.mode));
@@ -744,7 +765,12 @@ fn about(schema: &str) -> Box<str> {
 /// The effort stays an `Option` for the opposite reason: there is no rung that
 /// means "nobody said", and the field left off is what a vendor reads as its own
 /// default.
-fn model(name: Option<&str>, effort: Option<Effort>, workspace: &Workspace) -> Model {
+fn model(
+    provider: &str,
+    name: Option<&str>,
+    effort: Option<Effort>,
+    workspace: &Workspace,
+) -> Model {
     let name = name.unwrap_or_default();
 
     Model {
@@ -752,9 +778,20 @@ fn model(name: Option<&str>, effort: Option<Effort>, workspace: &Workspace) -> M
         // asked under, and no command has been left running to end.
         system: Some(standing::under(name, effort, workspace, &[]).into()),
         name: name.into(),
-        max_tokens: MAX_TOKENS,
+        max_tokens: ceiling(provider, name),
         effort,
     }
+}
+
+/// How long an answer to ask this model for.
+///
+/// The model's own limit held under [`CEILING`], or [`UNKNOWN_CEILING`] where
+/// this build has never heard of it. Read off the name exactly as it was asked
+/// for — a name one word from a listed one is a name nothing is known about,
+/// and borrowing the neighbour's figure is how a request comes to be refused
+/// for a reason nobody can see.
+fn ceiling(provider: &str, model: &str) -> u32 {
+    super::facts(provider, model).map_or(UNKNOWN_CEILING, |facts| facts.output.min(CEILING))
 }
 
 #[cfg(test)]

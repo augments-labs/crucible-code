@@ -134,8 +134,8 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "contextWindow",
-        about: "How many tokens the model above accepts at once, where crucible cannot ask the provider",
-        shape: Shape::Count,
+        about: "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
+        shape: Shape::Named(&WINDOW),
         examples: &[],
         widens: false,
     },
@@ -303,6 +303,13 @@ const COMPACTION: &[Field] = &[
         widens: false,
     },
 ];
+
+/// How much one model accepts, under the name it is asked for.
+///
+/// Keyed by model rather than stated once for the provider, because a session
+/// changes which model it asks without changing which vendor it writes to — and
+/// a figure that stayed behind would describe the model somebody just left.
+const WINDOW: Shape = Shape::Count;
 
 /// One rule: a tool, and what it may act on.
 const RULE: Shape = Shape::Text;

@@ -484,13 +484,42 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     let sample = Sample::new("effort-model");
     let workspace = sample.workspace();
 
-    let asking = model(Some("claude-opus-5"), Some(Effort::Xhigh), &workspace);
+    let asking = model(
+        "anthropic",
+        Some("claude-opus-5"),
+        Some(Effort::Xhigh),
+        &workspace,
+    );
 
     assert_eq!(asking.effort, Some(Effort::Xhigh));
 
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
-    assert_eq!(model(Some("claude-opus-5"), None, &workspace).effort, None);
+    assert_eq!(
+        model("anthropic", Some("claude-opus-5"), None, &workspace).effort,
+        None
+    );
+}
+
+#[test]
+fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
+    let sample = Sample::new("answer-ceiling");
+    let workspace = sample.workspace();
+
+    // A model this build has the limits of: its own output limit is far above
+    // the ceiling, so the ceiling is what is asked for.
+    let known = model("anthropic", Some("claude-opus-5"), None, &workspace);
+    assert_eq!(known.max_tokens, CEILING);
+
+    // And one it has never heard of, where nothing is known and the lower
+    // figure is what keeps a request from being refused outright.
+    let unknown = model(
+        "anthropic",
+        Some("claude-from-the-future"),
+        None,
+        &workspace,
+    );
+    assert_eq!(unknown.max_tokens, UNKNOWN_CEILING);
 }
 
 /// What `named` gets to reach the web with, given a key and maybe a model.

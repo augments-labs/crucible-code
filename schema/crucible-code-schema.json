@@ -229,9 +229,23 @@
               "type": "string"
             },
             "contextWindow": {
-              "description": "How many tokens the model above accepts at once, where crucible cannot ask the provider",
-              "minimum": 0,
-              "type": "integer"
+              "additionalProperties": false,
+              "description": "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
+              "patternProperties": {
+                "^[^$]": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "properties": {
+                "$comment": {
+                  "type": "string"
+                },
+                "$schema": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
             },
             "effort": {
               "description": "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
