@@ -175,3 +175,47 @@ fn end_of_input_is_a_refusal() {
     // A pipe that closed mid-question cannot consent to anything.
     assert_eq!(verdict(None), (Verdict::Deny, Remember::Never));
 }
+
+#[test]
+fn a_window_that_changed_under_a_cramped_ask_is_news_rather_than_a_refusal() {
+    // The other question in this session with no clock on it, and the one that
+    // is asked several times over: a window too small for the panel puts the
+    // questions a row at a time. A resize passed over here leaves the renderer
+    // holding a size the screen no longer has, and every question after it is
+    // wrapped and rewound against that one.
+    let question = Question::new("Language", "Which?", [Chosen::new("Rust")]);
+    assert!(matches!(
+        numbered(Pressed::Resized, &question),
+        Numbered::Resized
+    ));
+}
+
+#[test]
+fn a_number_takes_the_answer_it_stands_against_and_nothing_else_does() {
+    let question = Question::new(
+        "Language",
+        "Which?",
+        [Chosen::new("Rust"), Chosen::new("Go")],
+    );
+
+    let Numbered::Chose(chose) = numbered(Pressed::Key(Key::Char('2')), &question) else {
+        panic!("a number in range takes the answer it counts to");
+    };
+    assert_eq!(chose.answer(), "Go");
+
+    // Zero counts to nothing, a number past the end stands against nothing,
+    // and a letter was never one. All three leave the whole ask, which is what
+    // escape does on the panel this stood in for.
+    for arrived in [
+        Pressed::Key(Key::Char('0')),
+        Pressed::Key(Key::Char('3')),
+        Pressed::Key(Key::Char('x')),
+        Pressed::Escape,
+        Pressed::Up,
+    ] {
+        assert!(
+            matches!(numbered(arrived, &question), Numbered::Left),
+            "{arrived:?}"
+        );
+    }
+}

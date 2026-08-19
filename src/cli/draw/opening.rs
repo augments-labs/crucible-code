@@ -98,6 +98,12 @@ pub(crate) fn opening<T: Terminal>(
         sessions: &recent,
     };
 
+    // The width was read once when the renderer was built, which is before the
+    // session's files were opened and the launch was resolved — a stretch on a
+    // slow disk is long enough to have resized the window over. Asked again
+    // here, once, so the card is laid out against the terminal it is about to
+    // be drawn on rather than the one that was there at launch.
+    renderer.resized()?;
     let columns = renderer.columns();
     renderer.present(&welcome.rows(columns, style.glyphs()), style.palette())?;
     renderer.commit("")?;

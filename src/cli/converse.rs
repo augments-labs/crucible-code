@@ -1086,7 +1086,7 @@ fn cramped<T: Terminal>(
     for (at, question) in questions.iter().enumerate() {
         draw::asking(renderer, question, at, questions.len(), style)?;
 
-        let Some(taken) = took(question)? else {
+        let Some(taken) = took(renderer, question)? else {
             return Ok(None);
         };
 
@@ -1099,26 +1099,59 @@ fn cramped<T: Terminal>(
 
 /// Reads one key as one of `question`'s answers, or nothing where it means to
 /// leave.
-fn took(question: &Question) -> Result<Option<Chosen>, Fatal> {
+fn took<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    question: &Question,
+) -> Result<Option<Chosen>, Fatal> {
     loop {
-        let arrived = pressed()?;
-        let Pressed::Key(Key::Char(typed)) = arrived else {
-            if arrived == Pressed::Resized {
-                continue;
-            }
-            return Ok(None);
-        };
+        match numbered(pressed()?, question) {
+            Numbered::Chose(answer) => return Ok(Some(answer)),
+            Numbered::Left => return Ok(None),
 
-        let at = usize::try_from(typed.to_digit(10).unwrap_or(0))
-            .ok()
-            .and_then(|digit| digit.checked_sub(1));
-
-        if let Some(answer) = at.and_then(|at| question.answers().nth(at)) {
-            return Ok(Some(answer.clone()));
+            // The renderer is holding a size the screen no longer has, and the
+            // question after this one is drawn against it — a row wrapped for a
+            // window that has gone, and a rewind counted in rows of one. Nothing
+            // is redrawn: what is already down is committed, so it is the
+            // terminal's to reflow, which is the answer `answered` gives one
+            // question above.
+            Numbered::Resized => renderer.resized()?,
         }
-
-        return Ok(None);
     }
+}
+
+/// What one key pressed at a question put a row at a time means.
+///
+/// Three answers for the reason [`Heard`] has three: a key that is not one of
+/// the numbers is not therefore nothing, and the one that says the window
+/// changed has to be told apart from the one that says leave. Written apart
+/// from the loop above because that loop cannot be driven from a test — the
+/// keyboard it reads is the process's own — and this much of the reading can
+/// be.
+enum Numbered {
+    /// The answer whose number was typed.
+    Chose(Chosen),
+    /// The window changed under the question.
+    Resized,
+    /// Anything else, which leaves the whole ask.
+    Left,
+}
+
+/// Reads one key as one of `question`'s numbered answers.
+fn numbered(arrived: Pressed, question: &Question) -> Numbered {
+    if arrived == Pressed::Resized {
+        return Numbered::Resized;
+    }
+
+    let Pressed::Key(Key::Char(typed)) = arrived else {
+        return Numbered::Left;
+    };
+
+    let at = usize::try_from(typed.to_digit(10).unwrap_or(0))
+        .ok()
+        .and_then(|digit| digit.checked_sub(1));
+
+    at.and_then(|at| question.answers().nth(at))
+        .map_or(Numbered::Left, |answer| Numbered::Chose(answer.clone()))
 }
 
 /// Reads one bounded line, or `None` at end of input.

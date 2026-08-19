@@ -341,12 +341,13 @@ impl Question<'_> {
         // sentence again.
         if !ended {
             let below = last - from + 1;
+            // Clipped like every other single row here. It is the one row in
+            // this panel built from a sentence rather than folded from one, and
+            // a count that ran past the edge would be wrapped by the terminal
+            // into a row the rewind above it never counted.
+            let counted = format!("{} {below} more rows of explanation", glyphs.dot());
             window.push(framed(
-                said(
-                    PAYLOAD,
-                    Slot::Quiet,
-                    &format!("{} {below} more rows of explanation", glyphs.dot()),
-                ),
+                said(PAYLOAD, Slot::Quiet, clip(&counted, payload)),
                 inner,
                 glyphs,
             ));
