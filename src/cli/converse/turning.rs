@@ -380,6 +380,13 @@ struct Drawn {
     doing: Doing,
     /// The count beside it.
     spent: Option<u64>,
+    /// The reading against the far end of it.
+    ///
+    /// Part of what decides a redraw, because anything the row says and this
+    /// value does not carry reaches the screen only when something else on the
+    /// row happens to change with it — a stale number, arriving late, on the
+    /// row somebody is reading to find out what is going on.
+    left: Option<u8>,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
     beat: u64,
@@ -522,6 +529,7 @@ impl Turning {
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
             doing: self.doing,
+            left: self.left,
             spent: self.spent,
             beat: Working::beat(self.running()),
 
@@ -591,6 +599,7 @@ impl Turning {
             running: self.running(),
             spent: self.spent,
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
+            left: self.left,
         };
 
         // What the call has to clear is a row taller where the prompt below is

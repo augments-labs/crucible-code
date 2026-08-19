@@ -247,6 +247,7 @@ fn the_working_row_fits_the_window_the_turn_runs_in() {
         running: Duration::from_secs(93),
         spent: Some(12_345),
         stops: Some("esc to stop"),
+        left: Some(7),
     };
     across("the working row", |columns, glyphs| {
         vec![working.row(columns, glyphs)]
