@@ -25,9 +25,12 @@
 //! question nothing is competing with.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crucible_core::{Ask, Event, Post, Remember, Sensitivity, ToolCall, Verdict, Wrote};
+use crucible_core::{
+    Answered, Ask, Event, Post, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
+};
 
 /// Events allowed to wait for the terminal.
 ///
@@ -47,6 +50,10 @@ const BATCH_BYTES: usize = 1024 * 1024;
 /// channel type says nothing about which half is which.
 pub(crate) type Answer = (Verdict, Remember);
 
+/// What comes back when an ask is answered: one answer per question, or nobody
+/// answered at all.
+pub(crate) type Given = Option<Vec<Answered>>;
+
 /// Something the drawing thread has to deal with.
 #[derive(Debug)]
 pub(crate) enum Seen {
@@ -60,23 +67,48 @@ pub(crate) enum Seen {
         /// How much damage it could do.
         sensitivity: Sensitivity,
     },
+
+    /// A tool is waiting on a person. Put the questions, then answer.
+    Asked {
+        /// What to put, in the order it should be answered.
+        questions: Vec<Question>,
+    },
 }
 
 /// A worker's events, on their way to the thread that draws.
 #[derive(Debug)]
-pub(crate) struct Relay(SyncSender<Seen>);
+pub(crate) struct Relay {
+    to: SyncSender<Seen>,
+    putting: Putting,
+}
 
 impl Relay {
     /// Takes the sending end. One per turn, dropped when the turn ends — which
     /// is how the drawing thread learns the turn is over.
-    pub(crate) fn new(to: SyncSender<Seen>) -> Self {
-        Self(to)
+    ///
+    /// It carries the ask handle for exactly that reason: this value's death is
+    /// already the signal, so it is the right thing to give the ends back.
+    pub(crate) fn new(to: SyncSender<Seen>, putting: Putting) -> Self {
+        Self { to, putting }
+    }
+}
+
+impl Drop for Relay {
+    /// Gives back the ends the turn lent, before its own sender goes.
+    ///
+    /// A sender parked in the ask handle would outlive the turn, and the loop
+    /// that draws learns a turn is over by watching that channel close — so one
+    /// left behind is a loop that waits for ever. Done here rather than at the
+    /// end of the worker's body, because a worker that panicked would skip that
+    /// and hang the session; a drop runs either way.
+    fn drop(&mut self) {
+        self.putting.close();
     }
 }
 
 impl Post for Relay {
     fn post(&self, event: Event) {
-        drop(self.0.send(Seen::Turn(event)));
+        drop(self.to.send(Seen::Turn(event)));
     }
 }
 
@@ -246,7 +278,7 @@ mod tests {
     #[test]
     fn an_event_arrives_as_something_to_draw() {
         let (to, seen) = sync_channel(2);
-        let relay = Relay::new(to);
+        let relay = Relay::new(to, Putting::new());
 
         relay.post(Event::Delta {
             text: "hello".into(),
@@ -401,7 +433,7 @@ mod tests {
         let finished = Arc::new(AtomicBool::new(false));
         let done = finished.clone();
         let flooding = std::thread::spawn(move || {
-            let relay = Relay::new(to);
+            let relay = Relay::new(to, Putting::new());
             for _ in 0..POSTED {
                 relay.post(Event::Delta { text: "x".into() });
             }
@@ -438,7 +470,7 @@ mod tests {
         let finished = Arc::new(AtomicBool::new(false));
         let done = finished.clone();
         let flooding = std::thread::spawn(move || {
-            let relay = Relay::new(to);
+            let relay = Relay::new(to, Putting::new());
             for _ in 0..POSTED {
                 relay.post(Event::Delta {
                     text: "x".repeat(BATCH_BYTES).into(),
@@ -465,5 +497,77 @@ mod tests {
 
         flooding.join().unwrap();
         assert_eq!(received, POSTED);
+    }
+}
+
+/// The two ends a turn lends whoever is asking.
+///
+/// Made fresh for each turn, for the reason the verdict channel is: an answer
+/// that outlived the turn it was meant for is an answer to a question nobody
+/// asked.
+#[derive(Debug)]
+struct Ends {
+    to: SyncSender<Seen>,
+    answers: Receiver<Given>,
+}
+
+/// Where a tool's questions go, and where the answers come back.
+///
+/// Held by the tool from the moment it is built and lent its ends one turn at a
+/// time, which is the difference between this and [`Asking`]: a verdict is
+/// asked for by the loop, which can be handed a fresh value per turn, and this
+/// is asked for by a tool that was built once and never rebuilt.
+///
+/// **Nobody there is an answer.** A turn that has lent no ends, a channel that
+/// will not carry the questions, and a reply channel that closed first all mean
+/// the same thing — there is no one to ask — and the tool turns that into a
+/// result the turn survives. That is the whole of what makes it different from
+/// the verdict beside it, whose silence has to be a refusal because running a
+/// tool nobody agreed to is worse than stopping. Here nothing runs either way.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Putting(Arc<Mutex<Option<Ends>>>);
+
+impl Putting {
+    /// A handle with no turn behind it yet.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Lends the ends of this turn's channels.
+    pub(crate) fn open(&self, to: SyncSender<Seen>, answers: Receiver<Given>) {
+        if let Ok(mut held) = self.0.lock() {
+            *held = Some(Ends { to, answers });
+        }
+    }
+
+    /// Takes them back, so a question put after the turn ended finds nobody.
+    ///
+    /// [`Relay`]'s drop is what calls it, and why is written there.
+    pub(crate) fn close(&self) {
+        if let Ok(mut held) = self.0.lock() {
+            *held = None;
+        }
+    }
+}
+
+impl Put for Putting {
+    /// Blocks the turn until somebody answers.
+    ///
+    /// The lock is held across the wait on purpose: two asks outstanding at once
+    /// would be two questions on one screen with one reply channel between them,
+    /// and there is no shape of that which is right. Tools run one at a time, so
+    /// what this makes impossible is not something anything does today — it is
+    /// something a later change cannot start doing by accident.
+    fn put(&self, questions: &[Question]) -> Option<Vec<Answered>> {
+        let held = self.0.lock().ok()?;
+        let ends = held.as_ref()?;
+
+        ends.to
+            .send(Seen::Asked {
+                questions: questions.to_vec(),
+            })
+            .ok()?;
+
+        ends.answers.recv().ok()?
     }
 }

@@ -1,8 +1,8 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
 use crucible_core::{
-    Change, Command, Diff, Line, ProviderError, Summary, Target, ToolArgs, ToolId, TurnError,
-    TurnId, Workspace,
+    Change, Command, Diff, Line, ProviderError, Question, Summary, Target, ToolArgs, ToolId,
+    TurnError, TurnId, Workspace,
 };
 use crucible_tui::Recording;
 
@@ -995,4 +995,72 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
         0,
         "a running command's output was committed to scrollback"
     );
+}
+
+/// The question and its answers, as a window `columns` wide receives them.
+fn put(question: &Question, at: usize, of: usize, columns: usize) -> String {
+    let mut renderer = Renderer::new(Recording::new(columns, 24));
+
+    asking(&mut renderer, question, at, of, Style::plain()).expect("the question to commit");
+
+    renderer.terminal().written().to_string()
+}
+
+/// A question about a language, with two answers and one line said about them.
+fn language() -> Question {
+    Question::new(
+        "Language",
+        "Which language should the examples be written in?",
+        [
+            crucible_core::Answer::new("Rust").saying("crucible's own implementation language"),
+            crucible_core::Answer::new("Python"),
+        ],
+    )
+}
+
+#[test]
+fn a_question_with_no_room_for_a_panel_is_put_a_row_at_a_time() {
+    let written = put(&language(), 0, 1, WIDE);
+
+    assert!(
+        written.contains("? Which language should the examples be written in?"),
+        "{written}"
+    );
+    assert!(written.contains("1. Rust"), "{written}");
+    assert!(
+        written.contains("crucible's own implementation language"),
+        "{written}"
+    );
+    assert!(written.contains("2. Python"), "{written}");
+}
+
+#[test]
+fn one_of_several_says_which_one_it_is() {
+    // A question with no row of headings above it has nothing else saying how
+    // far through this is.
+    let written = put(&language(), 1, 3, WIDE);
+
+    assert!(written.contains("(2 of 3)"), "{written}");
+
+    let alone = put(&language(), 0, 1, WIDE);
+    assert!(!alone.contains(" of 1"), "{alone}");
+}
+
+#[test]
+fn a_question_is_wrapped_rather_than_cut_however_narrow_the_window() {
+    // Half a question is a question about something else. This is the path a
+    // window too small for the panel falls to, so it is the narrow case by
+    // definition and may never rely on room.
+    for columns in [20, 30, 40] {
+        let written = put(&language(), 0, 1, columns);
+
+        let joined: String = written.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+
+        assert!(
+            joined.contains("written in?"),
+            "at {columns} the question lost its tail: {written}"
+        );
+        assert!(joined.contains("Rust"), "at {columns}: {written}");
+        assert!(joined.contains("Python"), "at {columns}: {written}");
+    }
 }

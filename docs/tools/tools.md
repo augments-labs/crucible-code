@@ -1,6 +1,6 @@
 # Tools
 
-Ten tools, advertised in the order a model tends to reach for them. Six are
+Eleven tools, advertised in the order a model tends to reach for them. Seven are
 always in the list. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
@@ -15,12 +15,19 @@ sessions never write a plan or ask a question about the world.
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
 | `todo_write` | Writes down the plan | no |
+| `ask_user` | Puts a question to you | no |
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
 | `tool_search` | Finds a tool that is not in the list | no |
 
 There is nothing to install. What you configure is which calls get through, and
 that is [Permissions](../permissions/index.md).
+
+`ask_user` is always in the list, and is the one tool that is not there at all
+in some sessions: a run whose output is not a terminal has nobody to ask, so it
+is neither advertised nor held back. It is not deferred anywhere, because a
+model that cannot see it will not look it up at the moment it realises it should
+ask — and that moment is the only thing it is for.
 
 `todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
 call `tool_search` before it uses one, which costs a round trip the first time

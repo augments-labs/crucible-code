@@ -54,6 +54,7 @@ fn terms(sample: &Sample) -> Terms {
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
+        putting: crate::cli::seen::Putting::new(),
         leaving: crucible_tools::Background::new(),
         provider: std::cell::Cell::new(Some("anthropic")),
         choosing: sample.root().join("unwritten-home.json"),

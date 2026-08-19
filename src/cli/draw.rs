@@ -43,7 +43,9 @@
 
 use std::fmt;
 
-use crucible_core::{Change, Diff, Event, Sensitivity, StopReason, Summary, ToolCall, ToolOutput};
+use crucible_core::{
+    Change, Diff, Event, Question, Sensitivity, StopReason, Summary, ToolCall, ToolOutput,
+};
 use crucible_tools::Ended;
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
 
@@ -331,6 +333,56 @@ pub(crate) fn question<T: Terminal>(
     }
 
     mark(renderer, &answers(style.glyphs()), style)
+}
+
+/// One question, written into the scrollback where there was no room to stand a
+/// panel in.
+///
+/// Wrapped rather than clipped, for the reason the permission question above is:
+/// half a question is a question about something else, and rows are affordable
+/// because the renderer measures every line it commits.
+///
+/// Only the answers the call offered are numbered here. The panel adds two more
+/// — one to write an answer nobody offered, one to leave — and the first of them
+/// wants a line editor, which is exactly what a window this small has no room
+/// for. Leaving is still offered, by the key that always means it.
+pub(crate) fn asking<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    question: &Question,
+    at: usize,
+    of: usize,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let columns = renderer.columns();
+
+    renderer.settle()?;
+    let counted = if of > 1 {
+        format!("? {} ({} of {of})", question.question(), at + 1)
+    } else {
+        format!("? {}", question.question())
+    };
+    for row in wrapped(&counted, columns) {
+        renderer.commit(&row)?;
+    }
+
+    for (number, answer) in question.answers().enumerate() {
+        let said = if answer.says().is_empty() {
+            format!("{UNDER}{}. {}", number + 1, answer.answer())
+        } else {
+            format!(
+                "{UNDER}{}. {} {} {}",
+                number + 1,
+                answer.answer(),
+                style.glyphs().dash(),
+                answer.says()
+            )
+        };
+        for row in wrapped(&said, columns) {
+            renderer.commit(&row)?;
+        }
+    }
+
+    mark(renderer, UNDER, style)
 }
 
 /// Writes something the user is expected to type after.

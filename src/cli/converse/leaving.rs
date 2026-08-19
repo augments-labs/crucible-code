@@ -64,7 +64,7 @@ impl Leaving {
             renderer,
             style,
             self,
-            |leaving, columns, rows| leaving.rows(left, columns, rows, style.glyphs()),
+            |leaving, columns, rows| (leaving.rows(left, columns, rows, style.glyphs()), None),
             |arrived, leaving| leaving.against(arrived, left),
         )
     }

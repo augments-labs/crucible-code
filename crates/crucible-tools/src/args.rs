@@ -141,6 +141,30 @@ impl Args {
         Ok(texts)
     }
 
+    /// Refuses any field this object carries that is not among `known`.
+    ///
+    /// Silence about a field nobody reads is fine where the field changes
+    /// nothing. It is not fine where it changes what a person is shown: a call
+    /// meaning one thing, spelled a way the parser does not know, is then drawn
+    /// as something else and answered as something else. A refusal naming both
+    /// what arrived and what this takes is something the model rewrites.
+    pub(crate) fn only(&self, known: &[&str]) -> Result<(), ToolError> {
+        let Some(fields) = self.value.as_object() else {
+            return Ok(());
+        };
+
+        for named in fields.keys() {
+            if !known.contains(&named.as_str()) {
+                return Err(self.wrong(format!(
+                    "{named} is not a field of this call; it takes {}",
+                    known.join(", ")
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// A field that must be there and must not be blank.
     pub(crate) fn text(&self, field: &str) -> Result<&str, ToolError> {
         match self.optional_text(field)? {

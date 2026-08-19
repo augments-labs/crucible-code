@@ -199,7 +199,7 @@ pub(super) fn stand<T: Terminal>(
 
     let glyphs = style.glyphs();
     let picture = |window: &mut Window, columns: usize, rows: usize| {
-        laying(kept, window, glyphs, columns, rows)
+        (laying(kept, window, glyphs, columns, rows), None)
     };
 
     // Nothing is taken here and nothing is committed, so every way out is the

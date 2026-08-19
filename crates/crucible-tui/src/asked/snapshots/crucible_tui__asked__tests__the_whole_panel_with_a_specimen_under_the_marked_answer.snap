@@ -1,0 +1,25 @@
+---
+source: crates/crucible-tui/src/asked/tests.rs
+expression: "dump(&panel.within(80, 40, Glyphs::Unicode).0, 80)"
+---
+<Accent>╭──────────────────────────────────────────────────────────────────────────────╮</>
+<Accent>│</>  <Strong>Questions for you</>                                                           <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Accent> </> <DoneMark>✓</> <Quiet>Language</>   <Accent> </> <Quiet>□</> <Quiet>Support</>   <Accent>›</> <Quiet>□</> <Strong>Status line</>   <Accent> </> <Quiet>Review</>                     <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  You have no status line. Which one shall I set up here?                     <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Accent> </> 1. Compact                                                                <Accent>│</>
+<Accent>│</>  <Accent>›</><Strong> 2. </><Strong>With the workspace and the spend</>                                       <Accent>│</>
+<Accent>│</>  <Accent> </> 3. Nothing at all                                                         <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>    <Quiet>┌────────────────────────────────────────────────────┐</>                    <Accent>│</>
+<Accent>│</>    <Quiet>│</> crucible · opus-5 · main* · ~/src/crucible · 12.4k <Quiet>│</>                    <Accent>│</>
+<Accent>│</>    <Quiet>│</>                                                    <Quiet>│</>                    <Accent>│</>
+<Accent>│</>    <Quiet>│</>                                                    <Quiet>│</>                    <Accent>│</>
+<Accent>│</>    <Quiet>└────────────────────────────────────────────────────┘</>                    <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Quiet>──────────────────────────────────────────────────────────────────────────</>  <Accent>│</>
+<Accent>│</>    4. Say it in the prompt instead                                           <Accent>│</>
+<Accent>╰──────────────────────────────────────────────────────────────────────────────╯</>
+  <Quiet>esc to cancel · ←→ between questions · n for a note</>

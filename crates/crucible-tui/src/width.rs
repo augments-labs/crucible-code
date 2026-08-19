@@ -22,6 +22,31 @@ const TAB_STOP: usize = 8;
 /// The selector that asks for the emoji rendering of the character before it.
 pub(crate) const EMOJI_PRESENTATION: char = '\u{FE0F}';
 
+/// `said` with everything a terminal would read as an instruction dropped.
+///
+/// What arrives from a model or a tool is text this process did not write, and a
+/// terminal reads an escape as an instruction rather than as characters. Walking
+/// one at a time measures *around* a sequence, which is right for the arithmetic
+/// and wrong for the screen: the bytes are still in the slice, and a terminal
+/// sent them would move a cursor this process believes it is tracking, or leave
+/// an attribute set for every row after it.
+///
+/// So this drops what may not be drawn — every character that costs no column,
+/// which is a sequence's parameters, the escape that opened it, and any control
+/// byte that arrived on its own. Nothing here changes a width, because nothing
+/// dropped was ever counted.
+///
+/// Colour crucible writes for itself never travels as bytes inside a string; it
+/// belongs to a [`crate::Row`] and is applied as the row is drawn. So there is
+/// no case where dropping these loses something this program meant.
+pub(crate) fn spoken(said: &str) -> String {
+    let mut escapes = Escapes::default();
+
+    said.chars()
+        .filter(|character| !escapes.holds(*character) && advance(*character).is_some())
+        .collect()
+}
+
 /// The columns `character` moves the cursor along by.
 ///
 /// `None` for one that is not drawn at all — a control character is dropped

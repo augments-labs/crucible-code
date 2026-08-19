@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::{
     Approved, Ask, Disposition, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolArgs,
@@ -19,10 +20,31 @@ pub(crate) struct Sample {
 }
 
 impl Sample {
-    /// A fresh, empty workspace. `name` only has to be unique within the
-    /// crate's tests, which run in one process.
+    /// A fresh, empty workspace.
+    ///
+    /// `name` is a label, so a directory left behind by a run that crashed says
+    /// which test made it. It is deliberately **not** what makes the directory
+    /// unique: two fixtures asked for under one name used to share a tree, and
+    /// this constructor empties the tree it is about to use — so the second
+    /// test's setup deleted the first test's workspace out from under it while
+    /// it ran. A command spawned with a working directory that has been removed
+    /// cannot start, which surfaced as a `bash` test that failed under load and
+    /// passed on its own.
+    ///
+    /// So the count is what separates them, and it cannot be forgotten the way
+    /// a unique name can. The tests of one crate run in one process, which is
+    /// what makes a counter enough.
     pub(crate) fn new(name: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("crucible-{name}-{}", std::process::id()));
+        /// How many fixtures this process has made.
+        static MADE: AtomicU64 = AtomicU64::new(0);
+
+        let made = MADE.fetch_add(1, Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("crucible-{name}-{}-{made}", std::process::id()));
+
+        // A previous run that crashed leaves its tree behind, and a process
+        // identifier is reused eventually. Cheap, and the only thing that can
+        // still be in the way.
         let _ = fs::remove_dir_all(&base);
 
         let root = base.join("inside");
@@ -167,5 +189,34 @@ fn permitted(tool: &dyn Tool, args: &str, written: &[(Disposition, &str)]) -> Ap
         Settled::Forbidden | Settled::Refused => {
             panic!("the rules here name files below the call, and the answer above is yes")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_fixtures_asked_for_under_one_name_are_still_two_directories() {
+        // The defect this catches: a fixture's directory was named after the
+        // string a test passed, so two tests passing the same one shared a
+        // tree — and `Sample::new` empties the tree it is about to use. The
+        // second test's setup therefore deleted the first test's workspace
+        // while it was running, and a command spawned with a working directory
+        // that has been removed fails with "no such file or directory". It
+        // showed up as a flaky `bash` test, which is the one place a missing
+        // working directory has anything to say.
+        let first = Sample::new("same-name");
+        first.write("kept.txt", "still here");
+
+        let second = Sample::new("same-name");
+        second.write("theirs.txt", "and so is this");
+
+        assert!(
+            first.root().join("kept.txt").is_file(),
+            "the second fixture emptied the first one's workspace"
+        );
+        assert!(second.root().join("theirs.txt").is_file());
+        assert_ne!(first.root(), second.root());
     }
 }

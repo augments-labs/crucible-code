@@ -8,6 +8,13 @@
 //! brings its own state and its own picture and its own keys and not its own
 //! loop.
 //!
+//! Where the cursor goes is the same kind of answer and arrives the same way. A
+//! component that draws a line somebody is typing into is the only party that
+//! knows which of its rows that is and how far along it the cursor sits, and it
+//! finds out while it is laying the rows out. So the layout hands it back beside
+//! them, and `None` is *wherever you have always parked it* — which is what
+//! every component that draws no line hands back.
+//!
 //! What is kept is the component's own type rather than an index, because a mark
 //! is not all a component has to remember. A panel whose prose can be scrolled
 //! holds where the window over it opens as well as which answer is marked, and
@@ -76,15 +83,15 @@ pub(super) fn stand<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: Style,
     state: &mut S,
-    mut laid: impl FnMut(&mut S, usize, usize) -> Vec<Row>,
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
     let mut changed = true;
 
     loop {
         if changed {
-            let rows = laid(state, renderer.columns(), renderer.rows());
-            if !drawn(renderer, style, &rows)? {
+            let (rows, caret) = laid(state, renderer.columns(), renderer.rows());
+            if !drawn(renderer, style, &rows, caret)? {
                 return Ok(Ended::Cramped);
             }
         }
@@ -115,13 +122,15 @@ pub(super) fn stand<T: Terminal, S>(
 /// rung is nothing at all; the height is checked here, since a live region
 /// taller than the window is a frame that cannot be rewound over.
 ///
-/// The cursor is parked on the last row it drew. Nothing here hides it — this
-/// program never does — and the footer is the one row where it stands beside a
-/// key rather than inside a name somebody is reading.
+/// The cursor is parked where `caret` says, and on the last row it drew where
+/// that is `None`. Nothing here hides it — this program never does — and the
+/// last row is the one place it can stand without sitting inside a name
+/// somebody is reading.
 fn drawn<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     rows: &[Row],
+    caret: Option<Caret>,
 ) -> Result<bool, Fatal> {
     let Some(last) = rows
         .len()
@@ -131,10 +140,10 @@ fn drawn<T: Terminal>(
         return Ok(false);
     };
 
-    let caret = Caret {
+    let caret = caret.unwrap_or(Caret {
         row: last,
         column: 0,
-    };
+    });
 
     renderer.live(rows, caret, style.palette())?;
     Ok(true)

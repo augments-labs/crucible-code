@@ -369,7 +369,7 @@ pub(super) fn ask<T: Terminal>(
             standing.from = standing.from.min(standing.end);
             question.from = standing.from;
 
-            question.within(columns, room, glyphs)
+            (question.within(columns, room, glyphs), None)
         },
         moving,
     )?;

@@ -428,6 +428,8 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
+        putting: &Putting::new(),
+        terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
@@ -464,6 +466,8 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),
         plan: &Plan::new(),
+        putting: &Putting::new(),
+        terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
         subscriptions: &Subscriptions::production(),
@@ -510,6 +514,8 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             ledger: &Ledger::new(),
             revealed: &Revealed::new(),
             plan: &Plan::new(),
+            putting: &Putting::new(),
+            terminal: true,
             from: &|_| Some("sk-test".to_owned()),
             stored: &StoredCredentials::default(),
             subscriptions: &Subscriptions::production(),
@@ -556,4 +562,94 @@ fn a_session_with_no_model_chosen_reaches_nothing() {
         assert!(reaching.searching.is_none(), "{named}");
         assert!(reaching.fetching.is_none(), "{named}");
     }
+}
+
+/// The tools a session with these terms would be given.
+fn offered(terminal: bool) -> crucible_runner::Tools {
+    let workspace = Workspace::open(std::env::temp_dir().as_path()).expect("a directory");
+    let logs = std::env::temp_dir().join(format!("crucible-tools-{}", std::process::id()));
+
+    tools(
+        &Startup {
+            provider: None,
+            unasked: NOTHING_TO_ASK,
+            model: None,
+            effort: None,
+            resuming: false,
+            mode: Mode::Ask,
+            leaving: &crucible_tools::Background::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            cancel: &Cancel::new(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            putting: &Putting::new(),
+            terminal,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(),
+        },
+        &Settings::default(),
+        Reaching {
+            searching: None,
+            fetching: None,
+        },
+    )
+}
+
+#[test]
+fn a_session_with_somebody_at_a_keyboard_can_ask_them() {
+    // Advertised rather than deferred: a model that cannot see it will not go
+    // looking for it at the moment it realises it should ask, and that moment is
+    // the only thing it exists for.
+    let tools = offered(true);
+
+    assert!(
+        tools
+            .advertised()
+            .iter()
+            .any(|schema| schema.name == "ask_user"),
+        "the tool was registered without being offered"
+    );
+}
+
+#[test]
+fn a_session_with_nobody_there_does_not_carry_a_tool_for_asking_them() {
+    // Not deferred either, so a search cannot find it: a tool that can only ever
+    // answer "there is no one here" is a schema spent saying so.
+    let tools = offered(false);
+
+    assert!(tools.find("ask_user").is_none());
+    assert!(
+        tools
+            .deferred()
+            .iter()
+            .all(|schema| schema.name != "ask_user")
+    );
+}
+
+#[test]
+fn the_tools_a_session_already_had_are_unchanged_in_name_and_order() {
+    let tools = offered(true);
+    let named: Vec<String> = tools
+        .advertised()
+        .iter()
+        .map(|schema| schema.name.to_owned())
+        .collect();
+
+    assert_eq!(
+        named,
+        [
+            "read",
+            "grep",
+            "glob",
+            "edit",
+            "write",
+            "bash",
+            "ask_user",
+            "tool_search"
+        ]
+    );
 }
