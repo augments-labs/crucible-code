@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-19
+
 ### Added
 
 - **Themes, and a prompt row you can find.** `/theme` picks the colours crucible
@@ -2088,7 +2090,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/augments-labs/crucible-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/augments-labs/crucible-code/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/augments-labs/crucible-code/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/augments-labs/crucible-code/compare/v0.8.1...v0.9.0
