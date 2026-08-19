@@ -587,6 +587,7 @@ fn every_notice_is_a_single_line() {
         StopReason::Yielded,
         StopReason::WantsTools,
         StopReason::OutOfTokens,
+        StopReason::WindowExceeded,
         StopReason::Filtered,
         StopReason::Paused,
         StopReason::Cancelled,
@@ -598,6 +599,7 @@ fn every_notice_is_a_single_line() {
             StopReason::Yielded
             | StopReason::WantsTools
             | StopReason::OutOfTokens
+            | StopReason::WindowExceeded
             | StopReason::Filtered
             | StopReason::Paused
             | StopReason::Cancelled

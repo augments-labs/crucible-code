@@ -529,6 +529,7 @@ impl Runner {
             StopReason::WantsTools => Some(StopReason::Yielded),
             StopReason::Yielded
             | StopReason::OutOfTokens
+            | StopReason::WindowExceeded
             | StopReason::Filtered
             | StopReason::Paused
             | StopReason::Cancelled

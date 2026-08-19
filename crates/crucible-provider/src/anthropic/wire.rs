@@ -171,9 +171,15 @@ fn stopped(payload: &Value) -> Option<Delta> {
     Some(Delta::Stopped(match reason {
         "tool_use" => StopReason::WantsTools,
 
-        // Two different ceilings, one remedy: ask for less and the answer
-        // arrives whole.
-        "max_tokens" | "model_context_window_exceeded" => StopReason::OutOfTokens,
+        // An answer that ran out of room to finish in. The turn goes on around
+        // it, and asking for less is what gets a whole one.
+        "max_tokens" => StopReason::OutOfTokens,
+
+        // And a request that did not fit at all, which produced no answer. Its
+        // remedy is the opposite direction — the session has to get smaller
+        // before the same question can be asked again — so the two are never
+        // folded together however alike the words look.
+        "model_context_window_exceeded" => StopReason::WindowExceeded,
 
         // Stopped by a classifier rather than by the model. No shorter request
         // helps, which is why it is not folded in with the ceilings above.
@@ -352,15 +358,22 @@ mod tests {
     }
 
     #[test]
-    fn running_past_the_context_window_is_a_ceiling_like_any_other() {
-        // Different ceiling from `max_tokens`, same remedy — a shorter request
-        // is what gets a whole answer — so it reports the same reason.
+    fn the_two_ceilings_are_told_apart_because_only_one_of_them_is_recoverable() {
+        // An answer that ran out of room is finished early and the turn goes
+        // on. A request that did not fit is a turn that cannot proceed at all
+        // until the session is made smaller — opposite failures, and folding
+        // them together means the recoverable one gets no remedy and the other
+        // gets the wrong one.
+        assert_eq!(
+            of("message_delta", r#"{"delta":{"stop_reason":"max_tokens"}}"#),
+            Some(Delta::Stopped(StopReason::OutOfTokens))
+        );
         assert_eq!(
             of(
                 "message_delta",
                 r#"{"delta":{"stop_reason":"model_context_window_exceeded"}}"#
             ),
-            Some(Delta::Stopped(StopReason::OutOfTokens))
+            Some(Delta::Stopped(StopReason::WindowExceeded))
         );
     }
 

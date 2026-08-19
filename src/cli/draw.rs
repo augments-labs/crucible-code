@@ -734,6 +734,14 @@ fn notice(stop: StopReason) -> Option<&'static str> {
 
         StopReason::OutOfTokens => Some("! unfinished: the answer reached the token ceiling"),
 
+        // The request never fit, so there is no answer to be unfinished. Said
+        // in the words of the remedy rather than of the failure: what the
+        // reader can do about it is make the session smaller, and nothing about
+        // asking again unchanged will help.
+        StopReason::WindowExceeded => {
+            Some("! the session no longer fits this model's window; try /compact")
+        }
+
         // Named apart from the ceiling because the remedy is the opposite: a
         // shorter request buys nothing, so a user told the wrong reason retries
         // in the one way that cannot work.

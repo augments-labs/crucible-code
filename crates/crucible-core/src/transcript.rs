@@ -88,6 +88,18 @@ pub enum StopReason {
     WantsTools,
     /// It hit the token limit for the response.
     OutOfTokens,
+    /// The request did not fit the model's window.
+    ///
+    /// Its own variant rather than sharing [`Self::OutOfTokens`], because the
+    /// two are opposite failures wearing one word. That one is an answer that
+    /// ran out of room to finish in, and the turn carries on around it. This is
+    /// a request the model could not read at all, and no answer was produced —
+    /// the turn cannot go anywhere until the session sent is made smaller.
+    ///
+    /// Folded together, the recoverable one gets a remedy it does not need and
+    /// this one gets a remedy that cannot work: asking again, unchanged, for a
+    /// request that did not fit the first time.
+    WindowExceeded,
     /// The provider's filter cut the answer short.
     ///
     /// Truncation, like [`Self::OutOfTokens`], and separate from it because the
@@ -141,6 +153,9 @@ impl StopReason {
             Some(Self::Yielded | Self::WantsTools) => None,
 
             Some(Self::OutOfTokens) => Some("[the answer above was cut off at the token ceiling]"),
+            Some(Self::WindowExceeded) => {
+                Some("[there was no room left in the window for the request above]")
+            }
             Some(Self::Filtered) => {
                 Some("[the answer above was cut short by the provider's filter]")
             }
@@ -269,12 +284,14 @@ mod tests {
             StopReason::Filtered,
             StopReason::Paused,
             StopReason::Cancelled,
+            StopReason::WindowExceeded,
             StopReason::Unknown,
         ];
 
         for stop in every {
             match stop {
                 StopReason::OutOfTokens
+                | StopReason::WindowExceeded
                 | StopReason::Filtered
                 | StopReason::Paused
                 | StopReason::Cancelled

@@ -86,6 +86,19 @@ pub enum ProviderError {
         source: CredentialError,
     },
 
+    /// The provider refused the request because it did not fit the window.
+    ///
+    /// Separate from [`Self::Refused`], which carries a status and a vendor's
+    /// sentence, because this one has a remedy nothing else here has: make the
+    /// session smaller and send it again. Each wire decides it from its own
+    /// vendor's spelling — matching on a message here would be this crate
+    /// guessing at prose three vendors write differently and change freely.
+    #[error("{provider}: the request did not fit the model's window")]
+    WindowExceeded {
+        /// Which provider refused it.
+        provider: &'static str,
+    },
+
     /// The user cancelled mid-stream.
     #[error("{0}: cancelled")]
     Cancelled(&'static str),
@@ -108,7 +121,7 @@ impl ProviderError {
     #[must_use]
     pub fn redacted(self, redactions: &Redactions) -> Self {
         match self {
-            Self::Limit { .. } | Self::Cancelled(_) => self,
+            Self::Limit { .. } | Self::WindowExceeded { .. } | Self::Cancelled(_) => self,
             Self::Transport { provider, problem } => Self::Transport {
                 provider,
                 problem: redactions.redact(&problem).into(),
@@ -174,7 +187,11 @@ impl ProviderError {
                 matches!(status, 408 | 429) || matches!(status, 500..=599)
             }
 
-            Self::Limit { .. }
+            // Not about the moment: the same request will not fit a second
+            // time. What makes it recoverable is compaction, which is the
+            // turn's to do and not a retry's.
+            Self::WindowExceeded { .. }
+            | Self::Limit { .. }
             | Self::Protocol { .. }
             | Self::Credential { .. }
             | Self::Cancelled(_)

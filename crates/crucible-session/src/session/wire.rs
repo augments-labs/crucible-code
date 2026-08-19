@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 3;
+pub(crate) const FORMAT: u32 = 4;
 
 /// Whether this line says everything above it was forgotten.
 ///
@@ -115,6 +115,7 @@ fn stopped(stop: StopReason) -> &'static str {
         StopReason::Yielded => "yielded",
         StopReason::WantsTools => "tools",
         StopReason::OutOfTokens => "tokens",
+        StopReason::WindowExceeded => "window",
         StopReason::Filtered => "filtered",
         StopReason::Paused => "paused",
         StopReason::Cancelled => "cancelled",
@@ -138,6 +139,7 @@ fn stops(value: Option<&Value>) -> Option<StopReason> {
         "yielded" => StopReason::Yielded,
         "tools" => StopReason::WantsTools,
         "tokens" => StopReason::OutOfTokens,
+        "window" => StopReason::WindowExceeded,
         "filtered" => StopReason::Filtered,
         "paused" => StopReason::Paused,
         "cancelled" => StopReason::Cancelled,
