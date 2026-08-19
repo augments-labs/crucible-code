@@ -389,6 +389,40 @@ impl Spend {
     }
 }
 
+/// What one request carried to the model, counted in tokens.
+///
+/// The other half of what a usage reading holds, and the half [`Spend`] is not:
+/// that one counts what the model produced, and this counts what it was sent.
+/// Both arrive in the same object from every provider crucible speaks, and only
+/// one of them was ever read.
+///
+/// It is a **level rather than a total**, which is the whole of how it differs
+/// from [`Spend`] and why it has no `and`. crucible holds no conversation state
+/// at a vendor and sends the transcript whole on every request, so each reading
+/// is what *that* request carried and the next one supersedes it. Adding two
+/// together would count the same transcript twice and say a session was fuller
+/// than it is — which, since this is what compaction is decided on, is the one
+/// error here that spends somebody's context for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Carried(u64);
+
+impl Carried {
+    /// Nothing reported yet.
+    pub const NONE: Self = Self(0);
+
+    /// A reading of `tokens` carried.
+    #[must_use]
+    pub const fn new(tokens: u64) -> Self {
+        Self(tokens)
+    }
+
+    /// How many tokens that is.
+    #[must_use]
+    pub const fn tokens(self) -> u64 {
+        self.0
+    }
+}
+
 /// One piece of streamed output.
 ///
 /// A tool call arrives across several: the name comes first, then the arguments
@@ -410,6 +444,14 @@ pub enum Delta {
     ToolArgs(Box<str>),
     /// What this response has cost so far, replacing whatever it last said.
     Spent(Spend),
+    /// What the request this response answers carried, replacing whatever it
+    /// last said.
+    ///
+    /// Sent once by most providers and never by some. A provider that does not
+    /// report it produces no delta rather than a zero: nothing known and
+    /// nothing carried are different facts, and only one of them is safe to
+    /// decide compaction on.
+    Carried(Carried),
     /// The model stopped, and why.
     Stopped(StopReason),
 }

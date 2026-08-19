@@ -11,7 +11,7 @@
 //! Every event says its own `type`, so that is what is read rather than the SSE
 //! event name beside it. One name, one place it is spelled.
 
-use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{Carried, Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::openai::NAME;
@@ -219,16 +219,36 @@ fn finished(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderErro
 
 /// What a response that has stopped says, in the order somebody reads it.
 ///
-/// The cost first and the stop after it, because the stop is the thing a reader
-/// is entitled to treat as the last word. Both endings say it: tokens produced
+/// What the request carried, then what the answer cost, then the stop — because
+/// the stop is the thing a reader is entitled to treat as the last word, and
+/// the two counts read in the order they happened. Both endings say it: tokens produced
 /// before a ceiling cut the answer short are tokens produced, and a turn that
 /// read the cost off a clean finish alone would report the truncated response
 /// as the one that cost nothing.
 fn ended(payload: &Value, stop: StopReason) -> Vec<Delta> {
-    spent(payload)
+    carried(payload)
         .into_iter()
+        .chain(spent(payload))
         .chain([Delta::Stopped(stop)])
         .collect()
+}
+
+/// What the request this response answers carried.
+///
+/// The other half of the same usage object, read for the reason the half beside
+/// it is not enough: what the model produced says what the answer cost, and this
+/// says how much room is left to ask again.
+///
+/// Absent rather than zero where the count is missing, for the reason [`spent`]
+/// gives about its own.
+fn carried(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("response")
+        .and_then(|response| response.get("usage"))
+        .and_then(|usage| usage.get("input_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Carried(Carried::new(tokens)))
 }
 
 /// What the response cost, said once and under the response it belongs to.

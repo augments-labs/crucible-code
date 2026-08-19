@@ -342,6 +342,7 @@ fn what_a_response_cost_arrives_under_the_response_that_finished() {
     assert_eq!(
         out(done),
         vec![
+            Delta::Carried(Carried::new(900)),
             Delta::Spent(Spend::new(58)),
             Delta::Stopped(StopReason::Yielded),
         ]
@@ -454,5 +455,23 @@ fn an_event_that_is_not_json_is_a_protocol_failure_naming_no_payload() {
     assert!(
         !problem.to_string().contains("not json at all"),
         "the payload reached the user: {problem}"
+    );
+}
+
+#[test]
+fn a_finished_response_says_what_the_request_carried() {
+    // The other half of the same usage object, and the half that says how full
+    // the window is. It goes before the cost, which goes before the stop: what
+    // was sent, what came back, that it ended.
+    let done = r#"{"type":"response.completed","response":
+        {"output":[],"usage":{"input_tokens":900,"output_tokens":58}}}"#;
+
+    assert_eq!(
+        out(done),
+        vec![
+            Delta::Carried(Carried::new(900)),
+            Delta::Spent(Spend::new(58)),
+            Delta::Stopped(StopReason::Yielded),
+        ]
     );
 }

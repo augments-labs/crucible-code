@@ -10,7 +10,7 @@
 //! the same thing while still needing a fallback for the types this does not
 //! know.
 
-use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{Carried, Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::anthropic::NAME;
@@ -53,11 +53,12 @@ fn deltas(event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
         "content_block_start" => Ok(started(&parse(&event.data)?)?.into_iter().collect()),
         "content_block_delta" => Ok(content(&parse(&event.data)?).into_iter().collect()),
         "message_delta" => Ok(ended(&parse(&event.data)?)),
+        "message_start" => Ok(opened(&parse(&event.data)?).into_iter().collect()),
         "error" => Err(upstream(&parse(&event.data)?)),
 
         // Everything else, and none of it parsed. `ping` is the keep-alive and
-        // `message_start`, `content_block_stop` and `message_stop` are brackets
-        // around content already delivered; a type this build has never heard
+        // `content_block_stop` and `message_stop` are brackets around content
+        // already delivered; a type this build has never heard
         // of is a newer API talking to an older client, or a proxy spelling its
         // own heartbeat however it likes — which arrives with no data line at
         // all. Skipping the lot keeps the answer flowing; the alternative is
@@ -134,6 +135,31 @@ fn spent(payload: &Value) -> Option<Delta> {
         .and_then(Value::as_u64)?;
 
     Some(Delta::Spent(Spend::new(tokens)))
+}
+
+/// What the request this response answers carried.
+///
+/// Sent once, in the event that opens the response, because it is settled
+/// before the model has written a word — which is the same reason [`spent`]
+/// arrives repeatedly and this does not.
+///
+/// `input_tokens` alone. This endpoint reports what a cache read and a cache
+/// write cost in fields beside it, and crucible asks for neither: no request it
+/// builds carries a cache instruction, so those fields are absent and adding
+/// them would be reading a number nothing here can produce.
+///
+/// Absent rather than zero where the count is missing, for the reason [`spent`]
+/// gives about its own: a request whose size nobody reported and one that
+/// carried nothing are different facts, and this is the one compaction is
+/// decided on.
+fn opened(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("message")
+        .and_then(|message| message.get("usage"))
+        .and_then(|usage| usage.get("input_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Carried(Carried::new(tokens)))
 }
 
 /// The model saying it has stopped, and why.
@@ -357,6 +383,32 @@ mod tests {
                 r#"{"delta":{"stop_reason":"stop_sequence"}}"#
             ),
             Some(Delta::Stopped(StopReason::Yielded))
+        );
+    }
+
+    #[test]
+    fn the_event_that_opens_a_response_says_what_the_request_carried() {
+        // `message_start` was read as a bracket around content and skipped
+        // whole. It is where this endpoint puts the other half of the usage
+        // object, and that half is what says how full the window is.
+        assert_eq!(
+            deltas(&event(
+                "message_start",
+                r#"{"message":{"id":"msg_1","usage":{"input_tokens":1200}}}"#,
+            ))
+            .unwrap(),
+            vec![Delta::Carried(Carried::new(1200))]
+        );
+    }
+
+    #[test]
+    fn an_opening_event_that_says_nothing_about_the_request_reports_nothing() {
+        // The same rule the cost already keeps: nothing here invents a zero. A
+        // request whose size nobody reported and one that carried nothing are
+        // different facts, and compaction is decided on this one.
+        assert_eq!(
+            deltas(&event("message_start", r#"{"message":{"id":"msg_1"}}"#)).unwrap(),
+            vec![]
         );
     }
 

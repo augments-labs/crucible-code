@@ -1,4 +1,6 @@
-use crucible_core::{ApiKey, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript};
+use crucible_core::{
+    ApiKey, Carried, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript,
+};
 
 use super::stream::tests::{ANSWER, deltas};
 use super::*;
@@ -113,6 +115,7 @@ fn an_accepted_request_is_handed_back_as_the_answer_it_returned() {
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
             Delta::Stopped(StopReason::Yielded),
+            Delta::Carried(Carried::new(9)),
             Delta::Spent(Spend::new(4)),
         ]
     );

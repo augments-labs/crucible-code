@@ -194,7 +194,9 @@ impl Provider for OpenAi {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ApiKey, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript};
+    use crucible_core::{
+        ApiKey, Carried, Delta, Header, HeaderKey, Message, Spend, StopReason, Transcript,
+    };
 
     use super::stream::tests::{ANSWER, deltas};
     use super::*;
@@ -354,6 +356,7 @@ mod tests {
             vec![
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
+                Delta::Carried(Carried::new(9)),
                 Delta::Spent(Spend::new(4)),
                 Delta::Stopped(StopReason::Yielded),
             ]

@@ -3,7 +3,9 @@
 //! Separate from the stream next door only because it reached the per-file cap.
 //! Everything here is about `Stream` and the queue under it.
 
-use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{
+    Cancel, Carried, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId,
+};
 
 use super::*;
 use crate::transport::{Paused, Said};
@@ -63,6 +65,7 @@ fn an_answer_arrives_as_text_and_a_stop() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Carried(Carried::new(9)),
             Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]
@@ -168,6 +171,7 @@ fn a_heartbeat_with_no_payload_does_not_end_the_turn() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Carried(Carried::new(9)),
             Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]
@@ -339,6 +343,7 @@ fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
         vec![
             Delta::Text("Hello".into()),
             Delta::Text(", world".into()),
+            Delta::Carried(Carried::new(9)),
             Delta::Spent(Spend::new(4)),
             Delta::Stopped(StopReason::Yielded),
         ]

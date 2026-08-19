@@ -13,7 +13,7 @@
 //! Events are unnamed — the SSE `event:` line is never sent — so what an event
 //! is is decided by what its payload holds rather than by a word beside it.
 
-use crucible_core::{Delta, ProviderError, Spend, StopReason, ToolId};
+use crucible_core::{Carried, Delta, ProviderError, Spend, StopReason, ToolId};
 use serde_json::Value;
 
 use crate::moonshot::NAME;
@@ -83,6 +83,9 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
     // Read before the choices rather than after them, because the chunk that
     // carries this has none: on this endpoint the counts arrive on their own,
     // after the answer and after the reason the model stopped.
+    if let Some(carried) = carried(&payload) {
+        deltas.push(carried);
+    }
     if let Some(spent) = spent(&payload) {
         deltas.push(spent);
     }
@@ -113,6 +116,20 @@ fn deltas(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError
     }
 
     Ok(deltas)
+}
+
+/// What the request this response answers carried, where this chunk says.
+///
+/// `prompt_tokens` is this endpoint's name for it, and it arrives in the same
+/// chunk as the cost and under the same condition — the request asked for the
+/// counts. Absent rather than zero for the reason [`spent`] gives about its own.
+fn carried(payload: &Value) -> Option<Delta> {
+    let tokens = payload
+        .get("usage")
+        .and_then(|usage| usage.get("prompt_tokens"))
+        .and_then(Value::as_u64)?;
+
+    Some(Delta::Carried(Carried::new(tokens)))
 }
 
 /// What the response has cost, where this chunk says.

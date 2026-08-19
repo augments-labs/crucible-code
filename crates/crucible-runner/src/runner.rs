@@ -687,6 +687,13 @@ impl Runner {
                     *spent = before.and(said);
                     events.post(Event::Spent { spend: *spent });
                 }
+                // Not added to the spend beside it, and not accumulated at all.
+                // What a request carried is a level rather than a total — the
+                // transcript goes whole to the provider every time, so each
+                // reading supersedes the last instead of extending it, and a
+                // running sum of them would describe a session nobody had.
+                // Nothing on this path reads it.
+                Delta::Carried(_) => {}
                 Delta::Stopped(stop) => answer.stopped(stop)?,
             }
         }

@@ -42,8 +42,8 @@ pub use permission::{
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
 pub use provider::{
-    Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
-    Spend, ToolSchema,
+    Carried, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit,
+    Request, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
