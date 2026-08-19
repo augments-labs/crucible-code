@@ -34,6 +34,22 @@ failed and why, and what you were about to do next. Leave out anything you \
 would not need again. Write it as notes to yourself, not as a report to \
 somebody else, and write nothing before or after it.";
 
+/// The most a recap may be, in tokens.
+///
+/// Notes rather than an essay, and far under what an answer may be: a recap
+/// that ran to the model's whole answer ceiling would be replacing a session
+/// with something nearly as large as the part it replaced. It is also what the
+/// row saying so measures against, which is the other reason it is a figure
+/// this program chooses rather than the model's own.
+const ROOM: u32 = 4_096;
+
+/// Roughly how many bytes a token comes to.
+///
+/// Only ever used to turn a length into a fraction for the row that says room
+/// is being made. Nothing decided on it, and deliberately low — a bar that
+/// reaches its end a moment early is better than one that stalls short of it.
+const BYTES: u64 = 3;
+
 /// What a recap is marked with where it stands in a transcript.
 ///
 /// The model reads its own notes back under a heading that says whose they are
@@ -67,9 +83,9 @@ impl Runner {
         };
 
         let before = self.load.tokens();
-        events.post(crucible_core::Event::Compacting { why });
+        events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let recap = self.recap(cancel)?;
+        let recap = self.recap(why, events, cancel)?;
         if recap.is_empty() {
             return Ok(None);
         }
@@ -149,7 +165,12 @@ impl Runner {
     /// The instruction is pushed onto the transcript and taken off again rather
     /// than copied alongside it, because a copy of the transcript is the one
     /// allocation this crate may not make.
-    fn recap(&mut self, cancel: &Cancel) -> Result<String, TurnError> {
+    fn recap(
+        &mut self,
+        why: Compacting,
+        events: &dyn Post,
+        cancel: &Cancel,
+    ) -> Result<String, TurnError> {
         self.transcript.push(Message::User(RECAP.into()));
 
         let asked = self.provider.stream(
@@ -157,18 +178,39 @@ impl Runner {
                 model: &self.model.name,
                 transcript: &self.transcript,
                 tools: &[],
-                max_tokens: self.model.max_tokens,
+                max_tokens: ROOM.min(self.model.max_tokens),
                 system: None,
                 effort: self.model.effort,
             },
             cancel,
         );
 
+        // The bytes the notes would run to if they filled the room they were
+        // given. Counted from the text rather than from what the provider says
+        // it has produced: one of them reports that only in its last chunk, so
+        // a bar following it would sit at nothing for the whole request and
+        // then be over — which is what a reader watching it called broken.
+        let full = u64::from(ROOM.min(self.model.max_tokens)).saturating_mul(BYTES) | 1;
         let said = asked.map(|mut stream| {
             let mut said = String::new();
+            let mut part = 0;
+
             while let Some(delta) = stream.next() {
                 match delta {
-                    Ok(Delta::Text(text)) => said.push_str(&text),
+                    Ok(Delta::Text(text)) => {
+                        said.push_str(&text);
+
+                        // Posted only when the number it would draw has moved,
+                        // which for a row redrawn on a beat is the difference
+                        // between reporting a hundred times and a hundred
+                        // thousand.
+                        let now =
+                            u8::try_from((said.len() as u64 * 100 / full).min(100)).unwrap_or(100);
+                        if now != part {
+                            part = now;
+                            events.post(crucible_core::Event::Compacting { why, part });
+                        }
+                    }
                     Ok(Delta::Stopped(StopReason::Cancelled)) | Err(_) => break,
                     Ok(_) => {}
                 }

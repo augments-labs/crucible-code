@@ -62,6 +62,7 @@ mod picking;
 mod planning;
 mod putting;
 mod region;
+mod replaying;
 mod resuming;
 mod secret;
 mod turning;
@@ -268,6 +269,11 @@ pub(crate) fn converse<T: Terminal>(
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
+    // What the session already said, before what it will be asked about it: a
+    // resumed session is one the model can see and the reader cannot, and the
+    // terminal it is being read in is either empty or holds somebody else's
+    // scrollback.
+    replaying::replayed(renderer, runner.transcript(), terms.style())?;
     resuming::asked(renderer, &mut runner, terms, keys)?;
 
     loop {

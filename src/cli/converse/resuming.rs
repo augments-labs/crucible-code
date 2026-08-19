@@ -74,11 +74,11 @@ const DOING: &str = "compacting";
 /// And the key that stops it, named because it is read.
 const STOPS: &str = "esc to stop";
 
-/// What the row under it says, which is what is being done and not why.
+/// What the row under it says.
 ///
 /// Not a word about the window: nothing here says it was full, because at this
 /// moment it very often is not — somebody chose this rather than reaching it.
-const MAKING: &str = "reading the session back and writing down what matters";
+const MAKING: &str = "writing down what matters";
 
 /// How wide the bar under the word is, in columns.
 const BAR: usize = 28;
@@ -210,7 +210,6 @@ fn recap<T: Terminal>(
     // here is the box drawn everywhere else. A blank frame while this runs
     // reads as a program that has fallen over rather than one that is busy.
     let says = typing::saying(runner);
-    let filled = runner.left().map(|left| 100 - left);
 
     // Whatever stopped anything earlier is spent. From here the keyboard is
     // read against this, and a flag found raised belongs to it.
@@ -220,6 +219,7 @@ fn recap<T: Terminal>(
         let working = scope.spawn(|| runner.compact(Compacting::Resumed, &events, &cancel));
 
         let since = Instant::now();
+        let mut part = 0;
         loop {
             // Looked at every pass, because a request that answers once at the
             // end would otherwise leave the keyboard dead for as long as it
@@ -235,15 +235,16 @@ fn recap<T: Terminal>(
             }
 
             match seen.recv_timeout(TICK) {
-                // Nothing it reports changes this picture: the reading is off
-                // the row while this runs, and what it came to is drawn once at
-                // the end. What the beat is for is the mark.
+                // How much of the notes has been written. The rest of what it
+                // reports changes nothing here — what it came to is drawn once,
+                // at the end.
+                Ok(Event::Compacting { part: said, .. }) => part = said,
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
                 // The worker has dropped the sender, so it is finished.
                 Err(RecvTimeoutError::Disconnected) => break,
             }
 
-            standing(renderer, since, &says, filled, style)?;
+            standing(renderer, since, &says, part, style)?;
         }
 
         working
@@ -275,7 +276,7 @@ fn standing<T: Terminal>(
     renderer: &mut Renderer<T>,
     since: Instant,
     says: &typing::Says,
-    filled: Option<u8>,
+    part: u8,
     style: Style,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
@@ -295,7 +296,7 @@ fn standing<T: Terminal>(
         .row(columns, glyphs),
     ];
 
-    if let Some(row) = bar(filled, columns, glyphs) {
+    if let Some(row) = bar(part, columns, glyphs) {
         rows.push(row);
     }
 
@@ -321,19 +322,18 @@ fn standing<T: Terminal>(
     Ok(())
 }
 
-/// The bar under the word, or nothing where no window is known.
+/// The bar under the word, or nothing where there is no room for one.
 ///
-/// It shows how full the window was when this started, and holds still: what is
-/// being replaced is exactly that, and a bar moving while the session was
-/// rewritten would be measuring two different things a second apart.
-fn bar(filled: Option<u8>, columns: usize, glyphs: Glyphs) -> Option<Row> {
-    let filled = filled?;
+/// It fills as the notes are written, which is the one thing here that is
+/// actually known: the answer is arriving and this is how much of the room it
+/// was given has been used. It is not a clock, and does not claim to be.
+fn bar(part: u8, columns: usize, glyphs: Glyphs) -> Option<Row> {
     let gutter = Working::gutter(glyphs);
-    if columns < gutter + BAR + 2 {
+    if columns < gutter + BAR + 8 {
         return None;
     }
 
-    let full = usize::from(filled) * BAR / 100;
+    let full = usize::from(part) * BAR / 100;
 
     // Filled against hollow, and `Plain` against `Quiet`: the shape carries it
     // and the colour only reinforces, so it survives a terminal drawing none.
@@ -342,7 +342,7 @@ fn bar(filled: Option<u8>, columns: usize, glyphs: Glyphs) -> Option<Row> {
             .then(Slot::Quiet, " ".repeat(gutter))
             .then(Slot::Plain, glyphs.filled().repeat(full))
             .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
-            .then(Slot::Quiet, format!("  {MAKING}")),
+            .then(Slot::Quiet, format!("  {part}%  {MAKING}")),
     )
 }
 
@@ -407,7 +407,7 @@ mod tests {
         // What the owner has to be able to see: a word that is moving, a bar
         // saying how full it was, the key that stops it, and a box that still
         // says what it says at rest rather than a blank frame.
-        let bar = bar(Some(96), 80, Glyphs::Unicode).expect("a bar").text();
+        let bar = bar(31, 80, Glyphs::Unicode).expect("a bar").text();
         let row = Working {
             doing: DOING,
             running: std::time::Duration::from_secs(8),
@@ -430,21 +430,17 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_is_full_where_the_window_is_and_absent_where_none_is_known() {
-        let full = bar(Some(100), 80, Glyphs::Ascii).expect("a bar").text();
-        let empty = bar(Some(0), 80, Glyphs::Ascii).expect("a bar").text();
+    fn the_bar_fills_with_the_notes_and_is_absent_where_there_is_no_room() {
+        let full = bar(100, 80, Glyphs::Ascii).expect("a bar").text();
+        let empty = bar(0, 80, Glyphs::Ascii).expect("a bar").text();
 
         assert!(full.contains(&"*".repeat(BAR)), "{full}");
+        assert!(full.contains("100%"), "{full}");
         assert!(empty.contains(&"-".repeat(BAR)), "{empty}");
 
-        // Nothing at all where no window is known — the same rule the reading
-        // keeps, and not a bar drawn empty, which would read as a window with
-        // nothing in it.
-        assert!(bar(None, 80, Glyphs::Ascii).is_none());
-
-        // And nothing where there is no room for one, rather than a bar cut in
+        // Nothing where there is no room for one, rather than a bar cut in
         // half, which is a proportion that is not the proportion.
-        assert!(bar(Some(50), 12, Glyphs::Ascii).is_none());
+        assert!(bar(50, 12, Glyphs::Ascii).is_none());
     }
 
     #[test]

@@ -147,9 +147,21 @@ pub enum Event {
     },
 
     /// Room is being made, and the turn has not ended.
+    ///
+    /// Reported again as the notes are written, so the row saying so can move
+    /// rather than sit still for the length of one request.
     Compacting {
         /// What asked for it.
         why: crate::Compacting,
+        /// How much of the notes has been written, as a percentage of the room
+        /// they were given.
+        ///
+        /// A fraction of what was *asked for*, not of how long it will take —
+        /// nothing here knows that. It is honest about being an answer arriving
+        /// rather than a clock running down, and it is why the room a recap is
+        /// given is a figure this program chooses rather than the model's own
+        /// ceiling.
+        part: u8,
     },
 
     /// Room was made, and by how much.

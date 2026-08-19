@@ -126,9 +126,10 @@ fn picking<T: Terminal>(
         terms.style().palette(),
     )?;
 
-    // The same question a session picked up on the command line is asked, and
-    // for the same reason: what it costs to carry is a fact about the session
-    // rather than about which of the two ways reached it.
+    // Both of these are what a session picked up on the command line gets, and
+    // for the same reason: what it already said, and what it costs to carry,
+    // are facts about the session rather than about which way reached it.
+    super::super::replaying::replayed(renderer, runner.transcript(), terms.style())?;
     super::super::resuming::asked(renderer, runner, terms, keys)
 }
 

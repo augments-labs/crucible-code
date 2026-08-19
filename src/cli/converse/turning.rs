@@ -37,7 +37,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_core::Event;
+use crucible_core::{Compacting, Event};
 #[cfg(test)]
 use crucible_tui::Theme;
 use crucible_tui::{Row, Slot, Working};
@@ -95,6 +95,13 @@ const BACKGROUND: &str = "(ctrl+b to background)";
 /// thing the ladder below gives up, so on a short window this is a ceiling
 /// rather than a promise.
 const SAMPLE: usize = 5;
+
+/// How wide the bar under the word is, in columns.
+///
+/// The same figure the panel that offers to make room uses, because the two
+/// pictures are one picture at two moments and a bar that changed width between
+/// them would read as a different thing.
+const BAR: usize = 28;
 
 /// How far in the sample stands, in columns.
 ///
@@ -157,6 +164,20 @@ pub(super) struct Turning {
     /// How much of the model's window is left, or `None` where no window is
     /// known and while room is being made.
     left: Option<u8>,
+    /// Why room is being made, and `None` when it is not.
+    ///
+    /// What the row under the word says while it happens — the reason rather
+    /// than a fixed sentence, because a window that filled and a provider that
+    /// refused are different things to be told, and neither is true when
+    /// somebody simply asked.
+    making: Option<Compacting>,
+    /// How much of the notes has been written, as a percentage.
+    ///
+    /// What the bar under the word fills to. A fraction of the room the notes
+    /// were given rather than of how long it will take — the answer is arriving
+    /// and this is how much of it has, which is the only thing here that is
+    /// actually known.
+    part: u8,
     /// The words of the call whose tool is out, or `None` where none is. What
     /// the tool said the call was about, without the mark: the mark is the part
     /// that moves, and it is drawn per frame.
@@ -406,6 +427,8 @@ impl Turning {
             since: Instant::now(),
             doing: Doing::Thinking,
             left: None,
+            making: None,
+            part: 0,
             spent: None,
             calling: None,
             queued: None,
@@ -492,7 +515,16 @@ impl Turning {
         // one being replaced.
         match event {
             Event::Carried { left } => self.left = *left,
-            Event::Compacting { .. } => self.left = None,
+            // Reported again as the notes are written, so what the row shows
+            // moves rather than sitting still for one request. The reading is
+            // taken away for the duration: the number it would show is the one
+            // being replaced.
+            Event::Compacting { why, part } => {
+                self.making = Some(*why);
+                self.part = *part;
+                self.left = None;
+            }
+            Event::Compacted { .. } => self.making = None,
             _ => {}
         }
 
@@ -634,6 +666,15 @@ impl Turning {
         rows.push(Row::new());
         rows.push(working.row(columns, style.glyphs()));
 
+        // Under the word and with no blank between them, because it is a second
+        // line of the same thing rather than a second thing beside it — the
+        // rule the prompt waiting behind a turn already keeps.
+        if let Some(why) = self.making
+            && let Some(row) = making(why, self.part, columns, style)
+        {
+            rows.push(row);
+        }
+
         if let Some(said) = queued {
             rows.push(next(said, columns, style));
         }
@@ -643,7 +684,40 @@ impl Turning {
 
         rows
     }
+}
 
+/// The row under the word while room is being made, or nothing where there is
+/// no room for one.
+///
+/// It says why, because the three reasons are three different things to be told
+/// and only one of them is the window having filled.
+fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row> {
+    let glyphs = style.glyphs();
+    let gutter = Working::gutter(glyphs);
+    let said = match why {
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+        Compacting::Asked | Compacting::Resumed => "you asked for this",
+    };
+
+    let row = Row::new().then(Slot::Quiet, " ".repeat(gutter));
+
+    // The bar where there is room for one, and the words alone where there is
+    // not: what the reader needs is why this is happening, and the bar is what
+    // says how far along it is.
+    let row = if columns >= gutter + BAR + 8 {
+        let full = usize::from(part) * BAR / 100;
+        row.then(Slot::Plain, glyphs.filled().repeat(full))
+            .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
+            .then(Slot::Quiet, format!("  {part}%  {said}"))
+    } else {
+        row.then(Slot::Quiet, said.to_owned())
+    };
+
+    (row.columns() <= columns).then_some(row)
+}
+
+impl Turning {
     /// The line for the call whose tool is out.
     ///
     /// The mark pulses rather than turning: a call is one thing waiting on one
