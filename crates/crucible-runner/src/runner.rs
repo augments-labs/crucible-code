@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crucible_core::{
     Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
-    Provider, Request, Spend, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError,
-    TurnId,
+    Provider, ProviderError, Request, Spend, StopReason, Summary, ToolCall, ToolSchema, Transcript,
+    TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -524,18 +524,30 @@ impl Runner {
             // of the last pass are already in it. Checked at the top of the
             // loop, so it cannot run while a tool call is out, and the turn
             // carries on afterwards rather than ending.
-            if self.compacting.automatic && counting.load.full(counting.window, reserve) {
-                match self.compact(Compacting::Full, events, cancel)? {
-                    Some(compacted) if compacted.after < compacted.before => fruitless = 0,
-                    _ => fruitless += 1,
-                }
-
-                if fruitless >= COMPACTIONS_WITHOUT_PROGRESS {
-                    return Err(TurnError::NoRoom);
-                }
+            if self.compacting.automatic
+                && counting.load.full(counting.window, reserve)
+                && !self.made_room(Compacting::Full, events, cancel, &mut fruitless)?
+            {
+                return Err(TurnError::NoRoom);
             }
 
-            let (answer, said) = self.listen(events, cancel, &bounds, &mut counting)?;
+            // The other half of the reactive rail. One vendor says the request
+            // did not fit inside a response it went on to stream; the others
+            // refuse it outright, and the remedy is the same either way.
+            let heard = match self.listen(events, cancel, &bounds, &mut counting) {
+                Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
+                    if self.compacting.automatic =>
+                {
+                    if self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
+                        continue;
+                    }
+                    return Err(TurnError::Provider(ProviderError::WindowExceeded {
+                        provider,
+                    }));
+                }
+                heard => heard?,
+            };
+            let (answer, said) = heard;
 
             // And what the response reported goes the other way: the counts a
             // provider sends are read here and belong to the session.
@@ -549,11 +561,7 @@ impl Runner {
                 if !self.compacting.automatic {
                     return Ok(said);
                 }
-                match self.compact(Compacting::Refused, events, cancel)? {
-                    Some(compacted) if compacted.after < compacted.before => fruitless = 0,
-                    _ => fruitless += 1,
-                }
-                if fruitless >= COMPACTIONS_WITHOUT_PROGRESS {
+                if !self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
                     return Err(TurnError::NoRoom);
                 }
                 continue;
@@ -630,6 +638,32 @@ impl Runner {
                 }
             }
         }
+    }
+
+    /// Makes room, and says whether it got anywhere.
+    ///
+    /// `false` where two goes in a row freed nothing, which is the one way this
+    /// loop could spin without the transcript growing: everything else it does
+    /// either adds to the transcript or ends the turn. The caller decides what
+    /// to say about it, because the two rails reached here for different
+    /// reasons and owe the reader different sentences.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`] where the request for the recap itself failed.
+    fn made_room(
+        &mut self,
+        why: Compacting,
+        events: &dyn Post,
+        cancel: &Cancel,
+        fruitless: &mut u8,
+    ) -> Result<bool, TurnError> {
+        match self.compact(why, events, cancel)? {
+            Some(compacted) if compacted.after < compacted.before => *fruitless = 0,
+            _ => *fruitless += 1,
+        }
+
+        Ok(*fruitless < COMPACTIONS_WITHOUT_PROGRESS)
     }
 
     /// Whether the turn is over, and why — or `None` to run the calls.
