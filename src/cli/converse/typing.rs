@@ -1279,7 +1279,7 @@ fn said<T: Terminal>(
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
     renderer.present(
-        &Prompt::committed(&said, columns, style.glyphs()),
+        &Prompt::committed(&said, columns, style.glyphs(), style.palette().bands()),
         style.palette(),
     )?;
 

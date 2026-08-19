@@ -366,3 +366,103 @@ fn a_provider_chosen_again_is_written_over_rather_than_written_twice() {
     assert_eq!(resolving(&written).provider(), Some("anthropic"));
     assert_eq!(written.matches("provider").count(), 1, "{written}");
 }
+
+/// The file `drawing` produces, or the error it refused with.
+fn drawn(text: &str, theme: &str) -> Result<String, ConfigError> {
+    super::drawing(text, "config.json", theme)
+}
+
+#[test]
+fn a_file_that_is_not_there_becomes_one_holding_the_theme() {
+    assert_eq!(
+        drawn("", "light").expect("a file to be written"),
+        "{\n  \"output\": {\n    \"theme\": \"light\"\n  }\n}\n"
+    );
+}
+
+#[test]
+fn a_theme_goes_into_an_output_block_that_is_already_there() {
+    // Every byte the author put there stays where it was, which is the whole
+    // reason this splices rather than re-serialising.
+    let was = "{\n  \"output\": {\n    \"glyphs\": \"ascii\"\n  }\n}\n";
+
+    assert_eq!(
+        drawn(was, "dark").expect("a theme to be written"),
+        "{\n  \"output\": {\n    \"glyphs\": \"ascii\",\n    \"theme\": \"dark\"\n  }\n}\n"
+    );
+}
+
+#[test]
+fn a_theme_already_written_is_written_over_rather_than_beside() {
+    // The same key twice is a document the parser reads one way and its author
+    // reads the other.
+    let was = "{\n  \"output\": {\n    \"theme\": \"dark\"\n  }\n}\n";
+    let now = drawn(was, "light").expect("a theme to be written");
+
+    assert_eq!(now.matches("\"theme\"").count(), 1, "{now}");
+    assert!(now.contains("\"light\""), "{now}");
+}
+
+#[test]
+fn taking_the_theme_that_is_already_written_changes_nothing_at_all() {
+    let was = "{\n  \"output\": {\n    \"theme\": \"dark\"\n  }\n}\n";
+
+    assert_eq!(drawn(was, "dark").expect("the same file"), was);
+}
+
+#[test]
+fn an_output_block_is_created_beside_whatever_else_the_file_holds() {
+    let was = "{\n  \"provider\": \"anthropic\"\n}\n";
+    let now = drawn(was, "ansi").expect("a block to be written");
+
+    assert!(now.contains("\"provider\": \"anthropic\""), "{now}");
+    assert!(now.contains("\"theme\": \"ansi\""), "{now}");
+
+    // And it reads back as the document it looks like.
+    let read: serde_json::Value = serde_json::from_str(&now).expect("valid json");
+    assert_eq!(
+        read.get("output").and_then(|at| at.get("theme")),
+        Some(&"ansi".into())
+    );
+    assert_eq!(read.get("provider"), Some(&"anthropic".into()));
+}
+
+#[test]
+fn a_file_written_on_one_line_gets_the_block_on_one_line() {
+    // `insert` hands back `None` for the indentation where the line it is going
+    // on already has other things on it. A block with a hard-coded indent there
+    // would be this program deciding how somebody else's file is laid out.
+    let now = drawn("{\"provider\": \"anthropic\"}", "light").expect("a block");
+
+    assert!(
+        !now.contains('\n'),
+        "a line was broken that nobody broke: {now}"
+    );
+    let read: serde_json::Value = serde_json::from_str(&now).expect("valid json");
+    assert_eq!(
+        read.get("output").and_then(|at| at.get("theme")),
+        Some(&"light".into())
+    );
+}
+
+#[test]
+fn a_document_that_is_not_json_is_refused_by_name() {
+    let refused = drawn("{not json", "dark").expect_err("a refusal");
+
+    assert!(
+        matches!(refused, ConfigError::Malformed { .. }),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_document_no_theme_can_be_written_into_says_what_to_type() {
+    // A root that is not an object has nowhere to put a key, and guessing at
+    // somebody's file is the one thing this must not do.
+    let refused = drawn("[1, 2, 3]", "dark").expect_err("a refusal");
+
+    assert!(
+        matches!(refused, ConfigError::Unspliceable { .. }),
+        "{refused:?}"
+    );
+}

@@ -84,6 +84,14 @@ const EVERY: [(ThemeChoice, &str, &str); 6] = [
 /// A diff rather than anything prettier, because the diff is the one place a
 /// theme paints a ground and picks a pair to go on it — which is the part that
 /// cannot be checked by reading a name.
+/// What the specimen spends before the code starts: the line number, a space,
+/// the sign, and the space after it.
+///
+/// Named rather than counted at each use, because the clip and the fill have to
+/// agree about it — one column out either way is a row that says less than it
+/// could, or one the terminal wraps itself.
+const GUTTER: usize = 7;
+
 const SPECIMEN: [(&str, &str, &str); 3] = [
     (
         " 209",
@@ -93,6 +101,20 @@ const SPECIMEN: [(&str, &str, &str); 3] = [
     (" 210", "-", "    if from(COLORTERM).is_some_and(truecolor)"),
     (" 210", "+", "    let Some(depth) = Self::depth(from)"),
 ];
+
+/// What came off the panel.
+///
+/// Three answers rather than two, because what is owed differs in each: one
+/// that was left has already been answered, and one there was no room for was
+/// never drawn and read no key — so the listing is still owed.
+enum Picked {
+    /// The row at this index was taken.
+    Took(usize),
+    /// Escape. The reader asked for the screen they had before it.
+    Left,
+    /// No room to stand one. The caller still owes the answer.
+    Cramped,
+}
 
 /// Runs the command.
 pub(super) fn run<T: Terminal>(
@@ -110,11 +132,15 @@ pub(super) fn run<T: Terminal>(
 
     if keys {
         match chosen(renderer, terms)? {
-            Some(at) => {
+            Picked::Took(at) => {
                 let (choice, name, _) = EVERY.get(at).copied().unwrap_or(EVERY[0]);
                 return taken(choice, name, renderer, terms);
             }
-            None => return say(renderer, terms, LEFT),
+            // Escape asked for the screen that was there before the panel, so a
+            // listing under it would be the same question put a second time.
+            Picked::Left => return say(renderer, terms, LEFT),
+            // No room to stand one: the listing below is the answer.
+            Picked::Cramped => {}
         }
     }
 
@@ -125,7 +151,7 @@ pub(super) fn run<T: Terminal>(
 ///
 /// `None` where it was left, and where there was no room to stand one — the
 /// listing below is what answers the second case.
-fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Option<usize>, Fatal> {
+fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
     let was = terms.style();
     let ground = was.ground();
     let mut at = EVERY
@@ -155,7 +181,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Opti
 
             let specimen = specimen(columns, style.glyphs());
             let above = room.saturating_sub(specimen.len());
-            let mut rows = panel.within(above, columns, style.glyphs());
+            let mut rows = panel.within(columns, above, style.glyphs());
 
             if rows.is_empty() {
                 return (Vec::new(), None);
@@ -166,13 +192,17 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Opti
         |arrived, at| walking(arrived, at, EVERY.len()),
     )?;
 
-    // Whatever was previewed goes back the moment the panel does. What is taken
-    // is put on again by `taken` below, and what was left never was.
-    terms.style.set(was);
+    // Nothing to put back: the preview never writes `terms.style`. What the
+    // panel is drawn in comes from the closure above, which is handed a style
+    // built per frame and thrown away with it — so leaving changes nothing, and
+    // taking is what writes.
 
     Ok(match ended {
-        Ended::Took => Some(at),
-        Ended::Left | Ended::Cramped => None,
+        Ended::Took => Picked::Took(at),
+        Ended::Left => Picked::Left,
+        // Never drawn and no key read, so nothing was cancelled: what is owed
+        // is the listing, the way `/model` and `/effort` answer the same state.
+        Ended::Cramped => Picked::Cramped,
     })
 }
 
@@ -201,6 +231,13 @@ fn previewing(was: Style, ground: Option<crucible_tui::Ground>, at: usize) -> St
 
 /// The rows drawn under the panel in whatever the mark is on.
 fn specimen(columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    // Below the gutter there is no room for a specimen at all, and a row built
+    // anyway would be wider than the window: the fill cannot shrink one, and a
+    // live row the terminal wraps leaves the count of what was drawn short.
+    if columns <= GUTTER {
+        return Vec::new();
+    }
+
     let mut rows = vec![Row::new()];
 
     for (number, sign, line) in SPECIMEN {
@@ -211,7 +248,10 @@ fn specimen(columns: usize, glyphs: Glyphs) -> Vec<Row> {
         };
 
         let mut row = Row::new().then(gutter, format!("{number} {sign} "));
-        row.push(ground, crucible_tui::clip(line, columns.saturating_sub(8)));
+        row.push(
+            ground,
+            crucible_tui::clip(line, columns.saturating_sub(GUTTER)),
+        );
         row.fill(ground, columns);
         rows.push(row);
     }
@@ -221,6 +261,7 @@ fn specimen(columns: usize, glyphs: Glyphs) -> Vec<Row> {
         "and the row your own prompt is left on",
         columns,
         glyphs,
+        true,
     ));
     rows
 }

@@ -197,14 +197,19 @@ pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigErro
         .filter(|_| value.is_object())
         .ok_or_else(refuse)?;
 
-    // No `output` block at all: the key and the object around it go in together.
+    // No `output` block at all: the key and the object around it go in
+    // together. `insert` hands back the indentation of the line it is going on,
+    // and `None` where there is none to match — a line that already has other
+    // things on it. Written on one line there, the way `allowing` answers the
+    // same case: a block with a hard-coded indent inside a file that has none
+    // is this program deciding how somebody else's file is laid out, and a
+    // tab-indented file would get a mix of both.
     let Some(output) = value.get("output") else {
-        return Ok(splice::insert(text, root, |indent| {
-            let inner = indent.map_or_else(|| "    ".to_owned(), |indent| format!("{indent}  "));
-            format!(
-                "\"output\": {{\n{inner}\"theme\": {written}\n{}}}",
-                indent.unwrap_or("  ")
-            )
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => {
+                format!("\"output\": {{\n{indent}  \"theme\": {written}\n{indent}}}")
+            }
+            None => format!("\"output\": {{\"theme\": {written}}}"),
         }));
     };
 

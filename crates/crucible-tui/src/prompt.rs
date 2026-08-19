@@ -285,6 +285,11 @@ impl Prompt<'_> {
     /// where it was put, which breaking at a word would move; a line nobody is
     /// typing into any more owes only that it reads well.
     ///
+    /// `banded` is whether the palette this will be painted with writes a
+    /// ground for the row. Where it does not, the row stops where the words do:
+    /// padding it out would be trailing spaces that draw nothing and follow the
+    /// text into every copy taken out of the transcript.
+    ///
     /// A window with no room for the line at all still gets the mark. There is
     /// nothing true to draw of the line there, but a record with no mark in it
     /// is one that does not say a prompt was ever asked.
@@ -296,10 +301,11 @@ impl Prompt<'_> {
     /// never said what its background is, the slot resolves to nothing and this
     /// is the row it always was.
     #[must_use]
-    pub fn committed(said: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    pub fn committed(said: &str, columns: usize, glyphs: Glyphs, banded: bool) -> Vec<Row> {
         let mark = glyphs.caret();
         let under = width::columns(mark) + 1;
-        let folded = width::fold(said, columns.saturating_sub(under));
+        let room = columns.saturating_sub(under);
+        let folded = width::fold(said, room);
 
         if folded.is_empty() {
             return vec![Row::new().then(Slot::PromptMark, mark)];
@@ -309,6 +315,13 @@ impl Prompt<'_> {
             .into_iter()
             .enumerate()
             .map(|(at, line)| {
+                // Clipped as well as folded, for the one row folding cannot
+                // make fit: `fold` never hands back an empty row, so a glyph
+                // wider than the room it was given comes back whole and would
+                // put the row past the last column. The terminal would wrap it
+                // and the count of what was drawn would be short by one.
+                let line = width::clip(line, room);
+
                 let mut row = match at {
                     0 => Row::new()
                         .then(Slot::PromptMark, mark)
@@ -323,7 +336,14 @@ impl Prompt<'_> {
                 // reader's own: a ground that stops where the text stops has a
                 // ragged right edge with theirs showing through it, and a
                 // wrapped line would show that on every row but the longest.
-                row.fill(Slot::Prompt, columns);
+                //
+                // Only where there is a ground to carry. A palette that writes
+                // nothing for the slot would pad the row with spaces that draw
+                // nothing at all — trailing whitespace in the record, and on
+                // every copy taken out of it.
+                if banded {
+                    row.fill(Slot::Prompt, columns);
+                }
                 row
             })
             .collect()

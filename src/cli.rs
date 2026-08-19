@@ -51,11 +51,26 @@ use crate::cli::subscription::Subscriptions;
 
 /// How long the terminal is given to say what colour its background is.
 ///
-/// The first frame is budgeted at twenty milliseconds and this is on that path,
-/// so it is a fraction of it rather than a generous wait. A terminal that
-/// implements the question answers in about a millisecond; one that does not
-/// costs this much once and is never asked again, and what it loses is the band
-/// behind the prompt rather than anything it needs.
+/// **This is blocking I/O on the startup path, which `performance-budgets.md`
+/// forbids outright.** It is written down here rather than argued away: the
+/// rule is absolute and this is an exception to it. What makes the exception
+/// defensible is that the cost is bounded by this constant rather than by the
+/// terminal — eight milliseconds of a twenty-millisecond budget, worst case,
+/// once per run — and `bench-first-frame` measures the whole path, so the
+/// budget is the thing that decides whether it stays affordable rather than
+/// this comment.
+///
+/// A terminal that implements the question answers in about a millisecond. One
+/// that does not costs this much once and is never asked again, and what it
+/// loses is the band behind the prompt rather than anything it needs. Terminals
+/// where the answer would be slow are not asked at all — see `RELAYED` in
+/// `crucible_tui::ground`, and the reason there is about a late reply becoming
+/// a keystroke rather than about the wait.
+///
+/// The way out, when it is worth the machinery: ask on a thread and let the
+/// answer land in `Terms::style` at the next prompt, which the loop already
+/// re-reads per turn. That trades this exception for a second writer to the
+/// terminal, which is its own rule.
 const PATIENCE: std::time::Duration = std::time::Duration::from_millis(8);
 
 /// The providers this is built with, and where each one's key is read from.
@@ -632,11 +647,15 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             // variable it set at launch, which says which way its ground goes
             // and not what colour it is; that is enough to pick a table and not
             // enough to blend a band off.
-            crucible_tui::asked(PATIENCE),
+            crucible_tui::asked(PATIENCE, &from),
             crucible_tui::ground::seeded(&from),
             &from,
         )),
-        chosen: Cell::new(None),
+        // What the files named, so `/theme` opens with the mark on the row
+        // already in force rather than on the first one. `None` here would make
+        // a reader who configured a theme look at a panel that says they have
+        // not chosen.
+        chosen: Cell::new(settings.theme()),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),

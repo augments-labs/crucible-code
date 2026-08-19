@@ -147,8 +147,12 @@ fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
 enum Sets {
     /// Nothing: that half is left to the terminal's own theme.
     Nothing,
-    /// A colour, at a rung that names one rather than spelling it out.
+    /// A colour the terminal is left to look up: one of its own sixteen, or a
+    /// parameter with no channels in it.
     Named,
+    /// One of the two hundred and forty whose value the standard fixes, which
+    /// is a colour this can measure even though the sequence only names it.
+    Indexed(u8),
     /// A colour, with its three channels written out.
     Exact((u8, u8, u8)),
 }
@@ -194,12 +198,38 @@ fn named(param: &str, base: u16) -> bool {
 fn extended(params: &mut core::str::Split<'_, char>) -> Sets {
     match params.next() {
         Some("2") => channels(params).map_or(Sets::Named, Sets::Exact),
-        Some("5") => {
-            params.next();
-            Sets::Named
-        }
+        Some("5") => params
+            .next()
+            .and_then(|at| at.parse().ok())
+            // Below sixteen the value is the reader's terminal theme's, and
+            // nothing here can measure it. Sixteen and up are fixed by the
+            // standard, so they are as checkable as channels written out.
+            .filter(|at| *at >= 16)
+            .map_or(Sets::Named, Sets::Indexed),
         _ => Sets::Named,
     }
+}
+
+/// What an indexed parameter is worth, for the two hundred and forty the
+/// standard fixes.
+///
+/// The cube, then the grey ramp — the same arithmetic `color::derived` maps
+/// into, written again here rather than shared, because a test that measured a
+/// table with the table's own function would agree with it however wrong both
+/// were.
+fn indexed(at: u8) -> (u8, u8, u8) {
+    if at < 232 {
+        let at = u32::from(at - 16);
+        let rung = |value: u32| match value {
+            0 => 0,
+            other => u8::try_from(55 + 40 * other).unwrap_or(u8::MAX),
+        };
+
+        return (rung(at / 36), rung((at % 36) / 6), rung(at % 6));
+    }
+
+    let grey = 8 + 10 * (at - 232);
+    (grey, grey, grey)
 }
 
 /// The next three parameters, if all three are channels.
@@ -265,19 +295,74 @@ fn a_slot_that_takes_the_ground_is_legible_on_the_one_it_takes() {
     // pairs that are checked -- at both rungs that spell a colour out, because
     // an indexed table is picked separately and can drift from the exact one.
     for theme in THEMES {
-        for slot in DIFF {
-            let written = wearing(Depth::Exact, theme, None).open(slot);
-            let (Sets::Exact(hue), Sets::Exact(ground)) = sets(written.as_str()) else {
+        for (depth, slot) in [Depth::Exact, Depth::Indexed]
+            .into_iter()
+            .flat_map(|depth| DIFF.map(|slot| (depth, slot)))
+        {
+            let written = wearing(depth, theme, None).open(slot);
+            let worth = |half| match half {
+                Sets::Exact(colour) => Some(colour),
+                Sets::Indexed(at) => Some(indexed(at)),
+                Sets::Nothing | Sets::Named => None,
+            };
+            let (Some(hue), Some(ground)) = (
+                worth(sets(written.as_str()).0),
+                worth(sets(written.as_str()).1),
+            ) else {
                 // Ansi names its colours rather than spelling them, and what
                 // they are worth is the reader's terminal theme's answer.
-                assert_eq!(theme, Theme::Ansi, "{theme:?}: {slot:?} spells nothing out");
+                // Ansi names its colours rather than spelling them, and so does
+                // the indexed rung — an index is a number the terminal looks up
+                // rather than a colour written out. What the indexed pairs are
+                // worth is checked against the table they were picked from,
+                // below.
+                // Only Ansi, whose colours are the reader's own sixteen and are
+                // not this file's to measure.
+                assert_eq!(
+                    theme,
+                    Theme::Ansi,
+                    "{theme:?}: {slot:?} at {depth:?} names nothing measurable"
+                );
                 continue;
             };
 
             let ratio = contrast(hue, ground);
             assert!(
                 ratio >= LEGIBLE,
-                "{theme:?}: {slot:?} is {ratio:.2}:1 on the ground it carries, under {LEGIBLE}:1"
+                "{theme:?}: {slot:?} at {depth:?} is {ratio:.2}:1 on the ground it carries, under {LEGIBLE}:1"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_table_a_terminal_that_said_nothing_gets_clears_a_light_ground_too() {
+    // `Style::theme` settles `auto` on Dark where nothing reported a ground,
+    // and its own comment says why that is the safe fallback: "every hue in
+    // that table still clears a light ground at the old three-to-one bar even
+    // though it is tuned for a dark one."
+    //
+    // Nothing else measures that. Every other check here asks a table about the
+    // ground it is *for*, so a later hand-tuned adjustment to Dark could drop
+    // below three-to-one on white with the whole suite green — and the reader
+    // it would fail is the one on a white terminal whose emulator answers
+    // neither question, which is exactly who gets this table.
+    const BOTH: f64 = 3.0;
+
+    for slot in all() {
+        let (Sets::Exact(hue), Sets::Nothing) =
+            sets(wearing(Depth::Exact, Theme::Dark, None).open(slot).as_str())
+        else {
+            continue;
+        };
+
+        for ground in [(0, 0, 0), (255, 255, 255)] {
+            let ratio = contrast(hue, ground);
+            assert!(
+                ratio >= BOTH,
+                "{slot:?} is {ratio:.2}:1 against {ground:?}, under {BOTH}:1 — \
+                 Dark is what a terminal that reported nothing gets, whichever \
+                 ground it turns out to have"
             );
         }
     }

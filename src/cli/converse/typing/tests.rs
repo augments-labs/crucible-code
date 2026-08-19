@@ -276,7 +276,7 @@ fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
     let line = "why does the grep probe walk the whole tree before it reports";
     let mut editor = typed(line);
 
-    let drawn = Prompt::committed(line, 24, Style::plain().glyphs()).len();
+    let drawn = Prompt::committed(line, 24, Style::plain().glyphs(), true).len();
     assert!(drawn > 1, "the fixture has to wrap to be testing anything");
 
     said(

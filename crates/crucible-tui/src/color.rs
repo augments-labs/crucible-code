@@ -747,6 +747,12 @@ impl Palette {
         derived::blend(over, ground, step)
     }
 
+    /// Whether the row a prompt is left on takes a ground here.
+    #[must_use]
+    pub fn bands(self) -> bool {
+        self.band.is_some()
+    }
+
     /// Which table this palette spends.
     #[must_use]
     pub fn theme(self) -> Theme {
