@@ -307,7 +307,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Resume,
             rest,
-        } => resume::run(rest, renderer, runner, terms)?,
+        } => resume::run(rest, renderer, runner, terms, keys)?,
 
         Wanted::Known {
             command: Command::Clear,

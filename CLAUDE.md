@@ -100,7 +100,7 @@ column gets sent back in review.
 | How much a model accepts at once, counted in tokens | **window** | context, context window, context size, budget |
 | What one request carried to the model, counted in tokens | **carried** | input, prompt tokens, context length |
 | What the next request would carry, held by the turn while it runs | **load** | usage, fill, pressure, occupancy |
-| What compaction leaves standing in place of what it replaced | **recap** | summary, digest, précis, synopsis |
+| What compaction leaves standing in place of what it replaced | **recap** | digest, précis, synopsis — and *summary*, except on screen |
 
 Banned type suffixes where a domain word exists: `Manager`, `Service`,
 `Handler`, `Helper`, `Util`, `Processor`, `Data`, `Info`, `Base*`, `Abstract*`.
@@ -111,7 +111,7 @@ because `Result` is Rust's own, and `SourceError`'s field naming a source is
 the *word* losing to a language feature rather than to a synonym, and in prose
 each is still a result and a source.
 
-Two exceptions, both of the same kind — a word kept for whoever owns the thing
+Three exceptions, all of the same kind — a word kept for whoever owns the thing
 it names.
 
 Inside `crucible-provider`, **chunk** names the wire object a
@@ -119,6 +119,13 @@ vendor sends — OpenAI's is literally typed `chat.completion.chunk`. It is not 
 synonym for a delta, it is a layer below one, and one chunk can yield several.
 Using a vendor's word for a vendor's object is what keeps that a distinction
 rather than a coincidence. Everywhere above the wire, a delta is a delta.
+
+On screen, the recap is called a **summary**, and only there. It is the word a
+person arrives already knowing, and the row offering it has one line to be
+understood in — while `Summary` in this codebase is what a tool says about a
+call, so the code cannot have the word back. The two never meet: no type, field
+or function is named for it, and what a user reads is the one place the domain
+word gives way to theirs.
 
 Inside `crucible-tui`, **window** means the terminal this process is drawing
 into — the reader's own word for their own screen, and the thing every component

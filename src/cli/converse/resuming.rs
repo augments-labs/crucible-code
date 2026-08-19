@@ -17,13 +17,17 @@
 //! for a reader to weigh at that point, and stopping to ask would be stopping
 //! the turn they are waiting on.
 
+use std::io;
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crucible_core::{Compacting, Event};
 use crucible_runner::Runner;
-use crucible_tui::{Offered, Panel, Prompt, Renderer, Row, Slot, Terminal, Working};
+use crucible_tui::{
+    Glyphs, Key, Offered, Panel, Pressed, Prompt, Renderer, Row, Slot, Terminal, Working, pressed,
+    waiting,
+};
 
 use crate::cli::Fatal;
 use crate::cli::draw::{self, when};
@@ -31,6 +35,7 @@ use crate::cli::style::Style;
 
 use super::Terms;
 use super::picking::{self, Picked};
+use super::typing;
 
 /// How large a session has to be before it is worth asking about, in tokens.
 ///
@@ -44,7 +49,7 @@ const WORTH_ASKING: u64 = 60_000;
 const TITLE: &str = "This session is large";
 
 /// What the three answers say.
-const RECAP: &str = "Carry on from notes";
+const RECAP: &str = "Carry on from summary";
 const WHOLE: &str = "Carry all of it";
 const NEVER: &str = "Stop asking";
 
@@ -65,6 +70,41 @@ const TICK: Duration = Duration::from_millis(100);
 
 /// The one word the row says while this runs.
 const DOING: &str = "compacting";
+
+/// And the key that stops it, named because it is read.
+const STOPS: &str = "esc to stop";
+
+/// What the row under it says, which is what is being done and not why.
+///
+/// Not a word about the window: nothing here says it was full, because at this
+/// moment it very often is not — somebody chose this rather than reaching it.
+const MAKING: &str = "reading the session back and writing down what matters";
+
+/// How wide the bar under the word is, in columns.
+const BAR: usize = 28;
+
+/// The sentence under the title: how much, from when, and what it costs.
+///
+/// Written here rather than inline so it can be looked at without a terminal —
+/// it is the row that has to persuade somebody, and the only one whose wording
+/// is worth arguing about.
+fn sentence(carrying: u64, runner: &Runner) -> String {
+    let started = runner
+        .session()
+        .id()
+        .map(|id| when::ago(id.started(), SystemTime::now()));
+
+    match started {
+        Some(started) => format!(
+            "{} carried, from a session started {started}. Carrying it whole spends that again on every turn.",
+            draw::tokens(carrying)
+        ),
+        None => format!(
+            "{} carried. Carrying it whole spends that again on every turn.",
+            draw::tokens(carrying)
+        ),
+    }
+}
 
 /// Whether a session this size is worth stopping to ask about.
 ///
@@ -90,35 +130,21 @@ fn worth_asking(carrying: u64, said: Option<u64>) -> bool {
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
 pub(super) fn asked<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: Runner,
+    runner: &mut Runner,
     terms: &Terms,
     keys: bool,
-) -> Result<Runner, Fatal> {
+) -> Result<(), Fatal> {
     let carrying = runner.carrying();
 
     // Nothing is asked down a pipe: there is nobody to answer, and a question
     // with no reader is a session that carries on whole having pretended to
     // offer a choice.
     if !keys || !worth_asking(carrying, runner.compaction().ask_on_resume) {
-        return Ok(runner);
+        return Ok(());
     }
 
     let style = terms.style();
-    let started = runner
-        .session()
-        .id()
-        .map(|id| when::ago(id.started(), SystemTime::now()));
-    let said = match started {
-        Some(started) => format!(
-            "{} carried, from a session started {started}. Carrying it whole spends that again on every turn.",
-            draw::tokens(carrying)
-        ),
-        None => format!(
-            "{} carried. Carrying it whole spends that again on every turn.",
-            draw::tokens(carrying)
-        ),
-    };
-
+    let said = sentence(carrying, runner);
     let shown = [
         Offered {
             name: RECAP,
@@ -149,9 +175,9 @@ pub(super) fn asked<T: Terminal>(
         Picked::Took(0) => recap(renderer, runner, terms),
         Picked::Took(2) => {
             stop(renderer, terms);
-            Ok(runner)
+            Ok(())
         }
-        _ => Ok(runner),
+        _ => Ok(()),
     }
 }
 
@@ -167,43 +193,63 @@ pub(super) fn asked<T: Terminal>(
 /// key that does nothing is worse than a row naming none.
 fn recap<T: Terminal>(
     renderer: &mut Renderer<T>,
-    mut runner: Runner,
+    runner: &mut Runner,
     terms: &Terms,
-) -> Result<Runner, Fatal> {
+) -> Result<(), Fatal> {
     let style = terms.style();
     let glyphs = style.glyphs();
     let (events, seen) = channel::<Event>();
 
+    // Cloned out before the scope: `Terms` holds what one command changes in
+    // cells, so it is not a thing two threads may share, and the worker needs
+    // nothing from it but this.
     let cancel = terms.cancel.clone();
-    let working = thread::Builder::new()
-        .name("compacting".to_owned())
-        .spawn(move || {
-            let outcome = runner.compact(Compacting::Resumed, &events, &cancel);
-            (runner, outcome)
-        })
-        .map_err(Fatal::Worker)?;
 
-    let since = Instant::now();
-    let mut left = None;
-    loop {
-        match seen.recv_timeout(TICK) {
-            // The reading is taken off the row while this runs, the same as it
-            // is mid-turn: the number it would show is the one being replaced.
-            Ok(Event::Carried { left: said }) => left = said,
-            // Everything else it reports, and the beat with nothing on it: both
-            // reach the same redraw below, which is what turns the mark while
-            // one request answers once at the end.
-            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-            // The worker has dropped the sender, so it is finished.
-            Err(RecvTimeoutError::Disconnected) => break,
+    // Everything the box says at rest, read before the worker borrows the
+    // runner — and read from the one place that builds it, so the box drawn
+    // here is the box drawn everywhere else. A blank frame while this runs
+    // reads as a program that has fallen over rather than one that is busy.
+    let says = typing::saying(runner);
+    let filled = runner.left().map(|left| 100 - left);
+
+    // Whatever stopped anything earlier is spent. From here the keyboard is
+    // read against this, and a flag found raised belongs to it.
+    cancel.reset();
+
+    let outcome = thread::scope(|scope| {
+        let working = scope.spawn(|| runner.compact(Compacting::Resumed, &events, &cancel));
+
+        let since = Instant::now();
+        loop {
+            // Looked at every pass, because a request that answers once at the
+            // end would otherwise leave the keyboard dead for as long as it
+            // takes — which is a program that has stopped, as far as anybody
+            // watching can tell.
+            if waiting(Duration::ZERO).unwrap_or(false) {
+                // Every other key, and a read that failed, are the same
+                // answer here: this is not a box being typed into, and the only
+                // press it has anything to do about is the one that stops it.
+                if let Ok(Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof)) = pressed() {
+                    cancel.request();
+                }
+            }
+
+            match seen.recv_timeout(TICK) {
+                // Nothing it reports changes this picture: the reading is off
+                // the row while this runs, and what it came to is drawn once at
+                // the end. What the beat is for is the mark.
+                Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+                // The worker has dropped the sender, so it is finished.
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+
+            standing(renderer, since, &says, filled, style)?;
         }
 
-        standing(renderer, since, left, style)?;
-    }
-
-    let (runner, outcome) = working
-        .join()
-        .map_err(|_| Fatal::Worker(std::io::Error::other("the compacting thread ended badly")))?;
+        working
+            .join()
+            .map_err(|_| Fatal::Worker(io::Error::other("the compacting thread ended badly")))
+    })?;
 
     let columns = renderer.columns();
     match outcome {
@@ -211,20 +257,25 @@ fn recap<T: Terminal>(
             let rows = draw::compacted_rows(compacted, columns, glyphs);
             renderer.present(&rows, style.palette())?;
         }
+        // Nothing to replace, or stopped before it had anything to say. The
+        // session is untouched either way, and is carried whole.
         Ok(None) => {}
-        // The session is untouched, so there is nothing to undo and nothing to
-        // warn about beyond what happened. It is carried whole instead.
-        Err(problem) => renderer.commit(&format!("! could not make notes: {problem}"))?,
+        Err(problem) => renderer.commit(&format!("! could not make a summary: {problem}"))?,
     }
 
-    Ok(runner)
+    Ok(())
 }
 
-/// The row above the box, and the box, while room is being made.
+/// The row above the box, the bar under it, and the box, while room is made.
+///
+/// The same three rows a running turn puts there, which is what `METERED` is:
+/// the blank, the word, and one row under it. No blank between the word and the
+/// bar — it is a second line of the same thing rather than a second thing.
 fn standing<T: Terminal>(
     renderer: &mut Renderer<T>,
     since: Instant,
-    left: Option<u8>,
+    says: &typing::Says,
+    filled: Option<u8>,
     style: Style,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
@@ -236,22 +287,29 @@ fn standing<T: Terminal>(
             doing: DOING,
             running: since.elapsed(),
             spent: None,
-            stops: None,
-            left,
+            stops: Some(STOPS),
+            // Taken off while this runs: the number it would show is the one
+            // being replaced.
+            left: None,
         }
         .row(columns, glyphs),
-        Row::new(),
     ];
+
+    if let Some(row) = bar(filled, columns, glyphs) {
+        rows.push(row);
+    }
+
+    rows.push(Row::new());
     rows.extend(
         Prompt {
             said: "",
             column: 0,
-            mode: "",
-            tone: Slot::Quiet,
+            mode: says.mode.as_ref(),
+            tone: says.tone,
             hint: "",
-            model: "",
-            provider: "",
-            effort: None,
+            model: says.model.as_str(),
+            provider: says.provider,
+            effort: says.effort,
             asking: None,
             running: None,
             room: 1,
@@ -263,6 +321,31 @@ fn standing<T: Terminal>(
     Ok(())
 }
 
+/// The bar under the word, or nothing where no window is known.
+///
+/// It shows how full the window was when this started, and holds still: what is
+/// being replaced is exactly that, and a bar moving while the session was
+/// rewritten would be measuring two different things a second apart.
+fn bar(filled: Option<u8>, columns: usize, glyphs: Glyphs) -> Option<Row> {
+    let filled = filled?;
+    let gutter = Working::gutter(glyphs);
+    if columns < gutter + BAR + 2 {
+        return None;
+    }
+
+    let full = usize::from(filled) * BAR / 100;
+
+    // Filled against hollow, and `Plain` against `Quiet`: the shape carries it
+    // and the colour only reinforces, so it survives a terminal drawing none.
+    Some(
+        Row::new()
+            .then(Slot::Quiet, " ".repeat(gutter))
+            .then(Slot::Plain, glyphs.filled().repeat(full))
+            .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
+            .then(Slot::Quiet, format!("  {MAKING}")),
+    )
+}
+
 /// Writes down that this question is not wanted again.
 fn stop<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) {
     if let Err(problem) = crate::cli::remember::unasked(&terms.choosing) {
@@ -272,7 +355,109 @@ fn stop<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) {
 
 #[cfg(test)]
 mod tests {
+    use crucible_tui::Glyphs;
+
     use super::*;
+
+    /// The panel as it stands, drawn for a terminal `columns` wide.
+    fn drawn(columns: usize) -> String {
+        let shown = [
+            Offered {
+                name: RECAP,
+                says: RECAP_IS,
+            },
+            Offered {
+                name: WHOLE,
+                says: WHOLE_IS,
+            },
+            Offered {
+                name: NEVER,
+                says: NEVER_IS,
+            },
+        ];
+        let said = "340k carried, from a session started 3 hours ago. \
+                    Carrying it whole spends that again on every turn.";
+
+        Panel {
+            title: TITLE,
+            said: Some(said),
+            shown: &shown,
+            chosen: 0,
+            footer: KEYS,
+        }
+        .within(columns, 24, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect::<Vec<_>>()
+        .join("\n")
+    }
+
+    #[test]
+    fn the_panel_says_the_cost_the_three_answers_and_the_keys() {
+        let panel = drawn(80);
+        println!("\n{panel}");
+
+        for wanted in [TITLE, RECAP, WHOLE, NEVER, KEYS, "340k carried"] {
+            assert!(panel.contains(wanted), "missing {wanted:?} in:\n{panel}");
+        }
+    }
+
+    #[test]
+    fn the_screen_while_room_is_made_says_what_is_happening_and_offers_the_key() {
+        // What the owner has to be able to see: a word that is moving, a bar
+        // saying how full it was, the key that stops it, and a box that still
+        // says what it says at rest rather than a blank frame.
+        let bar = bar(Some(96), 80, Glyphs::Unicode).expect("a bar").text();
+        let row = Working {
+            doing: DOING,
+            running: std::time::Duration::from_secs(8),
+            spent: None,
+            stops: Some(STOPS),
+            left: None,
+        }
+        .row(80, Glyphs::Unicode)
+        .text();
+
+        println!("\n{row}\n{bar}");
+
+        assert!(row.contains(DOING), "{row}");
+        assert!(row.contains(STOPS), "{row}");
+        assert!(
+            !row.contains('%'),
+            "the reading is drawn while it is replaced"
+        );
+        assert!(bar.contains(MAKING), "{bar}");
+    }
+
+    #[test]
+    fn the_bar_is_full_where_the_window_is_and_absent_where_none_is_known() {
+        let full = bar(Some(100), 80, Glyphs::Ascii).expect("a bar").text();
+        let empty = bar(Some(0), 80, Glyphs::Ascii).expect("a bar").text();
+
+        assert!(full.contains(&"*".repeat(BAR)), "{full}");
+        assert!(empty.contains(&"-".repeat(BAR)), "{empty}");
+
+        // Nothing at all where no window is known — the same rule the reading
+        // keeps, and not a bar drawn empty, which would read as a window with
+        // nothing in it.
+        assert!(bar(None, 80, Glyphs::Ascii).is_none());
+
+        // And nothing where there is no room for one, rather than a bar cut in
+        // half, which is a proportion that is not the proportion.
+        assert!(bar(Some(50), 12, Glyphs::Ascii).is_none());
+    }
+
+    #[test]
+    fn no_row_of_it_is_wider_than_the_terminal_it_was_drawn_for() {
+        // The failure `responsive-components.md` is about: a row past the last
+        // column is one the terminal wraps itself, and every frame after it
+        // rewinds over the wrong number of rows.
+        for columns in [40, 60, 80, 120] {
+            for row in drawn(columns).lines() {
+                assert!(crucible_tui::columns(row) <= columns, "{columns}: {row:?}");
+            }
+        }
+    }
 
     #[test]
     fn a_session_small_enough_to_carry_is_carried_without_a_question() {

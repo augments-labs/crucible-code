@@ -165,7 +165,7 @@ This session is large
 340k carried, from a session started 3 hours ago. Carrying it whole spends that
 again on every turn.
 
-  1  Carry on from notes
+  1  Carry on from summary
      one request now, and every request after it is smaller
   2  Carry all of it
      all of it goes back to the model, on every turn from here

@@ -482,23 +482,29 @@ fn together(offered: Option<Instant>, now: Instant) -> bool {
 #[derive(Clone)]
 pub(super) struct Says {
     /// The mode, in the words somebody reads rather than the ones they type.
-    mode: Cow<'static, str>,
+    pub(super) mode: Cow<'static, str>,
     /// The keys that act on it, said quietly after.
-    keys: Cow<'static, str>,
+    pub(super) keys: Cow<'static, str>,
     /// Which model the next turn goes to, at the other end of the row.
-    model: String,
+    pub(super) model: String,
     /// The vendor it is asked of, drawn before it.
-    provider: &'static str,
+    pub(super) provider: &'static str,
     /// How hard it is being asked to think. `None` where no rung is in force.
-    effort: Option<&'static str>,
+    pub(super) effort: Option<&'static str>,
     /// What the border and the sentence are both drawn in.
-    tone: Slot,
+    pub(super) tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
     /// the ordinary state, where the mode is the last row there is.
-    asking: Option<&'static str>,
+    pub(super) asking: Option<&'static str>,
     /// How many commands are still running. Read per frame rather than per turn,
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
+    /// How much of the model's window is left, where a window is known.
+    ///
+    /// On the row above the box between turns, where the row a turn runs on
+    /// says it during one — the same reading in the same column either way, so
+    /// it does not move when a turn starts. `None` draws nothing at all.
+    pub(super) left: Option<u8>,
 }
 
 impl Says {
@@ -973,7 +979,7 @@ pub(super) fn stand<T: Terminal>(
 }
 
 /// The row for the mode the box is showing.
-fn saying(runner: &Runner) -> Says {
+pub(super) fn saying(runner: &Runner) -> Says {
     let mode = runner.mode();
 
     Says {
@@ -984,6 +990,7 @@ fn saying(runner: &Runner) -> Says {
         effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
+        left: runner.left(),
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.
         running: 0,
@@ -1064,12 +1071,34 @@ fn draw<T: Terminal>(
         .rows(columns, room.saturating_sub(listed.len()), style.glyphs());
     rows.append(&mut listed);
 
+    // Directly over the box, right-aligned, so it sits in the column the row a
+    // turn runs on puts it in. Nothing at all where no window is known, which
+    // is not a reading of zero.
+    if let Some(row) = left(around.says.left, columns) {
+        rows.push(row);
+    }
+
     let above = rows.len();
     caret.row += above;
     rows.append(&mut boxed);
 
     renderer.live(&rows, caret, style.palette())?;
     Ok(above)
+}
+
+/// How much of the window is left, against the end of its own row.
+///
+/// Whole or not at all, for the reason the row above a running turn says it
+/// that way: half a percentage is a number that is not the percentage.
+fn left(left: Option<u8>, columns: usize) -> Option<Row> {
+    let said = format!("{}% window left", left?);
+    let wide = crucible_tui::columns(&said);
+
+    (wide <= columns).then(|| {
+        Row::new()
+            .then(Slot::Quiet, " ".repeat(columns - wide))
+            .then(Slot::Quiet, said)
+    })
 }
 
 /// The box as it is being typed into.

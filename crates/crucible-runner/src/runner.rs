@@ -268,6 +268,15 @@ impl Runner {
         self.load.tokens()
     }
 
+    /// How much of the model's window is left, where a window is known.
+    ///
+    /// The same reading the row above the box shows during a turn, asked for
+    /// between turns — where no event is arriving to carry it.
+    #[must_use]
+    pub fn left(&self) -> Option<u8> {
+        self.load.left(self.model.window)
+    }
+
     /// What this session was told to do when the window fills.
     #[must_use]
     pub const fn compaction(&self) -> Compaction {

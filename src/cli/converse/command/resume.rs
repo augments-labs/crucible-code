@@ -37,6 +37,7 @@ pub(super) fn run<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
+    keys: bool,
 ) -> Result<(), Fatal> {
     let listed = recent(&terms.sessions, &terms.workspace, SHOWN);
 
@@ -65,7 +66,7 @@ pub(super) fn run<T: Terminal>(
         return Ok(());
     };
 
-    picking(picked, renderer, runner, terms, now)
+    picking(picked, renderer, runner, terms, keys)
 }
 
 /// Picks one up, having decided which.
@@ -74,7 +75,7 @@ fn picking<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
-    now: SystemTime,
+    keys: bool,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
 
@@ -112,10 +113,23 @@ fn picking<T: Terminal>(
     }
 
     renderer.present(
-        &picked_up(picked, held, now, columns, terms.style().glyphs()),
+        // Read here rather than carried in: one row is dated against one
+        // instant however it was reached, unlike the list above, which is
+        // several rows and has to share one.
+        &picked_up(
+            picked,
+            held,
+            SystemTime::now(),
+            columns,
+            terms.style().glyphs(),
+        ),
         terms.style().palette(),
     )?;
-    Ok(())
+
+    // The same question a session picked up on the command line is asked, and
+    // for the same reason: what it costs to carry is a fact about the session
+    // rather than about which of the two ways reached it.
+    super::super::resuming::asked(renderer, runner, terms, keys)
 }
 
 /// The rows that say what was picked up.

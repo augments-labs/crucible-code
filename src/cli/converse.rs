@@ -268,7 +268,7 @@ pub(crate) fn converse<T: Terminal>(
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
-    runner = resuming::asked(renderer, runner, terms, keys)?;
+    resuming::asked(renderer, &mut runner, terms, keys)?;
 
     loop {
         // Read here rather than before the loop, because one command changes
