@@ -202,8 +202,6 @@ pub(crate) fn converse<T: Terminal>(
     terms: &Terms,
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
-    let style = terms.style();
-
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
@@ -227,7 +225,10 @@ pub(crate) fn converse<T: Terminal>(
     // them itself, so scrolling back over the transcript stops working for as
     // long as this is held, and `output.mouse` left alone is how a reader who
     // scrolls more than they expand keeps it.
-    let _pointer = style.clicks().then(Reporting::on).transpose()?.flatten();
+    // Read once and not per turn, unlike the rest of the style: whether a click
+    // means anything is settled at startup and `/theme` does not touch it.
+    let clicks = terms.style().clicks();
+    let _pointer = clicks.then(Reporting::on).transpose()?.flatten();
 
     // One line for the whole session rather than one per prompt. What was typed
     // while a turn ran is still there when it ends, and the allocation the last
@@ -260,6 +261,17 @@ pub(crate) fn converse<T: Terminal>(
     let mut told = false;
 
     loop {
+        // Read here rather than before the loop, because one command changes
+        // it. `/theme` runs between turns, which is inside this loop, and a
+        // style captured above it would go on drawing the box in whatever was
+        // in force when the session opened — the transcript would follow the
+        // new theme and the box, the one thing the reader is looking straight
+        // at while they choose it, would not.
+        //
+        // Once per turn and not per frame: a `Cell::get` of a `Copy` value is
+        // a read, and what is between here and the next prompt is a whole turn.
+        let style = terms.style();
+
         // The window may have changed while the last turn was streaming. The
         // box notices a resize as it happens, because in raw mode the terminal
         // reports one; between turns there is nobody reading, so it is noticed
@@ -405,7 +417,7 @@ pub(crate) fn converse<T: Terminal>(
     if let Some(problem) = problem
         && !told
     {
-        draw::trouble(renderer, &problem, style)?;
+        draw::trouble(renderer, &problem, terms.style())?;
     }
 
     renderer.settle()?;

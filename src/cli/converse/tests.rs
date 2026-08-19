@@ -129,6 +129,65 @@ fn a_turn_streams_what_the_model_said_and_the_loop_comes_back_for_more() {
 }
 
 #[test]
+fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
+    // `/theme` changes the table the whole interface is drawn in. A loop that
+    // read the style once, before the first prompt, would go on drawing in
+    // whatever was in force when the session opened: the transcript would
+    // follow the new theme and everything the loop itself draws — the box, the
+    // expanded view, a queued prompt — would not.
+    //
+    // The box is what a reader actually looks at while they choose, and it is
+    // the one thing this suite cannot reach: drawing it needs raw mode, which
+    // reaches the controlling terminal. So the property is pinned on a row the
+    // same captured style fed — the one that says no model has been chosen.
+    let terms = Terms {
+        style: Cell::new(Style::coloured()),
+        ..plain()
+    };
+    let was = terms.style();
+
+    // No model, so a line that is not a command reaches `draw::unconfigured`,
+    // which is drawn from the style the loop is holding.
+    let runner = Runner::new(
+        Box::new(Script::new(vec![])),
+        Tools::new(),
+        Model {
+            name: "".into(),
+            max_tokens: 64,
+            system: None,
+            effort: None,
+        },
+        Session::nowhere(),
+    );
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
+
+    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+
+    let worn = |style: Style| {
+        style
+            .palette()
+            .open(crucible_tui::Slot::Strong)
+            .as_str()
+            .to_owned()
+    };
+    let now = terms.style();
+
+    assert_ne!(worn(now), worn(was), "the theme did not change");
+
+    let written = renderer.terminal().written();
+    let after = written
+        .rsplit_once("colourblind-dark")
+        .map_or("", |(_, after)| after);
+
+    assert!(
+        after.contains(&worn(now)),
+        "the loop kept the theme the session opened in:\n{after:?}"
+    );
+}
+
+#[test]
 fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     // Catching the signal a resize sends needs `unsafe`, which this
     // workspace forbids, so a prompt is the only moment the loop can notice
