@@ -390,6 +390,7 @@ session.
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
+| `/compact` | Replaces what is behind you with the model's own notes on it, making room |
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
 

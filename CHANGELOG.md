@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+**A turn is bounded by the model's window, not by counting what it does.** The
+four per-turn caps are gone, and with them the failure that ended a turn on a
+count and named a vendor for a bound that was crucible's own. When there is no
+longer room for another exchange, crucible replaces what is behind you with the
+model's own notes on it and the turn carries on; `/compact` does the same when
+you would rather choose the moment.
+
 ## [0.11.2] - 2026-08-19
 
 ### Fixed

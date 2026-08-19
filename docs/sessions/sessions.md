@@ -113,6 +113,47 @@ about the log, so nothing is assumed about it: `--continue` stops with
 `could not claim the session log …` and the reason the operating system gave,
 having read nothing and changed nothing.
 
+## When the window fills
+
+Every model accepts only so much at once, and a long session eventually reaches
+it. crucible shows how much is left against the end of the row a turn runs on:
+
+```text
+✳ writing (1m 12s · ↓ 4.1k · esc to stop)                     10% window left
+```
+
+The reading is there from the first frame of a session to the last. It is
+missing in two cases, and neither is a reading of zero: crucible does not know
+how much that model accepts, or it is making room right now and the number would
+be the one being replaced.
+
+When there is no longer room for another exchange, crucible **makes room in the
+middle of the turn and the turn carries on**. It asks the model to write down
+what is worth keeping, and that recap stands where the messages it replaced
+were, with the most recent turns kept word for word:
+
+```text
+────────────────────────────────────────────────────────────────────────────────
+ compacted · the window was full
+ 41 messages became a recap · 156k → 18k carried · 4 turns kept whole
+────────────────────────────────────────────────────────────────────────────────
+```
+
+Nothing is deleted. What is replaced is what the **model** is sent; the session
+log keeps every message of it, which is what `--continue` reads and what you
+can go back and look at.
+
+`/compact` does the same thing between turns, when you would rather choose the
+moment. A session with nothing behind it says so instead of spending a request.
+
+If a provider refuses a request for want of room — because crucible had the
+window wrong, or was never told it — the same thing happens and the question
+goes back once the session is smaller. A compaction that frees nothing is not
+tried twice; the turn stops and says so, and `/clear` or a model with a larger
+window is what gets past it.
+
+[Configuration](../configuration/configuration.md#compaction) has the keys.
+
 ## When recording stops
 
 A write to the log can fail — a full disk, most often — and the turn does not
