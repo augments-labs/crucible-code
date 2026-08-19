@@ -154,6 +154,35 @@ window is what gets past it.
 
 [Configuration](../configuration/configuration.md#compaction) has the keys.
 
+## Picking up a large one
+
+A session that ran for hours is worth what it cost to build, and carrying all of
+it back is what that costs again — on the next request and on every request
+after. So picking up a large one asks first:
+
+```text
+This session is large
+340k carried, from a session started 3 hours ago. Carrying it whole spends that
+again on every turn.
+
+  1  Carry on from notes
+     one request now, and every request after it is smaller
+  2  Carry all of it
+     all of it goes back to the model, on every turn from here
+  3  Stop asking
+     written down; sessions are carried whole from now on
+
+enter to choose · esc to carry it whole
+```
+
+Nothing is decided for you. The one case where carrying it whole is right — you
+are about to ask about something said two hours ago — is the case crucible
+cannot see from here.
+
+Escape carries it whole, which is the answer that changes nothing. *Stop asking*
+writes `compaction.askOnResume` down as `0`; set it to a number of tokens
+instead to move the point where the question appears.
+
 ## When recording stops
 
 A write to the log can fail — a full disk, most often — and the turn does not

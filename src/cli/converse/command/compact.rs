@@ -30,7 +30,7 @@ const NOTHING: &str = "there is nothing behind this turn worth replacing yet";
 /// Nowhere. The rows they exist to move belong to a turn — the word above the
 /// box, the bar under it — and no turn is running. What happened is drawn here
 /// instead, once, from the value the call hands back.
-struct Nowhere;
+pub(in crate::cli::converse) struct Nowhere;
 
 impl Post for Nowhere {
     fn post(&self, _: Event) {}

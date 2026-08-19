@@ -24,5 +24,5 @@ mod sample;
 mod tools;
 
 pub use crucible_session::{Recorded, Session, SessionError, recent};
-pub use runner::{Model, Runner};
+pub use runner::{Compaction, Model, Runner};
 pub use tools::Tools;

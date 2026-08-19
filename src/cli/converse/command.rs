@@ -29,7 +29,7 @@ use crate::cli::style::Style;
 use super::{Terms, mode};
 
 mod clear;
-mod compact;
+pub(super) mod compact;
 mod effort;
 mod login;
 mod logout;

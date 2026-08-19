@@ -31,6 +31,7 @@ impl Settings {
                 .unwrap_or(When::Full),
             reserve: count("reserve"),
             keep: count("keep"),
+            ask_on_resume: count("askOnResume"),
             spend_ceiling: count("spendCeiling"),
         }
     }
@@ -74,6 +75,12 @@ pub struct Compaction {
     pub reserve: Option<u64>,
     /// How many whole turns are kept after the recap, where a layer said.
     pub keep: Option<u64>,
+    /// How large a session must be before picking it up asks about it.
+    ///
+    /// `None` where nobody said, and the wiring's own figure applies. Zero is
+    /// somebody saying never — a different answer from silence, and the one
+    /// "stop asking" writes down.
+    pub ask_on_resume: Option<u64>,
     /// The most one turn may produce before it is stopped, in tokens.
     ///
     /// `None` where nobody said, and then nothing stops a turn for spending.
@@ -126,6 +133,7 @@ mod tests {
                 when: When::Full,
                 reserve: None,
                 keep: None,
+                ask_on_resume: None,
                 spend_ceiling: None,
             }
         );
@@ -143,6 +151,7 @@ mod tests {
                 when: When::Never,
                 reserve: Some(25_000),
                 keep: Some(4),
+                ask_on_resume: None,
                 spend_ceiling: Some(500_000),
             }
         );

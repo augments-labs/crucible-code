@@ -750,6 +750,7 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
     let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
     let why = match compacted.why {
         Compacting::Asked => "you asked",
+        Compacting::Resumed => "you chose notes over carrying this session whole",
         Compacting::Full => "the window was full",
         Compacting::Refused => "the model would not take another request this size",
     };
@@ -777,7 +778,7 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
 }
 
 /// A token count, as a row says it.
-fn tokens(tokens: u64) -> String {
+pub(crate) fn tokens(tokens: u64) -> String {
     match tokens {
         0..=999 => tokens.to_string(),
         1_000..=999_999 => format!("{}k", tokens / 1_000),

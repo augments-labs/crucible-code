@@ -20,6 +20,11 @@
         "$schema": {
           "type": "string"
         },
+        "askOnResume": {
+          "description": "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
+          "minimum": 0,
+          "type": "integer"
+        },
         "keep": {
           "description": "How many recent turns are kept word for word after the rest becomes a recap",
           "minimum": 0,

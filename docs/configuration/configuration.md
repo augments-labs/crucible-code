@@ -137,6 +137,7 @@ What happens when the model's window fills up. See
 | `when` | `full` to make room when there is none left, or `never`. |
 | `reserve` | Tokens kept free for the next answer and the tools it calls. |
 | `keep` | How many recent turns are kept word for word after the rest becomes a recap. |
+| `askOnResume` | How large a session must be, in tokens, before picking it up asks about it. |
 | `spendCeiling` | The most tokens one turn may produce before crucible stops it. |
 
 ```json
@@ -154,6 +155,10 @@ back. **Raising what an answer may be raises the reserve**, because a request
 and its answer have to fit the window together — so a larger answer ceiling
 means compacting sooner, not later. The reserve is never more than half the
 window, so a small model still has half of itself to work in.
+
+`askOnResume` is a number of tokens, and `0` means never ask — which is what
+the *stop asking* answer writes down. See
+[Sessions](../sessions/sessions.md#picking-up-a-large-one).
 
 `spendCeiling` is off unless you set it. It bounds what a runaway turn actually
 consumes rather than counting the calls it makes, because a turn that is long

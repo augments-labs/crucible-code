@@ -62,6 +62,7 @@ mod picking;
 mod planning;
 mod putting;
 mod region;
+mod resuming;
 mod secret;
 mod turning;
 mod typing;
@@ -263,6 +264,11 @@ pub(crate) fn converse<T: Terminal>(
     // Whether the log's trouble has been said. Once is all it is worth, for
     // the reason `troubled` gives.
     let mut told = false;
+
+    // Before the first prompt, because a session picked up on the command line
+    // reaches this loop the same way one picked up by `/resume` does, and the
+    // question is about the session rather than about how it was reached.
+    runner = resuming::asked(renderer, runner, terms, keys)?;
 
     loop {
         // Read here rather than before the loop, because one command changes

@@ -29,6 +29,10 @@ const ASKED: &str = "{\n  \"provider\": PROVIDER\n}\n";
 /// The file crucible writes when the theme is all it has to say.
 const DRAWN: &str = "{\n  \"output\": {\n    \"KEY\": THEME\n  }\n}\n";
 
+/// The file crucible writes when somebody says to stop asking and there is
+/// nothing to write it beside.
+const UNASKED: &str = "{\n  \"compaction\": {\n    \"askOnResume\": 0\n  }\n}\n";
+
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
 const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
@@ -170,6 +174,75 @@ pub fn asking(text: &str, file: &str, provider: &str) -> Result<String, ConfigEr
 /// rather than to guess at their file.
 pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigError> {
     output(text, file, "theme", theme)
+}
+
+/// The text of a configuration file that stops asking about a large session.
+///
+/// Written as a zero rather than by taking the key out, because silence and
+/// "never" are different answers here: one takes the wiring's own figure, and
+/// this is somebody saying they have decided.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] where the file is not JSON.
+pub fn unasked(text: &str, file: &str) -> Result<String, ConfigError> {
+    const KEY: &str = "askOnResume";
+    const WRITTEN: &str = "0";
+
+    if text.trim().is_empty() {
+        return Ok(UNASKED.to_owned());
+    }
+
+    let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })?;
+
+    if value
+        .get("compaction")
+        .and_then(|block| block.get(KEY))
+        .and_then(Value::as_u64)
+        == Some(0)
+    {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: format!("compaction.{KEY}").into(),
+        written: WRITTEN.into(),
+    };
+    let root = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+
+    // The same walk `output` makes, one block over: whichever of the two is
+    // already there is where this stops, and a block written on one line stays
+    // on one line rather than being given an indent this program chose.
+    let Some(block) = value.get("compaction") else {
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => {
+                format!("\"compaction\": {{\n{indent}  \"{KEY}\": {WRITTEN}\n{indent}}}")
+            }
+            None => format!("\"compaction\": {{\"{KEY}\": {WRITTEN}}}"),
+        }));
+    };
+
+    if !block.is_object() {
+        return Err(refuse());
+    }
+
+    let at = splice::member(text, root, "compaction").ok_or_else(refuse)?;
+    if block.get(KEY).is_none() {
+        return Ok(splice::insert(text, at, |_| {
+            format!("\"{KEY}\": {WRITTEN}")
+        }));
+    }
+
+    let was = splice::member(text, at, KEY).ok_or_else(refuse)?;
+    Ok(splice::over(text, was, WRITTEN))
 }
 
 /// The text of a configuration file that reads fenced code in `theme`.

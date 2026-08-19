@@ -303,6 +303,13 @@ const COMPACTION: &[Field] = &[
         widens: false,
     },
     Field {
+        name: "askOnResume",
+        about: "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+    Field {
         name: "spendCeiling",
         about: "The most tokens one turn may produce before crucible stops it, where a runaway turn is worth bounding",
         shape: Shape::Count,

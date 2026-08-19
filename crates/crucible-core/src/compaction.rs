@@ -9,6 +9,13 @@
 pub enum Compacting {
     /// The user asked, between turns.
     Asked,
+    /// The user chose notes over carrying a session whole, picking it up.
+    ///
+    /// Its own reason rather than sharing [`Self::Asked`], because what the
+    /// record says about it is read later by somebody working out where a
+    /// session's middle went — and "you asked" says nothing about which of the
+    /// two moments they are looking at.
+    Resumed,
     /// The load reached the bound while a turn was running.
     Full,
     /// The provider refused a request for want of room.

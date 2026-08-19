@@ -122,6 +122,12 @@ pub struct Compaction {
     pub keep: usize,
     /// The most one turn may produce before it is stopped, in tokens.
     pub spend_ceiling: Option<u64>,
+    /// How large a session must be before picking it up asks about it.
+    ///
+    /// Carried here rather than read where it is used, so the wiring resolves
+    /// every compaction answer in one place. This loop never asks anybody
+    /// anything about it — a turn already running has nobody to ask.
+    pub ask_on_resume: Option<u64>,
 }
 
 impl Default for Compaction {
@@ -133,6 +139,7 @@ impl Default for Compaction {
             // before it, which is what "carry on from here" needs.
             keep: 2,
             spend_ceiling: None,
+            ask_on_resume: None,
         }
     }
 }
@@ -248,6 +255,23 @@ impl Runner {
     #[must_use]
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
+    }
+
+    /// What the next request would carry, in tokens.
+    ///
+    /// An estimate for the stretch nothing has reported on yet, and what the
+    /// provider said for everything before it. Read by the wiring to decide
+    /// whether a session picked up is worth asking about — the loop itself
+    /// never asks, because a turn already running has nobody to ask.
+    #[must_use]
+    pub fn carrying(&self) -> u64 {
+        self.load.tokens()
+    }
+
+    /// What this session was told to do when the window fills.
+    #[must_use]
+    pub const fn compaction(&self) -> Compaction {
+        self.compacting
     }
 
     /// Where the session is being recorded.
