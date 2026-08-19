@@ -27,6 +27,14 @@ jobs:
   gate:
     name: scripts/check.sh
     runs-on: ubuntu-latest
+    # A ceiling, not a budget. Every number here is many times what the job
+    # takes, because what it catches is a step that has stopped rather than one
+    # that got slow — a package mirror that never answers, a runner that hangs
+    # after the last line it printed. Without one, GitHub's own six-hour default
+    # applies, and a job that will never finish reads as a job still going for
+    # most of a working day. Slowness is the budgets' question and is measured
+    # somewhere that can tell the difference.
+    timeout-minutes: 15
     # Every job below this one reads the tree, and a label leaves the tree
     # exactly where it was. Only the job that reads the labels runs again.
     if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
@@ -40,6 +48,7 @@ jobs:
 
   size:
     name: 400 changed lines
+    timeout-minutes: 5
     # The one rule that cannot live in scripts/check.sh, whose whole promise is
     # the same answer for the same tree. How large a change is asks about two
     # trees, and the second is whatever main has reached by now.
@@ -122,6 +131,7 @@ jobs:
   platforms:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +171,7 @@ jobs:
   budgets:
     name: scripts/bench.sh
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # A shared runner is noisy, so the number here is a trend and an artifact,
     # not the release measurement — RELEASING.md still requires a quiet
     # machine. What this job defends is that the budgets stay measured at all,

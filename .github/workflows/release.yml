@@ -25,6 +25,7 @@ jobs:
   gate:
     name: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -74,6 +75,7 @@ jobs:
     name: ${{ matrix.stem }}
     needs: gate
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     container:
       image: quay.io/centos/centos:stream9@sha256:04bad0b08ac68a63b1810ea78a9d2ed4fb431e11d9c4c3916418edd4932856bd
     defaults:
@@ -149,6 +151,7 @@ jobs:
     name: ${{ matrix.stem }}
     needs: gate
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       # One target failing is not a reason to stop learning about the other
       # three. A release is cancelled by hand either way.
@@ -223,6 +226,7 @@ jobs:
     name: freebsd-x86_64
     needs: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -287,6 +291,7 @@ jobs:
     name: smoke linux-x86_64 artifact
     needs: build-linux
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -322,6 +327,7 @@ jobs:
     name: release budgets
     needs: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -365,6 +371,7 @@ jobs:
   publish:
     needs: [build, build-linux, freebsd-x86_64, smoke-linux]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # creates the GitHub Release and uploads the archives
       id-token: write # signs the artifact attestation
