@@ -883,7 +883,7 @@ impl Palette {
     /// there is no colour at all — the two states in which the band resolves to
     /// nothing and a row padded out to the width would be spaces and no more.
     #[must_use]
-    pub fn bands(self) -> bool {
+    pub fn bands(&self) -> bool {
         self.band.is_some()
     }
 
@@ -926,7 +926,7 @@ impl Palette {
 
     /// Which table this palette spends.
     #[must_use]
-    pub fn theme(self) -> Theme {
+    pub fn theme(&self) -> Theme {
         self.theme
     }
 
@@ -970,7 +970,7 @@ impl Palette {
 
     /// The sequence that starts `slot`, or nothing when there is no colour.
     #[must_use]
-    pub fn open(self, slot: Slot) -> Worn {
+    pub fn open(&self, slot: Slot) -> Worn {
         if self.depth == Depth::Off {
             return Worn::Chosen("");
         }
@@ -1005,7 +1005,7 @@ impl Palette {
     /// A row that ends without this leaves its attribute set on every row after
     /// it, including the shell prompt this process eventually returns to.
     #[must_use]
-    pub fn close(self) -> &'static str {
+    pub fn close(&self) -> &'static str {
         match self.depth {
             Depth::Off => "",
             _ => RESET,
@@ -1014,7 +1014,7 @@ impl Palette {
 
     /// Whether anything at all is written.
     #[must_use]
-    pub fn writes_color(self) -> bool {
+    pub fn writes_color(&self) -> bool {
         self.depth != Depth::Off
     }
 
