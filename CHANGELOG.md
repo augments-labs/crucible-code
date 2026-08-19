@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-19
+
+### Changed
+
+- **A release may now go out without the FreeBSD archive.** There is no FreeBSD
+  machine to build on, so that one is built inside a virtual machine, and when
+  that machine does not come up the other six platforms are published rather
+  than held back with it. Getting started says what to do on the release where
+  it is missing; every other platform still blocks a release by its absence.
+
 ## [0.11.0] - 2026-08-19
 
 ### Added
@@ -2090,7 +2100,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/augments-labs/crucible-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/augments-labs/crucible-code/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/augments-labs/crucible-code/compare/v0.9.0...v0.9.1
