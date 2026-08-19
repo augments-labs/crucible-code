@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 crossterm.workspace = true
+terminal-colorsaurus.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
 

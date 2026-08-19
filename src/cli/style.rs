@@ -77,19 +77,19 @@ impl Style {
     /// Settles every question, from the files, the terminal and the environment.
     ///
     /// `terminal` is whether output is going to a terminal rather than a pipe;
-    /// `ground` is which way the terminal said its background goes, where
-    /// anything has said — a state everything downstream is correct in rather
-    /// than a failure.
-    ///
-    /// Which way, and not the channels. The variable that answers this carries
-    /// no colour, and nothing in this release asks the terminal for one: see
-    /// the note on [`Palette::resolve`]'s ground about what that leaves unpainted. `from` reads the environment, as a
+    /// `exact` is what the terminal answered when asked what its background is,
+    /// and `seeded` is which way a variable it set at launch says that ground
+    /// goes. Two parameters rather than one because they are not the same
+    /// answer: which way is enough to pick a table, and only the channels are
+    /// enough to blend a band off. Either may be absent, and both absent is a
+    /// state everything downstream is correct in rather than a failure. `from` reads the environment, as a
     /// parameter because writing to the real one is `unsafe` in edition 2024
     /// and this workspace forbids it.
     pub(crate) fn resolve(
         output: Output,
         terminal: bool,
-        ground: Option<Ground>,
+        exact: Option<(u8, u8, u8)>,
+        seeded: Option<Ground>,
         from: &dyn Fn(&str) -> Option<String>,
     ) -> Self {
         let color = match output.color.unwrap_or(Color::Auto) {
@@ -105,6 +105,19 @@ impl Style {
         // The one place `auto` is answered, because this is the one place that
         // holds both what was configured and what the terminal said. Past here
         // it does not exist.
+        // What was measured outranks what was merely set at launch: a variable
+        // says what the terminal was configured with and the answer says what it
+        // is now, and the two disagree the moment somebody changes their theme.
+        let ground = exact
+            .map(|colour| {
+                if crucible_tui::is_light(colour) {
+                    Ground::Light
+                } else {
+                    Ground::Dark
+                }
+            })
+            .or(seeded);
+
         let theme = Self::theme(output.theme, ground);
 
         Self {
@@ -112,10 +125,7 @@ impl Style {
             // Whether, then how much: the answer above is the veto, and the
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
-            // No channels to blend a band off: the only thing that reports
-            // them is a query this release does not make, so the prompt row
-            // keeps its mark and its blank row and takes no ground.
-            palette: Palette::resolve(color, theme, None, from),
+            palette: Palette::resolve(color, theme, exact, from),
             theme,
             ground,
             glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
@@ -210,7 +220,7 @@ impl Style {
     /// What a test uses when the drawing is not the thing being tested: a
     /// terminal, nothing configured, nothing in the environment.
     pub(crate) fn plain() -> Self {
-        Self::resolve(Output::default(), true, None, &|_| None)
+        Self::resolve(Output::default(), true, None, None, &|_| None)
     }
 
     /// And what it uses when the glyph set *is* the thing being tested: the
@@ -228,7 +238,7 @@ impl Style {
     /// all — the right instrument for a test reading what a row says, and no
     /// instrument at all for one reading what a row is painted as.
     pub(crate) fn coloured() -> Self {
-        Self::resolve(Output::default(), true, None, &|name| {
+        Self::resolve(Output::default(), true, None, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
     }
@@ -255,7 +265,7 @@ mod tests {
     /// The style a run with nothing configured and nothing in the environment
     /// gets, on a terminal or not.
     fn plain(terminal: bool) -> Style {
-        Style::resolve(Output::default(), terminal, None, &environment(&[]))
+        Style::resolve(Output::default(), terminal, None, None, &environment(&[]))
     }
 
     /// A style that configured `theme` and nothing else, over a reported ground.
@@ -266,6 +276,7 @@ mod tests {
                 ..Output::default()
             },
             true,
+            None,
             ground,
             &environment(&[]),
         )
@@ -314,46 +325,62 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_row_takes_no_ground_until_something_reports_one() {
-        // The band is built and checked in `crucible-tui`, and it is blended
-        // off the exact channels of the reader's own background. Nothing in
-        // this release reports those: the variable read at startup says which
-        // way the ground goes and not what colour it is, and the query that
-        // would say is not made.
-        //
-        // So the prompt row keeps its mark and the blank row above it and takes
-        // no ground at all -- the fallback the design calls correct rather than
-        // merely safe. This test is the record of that, and the day a source of
-        // channels lands it is the test that says so.
-        for ground in [None, Some(Ground::Dark), Some(Ground::Light)] {
-            let style = Style::resolve(
+    fn a_band_is_blended_only_where_the_terminal_answered_with_channels() {
+        // The distinction the two parameters exist for. A ground known only by
+        // which way it goes cannot be blended off, and guessing channels for it
+        // would paint a band against a colour nobody reported -- so that case
+        // gets the fallback the design calls correct: the prompt row keeps its
+        // mark and its blank row and takes no ground.
+        let painted = |exact, seeded| {
+            Style::resolve(
                 Output {
                     theme: Some(ThemeChoice::Dark),
                     ..Output::default()
                 },
                 true,
-                ground,
+                exact,
+                seeded,
                 &environment(&[("COLORTERM", "truecolor")]),
-            );
+            )
+            .palette()
+            .open(crucible_tui::Slot::Prompt)
+            .as_str()
+            .to_owned()
+        };
 
-            assert!(
-                style
-                    .palette()
-                    .open(crucible_tui::Slot::Prompt)
-                    .as_str()
-                    .is_empty(),
-                "{ground:?}"
-            );
-            // And the rest of the theme is unaffected: a band nobody can paint
-            // is not a palette nobody can use.
-            assert!(
-                !style
-                    .palette()
-                    .open(crucible_tui::Slot::Accent)
-                    .as_str()
-                    .is_empty()
-            );
-        }
+        assert!(painted(None, None).is_empty());
+        assert!(painted(None, Some(Ground::Dark)).is_empty());
+        assert!(painted(None, Some(Ground::Light)).is_empty());
+        assert!(!painted(Some((13, 13, 16)), None).is_empty());
+        assert!(!painted(Some((255, 255, 255)), None).is_empty());
+    }
+
+    #[test]
+    fn what_the_terminal_answered_outranks_what_a_variable_said_at_launch() {
+        // They disagree the moment somebody changes their terminal theme
+        // without restarting their shell: the variable is what it was
+        // configured with, and the answer is what it is now.
+        let style = |exact, seeded| {
+            Style::resolve(
+                Output {
+                    theme: Some(ThemeChoice::Auto),
+                    ..Output::default()
+                },
+                true,
+                exact,
+                seeded,
+                &environment(&[]),
+            )
+            .theme
+        };
+
+        assert_eq!(
+            style(Some((255, 255, 255)), Some(Ground::Dark)),
+            Theme::Light
+        );
+        assert_eq!(style(Some((0, 0, 0)), Some(Ground::Light)), Theme::Dark);
+        // And the variable is what is left when nothing answered.
+        assert_eq!(style(None, Some(Ground::Light)), Theme::Light);
     }
 
     #[test]
@@ -366,7 +393,8 @@ mod tests {
                 ..Output::default()
             },
             true,
-            Some(Ground::Dark),
+            Some((13, 13, 16)),
+            None,
             &environment(&[]),
         );
 
@@ -395,6 +423,7 @@ mod tests {
             Output::default(),
             true,
             None,
+            None,
             &environment(&[(NO_COLOR, "1")]),
         );
 
@@ -409,6 +438,7 @@ mod tests {
         let style = Style::resolve(
             Output::default(),
             true,
+            None,
             None,
             &environment(&[(NO_COLOR, "")]),
         );
@@ -430,6 +460,7 @@ mod tests {
                 },
                 false,
                 None,
+                None,
                 &shouting
             )
             .color()
@@ -443,6 +474,7 @@ mod tests {
                     ..Output::default()
                 },
                 true,
+                None,
                 None,
                 &environment(&[])
             )
@@ -466,6 +498,7 @@ mod tests {
             },
             true,
             None,
+            None,
             &environment(&[]),
         );
         assert_eq!(asked.glyphs(), Glyphs::Ascii);
@@ -480,7 +513,7 @@ mod tests {
 
         let shouting = environment(&[(NO_COLOR, "1"), ("COLORTERM", "truecolor")]);
         assert!(
-            !Style::resolve(Output::default(), true, None, &shouting)
+            !Style::resolve(Output::default(), true, None, None, &shouting)
                 .palette()
                 .writes_color()
         );
@@ -494,6 +527,7 @@ mod tests {
                 ..Output::default()
             },
             false,
+            None,
             None,
             &captured,
         );
@@ -517,6 +551,7 @@ mod tests {
             },
             true,
             None,
+            None,
             &environment(&[]),
         );
 
@@ -536,6 +571,7 @@ mod tests {
                     ..Output::default()
                 },
                 true,
+                None,
                 None,
                 &environment(&[]),
             );

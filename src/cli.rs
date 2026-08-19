@@ -49,6 +49,15 @@ use crate::cli::startup::{Startup, assemble, served};
 use crate::cli::style::Style;
 use crate::cli::subscription::Subscriptions;
 
+/// How long the terminal is given to say what colour its background is.
+///
+/// The first frame is budgeted at twenty milliseconds and this is on that path,
+/// so it is a fraction of it rather than a generous wait. A terminal that
+/// implements the question answers in about a millisecond; one that does not
+/// costs this much once and is never asked again, and what it loses is the band
+/// behind the prompt rather than anything it needs.
+const PATIENCE: std::time::Duration = std::time::Duration::from_millis(8);
+
 /// The providers this is built with, and where each one's key is read from.
 ///
 /// One list rather than two: the sentence a wrong name gets back is written
@@ -615,9 +624,15 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
                 theme: settings.theme(),
             },
             renderer.is_terminal(),
-            // Which way the terminal says its ground goes, from a variable it
-            // set at launch. Free to read, so the first frame is drawn on it —
-            // which is the whole reason `auto` costs nothing on this path.
+            // What the terminal says its own background is. Asked once, here,
+            // because a palette is settled once and this is what it is settled
+            // from — and asked with a short patience because this is the
+            // startup path: an answer that arrives after the budget is worth
+            // less than the budget is. A terminal that will not say leaves the
+            // variable it set at launch, which says which way its ground goes
+            // and not what colour it is; that is enough to pick a table and not
+            // enough to blend a band off.
+            crucible_tui::asked(PATIENCE),
             crucible_tui::ground::seeded(&from),
             &from,
         ),

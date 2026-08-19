@@ -11,6 +11,11 @@ description: >-
 A crate added for one function is a permanent cost for a temporary convenience.
 Everything below assumes you already decided you cannot avoid it.
 
+And when you cannot: **add it, and build the feature.** The ladder decides which
+rung the answer is on, never whether the work ships. Cutting a feature because
+it would need a dependency is under-delivery wearing discipline as a costume —
+see `.claude/rules/dependencies.md`.
+
 ## Before you add it
 
 Stop at the first rung that holds:

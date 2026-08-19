@@ -321,16 +321,24 @@ impl Screen {
     /// Acts on one control sequence, or refuses it by name.
     ///
     /// The whole set the renderer promises: move up, set the column, erase
-    /// down, colour, and the two that hold a frame until all of it has arrived.
+    /// down, colour, the two that hold a frame until all of it has arrived, and
+    /// the one question crucible asks the terminal at startup.
     fn act(&mut self, params: &str, ends: char) {
         // Every one of these defaults to one where the parameter is left out.
         let count = params.parse::<usize>().unwrap_or(1);
 
         match (params, ends) {
-            // Colour, and the mouse switched on at the prompt and off again.
-            // Both are state borrowed from the terminal rather than a mark on
-            // it, so neither moves the cursor or fills a column.
-            (_, 'm') | ("?1000" | "?1006", 'h' | 'l') => {}
+            // Colour, the mouse switched on at the prompt and off again, and
+            // the device-attributes question crucible asks once at startup.
+            // None of the three moves the cursor or fills a column: two are
+            // state borrowed from the terminal, and the third is a question.
+            //
+            // Device attributes is not asked for its own sake. It is what says
+            // the answer to the question before it has already arrived, because
+            // a terminal replies in the order it was asked — without it, a
+            // terminal implementing neither would be waited on for the whole
+            // patience rather than answered at once.
+            (_, 'm') | ("?1000" | "?1006", 'h' | 'l') | ("", 'c') => {}
             (_, 'A') => self.up(count),
             (_, 'G') => self.park(count),
             ("" | "0", 'J') => self.erase_down(),
@@ -371,7 +379,7 @@ impl Screen {
         self.column = column.min(self.columns);
     }
 
-    /// Reads `ESC ] … BEL`, which the renderer uses for the tab title alone.
+    /// Reads `ESC ] … BEL`: the tab title, and the one question at startup.
     fn command<'a>(&mut self, after: &'a str) -> &'a str {
         let Some(at) = after.find(char::from(BELL)) else {
             self.refuse("wrote a command string with no end to it".to_owned());
@@ -379,7 +387,15 @@ impl Screen {
         };
 
         let said = after.get(..at).unwrap_or_default();
-        if !said.starts_with("0;") {
+
+        // `0;` is the tab title, which crucible holds for as long as it runs.
+        // `11;?` asks the terminal what colour its own background is, which is
+        // what the row a prompt is left on takes its ground from — asked once,
+        // before the first frame, and never again. A terminal that does not
+        // implement it ignores it, as it ignores any command string it does not
+        // know; this window is not a terminal and draws the payload instead,
+        // which is why it has to be named here rather than left to be noticed.
+        if !said.starts_with("0;") && said != "11;?" {
             self.refuse(format!("wrote the command string {said:?}"));
         }
 

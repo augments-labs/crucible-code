@@ -15,6 +15,7 @@
 //! [`keys`] for what arrives once the mode is raw. Everything the renderer
 //! writes is plain ANSI, so what a swap would cost is those three files.
 
+pub(crate) mod ground;
 pub(crate) mod keys;
 pub(crate) mod mouse;
 pub(crate) mod raw;
