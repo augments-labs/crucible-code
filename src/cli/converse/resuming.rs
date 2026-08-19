@@ -188,9 +188,10 @@ pub(super) fn asked<T: Terminal>(
 /// seconds, and a screen that says nothing for ten seconds is a screen somebody
 /// reads as a hang.
 ///
-/// Nothing offers to stop it. The row names no key because no key is read here
-/// — there is no turn to interrupt and no editor standing — and a row naming a
-/// key that does nothing is worse than a row naming none.
+/// The keyboard is read on the same pass, so the key the row names is a key
+/// that does something: a request answering once at the end would otherwise
+/// leave it dead for as long as it takes, which is a program that has stopped
+/// as far as anybody watching can tell.
 fn recap<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
@@ -216,7 +217,12 @@ fn recap<T: Terminal>(
     cancel.reset();
 
     let outcome = thread::scope(|scope| {
-        let working = scope.spawn(|| runner.compact(Compacting::Resumed, &events, &cancel));
+        // `move`, and it matters: captured by reference the sender outlives the
+        // worker, the channel never closes, and the loop below waits for a
+        // disconnect that cannot come — a finished compaction with a screen
+        // that never moves on and a keyboard that answers nothing.
+        let stopping = cancel.clone();
+        let working = scope.spawn(move || runner.compact(Compacting::Resumed, &events, &stopping));
 
         let since = Instant::now();
         let mut part = 0;
@@ -242,6 +248,15 @@ fn recap<T: Terminal>(
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
                 // The worker has dropped the sender, so it is finished.
                 Err(RecvTimeoutError::Disconnected) => break,
+            }
+
+            // And asked directly as well, rather than trusting the channel to
+            // say so. A sender left alive anywhere else closes nothing, and the
+            // loop would wait for a disconnect that cannot come — a finished
+            // request with a screen that never moves on. The worker itself is
+            // the fact; the channel is a way of hearing about it.
+            if working.is_finished() {
+                break;
             }
 
             standing(renderer, since, &says, part, style)?;

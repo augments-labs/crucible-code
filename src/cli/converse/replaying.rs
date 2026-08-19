@@ -53,25 +53,19 @@ pub(super) fn replayed<T: Terminal>(
     let columns = renderer.columns();
     let glyphs = style.glyphs();
 
-    renderer.commit("")?;
-    renderer.present(
-        &[
-            Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns)),
-            Row::new().then(Slot::Quiet, clip(OPENED, columns)),
-        ],
-        style.palette(),
-    )?;
+    // One call with the lot, not one per row: presenting settles what came
+    // before it, so a row at a time would put each line where the last one was
+    // and leave only the final message standing.
+    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
+    let mut shown = vec![rule(), Row::new().then(Slot::Quiet, clip(OPENED, columns))];
 
     for message in transcript.messages() {
-        for row in rows(message, columns, style) {
-            renderer.present(&[row], style.palette())?;
-        }
+        shown.extend(rows(message, columns, style));
     }
+    shown.push(rule());
 
-    renderer.present(
-        &[Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns))],
-        style.palette(),
-    )?;
+    renderer.commit("")?;
+    renderer.present(&shown, style.palette())?;
     renderer.commit("")?;
 
     Ok(())
