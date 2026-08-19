@@ -50,18 +50,18 @@ pub(super) fn run<T: Terminal>(
             Slot::Quiet,
             clip("nothing has been worked on here yet", columns),
         )];
-        return Ok(renderer.present(&rows, terms.style.palette())?);
+        return Ok(renderer.present(&rows, terms.style().palette())?);
     }
 
     if said.is_empty() {
-        return Ok(renderer.present(&listing(&listed, now, columns), terms.style.palette())?);
+        return Ok(renderer.present(&listing(&listed, now, columns), terms.style().palette())?);
     }
 
     let Some(picked) = chosen(said, &listed) else {
         // The word came off the line and was never shape-checked — anything at
         // all can follow `/resume ` — so it goes out the way arrived text does.
         renderer.commit(&format!("! {said} is not on the list"))?;
-        renderer.present(&listing(&listed, now, columns), terms.style.palette())?;
+        renderer.present(&listing(&listed, now, columns), terms.style().palette())?;
         return Ok(());
     };
 
@@ -84,7 +84,7 @@ fn picking<T: Terminal>(
     // something.
     if runner.session().id() == Some(picked.id()) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
-        return Ok(renderer.present(&rows, terms.style.palette())?);
+        return Ok(renderer.present(&rows, terms.style().palette())?);
     }
 
     let (session, transcript) =
@@ -112,8 +112,8 @@ fn picking<T: Terminal>(
     }
 
     renderer.present(
-        &picked_up(picked, held, now, columns, terms.style.glyphs()),
-        terms.style.palette(),
+        &picked_up(picked, held, now, columns, terms.style().glyphs()),
+        terms.style().palette(),
     )?;
     Ok(())
 }

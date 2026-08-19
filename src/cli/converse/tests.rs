@@ -28,11 +28,12 @@ fn typed(text: &str) -> Editor {
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
-fn plain() -> Terms {
+pub(super) fn plain() -> Terms {
     let unwritten = std::env::temp_dir().join(format!("crucible-unwritten-{}", std::process::id()));
 
     Terms {
-        style: Style::plain(),
+        style: Cell::new(Style::plain()),
+        chosen: Cell::new(None),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
@@ -459,7 +460,7 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = Cursor::new(Vec::new());
         let terms = Terms {
-            style: Style::drawn(glyphs),
+            style: std::cell::Cell::new(Style::drawn(glyphs)),
             ..plain()
         };
 

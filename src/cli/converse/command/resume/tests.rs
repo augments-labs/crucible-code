@@ -4,6 +4,7 @@
 //! as text: what `/resume` picks up has to be what a session leaves behind, and
 //! a fixture written by hand is a second opinion about that.
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
@@ -49,7 +50,8 @@ fn over(session: Session) -> Runner {
 
 fn terms(sample: &Sample) -> Terms {
     Terms {
-        style: Style::plain(),
+        style: Cell::new(Style::plain()),
+        chosen: Cell::new(None),
         cancel: Cancel::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),

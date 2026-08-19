@@ -625,8 +625,12 @@ pub struct Palette {
     depth: Depth,
     /// Which table of hues is in force.
     theme: Theme,
-    /// The reader's own ground, blended a step. `None` where no ground is
-    /// known, and then the prompt row simply does not take one.
+    /// The reader's own ground, as the terminal reported it. Held so a theme
+    /// changed mid-session can work its two sequences out again rather than
+    /// guess at what they were blended from.
+    ground: Option<(u8, u8, u8)>,
+    /// That ground, blended a step. `None` where none is known, and then the
+    /// prompt row simply does not take one.
     band: Option<Sequence>,
     /// The same ground, carrying the accent, for the mark on that row.
     band_mark: Option<Sequence>,
@@ -719,6 +723,7 @@ impl Palette {
         Self {
             depth,
             theme,
+            ground,
             // Worked out here, once, and held: the only alternative is
             // formatting it per span per frame, and the render path may not.
             band: band.and_then(|band| painted(band, None, depth)),
@@ -742,12 +747,37 @@ impl Palette {
         derived::blend(over, ground, step)
     }
 
+    /// Which table this palette spends.
+    #[must_use]
+    pub fn theme(self) -> Theme {
+        self.theme
+    }
+
+    /// The same palette, spending a different table.
+    ///
+    /// Everything the terminal decided is carried across — how far up the
+    /// ladder it goes, and the band blended off its own ground — because none
+    /// of that is the theme's to change. Only the mark's ink is worked out
+    /// again, since it is the one computed value a table has a say in.
+    #[must_use]
+    pub fn wearing(self, theme: Theme) -> Self {
+        let band = self.ground.map(Self::band);
+
+        Self {
+            theme,
+            band: band.and_then(|band| painted(band, None, self.depth)),
+            band_mark: band.and_then(|band| painted(band, Some(theme.tones().accent), self.depth)),
+            ..self
+        }
+    }
+
     /// A palette that writes no escape bytes at all.
     #[must_use]
     pub fn plain() -> Self {
         Self {
             depth: Depth::Off,
             theme: Theme::Dark,
+            ground: None,
             band: None,
             band_mark: None,
         }

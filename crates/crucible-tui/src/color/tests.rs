@@ -122,6 +122,7 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
     Palette {
         depth,
         theme,
+        ground,
         band: band.and_then(|band| painted(band, None, depth)),
         band_mark: band.and_then(|band| painted(band, Some(theme.tones().accent), depth)),
     }

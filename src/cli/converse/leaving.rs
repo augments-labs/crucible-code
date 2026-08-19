@@ -62,7 +62,7 @@ impl Leaving {
         // a reader is looking at it.
         region::stand(
             renderer,
-            style,
+            |_| style,
             self,
             |leaving, columns, rows| (leaving.rows(left, columns, rows, style.glyphs()), None),
             |arrived, leaving| leaving.against(arrived, left),

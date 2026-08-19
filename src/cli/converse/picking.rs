@@ -115,7 +115,7 @@ pub(super) fn pick<T: Terminal>(
 
     let ended = region::stand(
         renderer,
-        style,
+        |_| style,
         &mut at,
         |marked, columns, rows| {
             panel.chosen = *marked;
@@ -151,7 +151,7 @@ pub(super) fn adjust<T: Terminal>(
 
     let ended = region::stand(
         renderer,
-        style,
+        |_| style,
         &mut at,
         |marked, columns, _| {
             ladder.chosen = *marked;

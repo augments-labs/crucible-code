@@ -53,20 +53,7 @@ pub(crate) struct Style {
     glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
-    /// Which table of colours is in force. Never `auto`: that is a question
-    /// about the terminal, and it is answered here.
-    ///
-    /// The lint is right that nothing reads it yet and wrong that nothing will:
-    /// `/theme` is what marks the row already in force, and it cannot do that
-    /// from the palette, which keeps its table private on purpose.
-    // Read by the tests and, shortly, by `/theme`; not yet by anything the
-    // binary does at runtime. `allow` rather than `expect` because the lint
-    // fires in one build and not the other, and an expectation that holds in
-    // only one of them is itself an error.
-    #[allow(dead_code, reason = "`/theme` marks the row already in force")]
-    theme: Theme,
     /// Which way the terminal said its ground goes, where it has said.
-    #[allow(dead_code, reason = "`/theme` reads it to draw the specimen")]
     ground: Option<Ground>,
     /// Whether a click means anything to crucible. Off leaves the mouse to the
     /// terminal, which is where the transcript above the box lives.
@@ -126,7 +113,6 @@ impl Style {
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
             palette: Palette::resolve(color, theme, exact, from),
-            theme,
             ground,
             glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
                 Wanted::Unicode => Glyphs::Unicode,
@@ -148,19 +134,39 @@ impl Style {
     /// likely — it is the fallback that degrades best: the band is simply not
     /// painted, and every hue in that table still clears a light ground at the
     /// old three-to-one bar even though it is tuned for a dark one.
-    fn theme(chosen: Option<ThemeChoice>, ground: Option<Ground>) -> Theme {
-        let following = |ground| match ground {
-            Some(Ground::Light) => Theme::Light,
-            Some(Ground::Dark) | None => Theme::Dark,
-        };
-
+    pub(crate) fn theme(chosen: Option<ThemeChoice>, ground: Option<Ground>) -> Theme {
         match chosen {
-            None | Some(ThemeChoice::Auto) => following(ground),
+            None | Some(ThemeChoice::Auto) => match ground {
+                Some(Ground::Light) => Theme::Light,
+                Some(Ground::Dark) | None => Theme::Dark,
+            },
             Some(ThemeChoice::Dark) => Theme::Dark,
             Some(ThemeChoice::Light) => Theme::Light,
             Some(ThemeChoice::ColourblindDark) => Theme::ColourblindDark,
             Some(ThemeChoice::ColourblindLight) => Theme::ColourblindLight,
             Some(ThemeChoice::Ansi) => Theme::Ansi,
+        }
+    }
+
+    /// Which way the terminal said its ground goes, where anything has said.
+    ///
+    /// Read by `/theme`, which has to answer `auto` a second time: the reader
+    /// may pick it after startup, and what it means is still whatever the
+    /// terminal reported then.
+    pub(crate) fn ground(self) -> Option<Ground> {
+        self.ground
+    }
+
+    /// The same style, drawn with a different table.
+    ///
+    /// The palette is settled again rather than patched, because a palette is
+    /// more than its table: the band was blended off the reader's own ground
+    /// and the ladder was settled from the terminal, and both have to be
+    /// carried across rather than recomputed from a guess.
+    pub(crate) fn wearing(self, theme: Theme) -> Self {
+        Self {
+            palette: self.palette.wearing(theme),
+            ..self
         }
     }
 
@@ -288,9 +294,14 @@ mod tests {
         // this program overruling an answer it asked for.
         let light = Some(Ground::Light);
 
-        assert_eq!(themed(Some(ThemeChoice::Dark), light).theme, Theme::Dark);
         assert_eq!(
-            themed(Some(ThemeChoice::ColourblindLight), Some(Ground::Dark)).theme,
+            themed(Some(ThemeChoice::Dark), light).palette().theme(),
+            Theme::Dark
+        );
+        assert_eq!(
+            themed(Some(ThemeChoice::ColourblindLight), Some(Ground::Dark))
+                .palette()
+                .theme(),
             Theme::ColourblindLight
         );
     }
@@ -302,14 +313,14 @@ mod tests {
         // the band.
         for reported in [Some(Ground::Light), Some(Ground::Light)] {
             assert_eq!(
-                themed(Some(ThemeChoice::Auto), reported).theme,
+                themed(Some(ThemeChoice::Auto), reported).palette().theme(),
                 Theme::Light,
                 "{reported:?}"
             );
         }
         for reported in [Some(Ground::Dark), Some(Ground::Dark)] {
             assert_eq!(
-                themed(Some(ThemeChoice::Auto), reported).theme,
+                themed(Some(ThemeChoice::Auto), reported).palette().theme(),
                 Theme::Dark,
                 "{reported:?}"
             );
@@ -320,8 +331,11 @@ mod tests {
     fn a_run_that_named_no_theme_follows_the_ground_as_auto_would() {
         // No layer said, so there is nothing to override -- and the answer to
         // "decide from the terminal" is the same answer either way.
-        assert_eq!(themed(None, Some(Ground::Light)).theme, Theme::Light);
-        assert_eq!(themed(None, None).theme, Theme::Dark);
+        assert_eq!(
+            themed(None, Some(Ground::Light)).palette().theme(),
+            Theme::Light
+        );
+        assert_eq!(themed(None, None).palette().theme(), Theme::Dark);
     }
 
     #[test]
@@ -371,7 +385,8 @@ mod tests {
                 seeded,
                 &environment(&[]),
             )
-            .theme
+            .palette()
+            .theme()
         };
 
         assert_eq!(

@@ -160,7 +160,7 @@ pub(crate) const MOUSE: &[&str] = &["off", "click"];
 /// terminal", which a nearer layer may state to undo a theme a further one
 /// named. The four after it are tables, and `ansi` is the instruction to spend
 /// nothing but the sixteen the terminal already has.
-pub(crate) const THEME: &[&str] = &[
+pub const THEME: &[&str] = &[
     "auto",
     "dark",
     "light",

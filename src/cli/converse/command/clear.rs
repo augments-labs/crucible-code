@@ -38,7 +38,7 @@ pub(super) fn run<T: Terminal>(
     // that never happened, and `--continue` offers the newer of them.
     if held == 0 {
         let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
-        return Ok(renderer.present(&rows, terms.style.palette())?);
+        return Ok(renderer.present(&rows, terms.style().palette())?);
     }
 
     let session = match Session::start(&terms.sessions, &terms.workspace) {
@@ -75,8 +75,8 @@ pub(super) fn run<T: Terminal>(
     }
 
     renderer.present(
-        &started(held, columns, terms.style.glyphs()),
-        terms.style.palette(),
+        &started(held, columns, terms.style().glyphs()),
+        terms.style().palette(),
     )?;
     Ok(())
 }
@@ -141,7 +141,8 @@ mod tests {
     /// and the two things the tools of such a run would have been built with.
     fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         Terms {
-            style: Style::plain(),
+            style: std::cell::Cell::new(Style::plain()),
+            chosen: std::cell::Cell::new(None),
             cancel: Cancel::new(),
             ledger: ledger.clone(),
             revealed: Revealed::new(),

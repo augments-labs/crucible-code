@@ -43,6 +43,16 @@ fn allowing(file: &Path, rule: &Minted) -> Result<(), RememberError> {
     })
 }
 
+/// Writes `theme` down as the table to draw with from now on.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the theme and nothing else.
+pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::drawing(text, named, theme)
+    })
+}
+
 /// Writes `provider` down as the one to ask from now on.
 ///
 /// Everything already in the file stays where it was, byte for byte. A file

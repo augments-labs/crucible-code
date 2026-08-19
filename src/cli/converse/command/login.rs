@@ -127,14 +127,14 @@ pub(super) fn run<T: Terminal>(
             let said = about(
                 &format!("/login {}", one.name),
                 &format!("a key from {}", one.key),
-                terms.style.glyphs(),
+                terms.style().glyphs(),
             );
 
             Row::new().then(Slot::Quiet, clip(&said, columns))
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style.palette())?)
+    Ok(renderer.present(&rows, terms.style().palette())?)
 }
 
 /// Walks the account route, then only the provider question that route needs.
@@ -233,7 +233,7 @@ fn asked<T: Terminal>(
     terms: &Terms,
     ways: &[Way],
 ) -> Result<Picked, Fatal> {
-    let says = sentences(ways, terms.style.glyphs());
+    let says = sentences(ways, terms.style().glyphs());
     let shown: Vec<_> = ways
         .iter()
         .zip(&says)
@@ -244,7 +244,7 @@ fn asked<T: Terminal>(
         .collect();
     picking::pick(
         renderer,
-        terms.style,
+        terms.style(),
         Panel {
             title: "Log in",
             said: Some(HOW),
@@ -271,7 +271,7 @@ fn method<T: Terminal>(
         .collect();
     picking::pick(
         renderer,
-        terms.style,
+        terms.style(),
         Panel {
             title: account.shown,
             said: Some("Choose where to finish account authorization."),
@@ -308,7 +308,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
         footer: CANCEL,
     };
 
-    picking::pick(renderer, terms.style, panel)
+    picking::pick(renderer, terms.style(), panel)
 }
 
 /// Runs a registered subscription flow and switches this session on success.
@@ -331,7 +331,7 @@ fn subscribed<T: Terminal>(
         Err(problem) => return say(renderer, terms, &format!("! {problem}")),
     };
 
-    let mut view = LoginView::new(terms.style.glyphs());
+    let mut view = LoginView::new(terms.style().glyphs());
     view.show(renderer, terms, route.title())?;
     loop {
         match attempt.wait(Duration::from_millis(50)) {
@@ -456,8 +456,8 @@ impl LoginView {
         terms: &Terms,
         title: &str,
     ) -> Result<(), Fatal> {
-        let (rows, caret) = self.frame(renderer.columns(), title, terms.style.glyphs());
-        renderer.live(&rows, caret, terms.style.palette())?;
+        let (rows, caret) = self.frame(renderer.columns(), title, terms.style().glyphs());
+        renderer.live(&rows, caret, terms.style().palette())?;
         Ok(())
     }
 
@@ -527,7 +527,8 @@ fn given<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let Some(key) = secret::ask(renderer, terms.style, &format!("{} api key", named.name))? else {
+    let Some(key) = secret::ask(renderer, terms.style(), &format!("{} api key", named.name))?
+    else {
         return say(renderer, terms, "nothing was written");
     };
 

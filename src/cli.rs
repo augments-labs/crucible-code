@@ -615,7 +615,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // Settled once, here, from the files and the terminal together. Nothing on
     // the render path may ask either of them again.
     let terms = Terms {
-        style: Style::resolve(
+        style: Cell::new(Style::resolve(
             style::Output {
                 color: settings.color(),
                 glyphs: settings.glyphs(),
@@ -635,7 +635,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             crucible_tui::asked(PATIENCE),
             crucible_tui::ground::seeded(&from),
             &from,
-        ),
+        )),
+        chosen: Cell::new(None),
         cancel: cancel.clone(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),
@@ -672,7 +673,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
-    renderer.wears(terms.style.palette());
+    renderer.wears(terms.style().palette());
 
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
@@ -703,7 +704,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
-            style: terms.style,
+            style: terms.style(),
         },
     )?;
 
