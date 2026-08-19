@@ -71,13 +71,24 @@ jobs:
   # which turns the compatibility floor promised in the getting-started page
   # into a build input rather than a fact reported after publication. The image
   # is multi-architecture, so each artifact still builds and runs natively.
+  #
+  # A stream is not an archive: the registry keeps the `stream9` tag moving and
+  # garbage-collects the manifest a digest used to name, so this pin rots on
+  # somebody else's schedule rather than on a change here. When it does, every
+  # Linux job fails to start with `manifest unknown` before a line of this
+  # workflow runs, and the repair is to resolve the tag again and paste the new
+  # digest below. What it may not become is the bare tag: the floor above is a
+  # promise about a build input, and an input that can change underneath a
+  # rebuild is not one. The smoke step before `publish` measures the floor the
+  # artifact actually carries and fails the release when it has moved, so a
+  # digest that raises glibc blocks the release rather than shipping quietly.
   build-linux:
     name: ${{ matrix.stem }}
     needs: gate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: quay.io/centos/centos:stream9@sha256:04bad0b08ac68a63b1810ea78a9d2ed4fb431e11d9c4c3916418edd4932856bd
+      image: quay.io/centos/centos:stream9@sha256:64e5a212e4f2e7b706dbd822968914bb8def7de0a7fdfd3bf248241f8758101c
     defaults:
       run:
         shell: bash
