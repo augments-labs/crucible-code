@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use crucible_tui::TerminalError;
 #[cfg(target_os = "linux")]
-use crucible_tui::{Glyphs, Palette, Renderer, Row, Size, Slot, Terminal, Working};
+use crucible_tui::{Glyphs, Palette, Renderer, Row, Size, Slot, Terminal, Theme, Working};
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 
@@ -258,7 +258,7 @@ fn measure() -> Result<Burst, ProbeError> {
     let lines = printed();
     let (sink, drain) = PipeSink::open()?;
     let mut render = Renderer::new(sink);
-    let palette = Palette::resolve(true, &|_| None);
+    let palette = Palette::resolve(true, Theme::Dark, None, &|_| None);
 
     let frame = |render: &mut Renderer<PipeSink>, index: usize| -> Result<(), ProbeError> {
         // Laid out inside the frame, because a real one is. The clock moves with

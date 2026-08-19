@@ -167,7 +167,7 @@ impl Row {
 
         for span in &self.0 {
             let open = palette.open(span.slot);
-            painted.push_str(open);
+            painted.push_str(open.as_str());
             painted.push_str(&span.text);
             if !open.is_empty() {
                 painted.push_str(palette.close());
@@ -191,7 +191,7 @@ mod tests {
 
     /// A palette that writes every hue it has, without an environment to say so.
     fn colourful() -> Palette {
-        Palette::resolve(true, &|name| {
+        Palette::resolve(true, crate::color::Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
     }
@@ -286,7 +286,7 @@ mod tests {
 
         assert_eq!(
             row.paint(colourful()),
-            colourful().open(Slot::Plain).to_owned() + "there"
+            colourful().open(Slot::Plain).as_str().to_owned() + "there"
         );
         assert!(!row.is_empty());
         assert!(Row::new().is_empty());

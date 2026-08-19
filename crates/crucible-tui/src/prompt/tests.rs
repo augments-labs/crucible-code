@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::color::Theme;
 use crate::dump::dump;
 
 use super::*;
@@ -138,7 +139,7 @@ fn pictured(name: &str, prompt: &Prompt<'_>, columns: usize, glyphs: Glyphs) {
 
 /// A palette that writes every hue it has.
 fn colourful() -> Palette {
-    Palette::resolve(true, &|name| {
+    Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     })
 }
@@ -585,12 +586,12 @@ fn the_border_is_drawn_in_the_tone_the_mode_was_given() {
         ..typed("")
     };
 
-    let opened = colourful().open(Slot::FullAccess);
+    let opened = colourful().open(Slot::FullAccess).as_str().to_owned();
     assert!(!opened.is_empty(), "the palette had no hue to test with");
 
     for row in prompt.rows(80, Glyphs::Unicode).iter().take(3) {
         assert!(
-            row.paint(colourful()).starts_with(opened),
+            row.paint(colourful()).starts_with(&opened),
             "{:?}",
             row.text()
         );

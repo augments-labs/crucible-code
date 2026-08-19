@@ -1,5 +1,6 @@
 //! What the renderer draws, asserted against a recording terminal.
 
+use crate::color::Theme;
 use unicode_width::UnicodeWidthStr;
 
 use super::*;
@@ -723,7 +724,7 @@ fn a_redirected_run_draws_no_live_region_at_all() {
 
 /// A palette that writes every hue it has, without an environment to say so.
 fn colourful() -> Palette {
-    Palette::resolve(true, &|name| {
+    Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     })
 }
@@ -785,7 +786,7 @@ fn a_fence_the_model_never_closed_does_not_reach_the_next_message() {
     let written = render.terminal.written();
     let tail = written.split("let it = 1;").last().unwrap_or_default();
     assert!(
-        !tail.contains(colourful().open(Slot::Quiet)),
+        !tail.contains(colourful().open(Slot::Quiet).as_str()),
         "the fence ended with the message: {tail:?}"
     );
 }

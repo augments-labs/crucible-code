@@ -47,7 +47,7 @@ mod working;
 pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use clear::{CLEARED, clear};
-pub use color::{Palette, Slot};
+pub use color::{Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Typed};
 pub use expanded::{Expanded, Shown};
 pub use glyphs::Glyphs;

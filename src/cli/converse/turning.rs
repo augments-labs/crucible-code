@@ -38,6 +38,8 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crucible_core::Event;
+#[cfg(test)]
+use crucible_tui::Theme;
 use crucible_tui::{Row, Slot, Working};
 
 use super::super::draw;
@@ -1183,7 +1185,7 @@ mod tests {
         // row is still and correct. What is under test is the beat reaching the
         // slot, so the instrument has to be one that can tell two slots apart.
         let style = Style::plain();
-        let palette = Palette::resolve(true, &|name| {
+        let palette = Palette::resolve(true, Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         });
         let now = Instant::now();

@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::color::Theme;
 use crate::dump::dump;
 
 use super::*;
@@ -107,7 +108,7 @@ fn art(asked: &Asked<'_>, columns: usize, room: usize) -> Vec<String> {
 
 /// A palette that writes every hue it has.
 fn colourful() -> Palette {
-    Palette::resolve(true, &|name| {
+    Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     })
 }
@@ -227,8 +228,14 @@ fn a_question_already_answered_wears_the_green_a_finished_task_wears() {
         .find(|row| row.contains("Language"))
         .expect("the questions row");
 
-    assert!(row.contains(colourful().open(Slot::DoneMark)), "{row:?}");
-    assert!(row.contains(colourful().open(Slot::Accent)), "{row:?}");
+    assert!(
+        row.contains(colourful().open(Slot::DoneMark).as_str()),
+        "{row:?}"
+    );
+    assert!(
+        row.contains(colourful().open(Slot::Accent).as_str()),
+        "{row:?}"
+    );
 }
 
 #[test]
@@ -629,7 +636,7 @@ fn an_empty_answer_being_written_shows_its_placeholder_and_parks_the_cursor_in_i
     // cursor sits on its first column rather than after it.
     let quiet = row
         .paint(colourful())
-        .contains(colourful().open(Slot::Quiet));
+        .contains(colourful().open(Slot::Quiet).as_str());
     assert!(quiet, "{:?}", row.paint(colourful()));
     assert_eq!(caret.column, 1 + 2 + 1 + " 3. ".len());
 }

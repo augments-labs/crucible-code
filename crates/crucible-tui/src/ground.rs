@@ -69,9 +69,23 @@ pub fn seeded(from: &dyn Fn(&str) -> Option<String>) -> Option<Ground> {
 /// The ground an answer to the query says it is.
 #[must_use]
 pub fn replied(data: &str) -> Option<Ground> {
-    let light = luminance(rgb(data)?) > MIDPOINT;
+    let colour = rgb(data)?;
 
-    Some(if light { Ground::Light } else { Ground::Dark })
+    Some(if is_light(colour) {
+        Ground::Light
+    } else {
+        Ground::Dark
+    })
+}
+
+/// Which way one colour goes.
+///
+/// The same question [`replied`] answers, asked about a colour rather than
+/// about a string. One decision in one place: a second threshold elsewhere
+/// would be two answers about one terminal, free to disagree about which ink
+/// belongs on it.
+pub(crate) fn is_light(colour: (u8, u8, u8)) -> bool {
+    luminance(colour) > MIDPOINT
 }
 
 /// The exact channels an answer carries.

@@ -1,4 +1,5 @@
 use crate::color::Palette;
+use crate::color::Theme;
 use crate::dump::dump;
 
 use super::*;
@@ -57,7 +58,7 @@ fn pictured(name: &str, welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) {
 
 /// A palette that writes every hue it has.
 fn colourful() -> Palette {
-    Palette::resolve(true, &|name| {
+    Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     })
 }

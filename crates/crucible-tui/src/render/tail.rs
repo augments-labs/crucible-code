@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 
-use crate::color::{Palette, Slot};
+use crate::color::{Palette, Slot, Worn};
 use crate::escape::Escapes;
 use crate::width::{self, EMOJI_PRESENTATION};
 
@@ -43,7 +43,7 @@ pub(crate) struct Tail {
     /// again without asking a second time. Empty for [`Slot::Plain`] and for
     /// every slot where colour is off, which is what keeps a redirected run
     /// free of escape bytes.
-    worn: &'static str,
+    worn: Worn,
     /// What closes [`Self::worn`].
     close: &'static str,
     /// Whether the row being appended to has [`Self::worn`] open on it.
@@ -74,7 +74,7 @@ impl Tail {
             width: width.max(1),
             bound: bound.max(1),
             escapes: Escapes::default(),
-            worn: "",
+            worn: Worn::Chosen(""),
             close: "",
             open: false,
         }
@@ -209,7 +209,7 @@ impl Tail {
         // The slot belongs to the answer that was being written, and that
         // answer is over. An unfinished code block would otherwise paint the
         // whole of the next one.
-        self.worn = "";
+        self.worn = Worn::Chosen("");
         self.close = "";
         self.open = false;
     }
@@ -235,7 +235,7 @@ impl Tail {
         }
 
         if let Some(row) = self.rows.back_mut() {
-            row.text.push_str(self.worn);
+            row.text.push_str(self.worn.as_str());
             self.open = true;
         }
     }

@@ -34,6 +34,8 @@
 use std::borrow::Cow;
 
 use crate::color::Slot;
+#[cfg(test)]
+use crate::color::Theme;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width::{clip, columns as wide, fold};
@@ -508,11 +510,14 @@ mod tests {
         assert!(!slots(passed).contains(&Slot::Quiet), "{passed:?}");
 
         // And no hue for it reaches the terminal either, on one that has them all.
-        let hues = Palette::resolve(true, &|name| {
+        let hues = Palette::resolve(true, Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         });
         let painted = passed.paint(hues);
-        assert!(!painted.contains(hues.open(Slot::Quiet)), "{painted:?}");
+        assert!(
+            !painted.contains(hues.open(Slot::Quiet).as_str()),
+            "{painted:?}"
+        );
     }
 
     #[test]

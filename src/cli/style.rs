@@ -6,7 +6,7 @@
 //! be asked per event — two are syscalls and the third is a file.
 
 use crucible_config::{Color, Glyphs as Wanted, Mouse, ToolDetail};
-use crucible_tui::{Glyphs, Palette};
+use crucible_tui::{Glyphs, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
 /// their say.
@@ -82,7 +82,9 @@ impl Style {
             // Whether, then how much: the answer above is the veto, and the
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
-            palette: Palette::resolve(color, from),
+            // Dark and no ground until `Style` resolves both; the theme axis
+            // is wired in the task that owns this file's answer to it.
+            palette: Palette::resolve(color, Theme::Dark, None, from),
             glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
                 Wanted::Unicode => Glyphs::Unicode,
                 Wanted::Ascii => Glyphs::Ascii,
