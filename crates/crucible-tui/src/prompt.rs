@@ -288,6 +288,13 @@ impl Prompt<'_> {
     /// A window with no room for the line at all still gets the mark. There is
     /// nothing true to draw of the line there, but a record with no mark in it
     /// is one that does not say a prompt was ever asked.
+    ///
+    /// The row takes a ground, which almost nothing here does. It is allowed to
+    /// because the ground is not one this crate chose: it is the reader's own,
+    /// blended one step by the palette, so the words on it stay their own
+    /// foreground and stay exactly as legible as they were. Where the terminal
+    /// never said what its background is, the slot resolves to nothing and this
+    /// is the row it always was.
     #[must_use]
     pub fn committed(said: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let mark = glyphs.caret();
@@ -295,20 +302,29 @@ impl Prompt<'_> {
         let folded = width::fold(said, columns.saturating_sub(under));
 
         if folded.is_empty() {
-            return vec![Row::new().then(Slot::Accent, mark)];
+            return vec![Row::new().then(Slot::PromptMark, mark)];
         }
 
         folded
             .into_iter()
             .enumerate()
-            .map(|(at, line)| match at {
-                0 => Row::new()
-                    .then(Slot::Accent, mark)
-                    .then(Slot::Plain, " ")
-                    .then(Slot::Plain, line),
-                _ => Row::new()
-                    .then(Slot::Plain, " ".repeat(under))
-                    .then(Slot::Plain, line),
+            .map(|(at, line)| {
+                let mut row = match at {
+                    0 => Row::new()
+                        .then(Slot::PromptMark, mark)
+                        .then(Slot::Prompt, " ")
+                        .then(Slot::Prompt, line),
+                    _ => Row::new()
+                        .then(Slot::Prompt, " ".repeat(under))
+                        .then(Slot::Prompt, line),
+                };
+
+                // Out to the last column, in the ground rather than in the
+                // reader's own: a ground that stops where the text stops has a
+                // ragged right edge with theirs showing through it, and a
+                // wrapped line would show that on every row but the longest.
+                row.fill(Slot::Prompt, columns);
+                row
             })
             .collect()
     }

@@ -598,19 +598,104 @@ fn the_border_is_drawn_in_the_tone_the_mode_was_given() {
     }
 }
 
+/// A palette over a terminal that answered with these channels.
+fn over(ground: (u8, u8, u8)) -> Palette {
+    Palette::resolve(true, Theme::Dark, Some(ground), &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
+
+#[test]
+fn a_committed_line_takes_the_ground_the_terminal_reported() {
+    // The band. Not a colour this file chose: the reader's own, moved one step,
+    // which is why it can be painted at all without taking the ground away from
+    // them.
+    let rows = Prompt::committed("fix the resolution", 40, Glyphs::Unicode);
+    let painted = rows.first().expect("a row").paint(over((13, 13, 16)));
+
+    assert!(
+        painted.contains("\x1b[48;2;"),
+        "no ground on the row: {painted:?}"
+    );
+}
+
+#[test]
+fn the_band_reaches_the_last_column_on_every_row_it_wrapped_onto() {
+    // A ground that stops where the text stops has a ragged right edge with the
+    // reader's own showing through it, and a wrapped prompt would show that on
+    // every row but the longest.
+    let said = "why does the grep probe walk the whole tree before it reports";
+
+    for columns in 20..=60 {
+        let rows = Prompt::committed(said, columns, Glyphs::Unicode);
+        assert!(rows.len() > 1, "the fixture has to wrap at {columns}");
+
+        for row in &rows {
+            assert_eq!(
+                row.columns(),
+                columns,
+                "row short of the last column at {columns}: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_mark_on_a_committed_line_is_on_the_band_rather_than_beside_it() {
+    // One row, one ground. A mark drawn in the plain accent would sit in a hole
+    // the band was painted around.
+    let rows = Prompt::committed("fix it", 40, Glyphs::Unicode);
+    let painted = rows.first().expect("a row").paint(over((13, 13, 16)));
+
+    let mark = painted.find('›').expect("the mark");
+    let opened = painted[..mark]
+        .rfind("\x1b[")
+        .expect("a sequence before it");
+
+    assert!(
+        painted[opened..mark].contains("48;2;"),
+        "the mark is not on the band: {painted:?}"
+    );
+}
+
+#[test]
+fn a_committed_line_takes_no_ground_where_the_terminal_said_nothing() {
+    // The state a terminal that answered neither question leaves this in, and
+    // it is correct rather than merely safe: the mark, the words, and the blank
+    // row above, which is what the row looked like before any of this existed.
+    let plain = Palette::resolve(true, Theme::Dark, None, &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    });
+
+    for row in Prompt::committed("fix the resolution", 40, Glyphs::Unicode) {
+        assert!(!row.paint(plain).contains("\x1b[48;"), "{:?}", row.text());
+    }
+}
+
+#[test]
+fn nothing_is_painted_on_a_committed_line_where_there_is_no_colour_at_all() {
+    for row in Prompt::committed("fix the resolution", 40, Glyphs::Unicode) {
+        assert_eq!(row.paint(Palette::plain()), row.text());
+    }
+}
+
 #[test]
 fn a_line_that_was_committed_keeps_the_mark() {
+    // Trimmed, because the row reaches the last column: it carries a ground,
+    // and the columns past the words are the part of it with nothing written on
+    // them for a reader to notice the edge by.
     let said = "why does the grep probe walk the whole tree before it reports";
     let wide = said.len() + 8;
+    let trimmed = |glyphs| {
+        rows_of(&Prompt::committed(said, wide, glyphs))
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect::<Vec<_>>()
+    };
 
-    assert_eq!(
-        rows_of(&Prompt::committed(said, wide, Glyphs::Unicode)),
-        [format!("› {said}")]
-    );
-    assert_eq!(
-        rows_of(&Prompt::committed(said, wide, Glyphs::Ascii)),
-        [format!("> {said}")]
-    );
+    assert_eq!(trimmed(Glyphs::Unicode), [format!("› {said}")]);
+    assert_eq!(trimmed(Glyphs::Ascii), [format!("> {said}")]);
 }
 
 #[test]
@@ -681,8 +766,12 @@ fn a_window_too_narrow_for_anything_still_leaves_the_mark() {
     // does not say a prompt was ever there.
     for columns in 0..=2 {
         let rows = Prompt::committed("hello", columns, Glyphs::Unicode);
+        let said: Vec<String> = rows_of(&rows)
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect();
 
-        assert_eq!(rows_of(&rows), ["›"], "at {columns} columns");
+        assert_eq!(said, ["›"], "at {columns} columns");
     }
 }
 
