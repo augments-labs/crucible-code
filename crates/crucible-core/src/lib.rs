@@ -17,6 +17,7 @@
 
 mod ask;
 mod cancel;
+mod compaction;
 mod credential;
 mod diff;
 mod event;
@@ -31,6 +32,7 @@ mod workspace;
 
 pub use ask::{Answer, Answered, Put, Question};
 pub use cancel::Cancel;
+pub use compaction::{Compacted, Compacting};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };

@@ -127,6 +127,8 @@ enum Doing {
     Interrupting,
     /// The response failed before it said anything and is being asked for again.
     Retrying,
+    /// The window filled and room is being made. The turn has not ended.
+    Compacting,
 }
 
 impl Doing {
@@ -138,6 +140,7 @@ impl Doing {
             Self::Running => "running",
             Self::Interrupting => "interrupting",
             Self::Retrying => "retrying",
+            Self::Compacting => "compacting",
         }
     }
 }
@@ -151,6 +154,9 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
+    /// How much of the model's window is left, or `None` where no window is
+    /// known and while room is being made.
+    left: Option<u8>,
     /// The words of the call whose tool is out, or `None` where none is. What
     /// the tool said the call was about, without the mark: the mark is the part
     /// that moves, and it is drawn per frame.
@@ -392,6 +398,7 @@ impl Turning {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
+            left: None,
             spent: None,
             calling: None,
             queued: None,
@@ -458,6 +465,9 @@ impl Turning {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
+            | Event::Carried { .. }
+            | Event::Compacting { .. }
+            | Event::Compacted { .. }
             | Event::Wrote { .. }
             | Event::Retrying => None,
         };
@@ -469,13 +479,27 @@ impl Turning {
             return returned;
         }
 
+        // How full the window is, kept whether or not a turn is running: the
+        // reading is on screen from the first frame of the session to the last,
+        // and the one moment it is not is while the number it would show is the
+        // one being replaced.
+        match event {
+            Event::Carried { left } => self.left = *left,
+            Event::Compacting { .. } => self.left = None,
+            _ => {}
+        }
+
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
             Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
-            Event::ToolFinished { .. } => Doing::Thinking,
+            // Room having been made puts the turn back where a finished tool
+            // does: waiting on the model, with the next request not yet asked.
+            Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
+            Event::Compacting { .. } => Doing::Compacting,
             Event::TurnStarted { .. }
             | Event::Spent { .. }
+            | Event::Carried { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };

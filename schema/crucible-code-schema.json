@@ -247,6 +247,11 @@
               },
               "type": "object"
             },
+            "defaultContextWindow": {
+              "description": "How many tokens to assume any model of this provider accepts, where it is not named above",
+              "minimum": 0,
+              "type": "integer"
+            },
             "effort": {
               "description": "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
               "enum": [

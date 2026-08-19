@@ -195,6 +195,7 @@ mod tests {
             Model {
                 name: "script".into(),
                 max_tokens: 64,
+                window: None,
                 system: None,
                 effort: None,
             },
@@ -314,6 +315,7 @@ mod tests {
             Model {
                 name: "script".into(),
                 max_tokens: 64,
+                window: None,
                 system: None,
                 effort: None,
             },

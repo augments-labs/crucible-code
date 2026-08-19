@@ -41,6 +41,7 @@ fn over(session: Session) -> Runner {
         Model {
             name: "script".into(),
             max_tokens: 64,
+            window: None,
             system: None,
             effort: None,
         },

@@ -44,7 +44,8 @@
 use std::fmt;
 
 use crucible_core::{
-    Change, Diff, Event, Question, Sensitivity, StopReason, Summary, ToolCall, ToolOutput,
+    Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason, Summary,
+    ToolCall, ToolOutput,
 };
 use crucible_tools::Ended;
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
@@ -106,7 +107,26 @@ pub(crate) fn event<T: Terminal>(
         // the next arrived. A response nobody read a word of, asked for again
         // and answered, left nothing behind worth a line — a line per hiccup is
         // what a reader would have to look past to find the answer.
-        Event::Spent { .. } | Event::Retrying => Ok(()),
+        // How full the window is belongs to the same row, and for the same
+        // reason: it is true until it changes, and a line per reading would be
+        // a column of stale numbers. Room being made belongs there too, while
+        // it is happening.
+        Event::Spent { .. }
+        | Event::Retrying
+        | Event::Carried { .. }
+        | Event::Compacting { .. } => Ok(()),
+
+        // What it came to does not. Room having been made is a thing that
+        // happened to the session rather than a state it is in, and the row
+        // above the box takes its rows back — so this is written down where the
+        // record of the session is, under the turn it happened in.
+        Event::Compacted { compacted } => {
+            renderer.apart()?;
+            renderer.present(
+                &compacted_rows(compacted, columns, style.glyphs()),
+                style.palette(),
+            )
+        }
 
         // Kept and not drawn. What a running command prints stands under the
         // call it belongs to, in rows the footing lays out and hands back; what
@@ -719,6 +739,50 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
             row
         })
         .collect()
+}
+
+/// The record of room having been made, as it goes to scrollback.
+///
+/// Ruled above and below, like anything else that is true of the session rather
+/// than of the row above it. It says what caused it before what it came to,
+/// because the cause is the part a reader can do something about.
+fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
+    let why = match compacted.why {
+        Compacting::Asked => "you asked",
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+    };
+    let turns = if compacted.kept == 1 { "turn" } else { "turns" };
+
+    vec![
+        rule(),
+        Row::new()
+            .then(Slot::Plain, " compacted ")
+            .then(Slot::Quiet, format!("{} {why}", glyphs.dot())),
+        Row::new().then(
+            Slot::Quiet,
+            format!(
+                " {} messages became a recap {} {} → {} carried {} {} {turns} kept whole",
+                compacted.replaced,
+                glyphs.dot(),
+                tokens(compacted.before),
+                tokens(compacted.after),
+                glyphs.dot(),
+                compacted.kept,
+            ),
+        ),
+        rule(),
+    ]
+}
+
+/// A token count, as a row says it.
+fn tokens(tokens: u64) -> String {
+    match tokens {
+        0..=999 => tokens.to_string(),
+        1_000..=999_999 => format!("{}k", tokens / 1_000),
+        _ => format!("{}.{}M", tokens / 1_000_000, (tokens % 1_000_000) / 100_000),
+    }
 }
 
 /// What to say about a turn that ended, if anything.

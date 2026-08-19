@@ -198,6 +198,25 @@ impl Transcript {
         self.messages.push(message);
     }
 
+    /// Takes the last message back off.
+    ///
+    /// For the one caller that puts a message on to ask something and must not
+    /// leave it there: an instruction the session never gave, still standing in
+    /// the transcript, is a question the model answers again every turn after.
+    pub fn pop(&mut self) -> Option<Message> {
+        self.messages.pop()
+    }
+
+    /// Hands the messages out, consuming the transcript.
+    ///
+    /// So that a caller rebuilding one can move what it keeps rather than
+    /// cloning it. This is the only value here that grows with the session, and
+    /// two of them alive at once is what the peak-memory budget refuses.
+    #[must_use]
+    pub fn into_messages(self) -> Vec<Message> {
+        self.messages
+    }
+
     /// Every message, in order — what a provider serialises.
     #[must_use]
     pub fn messages(&self) -> &[Message] {

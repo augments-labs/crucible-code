@@ -17,9 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Cancel, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post, Provider,
-    ProviderError, ProviderLimit, Request, Spend, StopReason, Summary, ToolCall, ToolSchema,
-    Transcript, TurnError, TurnId,
+    Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
+    Provider, Request, Spend, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError,
+    TurnId,
 };
 
 use crucible_session::Session;
@@ -27,15 +27,34 @@ use crucible_session::Session;
 use crate::tools::Tools;
 
 mod answer;
+mod compaction;
+mod load;
 mod work;
 
 use answer::Answer;
+use load::{Counting, Load};
 use work::{Went, Work};
 
-const MAX_PROVIDER_RESPONSES_PER_TURN: usize = 32;
+/// The most provider-controlled response data one turn retains, in bytes.
+///
+/// A bound on memory rather than on how long a turn may run: it exists against
+/// a provider that will not stop talking, and it is what keeps the peak-memory
+/// budget true. The counts that used to sit beside it — responses, tool calls —
+/// bounded the wrong thing. A turn is long because there is work in it, and
+/// what actually runs out is the model's window, which is now measured and
+/// answered by making room rather than by ending the turn.
 const MAX_TURN_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_TOOL_CALLS_PER_TURN: usize = 128;
+
+/// And the most tool-result text, for the same reason.
 const MAX_TOOL_OUTPUT_BYTES_PER_TURN: usize = 4 * 1024 * 1024;
+
+/// How many compactions one turn may run without getting anywhere.
+///
+/// A compaction that frees nothing and is asked for again is the one way this
+/// loop can spin without the transcript growing, so it is the one thing still
+/// counted. Two, because the first may legitimately free little on a session
+/// that is mostly one enormous turn, and a third has proved the point.
+const COMPACTIONS_WITHOUT_PROGRESS: u8 = 2;
 
 /// How many more times one response may be asked for after it failed.
 ///
@@ -58,39 +77,13 @@ const CANCEL_SLICE: Duration = Duration::from_millis(25);
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
 struct TurnBounds {
-    responses: usize,
     retained: usize,
-    calls: usize,
     tool_output: usize,
 }
 
 impl TurnBounds {
-    fn before_response(&self, provider: &'static str) -> Result<(), ProviderError> {
-        if self.responses == MAX_PROVIDER_RESPONSES_PER_TURN {
-            return Err(ProviderError::Limit {
-                provider,
-                limit: ProviderLimit::ProviderResponses,
-                maximum: MAX_PROVIDER_RESPONSES_PER_TURN,
-            });
-        }
-        Ok(())
-    }
-
     fn heard(&mut self, answer: &Answer) {
-        self.responses += 1;
         self.retained = self.retained.saturating_add(answer.retained());
-    }
-
-    fn accept_calls(&mut self, provider: &'static str, calls: usize) -> Result<(), ProviderError> {
-        if calls > MAX_TOOL_CALLS_PER_TURN.saturating_sub(self.calls) {
-            return Err(ProviderError::Limit {
-                provider,
-                limit: ProviderLimit::TurnToolCalls,
-                maximum: MAX_TOOL_CALLS_PER_TURN,
-            });
-        }
-        self.calls += calls;
-        Ok(())
     }
 }
 
@@ -101,10 +94,47 @@ pub struct Model {
     pub name: Box<str>,
     /// Ceiling on one response.
     pub max_tokens: u32,
+    /// How much this model accepts at once, in tokens, where anybody knows.
+    ///
+    /// `None` is not a large window — it is no answer, and a session runs
+    /// without a proactive bound rather than against a number this loop made
+    /// up. The wiring above resolves it; this crate is handed the result.
+    pub window: Option<u32>,
     /// The system prompt, if the session has one.
     pub system: Option<Box<str>>,
     /// How hard to think, where somebody said. `None` leaves it to the vendor.
     pub effort: Option<Effort>,
+}
+
+/// What a session does when the window fills.
+///
+/// Handed over whole by the wiring, so this crate never learns that any of it
+/// has a spelling in a file. The default is a session that compacts when it has
+/// to and is bounded by nothing else, which is the answer for somebody who has
+/// never heard of any of this.
+#[derive(Debug, Clone, Copy)]
+pub struct Compaction {
+    /// Whether a full window is answered by making room rather than by failing.
+    pub automatic: bool,
+    /// Room to leave for the next exchange, in tokens, where somebody said.
+    pub reserve: Option<u64>,
+    /// How many turns are kept word for word after the recap.
+    pub keep: usize,
+    /// The most one turn may produce before it is stopped, in tokens.
+    pub spend_ceiling: Option<u64>,
+}
+
+impl Default for Compaction {
+    fn default() -> Self {
+        Self {
+            automatic: true,
+            reserve: None,
+            // Enough to hold what the turn is in the middle of and the one
+            // before it, which is what "carry on from here" needs.
+            keep: 2,
+            spend_ceiling: None,
+        }
+    }
 }
 
 /// Drives turns to completion.
@@ -120,6 +150,8 @@ pub struct Runner {
     transcript: Transcript,
     session: Session,
     turn: TurnId,
+    compacting: Compaction,
+    load: Load,
 }
 
 impl Runner {
@@ -134,6 +166,8 @@ impl Runner {
             transcript: Transcript::new(),
             session,
             turn: TurnId::FIRST,
+            compacting: Compaction::default(),
+            load: Load::default(),
         }
     }
 
@@ -149,6 +183,16 @@ impl Runner {
         self
     }
 
+    /// Takes the compaction settings described, rather than the default ones.
+    ///
+    /// Handed over whole for the reason [`Runner::permitting`] is: this crate
+    /// never learns that any of it has a spelling in a file.
+    #[must_use]
+    pub fn compacting(mut self, compacting: Compaction) -> Self {
+        self.compacting = compacting;
+        self
+    }
+
     /// Picks up a transcript that already happened — what `--continue`
     /// replays.
     ///
@@ -159,7 +203,21 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
+        self.recount();
         self
+    }
+
+    /// Measures a transcript this runner did not build a message at a time.
+    ///
+    /// Walked once, where a session is picked up, rather than on any path a
+    /// turn takes: what it costs is proportional to the transcript, and the one
+    /// moment that is affordable is the one where the transcript was just read
+    /// off a disk.
+    fn recount(&mut self) {
+        self.load.replaced();
+        for message in self.transcript.messages() {
+            self.load.recorded(message);
+        }
     }
 
     /// Puts this runner on a different session, and hands back the one it was
@@ -181,6 +239,7 @@ impl Runner {
         self.permission.forget();
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
+        self.recount();
 
         std::mem::replace(&mut self.session, session)
     }
@@ -330,6 +389,7 @@ impl Runner {
     /// a log that is missing one message is a session that cannot be continued.
     fn record(&mut self, message: Message) {
         self.session.append(&message);
+        self.load.recorded(&message);
         self.transcript.push(message);
     }
 
@@ -431,14 +491,73 @@ impl Runner {
     ) -> Result<StopReason, TurnError> {
         let mut bounds = TurnBounds::default();
 
-        // The turn's own running total, not a bound: nothing here refuses a
-        // response for having cost too much, and the number exists to be read
-        // rather than to be checked against anything.
-        let mut spent = Spend::NONE;
+        // The turn's own running totals. A bound only where somebody asked for
+        // one: a turn that runs long because there is work in it is not a turn
+        // to stop, and what a runaway one actually consumes is this.
+        let mut counting = Counting {
+            spent: Spend::NONE,
+            load: self.load,
+            window: self.model.window,
+        };
+
+        let reserve = load::reserve(
+            self.model.max_tokens,
+            self.model.window,
+            self.compacting.reserve,
+        );
+        let mut fruitless = 0;
 
         loop {
-            bounds.before_response(self.provider.name())?;
-            let (answer, said) = self.listen(events, cancel, &bounds, &mut spent)?;
+            // Recording is what measures the transcript, and it happens on the
+            // runner rather than here; reading it back at the top of each pass
+            // is what makes the check below see the results of the last one.
+            counting.load = self.load;
+
+            if let Some(ceiling) = self.compacting.spend_ceiling
+                && counting.spent.tokens() >= ceiling
+            {
+                return Err(TurnError::Spent { ceiling });
+            }
+
+            // Before the request rather than after the answer, because here the
+            // transcript *is* what the next request would carry — the results
+            // of the last pass are already in it. Checked at the top of the
+            // loop, so it cannot run while a tool call is out, and the turn
+            // carries on afterwards rather than ending.
+            if self.compacting.automatic && counting.load.full(counting.window, reserve) {
+                match self.compact(Compacting::Full, events, cancel)? {
+                    Some(compacted) if compacted.after < compacted.before => fruitless = 0,
+                    _ => fruitless += 1,
+                }
+
+                if fruitless >= COMPACTIONS_WITHOUT_PROGRESS {
+                    return Err(TurnError::NoRoom);
+                }
+            }
+
+            let (answer, said) = self.listen(events, cancel, &bounds, &mut counting)?;
+
+            // And what the response reported goes the other way: the counts a
+            // provider sends are read here and belong to the session.
+            self.load = counting.load;
+
+            // The provider read the request and could not fit it. Making room
+            // and asking the same question again is the whole remedy, and it is
+            // the reason this reason is not folded in with the ceiling that
+            // cuts an answer short.
+            if said == StopReason::WindowExceeded {
+                if !self.compacting.automatic {
+                    return Ok(said);
+                }
+                match self.compact(Compacting::Refused, events, cancel)? {
+                    Some(compacted) if compacted.after < compacted.before => fruitless = 0,
+                    _ => fruitless += 1,
+                }
+                if fruitless >= COMPACTIONS_WITHOUT_PROGRESS {
+                    return Err(TurnError::NoRoom);
+                }
+                continue;
+            }
             bounds.heard(&answer);
             let (text, calls) = answer.finish();
 
@@ -458,8 +577,6 @@ impl Runner {
                 });
                 return Ok(stop);
             }
-
-            bounds.accept_calls(self.provider.name(), calls.len())?;
 
             for call in &calls {
                 // A name no tool answers to is a call `Work` refuses a moment
@@ -567,7 +684,7 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
         bounds: &TurnBounds,
-        spent: &mut Spend,
+        counting: &mut Counting,
     ) -> Result<(Answer, StopReason), TurnError> {
         let mut left = RETRIES;
         let mut pause = FIRST_PAUSE;
@@ -579,7 +696,7 @@ impl Runner {
                 MAX_TURN_RESPONSE_BYTES,
             );
 
-            let problem = match self.hearing(&mut answer, events, cancel, spent) {
+            let problem = match self.hearing(&mut answer, events, cancel, counting) {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
@@ -618,7 +735,7 @@ impl Runner {
         answer: &mut Answer,
         events: &dyn Post,
         cancel: &Cancel,
-        spent: &mut Spend,
+        counting: &mut Counting,
     ) -> Result<StopReason, TurnError> {
         // Read once per pass rather than once per turn: `tool_search` reveals a
         // name while the turn is running, and what it revealed has to be in the
@@ -626,7 +743,7 @@ impl Runner {
         let advertised = self.tools.advertised();
         let mut stream = self.provider.stream(self.request(&advertised), cancel)?;
 
-        Self::hear(stream.as_mut(), answer, events, spent)
+        Self::hear(stream.as_mut(), answer, events, counting)
             .and_then(|()| answer.reached().map_err(TurnError::from))
     }
 
@@ -667,14 +784,14 @@ impl Runner {
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
         events: &dyn Post,
-        spent: &mut Spend,
+        counting: &mut Counting,
     ) -> Result<(), TurnError> {
         // What the turn had spent before this response opened. Each reading a
         // provider sends is this response's total rather than an increment, so
         // it is added to that fixed number and not to the last reading — which
         // is also what makes a provider that sends one final figure and one
         // that counts up as it goes come out the same.
-        let before = *spent;
+        let before = counting.spent;
 
         while let Some(delta) = stream.next() {
             match delta? {
@@ -685,16 +802,23 @@ impl Runner {
                 Delta::ToolStarted { id, name } => answer.calling(id, name)?,
                 Delta::ToolArgs(fragment) => answer.arguments(&fragment)?,
                 Delta::Spent(said) => {
-                    *spent = before.and(said);
-                    events.post(Event::Spent { spend: *spent });
+                    counting.spent = before.and(said);
+                    counting.load.spent(said);
+                    events.post(Event::Spent {
+                        spend: counting.spent,
+                    });
                 }
-                // Not added to the spend beside it, and not accumulated at all.
-                // What a request carried is a level rather than a total — the
-                // transcript goes whole to the provider every time, so each
+                // Not added to the spend beside it, and not accumulated at
+                // all. What a request carried is a level rather than a total —
+                // the transcript goes whole to the provider every time, so each
                 // reading supersedes the last instead of extending it, and a
                 // running sum of them would describe a session nobody had.
-                // Nothing on this path reads it.
-                Delta::Carried(_) => {}
+                Delta::Carried(carried) => {
+                    counting.load.carried(carried);
+                    events.post(Event::Carried {
+                        left: counting.load.left(counting.window),
+                    });
+                }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
             }
         }

@@ -4,6 +4,8 @@ use std::cell::RefCell;
 
 use crucible_core::Outgoing;
 
+use crucible_config::Settings;
+
 use super::*;
 use crate::cli::sample::{Sample, WRITTEN};
 use crate::cli::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
@@ -489,6 +491,7 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
         Some("claude-opus-5"),
         Some(Effort::Xhigh),
         &workspace,
+        &Settings::default(),
     );
 
     assert_eq!(asking.effort, Some(Effort::Xhigh));
@@ -496,7 +499,14 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
     // And nothing where nothing said, which is the field left off rather than
     // a rung this program chose on the vendor's behalf.
     assert_eq!(
-        model("anthropic", Some("claude-opus-5"), None, &workspace).effort,
+        model(
+            "anthropic",
+            Some("claude-opus-5"),
+            None,
+            &workspace,
+            &Settings::default()
+        )
+        .effort,
         None
     );
 }
@@ -508,7 +518,13 @@ fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
 
     // A model this build has the limits of: its own output limit is far above
     // the ceiling, so the ceiling is what is asked for.
-    let known = model("anthropic", Some("claude-opus-5"), None, &workspace);
+    let known = model(
+        "anthropic",
+        Some("claude-opus-5"),
+        None,
+        &workspace,
+        &Settings::default(),
+    );
     assert_eq!(known.max_tokens, CEILING);
 
     // And one it has never heard of, where nothing is known and the lower
@@ -518,6 +534,7 @@ fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
         Some("claude-from-the-future"),
         None,
         &workspace,
+        &Settings::default(),
     );
     assert_eq!(unknown.max_tokens, UNKNOWN_CEILING);
 }

@@ -269,6 +269,9 @@ mod tests {
                 Event::TurnStarted { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Spent { .. }
                 | Event::TurnFinished { .. }
@@ -482,6 +485,9 @@ mod tests {
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }

@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Change, Diff, Line, ProviderError, Sensitivity, SessionId, Spend, Summary, Target,
-    Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
+    Approved, Carried, Change, Diff, Line, ProviderError, Sensitivity, SessionId, Spend, Summary,
+    Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
 };
 
 use super::*;
@@ -43,6 +43,7 @@ impl Scripted {
                 Model {
                     name: "claude-test".into(),
                     max_tokens: 1024,
+                    window: None,
                     system: None,
                     effort: None,
                 },
@@ -54,6 +55,18 @@ impl Scripted {
             events,
             seen,
         }
+    }
+
+    /// The same, on a model whose window is known and small.
+    ///
+    /// A window is what the proactive rail is measured against, so a session
+    /// without one never reaches it — which is the point of every other test
+    /// here and the thing this one has to undo.
+    fn within(script: Script, window: u32, compacting: Compaction) -> Self {
+        let mut scripted = Self::new(script, Tools::new(), Verdict::Allow);
+        scripted.runner.model.window = Some(window);
+        scripted.runner.compacting = compacting;
+        scripted
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
@@ -70,6 +83,9 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -88,6 +104,9 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -107,6 +126,9 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -125,6 +147,9 @@ impl Scripted {
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
                 | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
@@ -423,40 +448,26 @@ fn the_second_request_carries_the_first_pass_in_full() {
 }
 
 #[test]
-fn a_turn_cannot_keep_asking_the_provider_forever() {
-    let rounds = (0..MAX_PROVIDER_RESPONSES_PER_TURN)
-        .map(|number| calling(&number.to_string(), "missing", "{}"))
-        .collect();
+fn a_turn_runs_as_long_as_there_is_work_in_it() {
+    // The failure this whole feature exists to remove. Two hundred tool calls
+    // across forty responses used to end the turn on a count — and the message
+    // named the vendor for a bound that was crucible's own. Nothing counts them
+    // now: a turn is long because there is work in it, and what actually runs
+    // out is the model's window, which is measured rather than guessed at.
+    let mut rounds: Vec<Vec<Delta>> = (0..40).map(|_| many_calls(0, 5)).collect();
+    rounds.push(vec![
+        Delta::Text("done".into()),
+        Delta::Stopped(StopReason::Yielded),
+    ]);
+
     let mut scripted = Scripted::new(Script::new(rounds), Tools::new(), Verdict::Allow);
 
-    let problem = scripted.turn("go").unwrap_err();
+    let stop = scripted
+        .turn("go")
+        .expect("the turn was stopped by a count");
 
-    assert!(matches!(
-        problem,
-        TurnError::Provider(ProviderError::Limit {
-            limit: ProviderLimit::ProviderResponses,
-            maximum: MAX_PROVIDER_RESPONSES_PER_TURN,
-            ..
-        })
-    ));
-    assert_eq!(scripted.asked().len(), MAX_PROVIDER_RESPONSES_PER_TURN);
-}
-
-#[test]
-fn tool_calls_are_bounded_across_every_provider_response_in_a_turn() {
-    let script = Script::new(vec![many_calls(0, 64), many_calls(64, 65)]);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
-
-    let problem = scripted.turn("go").unwrap_err();
-
-    assert!(matches!(
-        problem,
-        TurnError::Provider(ProviderError::Limit {
-            limit: ProviderLimit::TurnToolCalls,
-            maximum: MAX_TOOL_CALLS_PER_TURN,
-            ..
-        })
-    ));
+    assert_eq!(stop, StopReason::Yielded);
+    assert_eq!(scripted.asked().len(), 41);
 }
 
 #[test]
@@ -979,6 +990,9 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
             | Event::Wrote { .. }
+            | Event::Carried { .. }
+            | Event::Compacting { .. }
+            | Event::Compacted { .. }
             | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1129,6 +1143,9 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Delta { .. }
             | Event::ToolRequested { .. }
             | Event::Wrote { .. }
+            | Event::Carried { .. }
+            | Event::Compacting { .. }
+            | Event::Compacted { .. }
             | Event::Retrying
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1152,4 +1169,135 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .collect();
 
     assert_eq!(kept, [None]);
+}
+
+/// A response that reports it carried `carried` tokens and then calls a tool.
+fn carrying(carried: u64, id: &str) -> Vec<Delta> {
+    vec![
+        Delta::Carried(Carried::new(carried)),
+        Delta::ToolStarted {
+            id: ToolId::new(id),
+            name: "missing".into(),
+        },
+        Delta::ToolArgs("{}".into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ]
+}
+
+/// Compaction settings that keep one turn, so a two-turn session has a middle.
+fn keeping_one() -> Compaction {
+    Compaction {
+        keep: 1,
+        ..Compaction::default()
+    }
+}
+
+#[test]
+fn a_full_window_is_answered_by_making_room_and_the_turn_carries_on() {
+    // A first turn to have something behind, then a second whose response says
+    // the request carried nearly the whole window. The loop compacts before
+    // asking again — mid-turn, without ending it — and the turn reaches its own
+    // ending afterwards.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        carrying(9_000, "a"),
+        // What the recap request is answered with.
+        vec![
+            Delta::Text("notes to self".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Text("carried on".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+
+    let stop = scripted
+        .turn("go")
+        .expect("the turn ended instead of making room");
+
+    assert_eq!(stop, StopReason::Yielded);
+    assert!(
+        scripted.said().contains("carried on"),
+        "the turn did not carry on after making room"
+    );
+}
+
+#[test]
+fn a_request_the_provider_would_not_take_is_asked_again_once_there_is_room() {
+    // The reactive rail. Nothing said the window was full — the provider did,
+    // by refusing — and the same question goes back once the session is
+    // smaller.
+    let script = Script::new(vec![
+        vec![Delta::Stopped(StopReason::WindowExceeded)],
+        vec![
+            Delta::Text("notes to self".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Text("asked again".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+
+    let stop = scripted.turn("go").expect("the refusal ended the turn");
+
+    assert_eq!(stop, StopReason::Yielded);
+    assert!(scripted.said().contains("asked again"));
+}
+
+#[test]
+fn a_session_told_never_to_compact_fails_rather_than_making_room() {
+    // Somebody who said never meant it. The turn ends with the reason, which is
+    // the one thing that tells them why.
+    let script = Script::new(vec![vec![Delta::Stopped(StopReason::WindowExceeded)]]);
+    let compacting = Compaction {
+        automatic: false,
+        ..Compaction::default()
+    };
+
+    let mut scripted = Scripted::within(script, 10_000, compacting);
+
+    assert_eq!(scripted.turn("go").unwrap(), StopReason::WindowExceeded);
+}
+
+#[test]
+fn the_recap_stands_where_the_messages_it_replaced_were() {
+    // The split the whole design turns on: what the model is sent is compacted,
+    // and the notes stand in the transcript in the model's place.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        carrying(9_000, "a"),
+        vec![
+            Delta::Text("notes to self".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Text("carried on".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn");
+    scripted.turn("go").expect("a turn");
+
+    assert!(
+        scripted.runner.transcript().messages().iter().any(
+            |message| matches!(message, Message::User(said) if said.contains("notes to self"))
+        ),
+        "the recap is not standing in the transcript"
+    );
 }

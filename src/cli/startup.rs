@@ -173,7 +173,13 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 
     // Read before the provider is handed over, because which vendor is being
     // written to is what says which model's limits are being asked about.
-    let asking = model(provider.name(), startup.model, startup.effort, workspace);
+    let asking = model(
+        provider.name(),
+        startup.model,
+        startup.effort,
+        workspace,
+        settings,
+    );
 
     let mut runner = Runner::new(
         provider,
@@ -770,6 +776,7 @@ fn model(
     name: Option<&str>,
     effort: Option<Effort>,
     workspace: &Workspace,
+    settings: &Settings,
 ) -> Model {
     let name = name.unwrap_or_default();
 
@@ -779,8 +786,24 @@ fn model(
         system: Some(standing::under(name, effort, workspace, &[]).into()),
         name: name.into(),
         max_tokens: ceiling(provider, name),
+        window: window(provider, name, settings),
         effort,
     }
+}
+
+/// How much this model accepts at once, in tokens, or nothing where nobody
+/// knows.
+///
+/// What a layer wrote down first, then what the generated table says. There is
+/// no third answer and deliberately no default: a window invented here would be
+/// wrong by a factor nobody could see, and a session would throw most of itself
+/// away — or die at the vendor — before anybody could tell why. Where nothing is
+/// known the turn simply runs without a proactive bound, and the provider
+/// refusing is what makes room instead.
+fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
+    settings
+        .context_window(provider, model)
+        .or_else(|| super::facts(provider, model).map(|facts| facts.window))
 }
 
 /// How long an answer to ask this model for.

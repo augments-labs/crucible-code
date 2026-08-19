@@ -44,15 +44,19 @@ impl Settings {
     /// nobody having said, which is not the same as a window of nothing.
     #[must_use]
     pub fn context_window(&self, provider: &str, model: &str) -> Option<u32> {
-        u32::try_from(
-            self.value
-                .get("providers")?
-                .get(provider)?
-                .get("contextWindow")?
-                .get(model)?
-                .as_u64()?,
-        )
-        .ok()
+        let provider = self.value.get("providers")?.get(provider)?;
+
+        // Named first, then whatever this provider says to assume. crucible
+        // ships no figure of its own for either: a window it invented would be
+        // wrong by a factor nobody could see until a session had already thrown
+        // most of itself away, and the reactive rail is what covers the case
+        // where nobody has said.
+        let said = provider
+            .get("contextWindow")
+            .and_then(|windows| windows.get(model))
+            .or_else(|| provider.get("defaultContextWindow"))?;
+
+        u32::try_from(said.as_u64()?).ok()
     }
 }
 
@@ -173,6 +177,28 @@ mod tests {
         // A model nobody wrote a figure for, and a provider nobody did either.
         assert_eq!(settings.context_window("openai", "gpt-5.6-luna"), None);
         assert_eq!(settings.context_window("anthropic", "gpt-5.6-sol"), None);
+    }
+
+    #[test]
+    fn a_provider_wide_figure_covers_the_models_nobody_named() {
+        let said = r#"{"providers": {"openai": {"defaultContextWindow": 272000,
+            "contextWindow": {"gpt-5.5": 1050000}}}}"#;
+        let settings = Settings::resolve(vec![Document::sample(said, Origin::User)]);
+
+        // The named model keeps its own figure, and one nobody named takes the
+        // provider's. Both are somebody stating a fact rather than crucible
+        // inventing one, which is the only reason either is allowed to exist.
+        assert_eq!(
+            settings.context_window("openai", "gpt-5.5"),
+            Some(1_050_000)
+        );
+        assert_eq!(
+            settings.context_window("openai", "gpt-5.9-unheard-of"),
+            Some(272_000)
+        );
+
+        // And a provider nobody wrote anything for still answers nothing.
+        assert_eq!(settings.context_window("anthropic", "claude-opus-5"), None);
     }
 
     #[test]
