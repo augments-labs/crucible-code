@@ -105,7 +105,7 @@ fn working(scratch: &Path) -> PathBuf {
 
 /// crucible, and the terminal it is drawing into.
 #[derive(Debug)]
-pub(crate) struct Window {
+pub(crate) struct Watched {
     /// The near side of the pair: what a terminal emulator would hold.
     terminal: File,
     /// The process being watched.
@@ -118,7 +118,7 @@ pub(crate) struct Window {
     scratch: PathBuf,
 }
 
-impl Window {
+impl Watched {
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     ///
@@ -341,7 +341,7 @@ impl Window {
     }
 }
 
-impl Drop for Window {
+impl Drop for Watched {
     /// Takes the process and the directory back, however the case ended.
     ///
     /// In `Drop` rather than at the end of a case because the interesting exits

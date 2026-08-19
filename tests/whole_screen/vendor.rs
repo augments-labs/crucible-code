@@ -115,7 +115,7 @@ impl Vendor {
 impl Drop for Vendor {
     /// The listener is inside the thread, so dropping this has to end the
     /// thread to close the port — which it does by the thread ending on its
-    /// own once the process it was serving is gone. `Window` kills crucible in
+    /// own once the process it was serving is gone. `Watched` kills crucible in
     /// its own `Drop`, and this runs after.
     fn drop(&mut self) {
         // Not joined. The thread is parked in `accept` on a listener nothing

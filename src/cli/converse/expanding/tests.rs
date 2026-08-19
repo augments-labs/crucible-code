@@ -7,8 +7,8 @@ use super::*;
 /// Everything rather than one result because that is what the keys are read
 /// against: which of the two is standing changes what is in the window and
 /// changes nothing about walking it.
-fn standing(from: usize, end: usize) -> Window {
-    Window {
+fn standing(from: usize, end: usize) -> View {
+    View {
         from,
         end,
         over: Over::Everything(0),
@@ -32,9 +32,9 @@ fn cut(called: &[&str]) -> Kept {
 }
 
 /// The window a view is open over, or a failed test if it is closed.
-fn opened(standing: &mut Standing) -> &mut Window {
+fn opened(standing: &mut Standing) -> &mut View {
     match standing {
-        Standing::Open(window) => window,
+        Standing::Open(view) => view,
         Standing::Closed => panic!("nothing is standing"),
     }
 }
