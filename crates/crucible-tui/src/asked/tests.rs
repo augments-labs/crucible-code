@@ -184,8 +184,12 @@ fn a_question_taking_several_answers_says_which_are_chosen() {
         .find(|row| row.contains("None of these"))
         .expect("an answer nobody chose");
 
-    assert!(chosen.contains('✓'), "{chosen:?}");
-    assert!(not.contains('□'), "{not:?}");
+    assert!(chosen.contains("[✓]"), "{chosen:?}");
+    assert!(not.contains("[ ]"), "{not:?}");
+
+    // And never the mark the row of questions above it uses, which says a
+    // different thing about a different list.
+    assert!(!chosen.contains('□'), "{chosen:?}");
 }
 
 #[test]
@@ -202,7 +206,7 @@ fn a_question_taking_one_answer_draws_no_boxes_at_all() {
 
     assert!(!numbered.is_empty(), "{drawn:#?}");
     assert!(
-        numbered.iter().all(|row| !row.contains('□')),
+        numbered.iter().all(|row| !row.contains('[')),
         "a box beside a single answer offers a choice nobody is making: {numbered:#?}"
     );
 }

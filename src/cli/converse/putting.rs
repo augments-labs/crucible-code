@@ -191,9 +191,12 @@ enum Writer {
 
 /// What a standing ask keeps between frames.
 struct Standing {
-    /// Which stop is on screen. The last one, where there is more than one
-    /// question, is the one that sends.
+    /// Which stop is on screen. The last one, where there is one, sends.
     at: usize,
+    /// Which questions take several answers, kept because whether this ask
+    /// reads its answers back is asked on every frame and the questions are not
+    /// always to hand.
+    asks: Vec<bool>,
     /// One per question, in the order they are asked.
     held: Vec<Held>,
     /// Which of the last stop's two answers is marked.
@@ -207,6 +210,7 @@ impl Standing {
     fn new(questions: &[Question]) -> Self {
         Self {
             at: 0,
+            asks: questions.iter().map(Question::takes_several).collect(),
             held: questions.iter().map(Held::new).collect(),
             sending: 0,
             writing: None,
@@ -214,8 +218,14 @@ impl Standing {
     }
 
     /// Whether this ask reads its answers back before sending them.
+    ///
+    /// More than one question, or any question taking several answers. The
+    /// second is the one worth saying out loud: where several may be chosen,
+    /// `enter` would otherwise mean both *choose this one* and *I am done*, and
+    /// a key that means two things is a key that does the wrong one. A stop
+    /// that says *these are the ones* is where being done happens instead.
     fn reviews(&self) -> bool {
-        self.held.len() > 1
+        self.held.len() > 1 || self.asks.iter().any(|several| *several)
     }
 
     /// How many stops there are, the one that sends included.

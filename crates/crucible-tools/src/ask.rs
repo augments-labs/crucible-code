@@ -62,10 +62,24 @@ const SHOWS: &str = "shows";
 /// which is a thing to write in the prompt rather than to put on a panel.
 const MOST_QUESTIONS: usize = 4;
 
-/// How many answers one question may offer.
+/// How many answers one question may offer, and how few.
 ///
 /// Eight is where a numbered list stops being read and starts being scanned.
+/// Two is the floor because a question offering one answer is not a question —
+/// it is a statement with a key to press, and the model wanting that should say
+/// it in its reply. The two this program adds are not counted: they are the way
+/// out rather than answers to what was asked.
 const MOST_ANSWERS: usize = 8;
+const FEWEST_ANSWERS: usize = 2;
+
+/// How long a heading may be, in bytes.
+///
+/// Every heading is drawn on one row across the top of the panel, so what
+/// bounds this is not what a heading needs but what the row can hold: four of
+/// them at eighty columns leaves about fifteen each, marks and gaps included.
+/// Past this the row gives way to a count, and a heading nobody ever sees is a
+/// heading the model spent tokens on for nothing.
+const HEADING_SHORT: usize = 24;
 
 /// How many rows of a specimen one answer may carry.
 ///
@@ -87,13 +101,13 @@ const SCHEMA: &str = r#"{
   "properties": {
     "questions": {
       "type": "array",
-      "description": "The questions to put, in the order they should be answered. At most 4: past that this is a form rather than a question, and belongs in your reply instead.",
+      "description": "The questions to put, in the order they should be answered. At most 4, and no two the same: past that this is a form rather than a question, and belongs in your reply instead.",
       "items": {
         "type": "object",
         "properties": {
           "heading": {
             "type": "string",
-            "description": "Two or three words naming this question, shown in a row of all of them so the reader can see where they are. At most 200 bytes."
+            "description": "Two or three words naming this question, shown in a row of all of them so the reader can see where they are. At most 24 bytes: the row holds every heading at once, and a longer one costs the whole row."
           },
           "question": {
             "type": "string",
@@ -105,7 +119,7 @@ const SCHEMA: &str = r#"{
           },
           "answers": {
             "type": "array",
-            "description": "The answers to offer, best first. At most 8. Two more are always added for you — one to write an answer you did not offer, and one to leave the whole thing and reply in the prompt — so do not offer either yourself.",
+            "description": "The answers to offer, best first. At least 2 and at most 8, and no two the same. One answer is a statement rather than a question — say that in your reply instead. Two more are always added for you — one to write an answer you did not offer, and one to leave the whole thing and reply in the prompt — so do not offer either yourself.",
             "items": {
               "type": "object",
               "properties": {
@@ -226,21 +240,33 @@ fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
         )));
     }
 
-    written.iter().map(question).collect()
+    let asked: Vec<Question> = written.iter().map(question).collect::<Result<_, _>>()?;
+
+    // The same question twice is one the reader answers once and is asked again,
+    // and the two answers come back under one heading with no way to tell which
+    // was which.
+    if let Some(twice) = repeated(asked.iter().map(Question::question)) {
+        return Err(args.wrong(format!("{twice} is asked twice")));
+    }
+
+    Ok(asked)
 }
 
 /// One question, and the answers under it.
 fn question(args: &Args) -> Result<Question, ToolError> {
     args.only(&[HEADING, QUESTION, SEVERAL, ANSWERS])?;
 
-    let heading = bounded(args, HEADING, args.text(HEADING)?, SHORT)?;
+    let heading = bounded(args, HEADING, args.text(HEADING)?, HEADING_SHORT)?;
     let asked = bounded(args, QUESTION, args.text(QUESTION)?, LONG)?;
 
     let Some(written) = args.list(ANSWERS)? else {
         return Err(args.wrong(format!("{ANSWERS} is required and must be a list")));
     };
-    if written.is_empty() {
-        return Err(args.wrong("offer at least one answer"));
+    if written.len() < FEWEST_ANSWERS {
+        return Err(args.wrong(format!(
+            "a question offers at least {FEWEST_ANSWERS} answers; one answer is \
+             a statement rather than a question, and belongs in your reply"
+        )));
     }
     if written.len() > MOST_ANSWERS {
         return Err(args.wrong(format!(
@@ -250,6 +276,12 @@ fn question(args: &Args) -> Result<Question, ToolError> {
     }
 
     let answers = written.iter().map(answer).collect::<Result<Vec<_>, _>>()?;
+
+    // Two answers spelled the same are two the reader cannot choose between,
+    // and one of them can never be what comes back.
+    if let Some(twice) = repeated(answers.iter().map(Answer::answer)) {
+        return Err(args.wrong(format!("{twice} is offered twice")));
+    }
 
     let question = Question::new(heading, asked, answers);
     Ok(if args.flag(SEVERAL, false)? {
@@ -306,6 +338,20 @@ fn bounded<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&
     }
 
     Ok(text)
+}
+
+/// The first thing `every` holds twice, where it holds anything twice.
+fn repeated<'a>(every: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let mut seen = Vec::new();
+
+    for one in every {
+        if seen.contains(&one) {
+            return Some(one);
+        }
+        seen.push(one);
+    }
+
+    None
 }
 
 /// What the model is told, one line per question.

@@ -141,8 +141,8 @@ fn nobody_answering_is_a_result_the_turn_survives() {
 #[test]
 fn an_ask_left_part_answered_says_how_much_went_unanswered() {
     let args = r#"{"questions":[
-        {"heading":"One","question":"First?","answers":[{"answer":"a"}]},
-        {"heading":"Two","question":"Second?","answers":[{"answer":"b"}]}]}"#;
+        {"heading":"One","question":"First?","answers":[{"answer":"a"},{"answer":"z"}]},
+        {"heading":"Two","question":"Second?","answers":[{"answer":"b"},{"answer":"y"}]}]}"#;
     let put = Arc::new(Whoever::saying(vec![Answered::new(["a"])]));
 
     let output = ran(put, args).expect("a call that asked properly");
@@ -159,7 +159,7 @@ fn an_ask_left_part_answered_says_how_much_went_unanswered() {
 fn every_bound_is_refused_with_the_figure_it_missed() {
     let many = (1..=5)
         .map(|at| {
-            format!(r#"{{"heading":"H{at}","question":"Q{at}?","answers":[{{"answer":"a"}}]}}"#)
+            format!(r#"{{"heading":"H{at}","question":"Q{at}?","answers":[{{"answer":"a"}},{{"answer":"b"}}]}}"#)
         })
         .collect::<Vec<_>>()
         .join(",");
@@ -181,13 +181,13 @@ fn every_bound_is_refused_with_the_figure_it_missed() {
         .join(",");
     let over = refused(&format!(
         r#"{{"questions":[{{"heading":"H","question":"Q?",
-            "answers":[{{"answer":"a","shows":[{rows}]}}]}}]}}"#
+            "answers":[{{"answer":"a","shows":[{rows}]}},{{"answer":"b"}}]}}]}}"#
     ));
     assert!(over.contains("11") && over.contains("10"), "{over}");
 
     let long = "q".repeat(LONG + 1);
     let over = refused(&format!(
-        r#"{{"questions":[{{"heading":"H","question":"{long}","answers":[{{"answer":"a"}}]}}]}}"#
+        r#"{{"questions":[{{"heading":"H","question":"{long}","answers":[{{"answer":"a"}},{{"answer":"b"}}]}}]}}"#
     ));
     assert!(over.contains(&(LONG + 1).to_string()), "{over}");
 }
@@ -197,7 +197,7 @@ fn a_call_with_nothing_to_ask_or_nothing_to_answer_with_is_refused() {
     assert!(refused(r#"{"questions":[]}"#).contains("at least one question"));
     assert!(
         refused(r#"{"questions":[{"heading":"H","question":"Q?","answers":[]}]}"#)
-            .contains("at least one answer")
+            .contains("at least 2 answers")
     );
     // A blank heading is a missing one, and is refused where it is read.
     assert!(
@@ -212,7 +212,8 @@ fn a_blank_row_of_a_specimen_is_a_blank_line_and_not_a_missing_one() {
     // as it was written, and what parts a mock prompt from the line under it is
     // a row with nothing on it.
     let args = r#"{"questions":[{"heading":"Status","question":"Which one?",
-        "answers":[{"answer":"Compact","shows":["› ...","","crucible · main"]}]}]}"#;
+        "answers":[{"answer":"Compact","shows":["› ...","","crucible · main"]},
+                   {"answer":"Nothing"}]}]}"#;
     let put = Arc::new(Whoever::saying(vec![Answered::new(["Compact"])]));
 
     let output = ran(put, args).expect("a specimen with a blank line in it");
@@ -230,8 +231,8 @@ fn the_row_beside_the_name_is_the_question_where_there_is_one_and_a_count_where_
     );
 
     let two = r#"{"questions":[
-        {"heading":"One","question":"First?","answers":[{"answer":"a"}]},
-        {"heading":"Two","question":"Second?","answers":[{"answer":"b"}]}]}"#;
+        {"heading":"One","question":"First?","answers":[{"answer":"a"},{"answer":"z"}]},
+        {"heading":"Two","question":"Second?","answers":[{"answer":"b"},{"answer":"y"}]}]}"#;
     assert_eq!(tool.summary(&ToolArgs::new(two)).as_str(), "2 questions");
 }
 
@@ -254,7 +255,7 @@ fn a_field_this_tool_does_not_know_is_refused_rather_than_dropped() {
     // person answers wrongly.
     let over = refused(
         r#"{"questions":[{"heading":"H","question":"Q?","multiSelect":true,
-            "answers":[{"answer":"a"}]}]}"#,
+            "answers":[{"answer":"a"},{"answer":"b"}]}]}"#,
     );
 
     assert!(over.contains("multiSelect"), "{over}");
@@ -265,7 +266,7 @@ fn a_field_this_tool_does_not_know_is_refused_rather_than_dropped() {
 
     let over = refused(
         r#"{"questions":[{"heading":"H","question":"Q?",
-            "answers":[{"answer":"a","preview":["x"]}]}]}"#,
+            "answers":[{"answer":"a","preview":["x"]},{"answer":"b"}]}]}"#,
     );
     assert!(over.contains("preview"), "{over}");
     assert!(over.contains("shows"), "{over}");
@@ -275,7 +276,49 @@ fn a_field_this_tool_does_not_know_is_refused_rather_than_dropped() {
 fn the_fields_this_tool_does_know_are_all_accepted() {
     let put = Arc::new(Whoever::saying(vec![Answered::new(["Rust"])]));
     let args = r#"{"questions":[{"heading":"Language","question":"Which?","several":false,
-        "answers":[{"answer":"Rust","says":"the one","shows":["a","","b"]}]}]}"#;
+        "answers":[{"answer":"Rust","says":"the one","shows":["a","","b"]},
+                   {"answer":"Python"}]}]}"#;
 
     ran(put, args).expect("every field the schema names");
+}
+
+#[test]
+fn a_question_offering_one_answer_is_refused_as_a_statement() {
+    let over =
+        refused(r#"{"questions":[{"heading":"H","question":"Q?","answers":[{"answer":"only"}]}]}"#);
+
+    assert!(over.contains("at least 2"), "{over}");
+}
+
+#[test]
+fn the_same_thing_asked_or_offered_twice_is_refused() {
+    // A question asked twice comes back under one heading with no way to tell
+    // which answer was which; an answer offered twice is one the reader cannot
+    // choose between.
+    let over = refused(
+        r#"{"questions":[
+            {"heading":"One","question":"Same?","answers":[{"answer":"a"},{"answer":"b"}]},
+            {"heading":"Two","question":"Same?","answers":[{"answer":"a"},{"answer":"b"}]}]}"#,
+    );
+    assert!(over.contains("asked twice"), "{over}");
+
+    let over = refused(
+        r#"{"questions":[{"heading":"H","question":"Q?",
+            "answers":[{"answer":"a"},{"answer":"a"}]}]}"#,
+    );
+    assert!(over.contains("offered twice"), "{over}");
+}
+
+#[test]
+fn a_heading_too_long_for_the_row_it_is_drawn_on_is_refused() {
+    // The row holds every heading at once. One long enough to cost the whole
+    // row is one nobody ever sees, since the panel gives the row up for a count.
+    let long = "H".repeat(HEADING_SHORT + 1);
+    let over = refused(&format!(
+        r#"{{"questions":[{{"heading":"{long}","question":"Q?",
+            "answers":[{{"answer":"a"}},{{"answer":"b"}}]}}]}}"#
+    ));
+
+    assert!(over.contains(&(HEADING_SHORT + 1).to_string()), "{over}");
+    assert!(over.contains("heading"), "{over}");
 }

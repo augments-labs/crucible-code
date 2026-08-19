@@ -62,6 +62,10 @@ const PAYLOAD: usize = 4;
 /// Blank columns between one stop on the questions row and the next.
 const GAP: usize = 3;
 
+/// What a chosen mark costs an answer: the brackets, the mark, and the space
+/// after it.
+const CHOSEN: usize = 4;
+
 /// The most rows of a specimen the block will draw, the row that counts what
 /// was left out included.
 ///
@@ -106,6 +110,12 @@ pub struct Choice<'a> {
     /// Whether it is chosen, on a question taking several answers. `None` is a
     /// question taking one, where the mark alone says which — a box drawn
     /// beside a single answer would offer a choice that is not being made.
+    ///
+    /// Drawn bracketed, and the row of questions above it is not. The two say
+    /// different things — *this one is chosen* against *this one is answered* —
+    /// and on a question taking several they are on screen at once, one under
+    /// the other. Marks that looked alike there would be one column of state
+    /// read as another.
     pub chosen: Option<bool>,
     /// The rows of what this answer would look like, or empty.
     pub shows: &'a [&'a str],
@@ -467,7 +477,7 @@ impl Asked<'_> {
             .map(|(at, answer)| {
                 SAID + 1
                     + wide(&format!(" {}. ", at + 1))
-                    + usize::from(answer.chosen.is_some()) * 2
+                    + usize::from(answer.chosen.is_some()) * CHOSEN
             })
             .max()
             .unwrap_or_default();
@@ -607,7 +617,7 @@ impl Asked<'_> {
         let marked = at == self.marked;
         let number = format!(" {}. ", at + 1);
         let boxed = answer.chosen.is_some();
-        let front = SAID + 1 + wide(&number) + usize::from(boxed) * 2;
+        let front = SAID + 1 + wide(&number) + usize::from(boxed) * CHOSEN;
         let slot = if marked { Slot::Strong } else { Slot::Plain };
 
         if marked
@@ -641,12 +651,13 @@ impl Asked<'_> {
                         .then(slot, &number);
 
                     if let Some(chosen) = answer.chosen {
-                        let (mark, ink) = if chosen {
-                            (glyphs.done(), Slot::DoneMark)
+                        open.push(Slot::Quiet, "[");
+                        if chosen {
+                            open.push(Slot::DoneMark, glyphs.done());
                         } else {
-                            (glyphs.open(), Slot::Quiet)
-                        };
-                        open.push(ink, mark);
+                            open.push(Slot::Plain, " ");
+                        }
+                        open.push(Slot::Quiet, "]");
                         open.push(Slot::Plain, " ");
                     }
 

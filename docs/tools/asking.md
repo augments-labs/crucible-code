@@ -12,10 +12,10 @@ permission and no rule to write about it.
 | Argument | What it is |
 | --- | --- |
 | `questions` | Every question to put, in the order to answer them. Required, and at most 4. |
-| `heading` | Two or three words naming one question, shown in a row of all of them. Required, and at most 200 bytes. |
+| `heading` | Two or three words naming one question, shown in a row of all of them. Required, and at most 24 bytes — the row holds every heading at once. |
 | `question` | The question itself. Required, and at most 500 bytes. |
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
-| `answers` | The answers it offers, best first. Required, and at most 8. |
+| `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
 | `answer` | What one answer is called. Required, and at most 200 bytes. |
 | `says` | One line saying what choosing it means, where the name does not say it. |
 | `shows` | What the answer would look like, row by row. At most 10 rows of at most 200 bytes each. |
@@ -47,6 +47,11 @@ on marked, then that question and its answers numbered under it.
 A `□` is a question you have not answered and a `✓` is one you have, so the row
 across the top is both where you are and how much is left. It appears only where
 there is more than one question.
+
+Where a question takes several answers, each one carries a bracketed mark of its
+own — `[ ]` and `[✓]`. Bracketed on purpose: the row above says whether a
+*question* is answered and these say whether an *answer* is chosen, and on that
+question both are on screen at once.
 
 Two answers are always there and the agent does not write them. **Something
 else** is a line you type yourself, and **Say it in the prompt instead** leaves
@@ -107,8 +112,11 @@ before it goes, so nothing is sent that you have not seen:
 │    2. Cancel                                                 │
 ```
 
-An ask of one question has no such stop. A screen reading back one answer says
-what the screen before it said.
+An ask of one question has no such stop — a screen reading back one answer says
+what the screen before it said — unless that question takes several answers.
+There, `enter` would otherwise mean both *choose this one* and *I am done*, and
+a key meaning two things does the wrong one; the last stop is where being done
+happens instead.
 
 ## Nobody answering is an answer
 

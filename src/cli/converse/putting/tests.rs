@@ -373,12 +373,13 @@ fn a_question_taking_several_answers_reaches_the_panel_as_one() {
     ];
     let mut standing = Standing::new(&questions);
 
-    // The questions row carries a box of its own for a question nobody has
-    // answered, so what is read here is the numbered rows and nothing else.
+    // The questions row carries a mark of its own for a question nobody has
+    // answered. What is read here is the numbered rows, and the mark on those is
+    // bracketed precisely so the two are never mistaken for each other.
     let numbered = |art: &[String]| -> usize {
         art.iter()
             .filter(|row| row.contains(" 1. ") || row.contains(" 2. "))
-            .filter(|row| row.contains('□'))
+            .filter(|row| row.contains("[ ]") || row.contains("[✓]"))
             .count()
     };
 
@@ -398,5 +399,43 @@ fn a_question_taking_several_answers_reaches_the_panel_as_one() {
     assert!(
         art.iter().any(|row| row.contains("space to choose")),
         "the footer never named the key: {art:#?}"
+    );
+}
+
+#[test]
+fn one_question_taking_several_answers_still_reads_them_back() {
+    // Where several may be chosen, enter would otherwise mean both "choose this
+    // one" and "I am done", and a key that means two things does the wrong one.
+    let questions = vec![
+        Question::new(
+            "Any",
+            "Which of these?",
+            [Answer::new("a"), Answer::new("b")],
+        )
+        .several(),
+    ];
+    let mut standing = Standing::new(&questions);
+
+    assert!(
+        standing.reviews(),
+        "a single multi-answer question had no last stop"
+    );
+
+    // Space chooses without moving on; enter is what reaches the last stop.
+    assert_eq!(
+        moving(key(Key::Char(' ')), &mut standing, &questions),
+        Moved::Redraw
+    );
+    assert!(!standing.sending());
+
+    assert_eq!(
+        moving(key(Key::Enter), &mut standing, &questions),
+        Moved::Redraw
+    );
+    assert!(standing.sending());
+
+    assert_eq!(
+        moving(key(Key::Enter), &mut standing, &questions),
+        Moved::Took
     );
 }
