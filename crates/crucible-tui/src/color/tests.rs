@@ -117,14 +117,14 @@ fn at(depth: Depth) -> Palette {
 
 /// The same, in a named theme and over a named terminal ground.
 fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette {
-    let band = ground.map(Palette::band);
+    let (band, band_mark) = Palette::banding(depth, theme, ground);
 
     Palette {
         depth,
         theme,
         ground,
-        band: band.and_then(|band| painted(band, None, depth)),
-        band_mark: band.and_then(|band| painted(band, Some(theme.tones().accent), depth)),
+        band,
+        band_mark,
     }
 }
 
@@ -305,19 +305,13 @@ fn a_slot_that_takes_the_ground_is_legible_on_the_one_it_takes() {
                 Sets::Indexed(at) => Some(indexed(at)),
                 Sets::Nothing | Sets::Named => None,
             };
-            let (Some(hue), Some(ground)) = (
-                worth(sets(written.as_str()).0),
-                worth(sets(written.as_str()).1),
-            ) else {
-                // Ansi names its colours rather than spelling them, and what
-                // they are worth is the reader's terminal theme's answer.
-                // Ansi names its colours rather than spelling them, and so does
-                // the indexed rung — an index is a number the terminal looks up
-                // rather than a colour written out. What the indexed pairs are
-                // worth is checked against the table they were picked from,
-                // below.
-                // Only Ansi, whose colours are the reader's own sixteen and are
-                // not this file's to measure.
+            let (ink, ground) = sets(written.as_str());
+            let (Some(hue), Some(ground)) = (worth(ink), worth(ground)) else {
+                // An index is measurable — it is a number this file can look up
+                // in the same cube the terminal will. A *name* is not: the
+                // sixteen are whatever the reader's terminal theme says they
+                // are, so Ansi is the one table whose pairs cannot be measured
+                // here, and the only one allowed to reach this arm.
                 assert_eq!(
                     theme,
                     Theme::Ansi,
@@ -638,4 +632,43 @@ fn every_slot_that_has_a_colour_ends_it() {
     for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
         assert_eq!(at(depth).close(), RESET, "{depth:?}");
     }
+}
+
+#[test]
+fn ansi_spells_no_colour_the_sixteen_cannot_hold_not_even_the_band() {
+    // The band is the one sequence not taken from a table, so it is the one
+    // that could climb past the rung the table is for. A reader on `ansi` has
+    // asked for the sixteen; a twenty-four-bit ground under their prompt is
+    // exactly the thing they asked not to be sent.
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+
+    for ground in [(0, 0, 0), (255, 255, 255), (40, 42, 54)] {
+        for slot in [Slot::Prompt, Slot::PromptMark] {
+            let written = Palette::resolve(true, Theme::Ansi, Some(ground), &truecolor).open(slot);
+
+            assert!(
+                !written.as_str().contains("48;2") && !written.as_str().contains("38;2"),
+                "ansi on {ground:?}: {slot:?} spelled {:?}",
+                written.as_str()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_table_that_spends_less_does_not_make_the_next_one_spend_less() {
+    // The picker walks its mark over `ansi` on the way to anything below it, so
+    // narrowing the rung in place would leave whatever is chosen after it drawn
+    // in sixteen colours on a terminal that takes sixteen million.
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+    let started = Palette::resolve(true, Theme::Dark, Some((40, 42, 54)), &truecolor);
+
+    let walked = started.wearing(Theme::Ansi).wearing(Theme::Dark);
+
+    assert_eq!(walked.open(Slot::Prompt), started.open(Slot::Prompt));
+    assert!(
+        walked.open(Slot::Prompt).as_str().contains("48;2"),
+        "{:?}",
+        walked.open(Slot::Prompt).as_str()
+    );
 }

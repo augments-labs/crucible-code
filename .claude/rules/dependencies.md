@@ -23,10 +23,12 @@ What still holds is everything the skill and the section below ask of the crate
 once chosen: the pin, the comment, the licence, the absence of a panicking or
 printing API, and the weight against the budgets.
 
+## Every crate is pinned, and every pin says why
 
-
-A new one needs a comment in `Cargo.toml` saying why it is needed;
-`scripts/check.sh` fails without both.
+A version is `=`-pinned, so a release is reproducible and a bump is a reviewed
+change rather than a side effect of somebody else's publish. A new one also
+needs a comment in `Cargo.toml` saying why it is there; `scripts/check.sh`
+fails without both.
 
 Pinning is also what hides an advisory published afterwards, so `deny.toml` is
 scanned on a clock instead — that check cannot live in a script whose whole

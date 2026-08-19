@@ -87,7 +87,7 @@ pub(crate) fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<()
 /// Reads the file, hands what it holds to `splice`, and puts back what comes
 /// out.
 ///
-/// The three above differ in that one call and in nothing else — which file is
+/// The five above differ in that one call and in nothing else — which file is
 /// opened, what a missing one means, and what a half-written one would cost are
 /// one answer for all of them, and three copies of it would be three places to
 /// fix the day the answer changes.

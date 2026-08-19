@@ -305,21 +305,37 @@ impl Prompt<'_> {
         let mark = glyphs.caret();
         let under = width::columns(mark) + 1;
         let room = columns.saturating_sub(under);
-        let folded = width::fold(said, room);
+        // Broken at the column, the way the box breaks the line while it is
+        // being typed, rather than folded at a space. A record says what was
+        // asked: `fold` trims what it is given and drops the space it breaks
+        // at, so a pasted line arrives at the model with its indentation and
+        // reads back here without it — a transcript disagreeing with the
+        // request it is the record of.
+        let folded = if room == 0 {
+            Vec::new()
+        } else {
+            broken(said, room)
+        };
 
         if folded.is_empty() {
-            return vec![Row::new().then(Slot::PromptMark, mark)];
+            // The one row a window this narrow can hold, and it carries the
+            // ground like every other where there is one to carry.
+            let mut row = Row::new().then(Slot::PromptMark, mark);
+            if banded {
+                row.fill(Slot::Prompt, columns);
+            }
+            return vec![row];
         }
 
         folded
             .into_iter()
             .enumerate()
             .map(|(at, line)| {
-                // Clipped as well as folded, for the one row folding cannot
-                // make fit: `fold` never hands back an empty row, so a glyph
-                // wider than the room it was given comes back whole and would
-                // put the row past the last column. The terminal would wrap it
-                // and the count of what was drawn would be short by one.
+                // Clipped as well as broken, for the one row breaking cannot
+                // make fit: a glyph wider than the whole row takes no bytes off
+                // the front, so it comes back whole and would put the row past
+                // the last column. The terminal would wrap it and the count of
+                // what was drawn would be short by one.
                 let line = width::clip(line, room);
 
                 let mut row = match at {

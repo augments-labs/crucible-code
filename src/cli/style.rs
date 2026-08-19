@@ -42,6 +42,28 @@ const OUTPUT: usize = 96;
 /// set it in the first place.
 const NO_COLOR: &str = "NO_COLOR";
 
+/// Whether a run writes colour at all.
+///
+/// Named rather than inlined because two callers need the same answer and one
+/// of them needs it *before* a style exists: what decides whether the terminal
+/// is asked about its background is whether the answer would ever be drawn.
+///
+/// Both overrides mean it: `always` is how a run whose output is being captured
+/// on purpose — a recording, a pty in CI — asks for the colour it would have
+/// had, and it would be no override at all if the terminal check still had a
+/// veto.
+pub(crate) fn writes_colour(
+    wanted: Option<Color>,
+    terminal: bool,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    match wanted.unwrap_or(Color::Auto) {
+        Color::Always => true,
+        Color::Never => false,
+        Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
+    }
+}
+
 /// What the terminal is written with.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Style {
@@ -311,20 +333,28 @@ mod tests {
         // Which way it goes is all this question needs, so the variable that
         // says only that is a whole answer here even though it is not one for
         // the band.
-        for reported in [Some(Ground::Light), Some(Ground::Light)] {
-            assert_eq!(
-                themed(Some(ThemeChoice::Auto), reported).palette().theme(),
-                Theme::Light,
-                "{reported:?}"
-            );
-        }
-        for reported in [Some(Ground::Dark), Some(Ground::Dark)] {
-            assert_eq!(
-                themed(Some(ThemeChoice::Auto), reported).palette().theme(),
-                Theme::Dark,
-                "{reported:?}"
-            );
-        }
+        // Both the way it can arrive: measured channels, and a variable that
+        // says only which way the ground goes. Which way is a whole answer to
+        // this question even though it is not one for the band.
+        let auto = |exact, seeded| {
+            Style::resolve(
+                Output {
+                    theme: Some(ThemeChoice::Auto),
+                    ..Output::default()
+                },
+                true,
+                exact,
+                seeded,
+                &environment(&[]),
+            )
+            .palette()
+            .theme()
+        };
+
+        assert_eq!(auto(None, Some(Ground::Light)), Theme::Light);
+        assert_eq!(auto(Some((255, 255, 255)), None), Theme::Light);
+        assert_eq!(auto(None, Some(Ground::Dark)), Theme::Dark);
+        assert_eq!(auto(Some((0, 0, 0)), None), Theme::Dark);
     }
 
     #[test]

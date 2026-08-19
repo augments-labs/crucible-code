@@ -179,7 +179,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
                 footer: FOOTER,
             };
 
-            let specimen = specimen(columns, style.glyphs());
+            let specimen = specimen(columns, style.glyphs(), style.palette().bands());
             let above = room.saturating_sub(specimen.len());
             let mut rows = panel.within(columns, above, style.glyphs());
 
@@ -230,7 +230,7 @@ fn previewing(was: Style, ground: Option<crucible_tui::Ground>, at: usize) -> St
 }
 
 /// The rows drawn under the panel in whatever the mark is on.
-fn specimen(columns: usize, glyphs: Glyphs) -> Vec<Row> {
+fn specimen(columns: usize, glyphs: Glyphs, banded: bool) -> Vec<Row> {
     // Below the gutter there is no room for a specimen at all, and a row built
     // anyway would be wider than the window: the fill cannot shrink one, and a
     // live row the terminal wraps leaves the count of what was drawn short.
@@ -261,7 +261,7 @@ fn specimen(columns: usize, glyphs: Glyphs) -> Vec<Row> {
         "and the row your own prompt is left on",
         columns,
         glyphs,
-        true,
+        banded,
     ));
     rows
 }

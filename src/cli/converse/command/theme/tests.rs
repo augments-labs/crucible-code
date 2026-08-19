@@ -68,7 +68,7 @@ fn the_listing_marks_the_one_in_force_and_only_that_one() {
 fn the_specimen_shows_the_rows_a_theme_is_actually_judged_by() {
     // A diff, because that is where a theme paints a ground and picks a pair to
     // go on it, and the prompt row, because that one takes the reader's own.
-    let rows = specimen(60, Glyphs::Unicode);
+    let rows = specimen(60, Glyphs::Unicode, true);
     let slots: Vec<Slot> = rows
         .iter()
         .filter_map(|row| row.text().is_empty().then_some(Slot::Plain))
@@ -88,7 +88,7 @@ fn every_row_of_a_specimen_ends_at_the_last_column() {
     // reader's own showing through it, and the specimen is the one place a
     // reader is looking straight at the grounds.
     for columns in 30..=100 {
-        for row in specimen(columns, Glyphs::Unicode) {
+        for row in specimen(columns, Glyphs::Unicode, true) {
             assert!(
                 row.columns() <= columns,
                 "row past the last column at {columns}: {:?}",

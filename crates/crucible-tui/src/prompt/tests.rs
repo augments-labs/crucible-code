@@ -778,6 +778,31 @@ fn a_wide_glyph_never_pushes_a_committed_row_past_the_last_column() {
 }
 
 #[test]
+fn a_committed_line_says_exactly_what_was_typed() {
+    // The record is what was asked. A line that arrives at the model with four
+    // spaces in front of it and reads back without them is a transcript that
+    // disagrees with the request it is the record of — and pasted code is the
+    // case that actually happens.
+    for said in [
+        "    let x = 1;",
+        "\thello",
+        "  two  spaces  inside  ",
+        "plain",
+    ] {
+        let rows = Prompt::committed(said, 200, Glyphs::Unicode, false);
+        let back: String = rows
+            .iter()
+            .map(Row::text)
+            .collect::<String>()
+            .strip_prefix("› ")
+            .expect("the mark")
+            .to_owned();
+
+        assert_eq!(back, said, "{said:?}");
+    }
+}
+
+#[test]
 fn a_window_too_narrow_for_anything_still_leaves_the_mark() {
     // There is no row to draw a line on at this width, and nothing true to say
     // about the line either -- but a record with no mark in it is a record that

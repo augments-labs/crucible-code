@@ -718,17 +718,48 @@ impl Palette {
         from: &dyn Fn(&str) -> Option<String>,
     ) -> Self {
         let depth = if color { Self::depth(from) } else { Depth::Off };
-        let band = ground.map(Self::band);
+        // Worked out here, once, and held: the only alternative is formatting
+        // it per span per frame, and the render path may not.
+        let (band, band_mark) = Self::banding(depth, theme, ground);
 
         Self {
             depth,
             theme,
             ground,
-            // Worked out here, once, and held: the only alternative is
-            // formatting it per span per frame, and the render path may not.
-            band: band.and_then(|band| painted(band, None, depth)),
-            band_mark: band.and_then(|band| painted(band, Some(theme.tones().accent), depth)),
+            band,
+            band_mark,
         }
+    }
+
+    /// The two sequences blended off the reader's ground, at the rung the table
+    /// in force allows.
+    ///
+    /// Its own function because they are settled in two places — once from the
+    /// environment, and again every time the picker moves its mark — and the
+    /// two disagreeing is a band that outlives the theme it was blended for.
+    /// It hands back the pair rather than a whole palette so that what else a
+    /// palette carries stays the caller's to keep: a field added later cannot
+    /// be silently reset here.
+    fn banding(
+        depth: Depth,
+        theme: Theme,
+        ground: Option<(u8, u8, u8)>,
+    ) -> (Option<Sequence>, Option<Sequence>) {
+        // `ansi` means the sixteen and nothing else. The band is derived rather
+        // than chosen, but it still has to be spelled at some rung, and a
+        // reader picks that answer precisely because their terminal — or
+        // whatever is recording it — cannot take twenty-four bits. A ground
+        // that ignored them would be the one thing on the row that did.
+        let rung = match theme {
+            Theme::Ansi if depth != Depth::Off => Depth::Basic,
+            _ => depth,
+        };
+        let band = ground.map(Self::band);
+
+        (
+            band.and_then(|band| painted(band, None, rung)),
+            band.and_then(|band| painted(band, Some(theme.tones().accent), rung)),
+        )
     }
 
     /// The reader's own ground, moved one step.
@@ -767,12 +798,19 @@ impl Palette {
     /// again, since it is the one computed value a table has a say in.
     #[must_use]
     pub fn wearing(self, theme: Theme) -> Self {
-        let band = self.ground.map(Self::band);
+        // The blend off the ground is fixed, but the rung it is spelled at and
+        // the ink the mark takes are both the table's, so both are settled
+        // again — by the same function the environment settles them with, so
+        // moving the picker's mark cannot reach a state resolving never could.
+        // `depth` is the terminal's own answer throughout and is never narrowed
+        // in place: a table that spends less does not make the next one spend
+        // less too.
+        let (band, band_mark) = Self::banding(self.depth, theme, self.ground);
 
         Self {
             theme,
-            band: band.and_then(|band| painted(band, None, self.depth)),
-            band_mark: band.and_then(|band| painted(band, Some(theme.tones().accent), self.depth)),
+            band,
+            band_mark,
             ..self
         }
     }

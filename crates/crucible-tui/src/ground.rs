@@ -1,12 +1,16 @@
 //! What the terminal says its background is, and which way that makes it go.
 //!
-//! Two things will answer, and neither is asked for here: this module reads.
-//! `COLORFGBG` is a variable some terminals set at launch, and a reply to the
-//! query is a string a terminal wrote back. Both arrive as text, both are
-//! parsed here, and the I/O that fetches the second lives elsewhere — which is
-//! what makes every answer below testable with no terminal attached.
+//! One thing answers here and it is a variable: `COLORFGBG`, which some
+//! terminals set at launch and which says which way the ground goes without
+//! saying what colour it is. It arrives as text and is read with no terminal
+//! attached, which is what makes it testable.
 //!
-//! **Nothing here guesses.** An answer in a spelling this does not know is
+//! The other answer — the exact channels, asked for over the wire — is read by
+//! the crate that asks for it. `XParseColor` has more spellings than are worth
+//! writing twice, and a second parser here would be a second thing to be wrong
+//! about somebody else's format. See [`crate::asked`].
+//!
+//! **Nothing here guesses.** A variable in a spelling this does not know is
 //! `None` rather than a default, because the caller has a correct thing to do
 //! with `None`: draw the prompt row with no ground at all. A default would
 //! replace a known-unknown with a wrong-known, and paint a band against a
@@ -66,75 +70,13 @@ pub fn seeded(from: &dyn Fn(&str) -> Option<String>) -> Option<Ground> {
     }
 }
 
-/// The ground an answer to the query says it is.
-#[must_use]
-pub fn replied(data: &str) -> Option<Ground> {
-    let colour = rgb(data)?;
-
-    Some(if is_light(colour) {
-        Ground::Light
-    } else {
-        Ground::Dark
-    })
-}
-
 /// Which way one colour goes.
 ///
-/// The same question [`replied`] answers, asked about a colour rather than
-/// about a string. One decision in one place: a second threshold elsewhere
-/// would be two answers about one terminal, free to disagree about which ink
-/// belongs on it.
+/// One decision in one place: a second threshold elsewhere would be two answers
+/// about one terminal, free to disagree about which ink belongs on it.
 #[must_use]
 pub fn is_light(colour: (u8, u8, u8)) -> bool {
     luminance(colour) > MIDPOINT
-}
-
-/// The exact channels an answer carries.
-///
-/// Separate from [`replied`] because the band is blended against the colour
-/// itself rather than against which side of the midpoint it fell.
-///
-/// Two spellings, which are the two an `XParseColor` answer comes in.
-/// `rgb:R/G/B` carries one to four hex digits per component, each scaled
-/// against its own maximum rather than against 255 — `rgb:f/f/f` is white, and
-/// reading it as `0f0f0f` would make it very nearly black. Some terminals
-/// append an alpha; it says nothing about the ground and is ignored.
-#[must_use]
-pub fn rgb(data: &str) -> Option<(u8, u8, u8)> {
-    if let Some(rest) = data
-        .strip_prefix("rgb:")
-        .or_else(|| data.strip_prefix("rgba:"))
-    {
-        let mut parts = rest.split('/');
-        let (red, green, blue) = (parts.next()?, parts.next()?, parts.next()?);
-
-        return Some((component(red)?, component(green)?, component(blue)?));
-    }
-
-    let hex = data.strip_prefix('#')?;
-    if hex.is_empty() || !hex.len().is_multiple_of(3) {
-        return None;
-    }
-
-    let each = hex.len() / 3;
-    Some((
-        component(hex.get(..each)?)?,
-        component(hex.get(each..each * 2)?)?,
-        component(hex.get(each * 2..)?)?,
-    ))
-}
-
-/// One component, however many digits it was written in, as a byte.
-fn component(hex: &str) -> Option<u8> {
-    if hex.is_empty() || hex.len() > 4 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-
-    let read = u32::from_str_radix(hex, 16).ok()?;
-    // Its own maximum, which is what the width of the field decides.
-    let most = 16u32.pow(u32::try_from(hex.len()).ok()?) - 1;
-
-    u8::try_from(read * 255 / most).ok()
 }
 
 /// Relative luminance, as the contrast formula defines it.

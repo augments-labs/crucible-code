@@ -538,6 +538,25 @@ pub(crate) fn start() -> ExitCode {
     }
 }
 
+/// What the terminal says its background is, where the answer would be used.
+///
+/// Asked only where a run is going to write colour at all. Colour off is not a
+/// slower answer, it is no question: `Palette::resolve` takes `Depth::Off`, the
+/// band resolves to nothing, and the reply is discarded — so asking first and
+/// discarding after spends the patience out of a twenty-millisecond budget on a
+/// value nobody reads. `NO_COLOR` and a redirected run are both that case, and
+/// so is the startup probe, which runs with `NO_COLOR` against a pty nothing
+/// answers on and would otherwise have paid the whole wait twenty times over.
+fn asked(
+    settings: &crucible_config::Settings,
+    terminal: bool,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Option<(u8, u8, u8)> {
+    style::writes_colour(settings.color(), terminal, from)
+        .then(|| crucible_tui::asked(PATIENCE, from))
+        .flatten()
+}
+
 /// Builds everything, then hands over to the loop.
 fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -647,7 +666,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             // variable it set at launch, which says which way its ground goes
             // and not what colour it is; that is enough to pick a table and not
             // enough to blend a band off.
-            crucible_tui::asked(PATIENCE, &from),
+            asked(&settings, renderer.is_terminal(), &from),
             crucible_tui::ground::seeded(&from),
             &from,
         )),
