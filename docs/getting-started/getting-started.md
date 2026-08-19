@@ -382,6 +382,7 @@ session.
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/theme` | Picks the colours crucible draws with, or takes the one you name |
 | `/resume` | Lists what was worked on in this directory, and picks one back up |
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
@@ -398,6 +399,17 @@ Either way the name is written to `~/.crucible/config.json` under the provider
 this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
+
+`/theme` stands a list of themes where the prompt box was, and under it draws a
+diff and a prompt row in whatever your mark is standing on. Moving the mark
+redraws them, so the choice is made by looking rather than by reading a name.
+Enter takes it and writes it to `~/.crucible/config.json`; escape puts back the
+one that was in force and changes nothing. `/theme <name>` skips the list.
+
+What is already in your scrollback keeps the colours it was drawn in. crucible
+draws into the terminal's own buffer and never goes back over what it has
+written, so a theme changes what comes next. See
+[Configuration](../configuration/configuration.md#output).
 
 `/effort` asks the same question over the rungs the model in force serves, and
 the answer is written to the same file beside the model. It draws a ladder

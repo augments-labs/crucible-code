@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Themes, and a prompt row you can find.** `/theme` picks the colours
+  crucible draws with — dark, light, either of them off the red-green axis, or
+  only the sixteen your terminal already has — and draws a diff under the list
+  in whichever one your mark is on. The row your own prompt is left on now takes
+  a background blended off your terminal's own, so it is never a colour crucible
+  chose, and a blank row parts it from the answer above.
+
 ## [0.10.0] - 2026-08-19
 
 ### Added
