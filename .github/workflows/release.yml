@@ -238,6 +238,20 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The one platform allowed to be missing. There is no FreeBSD runner, so
+    # this builds inside a virtual machine an action brings up on a Linux one,
+    # and everything that machine needs is fetched on infrastructure nobody
+    # here can pin, bound or repair. It has hung on that step for half an hour
+    # at a stretch, twice in one afternoon, while the other six platforms were
+    # built and waiting.
+    #
+    # So it stops being able to hold them hostage. A release that ships six
+    # platforms today and seven tomorrow is worth more than one that ships
+    # nothing until a machine in somebody else's estate answers. What this may
+    # not become is quiet: the step below names every platform that must be
+    # present and fails without one, and says out loud when this is the one
+    # that is gone.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -306,7 +320,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # `bwrap` is what smoke.sh builds its sandbox with. Upstream publishes a
+      # source tarball and nothing else, so unlike the `rg` above there is no
+      # binary to pin and the package manager stays.
+      #
+      # What changes is how long it may wait. Left to itself apt will sit on an
+      # unanswering mirror indefinitely, and it has: three release attempts in
+      # one afternoon, half an hour at a time, on the step before the one doing
+      # any work. A bounded connection that fails and is retried turns that into
+      # a minute, and a mirror that is genuinely down into a job that says so.
+      - name: bubblewrap, for the sandbox the smoke test runs in
+        env:
+          APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+        run: |
+          sudo apt-get $APT update
+          sudo apt-get $APT install -y bubblewrap
+          bwrap --version
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -342,7 +371,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      # The same binary, pinned the same way, as the budgets job in ci.yml —
+      # and it has to stay the same one, because the two report a ratio against
+      # it and a ratio means nothing next to a ratio against something else.
+      # Fetched rather than installed: a package manager hands over whichever
+      # version the distribution carries this month, and the mirror it comes
+      # from is a machine this repository does not own.
+      - name: The rg the grep budget is measured against
+        env:
+          RIPGREP_VERSION: 15.0.0
+          RIPGREP_SHA256: 253ad0fd5fef0d64cba56c70dccdacc1916d4ed70ad057cc525fcdb0c3bbd2a7
+        run: |
+          stem=ripgrep-$RIPGREP_VERSION-x86_64-unknown-linux-musl
+          curl --proto '=https' --tlsv1.2 --fail --location --silent \
+            --show-error --output rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/$RIPGREP_VERSION/$stem.tar.gz"
+          printf '%s  rg.tar.gz\n' "$RIPGREP_SHA256" | sha256sum --check --strict -
+          tar xzf rg.tar.gz "$stem/rg"
+          sudo install -m 755 "$stem/rg" /usr/local/bin/rg
+          rm -rf rg.tar.gz "$stem"
+          rg --version | head -1
 
       - run: scripts/bench.sh > budgets.json
 
@@ -393,6 +441,35 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+
+      # The upload below is a glob, and a glob ships whatever is there. That
+      # is fine for the one platform allowed to be absent and wrong for every
+      # other, so what must be present is written out and counted rather than
+      # trusted to a wildcard. Six required archives and two executables; the
+      # seventh is best-effort and its absence is a warning, loud enough to
+      # reach the release notes and quiet enough not to stop them.
+      - name: Every platform this release promises is here
+        working-directory: assets
+        env:
+          BEST_EFFORT: freebsd-x86_64
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          missing=
+          for stem in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64 \
+                      windows-x86_64 windows-aarch64; do
+            [ -f "crucible-$version-$stem.tar.gz" ] || missing="$missing $stem"
+          done
+          for stem in windows-x86_64 windows-aarch64; do
+            [ -f "crucible-$version-$stem.exe" ] || missing="$missing $stem.exe"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::required platforms missing:$missing"
+            exit 1
+          fi
+          if [ ! -f "crucible-$version-$BEST_EFFORT.tar.gz" ]; then
+            echo "::warning::$BEST_EFFORT did not build; this release ships without it"
+          fi
+          ls -1 crucible-*
 
       # One file rather than one `.sha256` per archive: a reader checking what
       # they downloaded wants a single line to look up, and `sha256sum -c`
