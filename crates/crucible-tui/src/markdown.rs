@@ -16,6 +16,7 @@
 //! mid-sentence has already been drawn up to where it stopped.
 
 use crate::color::Slot;
+use crate::syntax::Syntax;
 
 /// The longest run of one marker character read as a marker.
 ///
@@ -76,7 +77,7 @@ enum Inside {
 
 /// Reads markdown out of a stream of deltas.
 #[derive(Debug, Default)]
-pub(crate) struct Markdown {
+pub struct Markdown {
     /// A run of markers whose meaning the next character decides.
     held: Option<Held>,
     /// Something other than a space has arrived on this line.
@@ -87,7 +88,32 @@ pub(crate) struct Markdown {
     previous: char,
     line: Line,
     inside: Inside,
+    /// What the opening fence said the block is written in, while that fence's
+    /// own line is still being read.
+    language: String,
+    /// The reader for this block, where the language was one this build knows.
+    ///
+    /// `None` for a fence that named nothing, named something unrecognised, or
+    /// is not open at all — and then a block is drawn exactly as it was before
+    /// any of this existed, quiet and whole.
+    syntax: Option<Syntax>,
+    /// The line of code collected so far, waiting for the break that completes
+    /// it.
+    ///
+    /// A highlighter reads whole lines, and a delta is a piece of the wire — so
+    /// the two are joined here, which is the only place that knows where a line
+    /// ends. Bounded: past [`MOST`] the line is handed on as it stands and the
+    /// rest of it follows plain, because a buffer that grows with the answer is
+    /// the one thing this crate may not have.
+    code: String,
 }
+
+/// The most of one line of code that is held back to be read.
+///
+/// Four thousand columns is far past any line anybody wrote and far short of
+/// anything that matters to the budget. A line longer than this is drawn plain
+/// rather than dropped or held.
+const MOST: usize = 4096;
 
 impl Markdown {
     /// Reads `delta`, handing each run of text to `say` under its slot.
@@ -95,7 +121,7 @@ impl Markdown {
     /// Runs rather than characters: the text between two markers is one call,
     /// so a delta with no markers in it is one call for the whole delta.
     /// Markers themselves are never handed on.
-    pub(crate) fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
+    pub fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
@@ -137,7 +163,11 @@ impl Markdown {
             } else if matches!(self.inside, Inside::Opening | Inside::Closing) {
                 // What is left of a fence's own line names the language it is
                 // written in, or nothing at all. Either way it is not the
-                // answer, so it goes the way the fence went.
+                // answer, so it goes the way the fence went — but the opening
+                // one is kept, because it is what decides how the block is read.
+                if self.inside == Inside::Opening && self.language.len() < MOST {
+                    self.language.push(character);
+                }
                 run = next;
             } else {
                 self.started |= character != ' ';
@@ -228,14 +258,29 @@ impl Markdown {
     fn end_line(&mut self, say: &mut dyn FnMut(Slot, &str)) {
         let ended = self.inside;
 
+        // The line of code is complete, so this is the moment it can be read.
+        self.read_code(say);
+
+        let inside = match ended {
+            Inside::Opening => Inside::Fence,
+            Inside::Closing => Inside::Prose,
+            inside => inside,
+        };
+
+        // A block is read in whatever its opening fence named, and the reader
+        // is made here because this is where that name is finished. A block
+        // that closes drops its reader with it: the next one names its own.
+        let syntax = match ended {
+            Inside::Opening => Syntax::of(&self.language),
+            Inside::Closing => None,
+            _ => self.syntax.take(),
+        };
+
         *self = Self {
             // The fence is the one thing carried over, and a fence's own line
             // is where its effect begins or ends.
-            inside: match ended {
-                Inside::Opening => Inside::Fence,
-                Inside::Closing => Inside::Prose,
-                inside => inside,
-            },
+            inside,
+            syntax,
             ..Self::default()
         };
 
@@ -249,9 +294,48 @@ impl Markdown {
     }
 
     /// Hands on a run of text, if there is any.
-    fn say(&self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
-        if !text.is_empty() {
-            say(self.slot(), text);
+    ///
+    /// Inside a block being read, the run is held instead: a highlighter reads
+    /// whole lines and this is a piece of one. Everywhere else it goes straight
+    /// out, which is every run in every answer that is not code.
+    fn say(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
+        if text.is_empty() {
+            return;
+        }
+
+        if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
+            self.code.push_str(text);
+            return;
+        }
+
+        let slot = self.slot();
+        say(slot, text);
+    }
+
+    /// Hands on the line of code collected so far, read.
+    ///
+    /// Every byte comes back exactly once and in order, which is the property
+    /// the whole thing rests on — a byte dropped is code that quietly changed
+    /// meaning on screen, and a byte doubled is a row wider than it measured.
+    fn read_code(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        if self.code.is_empty() {
+            return;
+        }
+
+        let mut code = std::mem::take(&mut self.code);
+        // The reader wants the break as part of the line: a great many rules in
+        // a syntax definition are written against the end of one.
+        code.push('\n');
+
+        match self.syntax.as_mut() {
+            Some(syntax) => syntax.read(&code, &mut |slot, text| {
+                // The break is the caller's to write, once, below.
+                let text = text.strip_suffix('\n').unwrap_or(text);
+                if !text.is_empty() {
+                    say(slot, text);
+                }
+            }),
+            None => say(Slot::Quiet, code.trim_end_matches('\n')),
         }
     }
 

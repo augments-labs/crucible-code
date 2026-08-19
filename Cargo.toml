@@ -62,6 +62,41 @@ thiserror = "=2.0.20"
 # this project guessed at.
 terminal-colorsaurus = "=1.0.3"
 
+# Parses fenced code so it can be drawn in more than one colour, and reads the
+# `.tmTheme` files that say what those colours are — which is the format every
+# syntax theme a reader already owns is written in. Default features are off on
+# purpose: they select `oniguruma`, a C regex library, and a C toolchain is a
+# build and supply-chain surface this tree does not want for a regex engine.
+# `regex-fancy` is the pure-Rust engine instead, three times slower per line and
+# far inside the frame budget. Everything else here is the smallest set that
+# loads the built-in syntaxes and a theme file: no HTML output, no compiling
+# syntax definitions from source.
+syntect = { version = "=5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "default-themes",
+    "regex-fancy",
+    "dump-load",
+    "plist-load",
+] }
+
+# The syntax themes people actually name — Monokai, GitHub, Dracula, Nord,
+# gruvbox, Solarized and the rest. `syntect` alone ships seven, every one of
+# them base16 or Solarized, and a theme picker whose list nobody recognises is a
+# picker nobody uses. This is the same collection `bat` draws on, packaged for
+# syntect, so the names in the list are the names a reader already has an
+# opinion about.
+two-face = { version = "=0.5.2", default-features = false, features = [
+    # `syntect-fancy` and not `syntect-default-fancy`: the latter turns on
+    # syntect's whole default set, which drags in HTML output, dump *creation*
+    # and a YAML parser for compiling syntax definitions from source. None of
+    # the three is reachable from here — the syntaxes and themes are loaded
+    # from the binary dumps this crate already ships — and cargo unifies
+    # features, so asking for them here would put them back into the build the
+    # syntect entry above deliberately left them out of.
+    "syntect-fancy",
+] }
+
 # `insta` compares what a component drew against a file checked in beside it.
 # A test only reaches for it where the thing under test is a *picture*: what a
 # row looks like at forty columns, in ascii, under a mode's colour. Those are

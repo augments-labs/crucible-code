@@ -11,10 +11,14 @@ use crucible_tui::{Glyphs, Ground, Palette, Theme};
 /// What the `output` block said, before the terminal and the environment have
 /// their say.
 ///
-/// One value rather than four parameters: they arrive together, out of one
-/// block, and a call site passing four `None`s in a row says nothing about
+/// One value rather than five parameters: they arrive together, out of one
+/// block, and a call site passing five `None`s in a row says nothing about
 /// which is which.
-#[derive(Debug, Default, Clone, Copy)]
+///
+/// Not `Copy`, unlike everything else here: one of the answers is a theme name,
+/// which is somebody else's string. It is built once at startup and moved into
+/// [`Style::resolve`], so there is nothing for `Copy` to buy.
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Output {
     /// Whether to write colour.
     pub(crate) color: Option<Color>,
@@ -26,6 +30,8 @@ pub(crate) struct Output {
     pub(crate) mouse: Option<Mouse>,
     /// Which table of colours to draw with.
     pub(crate) theme: Option<ThemeChoice>,
+    /// Which theme fenced code is drawn in.
+    pub(crate) syntax: Option<String>,
 }
 
 /// How much of a tool's arguments a compact line shows.
@@ -101,7 +107,18 @@ impl Style {
         seeded: Option<Ground>,
         from: &dyn Fn(&str) -> Option<String>,
     ) -> Self {
-        let color = match output.color.unwrap_or(Color::Auto) {
+        // Taken apart first: one of the answers is a theme name, which is a
+        // string this moves out rather than copies.
+        let Output {
+            color: wanted,
+            glyphs,
+            detail,
+            mouse,
+            theme: chosen,
+            syntax,
+        } = output;
+
+        let color = match wanted.unwrap_or(Color::Auto) {
             // Both overrides mean it: `always` is how a run whose output is
             // being captured on purpose — a recording, a pty in CI — asks for
             // the colour it would have had, and it would be no override at all
@@ -127,25 +144,45 @@ impl Style {
             })
             .or(seeded);
 
-        let theme = Self::theme(output.theme, ground);
+        let theme = Self::theme(chosen, ground);
+
+        // The six colours a fenced block is drawn in. Settled here with
+        // everything else, because a palette is settled once — and it is
+        // only the *themes* that are read now, about half a millisecond of
+        // the startup budget. The syntax definitions, which are the larger
+        // half, stay unread until a fence actually arrives.
+        let code = color
+            .then(|| {
+                let named = syntax
+                    .as_deref()
+                    .unwrap_or(crucible_tui::syntax::THEME_UNLESS_SAID);
+
+                crucible_tui::syntax::colours(named).or_else(|| {
+                    crucible_tui::syntax::colours(crucible_tui::syntax::THEME_UNLESS_SAID)
+                })
+            })
+            .flatten();
 
         Self {
             color,
             // Whether, then how much: the answer above is the veto, and the
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
-            palette: Palette::resolve(color, theme, exact, from),
+            palette: match code {
+                Some(six) => Palette::resolve(color, theme, exact, from).reading(six),
+                None => Palette::resolve(color, theme, exact, from),
+            },
             ground,
-            glyphs: match output.glyphs.unwrap_or(Wanted::Unicode) {
+            glyphs: match glyphs.unwrap_or(Wanted::Unicode) {
                 Wanted::Unicode => Glyphs::Unicode,
                 Wanted::Ascii => Glyphs::Ascii,
             },
-            detail: output.detail.unwrap_or(ToolDetail::Compact),
+            detail: detail.unwrap_or(ToolDetail::Compact),
 
             // Off unless a layer asked. The wheel is a button, so a terminal
             // forwarding buttons to crucible is one whose wheel no longer
             // scrolls the scrollback this program's transcript lives in.
-            clicks: output.mouse.is_some_and(Mouse::places),
+            clicks: mouse.is_some_and(Mouse::places),
         }
     }
 
@@ -177,6 +214,14 @@ impl Style {
     /// terminal reported then.
     pub(crate) fn ground(self) -> Option<Ground> {
         self.ground
+    }
+
+    /// The same style, reading code in a different syntax theme.
+    pub(crate) fn reading(self, colours: [(u8, u8, u8); 6]) -> Self {
+        Self {
+            palette: self.palette.reading(colours),
+            ..self
+        }
     }
 
     /// The same style, drawn with a different table.

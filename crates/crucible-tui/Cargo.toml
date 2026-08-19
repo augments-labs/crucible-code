@@ -11,7 +11,9 @@ authors.workspace = true
 
 [dependencies]
 crossterm.workspace = true
+syntect.workspace = true
 terminal-colorsaurus.workspace = true
+two-face.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
 

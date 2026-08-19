@@ -347,7 +347,7 @@ mod tests {
         }
         .rows(60, Glyphs::Unicode)
         .first()
-        .map(|row| row.paint(colourful()))
+        .map(|row| row.paint(&colourful()))
         .expect("a row the component drew");
 
         assert!(
@@ -397,7 +397,7 @@ mod tests {
         }
         .rows(60, Glyphs::Unicode)
         .iter()
-        .map(|row| row.paint(colourful()))
+        .map(|row| row.paint(&colourful()))
         .collect();
 
         let chosen = painted.first().expect("the row it is on");

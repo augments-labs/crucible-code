@@ -22,7 +22,7 @@
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
@@ -112,6 +112,10 @@ pub(crate) struct Terms {
     /// layer said — which is not the same as `auto`, and is why the panel marks
     /// nothing rather than marking the row `auto` happens to have resolved to.
     pub(crate) chosen: Cell<Option<crucible_config::ThemeChoice>>,
+    /// Which syntax theme fenced code is read in, where a layer named one or
+    /// `/theme` took one. `None` is "nothing said", and the first fence settles
+    /// on whatever this build draws code in unless somebody says otherwise.
+    pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// Which files this session has read, which is what `write` asks before it

@@ -63,6 +63,14 @@
           ],
           "type": "string"
         },
+        "syntaxTheme": {
+          "description": "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
+          "examples": [
+            "Monokai Extended",
+            "GitHub"
+          ],
+          "type": "string"
+        },
         "theme": {
           "description": "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
           "enum": [

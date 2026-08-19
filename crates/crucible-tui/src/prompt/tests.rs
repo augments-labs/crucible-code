@@ -591,7 +591,7 @@ fn the_border_is_drawn_in_the_tone_the_mode_was_given() {
 
     for row in prompt.rows(80, Glyphs::Unicode).iter().take(3) {
         assert!(
-            row.paint(colourful()).starts_with(&opened),
+            row.paint(&colourful()).starts_with(&opened),
             "{:?}",
             row.text()
         );
@@ -611,7 +611,7 @@ fn a_committed_line_takes_the_ground_the_terminal_reported() {
     // which is why it can be painted at all without taking the ground away from
     // them.
     let rows = Prompt::committed("fix the resolution", 40, Glyphs::Unicode, true);
-    let painted = rows.first().expect("a row").paint(over((13, 13, 16)));
+    let painted = rows.first().expect("a row").paint(&over((13, 13, 16)));
 
     assert!(
         painted.contains("\x1b[48;2;"),
@@ -646,7 +646,7 @@ fn the_mark_on_a_committed_line_is_on_the_band_rather_than_beside_it() {
     // One row, one ground. A mark drawn in the plain accent would sit in a hole
     // the band was painted around.
     let rows = Prompt::committed("fix it", 40, Glyphs::Unicode, true);
-    let painted = rows.first().expect("a row").paint(over((13, 13, 16)));
+    let painted = rows.first().expect("a row").paint(&over((13, 13, 16)));
 
     let mark = painted.find('›').expect("the mark");
     let opened = painted[..mark]
@@ -669,14 +669,14 @@ fn a_committed_line_takes_no_ground_where_the_terminal_said_nothing() {
     });
 
     for row in Prompt::committed("fix the resolution", 40, Glyphs::Unicode, true) {
-        assert!(!row.paint(plain).contains("\x1b[48;"), "{:?}", row.text());
+        assert!(!row.paint(&plain).contains("\x1b[48;"), "{:?}", row.text());
     }
 }
 
 #[test]
 fn nothing_is_painted_on_a_committed_line_where_there_is_no_colour_at_all() {
     for row in Prompt::committed("fix the resolution", 40, Glyphs::Unicode, true) {
-        assert_eq!(row.paint(Palette::plain()), row.text());
+        assert_eq!(row.paint(&Palette::plain()), row.text());
     }
 }
 

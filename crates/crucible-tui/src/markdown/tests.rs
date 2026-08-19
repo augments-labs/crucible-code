@@ -84,8 +84,31 @@ fn inline_code_is_quiet_and_loses_its_backticks() {
 fn a_fence_and_the_language_written_on_it_take_no_row_of_their_own() {
     let said = whole("before\n```rust\nlet it = 1;\n```\nafter\n");
 
+    // The fence and the word after it are markers, so neither is drawn and
+    // neither costs a row. What is between them is the block.
     assert_eq!(drawn(&said), "before\nlet it = 1;\nafter\n");
-    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Quiet, Slot::Plain]);
+
+    // The block is read rather than quiet, because the fence named a language
+    // this build knows. What it is *not* is prose: nothing inside it comes back
+    // Plain-and-nothing-else the way the words on either side do.
+    let inside: Vec<Slot> = said
+        .iter()
+        .skip_while(|(_, text)| !text.contains("let"))
+        .take_while(|(_, text)| !text.contains("after"))
+        .map(|(slot, _)| *slot)
+        .collect();
+
+    assert!(inside.contains(&Slot::Keyword), "{said:?}");
+    assert_eq!(
+        slots(&said).first().copied(),
+        Some(Slot::Plain),
+        "the prose before it moved"
+    );
+    assert_eq!(
+        slots(&said).last().copied(),
+        Some(Slot::Plain),
+        "the prose after it moved"
+    );
 }
 
 #[test]
@@ -165,7 +188,86 @@ fn a_fence_split_across_three_deltas_is_still_one_fence() {
     let third = read(&mut markdown, " = 1;\n```\n");
 
     assert_eq!(drawn(&first), "");
-    assert_eq!(drawn(&second), "let it");
-    assert_eq!(drawn(&third), " = 1;\n");
-    assert_eq!(slots(&third), vec![Slot::Quiet]);
+
+    // Nothing yet: a block being read is held until its line is whole, because
+    // a highlighter reads lines and a delta is a piece of the wire. So code
+    // arrives on screen a line at a time where prose arrives a character at a
+    // time — bounded by one line, and the price of reading it at all.
+    assert_eq!(drawn(&second), "");
+    assert_eq!(drawn(&third), "let it = 1;\n");
+
+    let read_as: Vec<Slot> = third.iter().map(|(slot, _)| *slot).collect();
+    assert!(read_as.contains(&Slot::Keyword), "{third:?}");
+}
+
+#[test]
+fn a_fenced_block_in_a_language_this_build_knows_is_read() {
+    // The whole point of the fence keeping its language.
+    let said = whole("```rust\nlet x = 1; // hi\n```\n");
+    let kinds: Vec<Slot> = said.iter().map(|(slot, _)| *slot).collect();
+
+    assert!(kinds.contains(&Slot::Keyword), "no keyword: {said:?}");
+    assert!(kinds.contains(&Slot::Comment), "no comment: {said:?}");
+}
+
+#[test]
+fn a_fence_that_named_nothing_is_the_block_it_always_was() {
+    // The fallback, unchanged: quiet and whole.
+    let said = whole("```\nlet x = 1;\n```\n");
+
+    assert!(
+        said.iter().all(|(slot, _)| *slot == Slot::Quiet),
+        "something was read: {said:?}"
+    );
+}
+
+#[test]
+fn a_fence_naming_something_nothing_knows_is_the_block_it_always_was() {
+    let said = whole("```wingdings\nlet x = 1;\n```\n");
+
+    assert!(
+        said.iter().all(|(slot, _)| *slot == Slot::Quiet),
+        "something was read: {said:?}"
+    );
+}
+
+#[test]
+fn a_block_that_was_read_says_exactly_what_arrived() {
+    // Every byte of the code comes back, once, in order — the fence's own two
+    // lines being the markers they always were.
+    let code = "fn main() {\n    let x = 1; // hi\n    println!(\"{x}\");\n}\n";
+    let said = whole(&format!("```rust\n{code}```\n"));
+    let text: String = said.iter().map(|(_, text)| text.as_str()).collect();
+
+    assert_eq!(text, code);
+}
+
+#[test]
+fn a_block_read_a_character_at_a_time_says_the_same_thing() {
+    // A delta is a piece of the wire, so a fence, a language and a line of code
+    // all arrive split as often as not.
+    let streamed = "```rust\nlet x = 1; // hi\nlet y = 2;\n```\n";
+    let together = self::whole(streamed);
+
+    let mut markdown = Markdown::default();
+    let mut apart = Vec::new();
+    for character in streamed.chars() {
+        let mut piece = [0u8; 4];
+        markdown.read(character.encode_utf8(&mut piece), &mut |slot, text| {
+            apart.push((slot, text.to_owned()));
+        });
+    }
+
+    let joined = |runs: &[(Slot, String)]| -> Vec<(Slot, String)> {
+        let mut out: Vec<(Slot, String)> = Vec::new();
+        for (slot, text) in runs {
+            match out.last_mut() {
+                Some((last, held)) if last == slot => held.push_str(text),
+                _ => out.push((*slot, text.clone())),
+            }
+        }
+        out
+    };
+
+    assert_eq!(joined(&apart), joined(&together));
 }

@@ -33,7 +33,7 @@ pub struct Caret {
 /// Kept rather than built per frame because a live region is redrawn on every
 /// keystroke, and a `String` per row per key is an allocation the render path
 /// does not have to make.
-pub(crate) fn paint(rows: &[Row], palette: Palette, into: &mut Vec<String>) {
+pub(crate) fn paint(rows: &[Row], palette: &Palette, into: &mut Vec<String>) {
     into.resize_with(rows.len(), String::new);
 
     for (row, painted) in rows.iter().zip(into.iter_mut()) {
@@ -116,7 +116,7 @@ mod tests {
 
         paint(
             &[Row::plain("one"), Row::plain("two")],
-            Palette::plain(),
+            &Palette::plain(),
             &mut into,
         );
 
@@ -132,10 +132,10 @@ mod tests {
         let mut into = Vec::new();
         paint(
             &[Row::plain("one"), Row::plain("two")],
-            Palette::plain(),
+            &Palette::plain(),
             &mut into,
         );
-        paint(&[Row::plain("one")], Palette::plain(), &mut into);
+        paint(&[Row::plain("one")], &Palette::plain(), &mut into);
 
         assert_eq!(into, ["one"]);
     }
@@ -147,7 +147,7 @@ mod tests {
         let mut into = Vec::new();
         let row = Row::new().then(Slot::Quiet, "ask");
 
-        paint(&[row], Palette::plain(), &mut into);
+        paint(&[row], &Palette::plain(), &mut into);
         assert_eq!(into, ["ask"]);
     }
 }

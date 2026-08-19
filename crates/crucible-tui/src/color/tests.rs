@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 16] {
+fn all() -> [Slot; 22] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -79,6 +79,12 @@ fn all() -> [Slot; 16] {
             Slot::AddedNumber => 13,
             Slot::Prompt => 14,
             Slot::PromptMark => 15,
+            Slot::Comment => 16,
+            Slot::Keyword => 17,
+            Slot::Str => 18,
+            Slot::Number => 19,
+            Slot::Name => 20,
+            Slot::Operator => 21,
         }
     }
 
@@ -99,6 +105,12 @@ fn all() -> [Slot; 16] {
         Slot::AddedNumber,
         Slot::Prompt,
         Slot::PromptMark,
+        Slot::Comment,
+        Slot::Keyword,
+        Slot::Str,
+        Slot::Number,
+        Slot::Name,
+        Slot::Operator,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -123,6 +135,7 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
         depth,
         theme,
         ground,
+        code: Code::default(),
         band,
         band_mark,
     }
@@ -387,8 +400,9 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // on this ground", which is the one judgement worth deferring to. The other
     // two are that same foreground with an attribute on it -- weight, and a
     // line through it -- so what they are legible against is whatever Plain
-    // was. The last two are the band, whose ground is the reader's own and
-    // whose ink is deliberately theirs as well.
+    // was. The band's ground is the reader's own and its ink is deliberately
+    // theirs as well, and the six code slots are a syntax theme's to fill —
+    // empty until one is read, and never in any table here.
     let hueless: Vec<Slot> = all()
         .into_iter()
         .filter(|slot| {
@@ -412,7 +426,13 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,
-            Slot::PromptMark
+            Slot::PromptMark,
+            Slot::Comment,
+            Slot::Keyword,
+            Slot::Str,
+            Slot::Number,
+            Slot::Name,
+            Slot::Operator,
         ]
     );
 }

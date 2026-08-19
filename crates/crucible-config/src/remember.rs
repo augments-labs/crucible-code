@@ -27,7 +27,7 @@ const FRESH: &str = "{\n  \"permissions\": {\n    \"allow\": [\n      RULE\n    
 const ASKED: &str = "{\n  \"provider\": PROVIDER\n}\n";
 
 /// The file crucible writes when the theme is all it has to say.
-const DRAWN: &str = "{\n  \"output\": {\n    \"theme\": THEME\n  }\n}\n";
+const DRAWN: &str = "{\n  \"output\": {\n    \"KEY\": THEME\n  }\n}\n";
 
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
@@ -169,10 +169,26 @@ pub fn asking(text: &str, file: &str, provider: &str) -> Result<String, ConfigEr
 /// into without rewriting — which is the moment to tell somebody what to type
 /// rather than to guess at their file.
 pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigError> {
-    let written = Value::String(theme.to_owned()).to_string();
+    output(text, file, "theme", theme)
+}
+
+/// The text of a configuration file that reads fenced code in `theme`.
+///
+/// The same splice as [`drawing`], one key over. See it for what is preserved.
+///
+/// # Errors
+///
+/// As [`drawing`].
+pub fn reading(text: &str, file: &str, theme: &str) -> Result<String, ConfigError> {
+    output(text, file, "syntaxTheme", theme)
+}
+
+/// One key of the `output` block, spliced in beside whatever else is there.
+fn output(text: &str, file: &str, key: &str, value_of: &str) -> Result<String, ConfigError> {
+    let written = Value::String(value_of.to_owned()).to_string();
 
     if text.trim().is_empty() {
-        return Ok(DRAWN.replace("THEME", &written));
+        return Ok(DRAWN.replace("KEY", key).replace("THEME", &written));
     }
 
     let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
@@ -182,15 +198,15 @@ pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigErro
         problem: crate::document::without_position(&source.to_string()).into(),
     })?;
 
-    if value.get("output").and_then(|output| output.get("theme"))
-        == Some(&Value::String(theme.to_owned()))
+    if value.get("output").and_then(|output| output.get(key))
+        == Some(&Value::String(value_of.to_owned()))
     {
         return Ok(text.to_owned());
     }
 
     let refuse = || ConfigError::Unspliceable {
         file: file.into(),
-        at: "output.theme".into(),
+        at: format!("output.{key}").into(),
         written: written.clone().into(),
     };
     let root = splice::root(text)
@@ -218,13 +234,13 @@ pub fn drawing(text: &str, file: &str, theme: &str) -> Result<String, ConfigErro
     }
 
     let block = splice::member(text, root, "output").ok_or_else(refuse)?;
-    if output.get("theme").is_none() {
+    if output.get(key).is_none() {
         return Ok(splice::insert(text, block, |_| {
-            format!("\"theme\": {written}")
+            format!("\"{key}\": {written}")
         }));
     }
 
-    let was = splice::member(text, block, "theme").ok_or_else(refuse)?;
+    let was = splice::member(text, block, key).ok_or_else(refuse)?;
     Ok(splice::over(text, was, &written))
 }
 

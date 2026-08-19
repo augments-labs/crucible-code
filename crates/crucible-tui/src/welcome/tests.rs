@@ -213,10 +213,10 @@ fn colour_says_what_a_row_means_and_never_changes_what_it_says() {
     for columns in [40, FRAMED_AT, 80, 120] {
         for row in welcome(&WORKED_IN).rows(columns, Glyphs::Unicode) {
             assert_eq!(
-                crate::width::columns(&row.paint(colourful())),
+                crate::width::columns(&row.paint(&colourful())),
                 row.columns()
             );
-            assert_eq!(row.paint(Palette::plain()), row.text());
+            assert_eq!(row.paint(&Palette::plain()), row.text());
         }
     }
 }
@@ -229,7 +229,7 @@ fn nothing_the_component_draws_reaches_above_the_screen() {
     let painted = welcome(&WORKED_IN)
         .rows(80, Glyphs::Unicode)
         .iter()
-        .map(|row| row.paint(colourful()))
+        .map(|row| row.paint(&colourful()))
         .collect::<String>();
 
     for upward in [

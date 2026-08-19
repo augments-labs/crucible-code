@@ -53,6 +53,13 @@ pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes `theme` down as the syntax theme fenced code is read in.
+pub(crate) fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::reading(text, named, theme)
+    })
+}
+
 /// Writes `provider` down as the one to ask from now on.
 ///
 /// Everything already in the file stays where it was, byte for byte. A file

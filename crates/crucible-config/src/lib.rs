@@ -60,7 +60,7 @@ mod shape;
 // to do with it, and a second way in is a second answer to which files exist.
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
-pub use remember::{allowing, asking, choosing, drawing, thinking};
+pub use remember::{allowing, asking, choosing, drawing, reading, thinking};
 pub use settings::{
     ClearScreen, Color, Glyphs, Mouse, Settings, ThemeChoice, ToolDetail, Updates, local, user,
 };

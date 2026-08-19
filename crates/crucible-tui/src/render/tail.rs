@@ -93,7 +93,7 @@ impl Tail {
     /// The sequence costs no column. Width is counted as characters are placed
     /// and a sequence is never placed, so a row wearing a slot wraps in exactly
     /// the same column as the same row plain.
-    pub(crate) fn wear(&mut self, slot: Slot, palette: Palette) {
+    pub(crate) fn wear(&mut self, slot: Slot, palette: &Palette) {
         let worn = palette.open(slot);
         if worn == self.worn {
             return;

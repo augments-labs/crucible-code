@@ -125,6 +125,15 @@ impl Row {
         said
     }
 
+    /// The slot each run of this row asked for, in order.
+    ///
+    /// What a test checking that a component *chose* the right meaning reads —
+    /// [`Row::text`] answers what it says and [`Row::paint`] what a terminal is
+    /// sent, and neither can answer this.
+    pub fn kinds(&self) -> impl Iterator<Item = Slot> + '_ {
+        self.0.iter().map(|span| span.slot)
+    }
+
     /// The runs the row is made of: the slot each asked for, and what it says.
     ///
     /// The one thing neither [`Row::text`] nor [`Row::paint`] can answer. A
@@ -140,12 +149,17 @@ impl Row {
 
     /// The row as a terminal is sent it.
     ///
+    /// The palette is borrowed rather than copied. It used to be a handful of
+    /// bytes and was passed by value; it now carries the sequences it worked
+    /// out — the prompt band and the six a syntax theme decides — and copying
+    /// those once per row is work on the one path that may not do any.
+    ///
     /// A slot the palette has no colour for — [`Slot::Plain`] always, and every
     /// slot once colour is off — writes its text and nothing around it, so a
     /// run that is not coloured costs no bytes rather than costing an empty
     /// pair of sequences.
     #[must_use]
-    pub fn paint(&self, palette: Palette) -> String {
+    pub fn paint(&self, palette: &Palette) -> String {
         let mut painted = String::new();
         self.paint_into(palette, &mut painted);
         painted
@@ -155,7 +169,7 @@ impl Row {
     ///
     /// What a component with a dozen rows to draw uses, so the whole of it
     /// costs the one allocation that buffer already grew to.
-    pub fn paint_into(&self, palette: Palette, painted: &mut String) {
+    pub fn paint_into(&self, palette: &Palette, painted: &mut String) {
         // Room for the sequences as well, so a row of a dozen spans does not
         // grow the buffer twice. Over-reserving by a few bytes is cheaper than
         // either.
@@ -208,8 +222,8 @@ mod tests {
             .then(Slot::Quiet, "v0.0.8");
 
         assert_eq!(row.columns(), "crucible v0.0.8".len());
-        assert_eq!(width::columns(&row.paint(colourful())), row.columns());
-        assert_eq!(width::columns(&row.paint(Palette::plain())), row.columns());
+        assert_eq!(width::columns(&row.paint(&colourful())), row.columns());
+        assert_eq!(width::columns(&row.paint(&Palette::plain())), row.columns());
     }
 
     #[test]
@@ -220,8 +234,8 @@ mod tests {
             .then(Slot::Accent, "/");
 
         assert_eq!(row.text(), "Tips: /");
-        assert_eq!(row.paint(Palette::plain()), "Tips: /");
-        assert!(row.paint(colourful()).contains("Tips"));
+        assert_eq!(row.paint(&Palette::plain()), "Tips: /");
+        assert!(row.paint(&colourful()).contains("Tips"));
     }
 
     #[test]
@@ -231,7 +245,7 @@ mod tests {
         // and the padding from paying for a palette they do not use.
         let row = Row::plain("   ~/code   ");
 
-        assert_eq!(row.paint(colourful()), row.text());
+        assert_eq!(row.paint(&colourful()), row.text());
     }
 
     #[test]
@@ -285,7 +299,7 @@ mod tests {
             .then(Slot::Quiet, "");
 
         assert_eq!(
-            row.paint(colourful()),
+            row.paint(&colourful()),
             colourful().open(Slot::Plain).as_str().to_owned() + "there"
         );
         assert!(!row.is_empty());
@@ -298,7 +312,7 @@ mod tests {
         // the last row of a component is the reader's own transcript.
         let painted = Row::plain("root: ")
             .then(Slot::Accent, "~/code")
-            .paint(colourful());
+            .paint(&colourful());
 
         assert!(painted.ends_with(colourful().close()), "{painted:?}");
     }
