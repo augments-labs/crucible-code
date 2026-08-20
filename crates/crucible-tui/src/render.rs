@@ -559,18 +559,20 @@ impl<T: Terminal> Renderer<T> {
     /// under the final answer, and the shell's own prompt would come back one
     /// row lower than it left.
     ///
-    /// Blank rows do not accumulate, and none is owed at the very top, where
-    /// the boundary is the start of the session. Nor is one owed while the tail
-    /// still holds something: what comes next is then the rest of that line
-    /// rather than a block after it, and a caller that asks on every piece of a
-    /// streamed answer — which is the only way it can ask on the first — must
-    /// get a row before the answer and none inside it.
+    /// Blank rows do not accumulate, and none is owed once an answer has begun
+    /// arriving: what comes next is then the rest of that answer rather than a
+    /// block after it, and a caller that asks on every piece of a streamed
+    /// answer — which is the only way it can ask on the first — must get a row
+    /// before the answer and none inside it. The tail holding something is not
+    /// that question: a row is complete the moment its newline arrives and is
+    /// gone by the next delta, so an answer between one row and the next holds
+    /// nothing at all.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn apart(&mut self) -> Result<(), TerminalError> {
-        if self.parted || !self.tail.is_empty() {
+        if self.parted || self.tail.live() {
             return Ok(());
         }
 

@@ -67,6 +67,14 @@ pub(crate) struct Tail {
     /// measurement is kept for. True to start with, because a tail that has let
     /// nothing go has put no row under anything.
     let_blank: bool,
+    /// Whether anything has been written into this tail since it was cleared.
+    ///
+    /// Not the question [`Self::is_empty`] answers. A row is complete the
+    /// moment the newline ends it and leaves for scrollback on the frame after
+    /// that, so a tail in the middle of an answer holds nothing at all between
+    /// one row and the next -- which is what a boundary between two blocks
+    /// looks like too. This is what tells them apart.
+    live: bool,
 }
 
 /// The last place on a row a wrap could cut it, and what the cut has to mend.
@@ -121,6 +129,7 @@ impl Tail {
             open: false,
             broken: None,
             let_blank: true,
+            live: false,
         }
     }
 
@@ -164,6 +173,7 @@ impl Tail {
             if self.escapes.holds(character) {
                 continue;
             }
+            self.live = true;
 
             match character {
                 // A newline ends the row wherever it is.
@@ -240,6 +250,15 @@ impl Tail {
         self.is_empty() && self.let_blank
     }
 
+    /// Whether a message is still being written into this tail.
+    ///
+    /// What a caller asks before putting a row of its own down: a row inside an
+    /// answer that is still arriving is a row nobody wrote. See [`Self::live`].
+    #[must_use]
+    pub(crate) fn live(&self) -> bool {
+        self.live
+    }
+
     /// How many columns along the row being appended to the next character
     /// goes.
     ///
@@ -269,6 +288,9 @@ impl Tail {
         self.close = "";
         self.open = false;
         self.broken = None;
+        // The message that was being written into this tail is over. What
+        // comes next starts from nothing having been written.
+        self.live = false;
     }
 
     /// Ends the row being appended to and starts a fresh one, carrying the slot

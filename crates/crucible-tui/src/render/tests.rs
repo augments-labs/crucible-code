@@ -992,3 +992,24 @@ fn the_region_is_read_from_the_same_place_the_record_is() {
     assert_eq!(render.within(3, 4), None, "above the region");
     assert_eq!(render.within(6, 4), None, "below the last row of it");
 }
+
+#[test]
+fn a_row_is_never_put_down_inside_an_answer_still_arriving() {
+    // Every delta asks, because the first one is the only one worth asking on
+    // and nothing upstream can tell which that was. A row completed by one
+    // delta has gone to scrollback by the time the next arrives, so the tail is
+    // holding nothing at that moment -- and a tail holding nothing is exactly
+    // what a boundary between two blocks looks like from here.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    for delta in ["- one\n", "- two\n"] {
+        render.apart().unwrap();
+        render.stream(delta).unwrap();
+    }
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written().matches("\r\n").count(),
+        2,
+        "one row for each item, and nothing between them"
+    );
+}

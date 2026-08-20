@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A blank row no longer opens in the middle of an answer.** A row is complete
+the moment its newline arrives and belongs to the terminal by the next delta,
+so between one row and the next the live region holds nothing — which is also
+what the boundary between two blocks looks like, and the separating row was
+spent again on every list item and every line of a plan.
+
 **A block fenced with tildes is a block.** `~~~` was written into the answer as
 three tildes and everything between them was read as prose, so a block written
 that way lost the markers its code was made of. A block is now closed by the
