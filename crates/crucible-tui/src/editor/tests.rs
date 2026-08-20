@@ -337,6 +337,32 @@ fn a_multi_line_paste_keeps_its_newlines_and_drops_the_rest() {
 }
 
 #[test]
+fn a_break_is_stored_one_way_whichever_of_the_three_a_paste_arrives_in() {
+    // The spelling that matters most is the one this editor does *not* store: a
+    // terminal spells the break inside a paste the way Return spells it, so a
+    // carriage return is what a real paste is made of and reading only newlines
+    // is the same bug as reading none.
+    for pasted in ["first\rsecond\rthird", "first\r\nsecond\r\nthird"] {
+        let mut editor = Editor::new().multiline();
+
+        assert_eq!(editor.paste(pasted), Typed::Changed, "{pasted:?}");
+        assert_eq!(editor.text(), "first\nsecond\nthird", "{pasted:?}");
+        assert_eq!(editor.line(), 2, "{pasted:?}");
+    }
+
+    // The pair is one break and not two, so a clipboard filled on another
+    // platform does not arrive double-spaced.
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste("one\r\ntwo"), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+
+    // And a one-line editor loses all three, the same as it loses a newline.
+    let mut single = Editor::new();
+    assert_eq!(single.paste("first\rsecond\r\nthird"), Typed::Changed);
+    assert_eq!(single.text(), "firstsecondthird");
+}
+
+#[test]
 fn up_and_down_cross_lines_and_remember_the_column() {
     let mut editor = lines("long line here\nshort\nlong again");
     // Start at the end of the last line, column 10.
@@ -512,4 +538,102 @@ fn a_pasted_tab_arrives_as_the_columns_it_stood_for() {
 
     assert_eq!(editor.paste("fn main() {\n\tlet a = 1;\n}"), Typed::Changed);
     assert_eq!(editor.text(), "fn main() {\n    let a = 1;\n}");
+}
+
+#[test]
+fn return_sends_and_a_modified_return_opens_a_line() {
+    // The arrangement almost every reader has, and the one nothing has to be
+    // configured for.
+    let mut editor = typed("one").multiline();
+
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+}
+
+#[test]
+fn the_two_swap_for_a_terminal_that_keeps_the_modified_return() {
+    // What a reader asks for when Shift and Return never reach this process:
+    // Return opens the line it could not otherwise open, and the press that did
+    // arrive is the one that sends.
+    let mut editor = typed("one").multiline().sends(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Newline), Typed::Submitted);
+}
+
+#[test]
+fn the_swap_still_refuses_to_send_nothing() {
+    // Whichever press sends, an empty box has nothing to send — otherwise the
+    // arrangement below would turn a stray Alt+Return into a turn about
+    // nothing.
+    let mut editor = Editor::new().multiline().sends(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Newline), Typed::Ignored);
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "\n");
+}
+
+#[test]
+fn the_three_edits_every_shell_answers_to_reach_the_line_here_too() {
+    let mut editor = lines("first line\nsecond word here");
+
+    // The cursor is at the end of the last line. A word back, then another.
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first line\nsecond word ");
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first line\nsecond ");
+
+    // The rest of the line, and only of the line: the one above it stays.
+    assert_eq!(editor.press(Key::RubToStart), Typed::Changed);
+    assert_eq!(editor.text(), "first line\n");
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 0);
+
+    // An edit against an end it is already at is nothing happening, which is
+    // what keeps a held key from redrawing at the speed of the repeat. The line
+    // ahead is empty and the line behind is empty, so two of the three refuse.
+    assert_eq!(editor.press(Key::RubToStart), Typed::Ignored);
+    assert_eq!(editor.press(Key::Delete), Typed::Ignored);
+
+    // The third does not, and that is the point: a word goes on being a word
+    // across a break, the same way Backspace joins the lines rather than
+    // stopping at one. Nothing else here treats a break as a wall.
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first ");
+    assert_eq!(editor.line(), 0);
+}
+
+#[test]
+fn the_rest_of_a_line_ahead_goes_without_the_line_under_it() {
+    let mut editor = lines("keep this\nand this");
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+
+    assert_eq!(editor.press(Key::RubToEnd), Typed::Changed);
+    assert_eq!(editor.text(), "keep this\n");
+
+    // The break is not on the line ahead, so the line above survives an edit
+    // that took everything the cursor could see.
+    assert_eq!(editor.press(Key::RubToEnd), Typed::Ignored);
+    assert_eq!(editor.line(), 1);
+}
+
+#[test]
+fn delete_takes_what_is_ahead_and_leaves_the_cursor_where_it_was() {
+    let mut editor = Editor::new();
+    editor.paste("abc");
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+
+    assert_eq!(editor.press(Key::Delete), Typed::Changed);
+    assert_eq!(editor.text(), "bc");
+    assert_eq!(editor.column(), 0);
+
+    // A character wider than a byte goes whole, which is what a rub that
+    // counted bytes would get wrong.
+    let mut wide = Editor::new();
+    wide.paste("日本");
+    assert_eq!(wide.press(Key::Home), Typed::Changed);
+    assert_eq!(wide.press(Key::Delete), Typed::Changed);
+    assert_eq!(wide.text(), "本");
 }

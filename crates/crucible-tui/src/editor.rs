@@ -49,6 +49,14 @@ pub enum Key {
     Char(char),
     /// Rub out what is behind the cursor.
     Backspace,
+    /// Rub out what is ahead of it.
+    Delete,
+    /// Rub out the word behind it, back to where that word starts.
+    RubWord,
+    /// Rub out the rest of the line behind it.
+    RubToStart,
+    /// Rub out the rest of the line ahead of it.
+    RubToEnd,
     /// Move one character back.
     Left,
     /// Move one character on.
@@ -57,8 +65,10 @@ pub enum Key {
     Up,
     /// Move to the line below, the same way.
     Down,
-    /// A newline, inserted where the cursor is. Distinct from the key that
-    /// submits, which is what a bare Return stays.
+    /// A Return that arrived with a modifier — Shift, Alt, or the Ctrl-J a
+    /// terminal has always spelled a line feed with. Kept apart from the bare
+    /// one because which of the two sends is the reader's to say; see
+    /// [`Sending`].
     Newline,
     /// Move back over the word behind the cursor, to where it starts.
     WordLeft,
@@ -68,13 +78,40 @@ pub enum Key {
     Home,
     /// Move to the end of it.
     End,
-    /// Submit what is there.
+    /// A Return with nothing held down.
     Enter,
     /// Ctrl-C. In raw mode the terminal sends the key rather than a signal, so
     /// what it means is decided here.
     Interrupt,
     /// Ctrl-D, which a terminal means as the end of input.
     Eof,
+}
+
+/// Which press ends the text, and which one opens a line under it.
+///
+/// A reader's answer rather than something read off the terminal. Every
+/// terminal reports a bare Return; not every terminal *forwards* a modified
+/// one, and one that keeps Shift and Return for itself leaves the arrangement
+/// almost everybody wants with no way to write a second line. So the two are
+/// swappable, and both arrangements rest on presses that arrive everywhere.
+///
+/// What is not offered is Ctrl and Return. A terminal that has not agreed to a
+/// newer keyboard protocol sends the same bytes for it as for Return alone, so
+/// a reader who chose it on such a terminal could not send anything at all.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Sending {
+    /// Return sends; a modified Return opens a line.
+    #[default]
+    Enter,
+    /// A modified Return sends; Return opens a line.
+    AltEnter,
+}
+
+impl Sending {
+    /// Whether the press that sends is a modified Return rather than a bare one.
+    const fn modified(self) -> bool {
+        matches!(self, Self::AltEnter)
+    }
 }
 
 /// What a key did.
@@ -124,6 +161,10 @@ pub struct Editor {
     /// than drifting left over a run of short lines. `None` while the cursor
     /// has only ever moved sideways.
     wanted: Option<usize>,
+    /// Which press sends, and which opens a line. Only the prompt sets it: an
+    /// editor of one line has nowhere to put a second, so a Return there is a
+    /// Return whatever a document says.
+    sending: Sending,
 }
 
 impl Editor {
@@ -144,6 +185,17 @@ impl Editor {
     #[must_use]
     pub fn multiline(mut self) -> Self {
         self.multiline = true;
+        self
+    }
+
+    /// Says which press sends the text, and which opens a line under it.
+    ///
+    /// The prompt is the one caller, for the reason [`Editor::multiline`] is
+    /// the one caller of that: an editor with one row has no second press to
+    /// give away.
+    #[must_use]
+    pub fn sends(mut self, sending: Sending) -> Self {
+        self.sending = sending;
         self
     }
 
@@ -277,6 +329,10 @@ impl Editor {
         match key {
             Key::Char(typed) => self.insert(typed),
             Key::Backspace => self.rub(),
+            Key::Delete => self.rub_ahead(),
+            Key::RubWord => self.cut(self.word_back(), self.at),
+            Key::RubToStart => self.cut(self.line_start(), self.at),
+            Key::RubToEnd => self.cut(self.at, self.line_end()),
             Key::Left => self.left(),
             Key::Right => self.right(),
             Key::Up => self.up(),
@@ -285,8 +341,8 @@ impl Editor {
             Key::WordRight => self.jump(self.word_ahead()),
             Key::Home => self.jump(self.line_start()),
             Key::End => self.jump(self.line_end()),
-            Key::Newline => self.newline(),
-            Key::Enter => self.submit(),
+            Key::Newline => self.returned(true),
+            Key::Enter => self.returned(false),
             Key::Interrupt => self.interrupt(),
             Key::Eof => self.eof(),
         }
@@ -298,43 +354,51 @@ impl Editor {
     /// character. That makes a bulk insertion into the middle linear in the
     /// line plus the inserted text. Control characters are left out for the
     /// reason `insert` leaves them out — drawn, they would move a cursor the
-    /// renderer had already placed — with two exceptions: a newline, on an
-    /// editor that is many lines, is kept, and a tab arrives as [`TAB`].
-    /// Dropping the first turned a paste of several lines into one long line
-    /// with the breaks gone; dropping the second took the indentation off
-    /// every snippet written with tabs.
+    /// renderer had already placed — with two exceptions: a break, on an editor
+    /// that is many lines, is kept, and a tab arrives as [`TAB`]. Dropping the
+    /// first turned a paste of several lines into one long line with the breaks
+    /// gone; dropping the second took the indentation off every snippet written
+    /// with tabs.
+    ///
+    /// A break arrives spelled three ways and is stored one. A terminal spells
+    /// the break inside a paste the way Return spells it — a carriage return,
+    /// not a newline — so the spelling this editor keeps is the one a paste is
+    /// *least* likely to arrive in, and reading only that one is the same bug
+    /// as dropping every break. A clipboard filled on another platform carries
+    /// the pair, which is one break rather than two.
     pub fn paste(&mut self, pasted: &str) -> Typed {
         let multiline = self.multiline;
         let keeps = |character: char| !character.is_control() || (multiline && character == '\n');
 
-        let Some(first_control) = pasted.find(|character: char| !keeps(character)) else {
+        // Nothing to rewrite: every character stands as it is, including a
+        // break already spelled the way this editor stores one.
+        let Some(first_rewritten) = pasted.find(|character: char| !keeps(character)) else {
             return self.insert_text(pasted);
         };
 
-        let width = |character: char| match character {
-            '\t' => TAB.len(),
-            character if keeps(character) => character.len_utf8(),
-            _ => 0,
-        };
-
         let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
-        let mut kept = 0;
-        for character in pasted.chars() {
-            kept += width(character);
-            if kept > remaining {
+        let mut plain = String::with_capacity(pasted.len().min(remaining));
+        plain.push_str(pasted.get(..first_rewritten).unwrap_or_default());
+
+        let mut after_return = false;
+        let mut one = [0; 4];
+        for character in pasted.get(first_rewritten..).unwrap_or_default().chars() {
+            let paired = std::mem::replace(&mut after_return, character == '\r');
+
+            let carried = match character {
+                '\n' if paired => continue,
+                '\r' | '\n' if multiline => "\n",
+                '\t' => TAB,
+                kept if keeps(kept) => kept.encode_utf8(&mut one),
+                _ => continue,
+            };
+
+            if plain.len() + carried.len() > remaining {
                 return Typed::Refused;
             }
+            plain.push_str(carried);
         }
 
-        let mut plain = String::with_capacity(kept);
-        plain.push_str(pasted.get(..first_control).unwrap_or_default());
-        for character in pasted.get(first_control..).unwrap_or_default().chars() {
-            match character {
-                '\t' => plain.push_str(TAB),
-                character if keeps(character) => plain.push(character),
-                _ => {}
-            }
-        }
         self.insert_text(&plain)
     }
 
@@ -502,6 +566,34 @@ impl Editor {
         Typed::Changed
     }
 
+    /// Removes the character ahead of the cursor, which does not move.
+    fn rub_ahead(&mut self) -> Typed {
+        if self.ahead().is_none() {
+            return Typed::Ignored;
+        }
+
+        self.said.remove(self.at);
+        self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Removes everything between two boundaries the line already has, and
+    /// leaves the cursor at the first of them.
+    ///
+    /// Both come from the same helpers the cursor moves by, so neither can land
+    /// off a character boundary. An empty span is nothing happening, which is
+    /// what keeps a rub against an end it is already at from redrawing.
+    fn cut(&mut self, from: usize, to: usize) -> Typed {
+        if from >= to {
+            return Typed::Ignored;
+        }
+
+        self.said.replace_range(from..to, "");
+        self.at = from;
+        self.wanted = None;
+        Typed::Changed
+    }
+
     fn left(&mut self) -> Typed {
         match self.back() {
             Some(back) => {
@@ -574,6 +666,19 @@ impl Editor {
     /// Return on an empty prompt is somebody looking at the screen, not
     /// somebody asking for nothing. Submitting it would cost a turn and answer
     /// a question nobody asked.
+    /// Does what a Return does, told apart by whether a modifier came with it.
+    ///
+    /// One of the two sends and the other opens a line, and which is which is
+    /// [`Sending`]. Written as one function rather than two arms so that the
+    /// swap is stated once: two arms would be two places to get it backwards.
+    fn returned(&mut self, modified: bool) -> Typed {
+        if modified == self.sending.modified() {
+            self.submit()
+        } else {
+            self.newline()
+        }
+    }
+
     fn submit(&self) -> Typed {
         if self.said.is_empty() {
             Typed::Ignored
