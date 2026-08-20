@@ -1487,7 +1487,12 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
         .messages()
         .iter()
         .filter_map(|message| match message {
-            Message::ToolResults(results) => Some(results.iter().map(|result| result.output.text().len()).collect()),
+            Message::ToolResults(results) => Some(
+                results
+                    .iter()
+                    .map(|result| result.output.text().len())
+                    .collect(),
+            ),
             _ => None,
         })
         .collect::<Vec<Vec<usize>>>()
@@ -1501,7 +1506,10 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     let [oldest, protected @ ..] = cleared.as_slice() else {
         panic!("expected three results standing, got {}", cleared.len());
     };
-    assert!(*oldest < 50_000, "the oldest result kept its bulk: {cleared:?}");
+    assert!(
+        *oldest < 50_000,
+        "the oldest result kept its bulk: {cleared:?}"
+    );
     assert!(
         protected.iter().all(|size| *size == 50_000),
         "a protected result was cleared: {cleared:?}"
