@@ -50,14 +50,6 @@ const ROOM: u32 = 4_096;
 /// reaches its end a moment early is better than one that stalls short of it.
 const BYTES: u64 = 3;
 
-/// What a recap is marked with where it stands in a transcript.
-///
-/// The model reads its own notes back under a heading that says whose they are
-/// and why they are short — without it, a recap reads as something the user
-/// said, which is the one voice it must not be mistaken for.
-const STANDS: &str = "[everything before this was compacted to make room; \
-these are your own notes on it]\n\n";
-
 impl Runner {
     /// Makes room, and says what it took.
     ///
@@ -99,7 +91,7 @@ impl Runner {
         let standing: Vec<Message> = messages.drain(replacing..).collect();
         drop(messages);
 
-        let standing_as = format!("{STANDS}{recap}");
+        let standing_as = format!("{}{recap}", crucible_core::RECAP);
 
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one

@@ -32,7 +32,7 @@ mod workspace;
 
 pub use ask::{Answer, Answered, Put, Question};
 pub use cancel::Cancel;
-pub use compaction::{Compacted, Compacting};
+pub use compaction::{Compacted, Compacting, RECAP};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };

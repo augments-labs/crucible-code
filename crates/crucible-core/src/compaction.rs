@@ -4,6 +4,16 @@
 //! that draws is told room is being made and then what it came to, and neither
 //! of those may name the loop that did it.
 
+/// What a recap is marked with where it stands in a transcript.
+///
+/// In core because two crates need the same string for opposite reasons: the
+/// loop writes it so the model reads its own notes under a heading saying whose
+/// they are, and the screen reads it so it can draw them as notes rather than
+/// as something the user typed. Two copies of it would come apart, and the day
+/// they did the notes would go back to looking like a prompt.
+pub const RECAP: &str = "[everything before this was compacted to make room; \
+these are your own notes on it]\n\n";
+
 /// What asked for room to be made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compacting {

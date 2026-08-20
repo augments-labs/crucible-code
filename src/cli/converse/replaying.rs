@@ -17,8 +17,8 @@
 //! every line of it again. The prompts and the answers go down in full, because
 //! those are the conversation.
 
-use crucible_core::{Message, StopReason, Transcript};
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_core::{Message, RECAP, StopReason, Transcript};
+use crucible_tui::{Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -74,30 +74,45 @@ pub(super) fn replayed<T: Terminal>(
 /// One message, as the rows that say it happened.
 fn rows(message: &Message, columns: usize, style: Style) -> Vec<Row> {
     let glyphs = style.glyphs();
-    let room = columns.saturating_sub(BEFORE.len());
+    let room = columns.saturating_sub(BEFORE.chars().count());
 
     match message {
-        // What was asked, with the mark the box puts in front of a line being
+        // The notes a compaction left standing. They ride a user message
+        // because the closed set of messages has no variant for them and no
+        // provider would know what to do with one — but they are the model's
+        // own words, and drawing them behind the mark somebody's typing wears
+        // would say the user wrote them.
+        Message::User(said) if said.starts_with(RECAP) => {
+            let notes = said.strip_prefix(RECAP).unwrap_or(said);
+            let mut rows = vec![
+                Row::new()
+                    .then(Slot::Quiet, BEFORE)
+                    .then(Slot::Quiet, clip("notes on everything before this", room)),
+            ];
+            rows.extend(prose(notes, room, Slot::Quiet));
+            rows
+        }
+
+        // What was asked, behind the mark the box puts in front of a line being
         // typed, so a reader finds their own words the way they left them.
         Message::User(said) => said
             .lines()
-            .map(|line| {
-                Row::new()
-                    .then(Slot::Quiet, BEFORE)
-                    .then(Slot::Quiet, glyphs.caret())
-                    .then(Slot::Plain, format!(" {}", clip(line, room)))
+            .flat_map(|line| {
+                let mark = format!("{} ", glyphs.caret());
+                fold(line, room.saturating_sub(mark.chars().count()))
+                    .into_iter()
+                    .map(|part| {
+                        Row::new()
+                            .then(Slot::Quiet, BEFORE)
+                            .then(Slot::Quiet, mark.clone())
+                            .then(Slot::Plain, part.to_owned())
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect(),
 
         Message::Agent { text, calls, stop } => {
-            let mut rows: Vec<Row> = text
-                .lines()
-                .map(|line| {
-                    Row::new()
-                        .then(Slot::Quiet, BEFORE)
-                        .then(Slot::Plain, clip(line, room))
-                })
-                .collect();
+            let mut rows = prose(text, room, Slot::Plain);
 
             // Named, not replayed: what a tool said is in the transcript the
             // model reads, and a reader wants what was done.
@@ -138,6 +153,32 @@ fn rows(message: &Message, columns: usize, style: Style) -> Vec<Row> {
             ]
         }
     }
+}
+
+/// Prose, wrapped to the room it has.
+///
+/// **Folded, never clipped.** A transcript put back with its right-hand edge
+/// cut off is a transcript somebody has to go and read the log to understand —
+/// which is the whole of what this exists to save them.
+fn prose(text: &str, room: usize, slot: Slot) -> Vec<Row> {
+    text.lines()
+        .flat_map(|line| {
+            // A blank line in the middle of an answer is a paragraph break, and
+            // folding drops it — so it is kept here rather than lost.
+            if line.trim().is_empty() {
+                return vec![Row::new().then(Slot::Quiet, BEFORE)];
+            }
+
+            fold(line, room)
+                .into_iter()
+                .map(|part| {
+                    Row::new()
+                        .then(Slot::Quiet, BEFORE)
+                        .then(slot, part.to_owned())
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// What an ending is worth saying about, replayed.
@@ -210,6 +251,70 @@ mod tests {
             "{screen}"
         );
         assert!(screen.contains("1 result"), "{screen}");
+    }
+
+    #[test]
+    fn a_long_answer_is_wrapped_rather_than_cut_off_at_the_edge() {
+        // A transcript put back with its right-hand edge missing is one
+        // somebody has to open the log to understand, which is the whole of
+        // what this exists to save them.
+        let long = "a ".repeat(120);
+        let mut transcript = Transcript::new();
+        transcript.push(Message::Agent {
+            text: long.clone().into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+
+        let drawn: Vec<String> = transcript
+            .messages()
+            .iter()
+            .flat_map(|message| rows(message, 40, Style::plain()))
+            .map(|row| row.text())
+            .collect();
+
+        assert!(drawn.len() > 1, "it was cut instead of wrapped: {drawn:?}");
+        for row in &drawn {
+            assert!(crucible_tui::columns(row) <= 40, "{row:?}");
+        }
+
+        // And nothing of it went missing on the way.
+        let back: String = drawn
+            .iter()
+            .map(|row| row.trim_start_matches(['│', ' ']))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(back.split_whitespace().count() >= long.split_whitespace().count());
+    }
+
+    #[test]
+    fn the_notes_a_compaction_left_are_not_drawn_as_something_somebody_typed() {
+        // They ride a user message because the closed set has no variant for
+        // them — but they are the model's own words, and the mark a typed line
+        // wears would say otherwise.
+        let mut transcript = Transcript::new();
+        transcript.push(Message::User(
+            format!("{RECAP}what was decided, and what is left").into(),
+        ));
+
+        let drawn: Vec<String> = transcript
+            .messages()
+            .iter()
+            .flat_map(|message| rows(message, 80, Style::plain()))
+            .map(|row| row.text())
+            .collect();
+        let screen = drawn.join("\n");
+        println!("\n{screen}");
+
+        assert!(
+            screen.contains("notes on everything before this"),
+            "{screen}"
+        );
+        assert!(screen.contains("what was decided"), "{screen}");
+        assert!(
+            !screen.contains('›'),
+            "the notes are behind a prompt mark: {screen}"
+        );
     }
 
     #[test]
