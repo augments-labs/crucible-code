@@ -6,6 +6,30 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-20
+
+### Changed
+
+**Compaction keeps what matters and drops the rest.** When the window fills,
+the recap now follows a fixed shape — goal, decisions, changes, state — that a
+free-form summary could quietly leave a category out of, and the tail kept
+word for word is bounded in tokens rather than counted in turns, so a turn
+that is mostly tool output can no longer carry the kept span past the window
+on its own. Before paying for the recap, crucible first clears old tool
+results — the bulkiest thing in most sessions — at no cost in a request, and
+only summarizes what is left; the originals stay in the session log, and a
+continued session clears them again so the model is never re-sent what it
+stopped seeing. The recap also tracks the files the session touched and
+carries that list forward across compactions, so the rebuilt session keeps the
+paths and re-reads only what it needs.
+
+### Fixed
+
+**`k3-256k` compacts at the window it is actually served at.** The model table
+listed it only under its full-size key, so a session on it ran with no known
+window — no reading on screen and no compaction until the provider refused a
+request. It now ships at 262,144 tokens.
+
 ## [0.12.0] - 2026-08-20
 
 ### Changed
@@ -2138,7 +2162,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/augments-labs/crucible-code/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/augments-labs/crucible-code/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...v0.11.1
