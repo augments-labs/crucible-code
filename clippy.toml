@@ -7,8 +7,11 @@ msrv = "1.97.1"
 # not exist. `..` keeps clippy's own list rather than replacing it.
 doc-valid-idents = ["OpenAI", "SchemaStore", ".."]
 
-# A function longer than this is doing more than one thing.
-too-many-lines-threshold = 100
+# A cap on sheer size rather than a judgement about structure: a function this
+# long is one nobody can read, whatever it is doing. Shape is argued in review
+# and held by the smaller thresholds below — arguments, branches, the type of
+# what it returns — not by counting the lines a clear one takes.
+too-many-lines-threshold = 200
 
 # More than five arguments means the parameters want to be a struct.
 too-many-arguments-threshold = 5

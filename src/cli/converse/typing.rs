@@ -141,6 +141,31 @@ pub(crate) enum Asked {
     Untyped,
 }
 
+/// Moves the cursor within a many-rowed line, where there is a row to reach.
+///
+/// Whether the editor moved is the answer a caller keys a frame on, and whether
+/// the key was the line's at all: a one-line line has no row above or below, so
+/// the arrows stay with whatever is open above the box instead.
+fn vertical(editor: &mut Editor, key: Key) -> bool {
+    editor.moves(key) && editor.press(key) == Typed::Changed
+}
+
+/// Pastes a bracketed block into the line, and says what the row owes for it.
+///
+/// One place for the two loops that read a prompt, because a paste means the
+/// same thing in both: its newlines are characters rather than submissions, and
+/// a block over the line's bound is refused whole. `true` is a frame owed.
+fn pasted(editor: &mut Editor, text: &str, says: &mut Says) -> bool {
+    match editor.paste(text) {
+        Typed::Changed => true,
+        Typed::Refused => {
+            says.asking = Some(LIMITED);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// What inserting one immediately ready character run changed.
 struct Inserted {
     /// Whether the line changed and therefore its filtered list is stale.
@@ -393,9 +418,12 @@ pub(crate) fn ask<T: Terminal>(
             }
 
             // Through whatever the line has open above the box. With nothing
-            // open, or at the end it is already on, the key costs no frame.
-            Pressed::Up => open.up() || offered.is_some(),
-            Pressed::Down => open.down() || offered.is_some(),
+            // The arrows walk whatever is open above the box — unless the line
+            // being typed is many rows, in which case they move within it. The
+            // editor answers whether there is a row to reach, and a one-line
+            // line has none, so the list keeps the key it has always had.
+            Pressed::Up => vertical(editor, Key::Up) || open.up() || offered.is_some(),
+            Pressed::Down => vertical(editor, Key::Down) || open.down() || offered.is_some(),
 
             // Stepping the mode on. Every step takes effect on the press: the
             // row under the box says which mode that landed in, and the same
@@ -418,6 +446,17 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(LIMITED);
                 }
                 inserted.redraw || offered.is_some()
+            }
+
+            // A bracketed paste, inserted whole. Its newlines are characters in
+            // the line rather than submissions, which is the difference between
+            // this and a run of typed characters — and the reason it is not one.
+            Pressed::Pasted(text) => {
+                let moved = pasted(editor, &text, &mut says);
+                if moved {
+                    open = Opened::filtered(editor.text(), glyphs);
+                }
+                moved || offered.is_some()
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -693,6 +732,18 @@ pub(super) fn during<T: Terminal>(
                 }
             }
 
+            Meant::Pasting(text) => match editor.paste(&text) {
+                Typed::Refused => {
+                    moved = true;
+                    notice = Some(LIMITED);
+                }
+                Typed::Changed => {
+                    moved = true;
+                    notice = None;
+                }
+                _ => {}
+            },
+
             Meant::Editing(key) => match editor.press(key) {
                 Typed::Changed => {
                     moved = true;
@@ -831,8 +882,9 @@ pub(super) enum Meanwhile {
 /// Every key is named rather than caught by a rest arm. One arriving mid turn
 /// either belongs to the turn, to the line in the box, or to nothing — and a
 /// variant added to `Pressed` later has to be decided about here rather than
-/// silently join the third group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// silently join the third group. Clone rather than Copy, because one variant
+/// carries a paste.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Meant {
     /// The window changed under the box.
     Resized,
@@ -842,6 +894,10 @@ enum Meant {
     Queue,
     /// A run of characters beginning here, taken into the line in one edit.
     Typing(char),
+    /// A bracketed paste, taken into the line whole: its newlines are characters
+    /// in it rather than submissions, which is the difference between this and
+    /// [`Meant::Typing`].
+    Pasting(Box<str>),
     /// The line's own key — a cursor move, a delete, Ctrl-C against it, Ctrl-D.
     Editing(Key),
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
@@ -880,6 +936,9 @@ fn meant(arrived: Pressed) -> Meant {
 
         Pressed::Key(Key::Enter) => Meant::Queue,
         Pressed::Key(Key::Char(first)) => Meant::Typing(first),
+        // A paste mid-turn is typed into the box like any other: the turn above
+        // it is none of the line's business, and its newlines are characters.
+        Pressed::Pasted(text) => Meant::Pasting(text),
 
         // Ctrl-C among them, which is the point: it reaches the editor here the
         // same way it does between turns, so it throws away the line rather
@@ -1109,6 +1168,7 @@ fn left(left: Option<u8>, columns: usize) -> Option<Row> {
 fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
     Prompt {
         said: editor.text(),
+        line: editor.line(),
         column: editor.column(),
         mode: says.mode.as_ref(),
         tone: says.tone,
@@ -1203,11 +1263,14 @@ fn landed<T: Terminal>(
         return Landed::Counted;
     }
 
-    let Some(into) = prompt.clicked(renderer.columns(), row, at.column) else {
+    // A line and a column within it, which is what the box's arithmetic knows:
+    // a newline makes a bare column into the whole text ambiguous, so the editor
+    // is placed by the pair rather than by one number.
+    let Some((line, into)) = prompt.clicked(renderer.columns(), row, at.column) else {
         return Landed::Nothing;
     };
 
-    if editor.place(into) == Typed::Changed {
+    if editor.place_at(line, into) == Typed::Changed {
         Landed::Line
     } else {
         Landed::Nothing

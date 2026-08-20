@@ -922,7 +922,10 @@ impl<'a> Held<'a> {
     /// and nothing said, over the plan the tools were built with.
     fn new(plan: Plan, answers: Answers<'a>) -> Self {
         Self {
-            editor: Editor::new(),
+            // The one editor that takes a newline: a prompt is a paragraph, not
+            // a line, and the box grows a row for each. Every other editor — a
+            // permission note, a secret, a name — stays one line.
+            editor: Editor::new().multiline(),
             queued: Prompts::default(),
             kept: Kept::default(),
             opened: Standing::default(),
@@ -1038,6 +1041,9 @@ enum Heard {
 /// arrives while a permission question is on screen is either an answer or
 /// something this has decided to ignore, and a new one added to `Pressed` must
 /// be decided about here rather than silently join the second group.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn heard(arrived: Pressed) -> Heard {
     match arrived {
         Pressed::Key(Key::Char(letter)) => Heard::Said(letter.to_string()),
@@ -1070,6 +1076,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan
+        | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
@@ -1260,6 +1267,9 @@ enum Numbered {
 }
 
 /// Reads one key as one of `question`'s numbered answers.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn numbered(arrived: Pressed, question: &Question) -> Numbered {
     if arrived == Pressed::Resized {
         return Numbered::Resized;

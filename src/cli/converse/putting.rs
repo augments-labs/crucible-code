@@ -492,6 +492,9 @@ fn footer(standing: &Standing, several: bool) -> &'static str {
 /// Every key is named rather than caught by a rest arm: a key here is either an
 /// answer, a step, or something decided to ignore, and a new [`Pressed`] must be
 /// decided about rather than quietly join the third group.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> Moved {
     if standing.writing.is_some() {
         return written(arrived, standing);
@@ -530,6 +533,7 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan
+        | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Moved::Still,
     }
@@ -540,6 +544,9 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
 /// The letters are the line's, so nothing here is a command except the two keys
 /// that stop the writing — and escape keeps what was typed, because the whole
 /// ask is what a second escape leaves.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn written(arrived: Pressed, standing: &mut Standing) -> Moved {
     let Some(writer) = standing.writing else {
         return Moved::Still;

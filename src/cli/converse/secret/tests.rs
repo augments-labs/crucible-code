@@ -9,7 +9,7 @@ fn typed(keys: &[Pressed]) -> (String, Typing) {
     let mut last = Typing::Still;
 
     for key in keys {
-        last = typing(*key, &mut held);
+        last = typing(key.clone(), &mut held);
     }
 
     (held, last)
@@ -64,7 +64,7 @@ fn return_finishes_the_line_and_the_keys_that_end_a_session_leave_it() {
         Pressed::Key(Key::Eof),
     ] {
         assert_eq!(
-            typed(&[character('a'), leaving]).1,
+            typed(&[character('a'), leaving.clone()]).1,
             Typing::Left,
             "{leaving:?}"
         );

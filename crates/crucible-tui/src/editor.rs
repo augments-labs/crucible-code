@@ -8,8 +8,16 @@
 //!
 //! Deliberately the smallest thing that is still an editor: characters,
 //! sanitized bulk text, backspace, the arrows, a word either way, the two ends,
-//! and the three keys that end a line. History and a second row are separable,
-//! and neither is what makes a bordered prompt possible.
+//! and the three keys that end a line. History is separable, and it is not what
+//! makes a bordered prompt possible.
+//!
+//! The text is many lines rather than one: a newline is a character like any
+//! other, pasted or typed, and the prompt grows a row for it. That is what a
+//! paste of several lines and the key that inserts one both come to — the
+//! string carries them, and the component that owns the box lays the lines out.
+//! The one-line prompt this used to be could not safely draw after a newline,
+//! which is why there was none; the box below lays out by line, so now there
+//! is.
 //!
 //! Nothing here reads a key or draws a row. It is a string and an offset, so a
 //! test of what a keystroke does is a test of what a keystroke does, and the
@@ -36,6 +44,13 @@ pub enum Key {
     Left,
     /// Move one character on.
     Right,
+    /// Move to the line above, at the column the cursor last stood at.
+    Up,
+    /// Move to the line below, the same way.
+    Down,
+    /// A newline, inserted where the cursor is. Distinct from the key that
+    /// submits, which is what a bare Return stays.
+    Newline,
     /// Move back over the word behind the cursor, to where it starts.
     WordLeft,
     /// Move on over the word ahead of it, to where it ends.
@@ -88,6 +103,18 @@ pub struct Editor {
     /// whole character's width, so it is always on a boundary — which is the
     /// invariant every slice below rests on.
     at: usize,
+    /// Whether a newline is a character rather than the end of the line.
+    ///
+    /// Off by default: a permission answer, a secret and a name are one line,
+    /// and a newline pasted into one is noise rather than structure. The prompt
+    /// turns it on, which is the only place a second row has somewhere to be
+    /// drawn.
+    multiline: bool,
+    /// The column the cursor was on when it last moved sideways, kept across a
+    /// vertical move so that up then down returns to the same column rather
+    /// than drifting left over a run of short lines. `None` while the cursor
+    /// has only ever moved sideways.
+    wanted: Option<usize>,
 }
 
 impl Editor {
@@ -98,6 +125,17 @@ impl Editor {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Lets a newline be a character, so the text can be many lines.
+    ///
+    /// The prompt is the one caller: it is the only editor with rows to give a
+    /// second line. Every other stays one line, and a newline pasted into it is
+    /// still left out.
+    #[must_use]
+    pub fn multiline(mut self) -> Self {
+        self.multiline = true;
+        self
     }
 
     /// What has been typed so far.
@@ -112,23 +150,34 @@ impl Editor {
         self.said.is_empty()
     }
 
-    /// How many display columns the cursor sits after.
+    /// How many display columns the cursor sits after, on its line.
     ///
     /// Columns rather than characters, because that is what the terminal moves
     /// in: a CJK glyph takes two of them and a combining mark takes none, so a
     /// cursor placed by counting characters lands somewhere the user did not
-    /// type.
+    /// type. On a multi-line editor this is the column within the cursor's own
+    /// line, not into the whole text — which is the number the box lays a line
+    /// out against.
     #[must_use]
     pub fn column(&self) -> usize {
-        width::columns(self.before())
+        width::columns(self.line_before())
+    }
+
+    /// Which line the cursor is on, counting from none.
+    ///
+    /// Zero on a one-line editor, so the box that never asked for a second line
+    /// reads the same number it always did.
+    #[must_use]
+    pub fn line(&self) -> usize {
+        self.before().matches('\n').count()
     }
 
     /// Puts the cursor `column` display columns into the line.
     ///
-    /// What a click on the box comes to. Past the end of the line is the end of
-    /// the line, which is where the eye reads a line as ending — and the offset
-    /// can only land on a character boundary, so a click on the far half of a
-    /// wide glyph puts the cursor in front of it rather than inside it.
+    /// What a click on a one-line box comes to. Past the end of the line is the
+    /// end of the line, which is where the eye reads a line as ending — and the
+    /// offset can only land on a character boundary, so a click on the far half
+    /// of a wide glyph puts the cursor in front of it rather than inside it.
     ///
     /// [`Typed::Ignored`] where the cursor was already there, so a click that
     /// moved nothing costs no frame.
@@ -140,6 +189,45 @@ impl Editor {
         }
 
         self.at = at;
+        self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Puts the cursor on `line`, `column` display columns into it.
+    ///
+    /// What a click on a multi-line box comes to: the row is known, so the
+    /// column is wanted within that line rather than into the whole text. A
+    /// line the text does not have is the end of it; a column past a line's end
+    /// is that line's end. The offset can only land on a character boundary, so
+    /// a click on the far half of a wide glyph puts the cursor in front of it.
+    ///
+    /// [`Typed::Ignored`] where the cursor was already there.
+    pub fn place_at(&mut self, line: usize, column: usize) -> Typed {
+        let mut start = 0;
+        let mut at_line = 0;
+
+        for (offset, character) in self.said.char_indices() {
+            if at_line == line {
+                break;
+            }
+            if character == '\n' {
+                at_line += 1;
+                start = offset + 1;
+            }
+        }
+
+        // Past the last line is the end of the text, which is where the eye
+        // reads the last line as ending.
+        let rest = self.said.get(start..).unwrap_or_default();
+        let line_text = rest.split('\n').next().unwrap_or_default();
+        let at = start + width::cut(line_text, column).unwrap_or(line_text.len());
+
+        if at == self.at {
+            return Typed::Ignored;
+        }
+
+        self.at = at;
+        self.wanted = None;
         Typed::Changed
     }
 
@@ -160,6 +248,21 @@ impl Editor {
         self.at = 0;
     }
 
+    /// Whether `key` would move the cursor, without moving it.
+    ///
+    /// Asked by the prompt to tell a vertical move within the text from one
+    /// meant for a list standing beside it: a one-line line has no row above or
+    /// below, and the key belongs to the list there. Only the vertical keys are
+    /// answered; the rest are the line's wherever it is.
+    #[must_use]
+    pub fn moves(&self, key: Key) -> bool {
+        match key {
+            Key::Up => self.line_start() > 0,
+            Key::Down => self.line_end() < self.said.len(),
+            _ => false,
+        }
+    }
+
     /// Applies a key, and says what it did.
     pub fn press(&mut self, key: Key) -> Typed {
         match key {
@@ -167,10 +270,13 @@ impl Editor {
             Key::Backspace => self.rub(),
             Key::Left => self.left(),
             Key::Right => self.right(),
+            Key::Up => self.up(),
+            Key::Down => self.down(),
             Key::WordLeft => self.jump(self.word_back()),
             Key::WordRight => self.jump(self.word_ahead()),
-            Key::Home => self.jump(0),
-            Key::End => self.jump(self.said.len()),
+            Key::Home => self.jump(self.line_start()),
+            Key::End => self.jump(self.line_end()),
+            Key::Newline => self.newline(),
             Key::Enter => self.submit(),
             Key::Interrupt => self.interrupt(),
             Key::Eof => self.eof(),
@@ -181,17 +287,23 @@ impl Editor {
     ///
     /// The suffix is moved once by `insert_str`, rather than once per pasted
     /// character. That makes a bulk insertion into the middle linear in the
-    /// line plus the inserted text. Control characters
-    /// are left out for the same reason `insert` leaves them out: a
-    /// one-line prompt cannot safely draw or place its cursor after them.
+    /// line plus the inserted text. Control characters are left out for the
+    /// reason `insert` leaves them out — drawn, they would move a cursor the
+    /// renderer had already placed — with one exception: a newline, on an
+    /// editor that is many lines, is kept. That is what a paste of several
+    /// lines comes to, and dropping it was what turned such a paste into one
+    /// long line with the breaks gone.
     pub fn paste(&mut self, pasted: &str) -> Typed {
-        let Some(first_control) = pasted.find(char::is_control) else {
+        let multiline = self.multiline;
+        let keeps = |character: char| !character.is_control() || (multiline && character == '\n');
+
+        let Some(first_control) = pasted.find(|character: char| !keeps(character)) else {
             return self.insert_text(pasted);
         };
 
         let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
         let mut kept = 0;
-        for character in pasted.chars().filter(|character| !character.is_control()) {
+        for character in pasted.chars().filter(|character| keeps(*character)) {
             kept += character.len_utf8();
             if kept > remaining {
                 return Typed::Refused;
@@ -205,7 +317,7 @@ impl Editor {
                 .get(first_control..)
                 .unwrap_or_default()
                 .chars()
-                .filter(|character| !character.is_control()),
+                .filter(|character| keeps(*character)),
         );
         self.insert_text(&plain)
     }
@@ -218,6 +330,24 @@ impl Editor {
     /// could go wrong with one.
     fn before(&self) -> &str {
         self.said.get(..self.at).unwrap_or_default()
+    }
+
+    /// The part of the cursor's own line that it has passed.
+    fn line_before(&self) -> &str {
+        self.before().split('\n').next_back().unwrap_or_default()
+    }
+
+    /// Where the cursor's line begins, as a byte offset into the text.
+    fn line_start(&self) -> usize {
+        self.before().rfind('\n').map_or(0, |newline| newline + 1)
+    }
+
+    /// Where the cursor's line ends.
+    fn line_end(&self) -> usize {
+        self.said
+            .get(self.at..)
+            .and_then(|rest| rest.find('\n').map(|within| self.at + within))
+            .unwrap_or(self.said.len())
     }
 
     /// The character behind the cursor, in bytes.
@@ -241,7 +371,10 @@ impl Editor {
     /// renderer had already placed — most often out of a paste, which this
     /// release reads as typing.
     fn insert(&mut self, typed: char) -> Typed {
-        if typed.is_control() {
+        // A newline is a character where the editor is many lines, and a control
+        // everywhere: everywhere else it is a byte that would draw as nothing
+        // and move a cursor the renderer had already placed.
+        if typed.is_control() && !(self.multiline && typed == '\n') {
             return Typed::Ignored;
         }
         if typed.len_utf8() > Self::MAX_BYTES.saturating_sub(self.said.len()) {
@@ -250,6 +383,79 @@ impl Editor {
 
         self.said.insert(self.at, typed);
         self.at += typed.len_utf8();
+        self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Puts a newline where the cursor is, splitting the line there.
+    ///
+    /// One line's editor turns it down, which is what the key that produces it
+    /// reads as *nothing happened* — the answer to a newline where a newline
+    /// cannot be drawn.
+    fn newline(&mut self) -> Typed {
+        if !self.multiline {
+            return Typed::Ignored;
+        }
+
+        self.insert('\n')
+    }
+
+    /// Moves the cursor to the line above, at the column it last stood at.
+    ///
+    /// The column is the one the cursor reached sideways, remembered across the
+    /// move, so a run of short lines does not walk the cursor to the left edge.
+    /// A line shorter than that column takes its end, which is where the next
+    /// character typed on it would go. On the first line there is nowhere to go.
+    fn up(&mut self) -> Typed {
+        let start = self.line_start();
+        if start == 0 {
+            return Typed::Ignored;
+        }
+
+        // The line above ends one byte before the newline that began this one.
+        let above_end = start - 1;
+        let above_start = self
+            .said
+            .get(..above_end)
+            .and_then(|before| before.rfind('\n').map(|newline| newline + 1))
+            .unwrap_or(0);
+
+        self.vertical(above_start, above_end)
+    }
+
+    /// The same, downwards.
+    fn down(&mut self) -> Typed {
+        let end = self.line_end();
+        if end == self.said.len() {
+            return Typed::Ignored;
+        }
+
+        let below_start = end + 1;
+        let below_end = self
+            .said
+            .get(below_start..)
+            .and_then(|rest| rest.find('\n').map(|within| below_start + within))
+            .unwrap_or(self.said.len());
+
+        self.vertical(below_start, below_end)
+    }
+
+    /// The shared half of [`Editor::up`] and [`Editor::down`]: put the cursor on
+    /// the line bounded by `start..end`, at the column it is wanted at.
+    fn vertical(&mut self, start: usize, end: usize) -> Typed {
+        // Read before `wanted` is taken mutably: the column is a borrow of the
+        // text, and the two cannot be held at once.
+        let column = self.column();
+        let wanted = *self.wanted.get_or_insert(column);
+        let line = self.said.get(start..end).unwrap_or_default();
+        let within = width::cut(line, wanted).unwrap_or(line.len());
+        let to = start + within;
+
+        if to == self.at {
+            return Typed::Ignored;
+        }
+
+        self.at = to;
         Typed::Changed
     }
 
@@ -264,6 +470,7 @@ impl Editor {
 
         self.said.insert_str(self.at, text);
         self.at += text.len();
+        self.wanted = None;
         Typed::Changed
     }
 
@@ -275,6 +482,7 @@ impl Editor {
 
         self.at -= back;
         self.said.remove(self.at);
+        self.wanted = None;
         Typed::Changed
     }
 
@@ -282,6 +490,7 @@ impl Editor {
         match self.back() {
             Some(back) => {
                 self.at -= back;
+                self.wanted = None;
                 Typed::Changed
             }
             None => Typed::Ignored,
@@ -292,6 +501,7 @@ impl Editor {
         match self.ahead() {
             Some(ahead) => {
                 self.at += ahead;
+                self.wanted = None;
                 Typed::Changed
             }
             None => Typed::Ignored,
@@ -339,6 +549,7 @@ impl Editor {
         }
 
         self.at = to;
+        self.wanted = None;
         Typed::Changed
     }
 

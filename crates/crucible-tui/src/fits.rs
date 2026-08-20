@@ -221,6 +221,7 @@ fn a_ladder_fits_the_window_its_rungs_are_chosen_in() {
 fn the_prompt_box_fits_the_window_it_is_typed_into() {
     let prompt = Prompt {
         said: PROSE,
+        line: 0,
         column: 4,
         mode: "ask before edits",
         tone: Slot::Quiet,

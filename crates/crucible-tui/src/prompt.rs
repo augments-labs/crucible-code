@@ -78,7 +78,10 @@ const CHROME: usize = 3;
 pub struct Prompt<'a> {
     /// The line being typed.
     pub said: &'a str,
-    /// How many display columns into it the cursor sits.
+    /// Which line of it the cursor is on, counting from none. Zero where the
+    /// text is one line, which is every prompt before this took a newline.
+    pub line: usize,
+    /// How many display columns into that line the cursor sits.
     pub column: usize,
     /// What the status row says the mode in force is.
     pub mode: &'a str,
@@ -215,8 +218,12 @@ impl Prompt<'_> {
     /// A click past the end of a row lands at the end of that row, which is
     /// where the eye reads the line as ending. Every other terminal does the
     /// same thing and it is the one behaviour nobody has to be taught.
+    ///
+    /// What comes back is the line and the column within it, rather than a
+    /// column into the whole text: a newline makes the second of those
+    /// ambiguous, and the editor places its cursor by the first.
     #[must_use]
-    pub fn clicked(&self, columns: usize, row: usize, column: usize) -> Option<usize> {
+    pub fn clicked(&self, columns: usize, row: usize, column: usize) -> Option<(usize, usize)> {
         let (first, before) = if columns < FRAMED_AT {
             (0, BARE)
         } else {
@@ -225,22 +232,26 @@ impl Prompt<'_> {
 
         let shown = self.shown(inner(columns));
         let at = row.checked_sub(first)?;
-        let line = shown.rows.get(at)?;
+        let hit = shown.rows.get(at)?;
 
-        // The columns the rows above the clicked one already account for, so
-        // that what comes back is an offset into the whole line rather than
-        // into the row it happened to land on.
+        // The columns the wrapped rows of the same line above the clicked one
+        // account for, so that the column comes back into the line rather than
+        // into the row it happened to land on. Walked backwards, because only
+        // the rows directly above this one can be its own line: a newline below
+        // them starts another.
         let above: usize = shown
             .rows
             .get(..at)
             .unwrap_or_default()
             .iter()
-            .map(|row| width::columns(row))
+            .rev()
+            .take_while(|row| row.line == hit.line)
+            .map(|row| width::columns(row.text))
             .sum();
 
-        let into = column.saturating_sub(before).min(width::columns(line));
+        let into = column.saturating_sub(before).min(width::columns(hit.text));
 
-        Some(shown.gone + above + into)
+        Some((hit.line, above + into))
     }
 
     /// Whether `row` of this component is the row naming what is still running,
@@ -336,7 +347,7 @@ impl Prompt<'_> {
                 // the front, so it comes back whole and would put the row past
                 // the last column. The terminal would wrap it and the count of
                 // what was drawn would be short by one.
-                let line = width::clip(line, room);
+                let line = width::clip(line.text, room);
 
                 let mut row = match at {
                     0 => Row::new()
@@ -383,7 +394,7 @@ impl Prompt<'_> {
                 // make fit: a character wider than the whole box. Half of one
                 // cannot be drawn, so none of it is, and the row still ends
                 // where the border expects it.
-                let mut line = Row::plain(width::clip(shown, inner));
+                let mut line = Row::plain(width::clip(shown.text, inner));
                 line.pad(inner);
 
                 let mark = if at == 0 { glyphs.caret() } else { " " };
@@ -420,7 +431,7 @@ impl Prompt<'_> {
                 Row::new()
                     .then(Slot::Accent, mark)
                     .then(Slot::Plain, " ")
-                    .then(Slot::Plain, width::clip(shown, inner(columns)))
+                    .then(Slot::Plain, width::clip(shown.text, inner(columns)))
             })
             .collect()
     }
@@ -531,7 +542,7 @@ impl Prompt<'_> {
     /// [`room`]: Prompt::room
     fn shown(&self, inner: usize) -> Shown<'_> {
         let broken = broken(self.said, inner);
-        let (row, column) = place(&broken, self.column);
+        let (row, column) = place(&broken, self.line, self.column);
 
         // The cursor's row is the last one shown, so a line being written grows
         // the box downwards and a line longer than the allowance scrolls under
@@ -539,18 +550,11 @@ impl Prompt<'_> {
         // same reason.
         let room = self.room.max(1);
         let first = row.saturating_sub(room - 1);
-        let gone: usize = broken
-            .get(..first)
-            .unwrap_or_default()
-            .iter()
-            .map(|row| width::columns(row))
-            .sum();
 
         Shown {
             rows: broken.get(first..).unwrap_or_default().to_vec(),
             row: row - first,
             column,
-            gone,
         }
     }
 }
@@ -558,48 +562,69 @@ impl Prompt<'_> {
 /// What the box is showing of the line, and where the cursor is in it.
 struct Shown<'a> {
     /// The rows on screen, top first.
-    rows: Vec<&'a str>,
+    rows: Vec<RowInLine<'a>>,
     /// Which of them the cursor is on.
     row: usize,
     /// How many columns into that row it sits.
     column: usize,
-    /// How many columns of the line scrolled off above the first row shown.
-    gone: usize,
 }
 
-/// The line broken into rows no wider than the box.
+/// One display row: the text, and which logical line it is part of.
+///
+/// The line number is what lets a click and a cursor be placed on the right
+/// line rather than at a column into the whole text, which a newline makes
+/// ambiguous: the fiftieth column of a three-line prompt is not one place.
+#[derive(Debug, Clone, Copy)]
+struct RowInLine<'a> {
+    text: &'a str,
+    line: usize,
+}
+
+/// The text broken into display rows no wider than the box.
+///
+/// First into lines at each newline, then each line into rows at the column —
+/// the order matters, because a newline is a break the reader put there and a
+/// wrap is one the box did. A wrapped row continues the mark's indent; a new
+/// line does too, so the two read the same and only the cursor's arithmetic
+/// tells them apart.
 ///
 /// Broken at the column rather than at a space, which is what an input box owes
 /// the person typing into it: a word moving to the next row as it is written
 /// would move the cursor with it, and the character just typed would not be
 /// where it was put.
-fn broken(said: &str, inner: usize) -> Vec<&str> {
+fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
     if inner == 0 {
-        return vec![""];
+        return vec![RowInLine { text: "", line: 0 }];
     }
 
     let mut rows = Vec::new();
-    let mut rest = said;
 
-    // `cut` answers with nothing where the rest fits, which is what ends this.
-    while let Some(at) = width::cut(rest, inner) {
-        // A character wider than the whole row takes no bytes off the front and
-        // this would not end. It is drawn a column over instead, which is the
-        // one row a box this narrow cannot hold either way.
-        let at = if at == 0 { step(rest) } else { at };
+    for (line, text) in said.split('\n').enumerate() {
+        let mut rest = text;
 
-        rows.push(rest.get(..at).unwrap_or_default());
-        rest = rest.get(at..).unwrap_or_default();
-    }
+        // `cut` answers with nothing where the rest fits, which is what ends this.
+        while let Some(at) = width::cut(rest, inner) {
+            // A character wider than the whole row takes no bytes off the front and
+            // this would not end. It is drawn a column over instead, which is the
+            // one row a box this narrow cannot hold either way.
+            let at = if at == 0 { step(rest) } else { at };
 
-    rows.push(rest);
+            rows.push(RowInLine {
+                text: rest.get(..at).unwrap_or_default(),
+                line,
+            });
+            rest = rest.get(at..).unwrap_or_default();
+        }
 
-    // A line that exactly fills its last row is followed by an empty one, so
-    // the cursor after the last character stands at the start of a row rather
-    // than on the padding beside the border — which is where the next character
-    // is going to appear anyway.
-    if width::columns(rest) == inner {
-        rows.push("");
+        rows.push(RowInLine { text: rest, line });
+
+        // A line that exactly fills its last row is followed by an empty one, so
+        // the cursor after the last character stands at the start of a row rather
+        // than on the padding beside the border — which is where the next character
+        // is going to appear anyway.
+        if width::columns(rest) == inner {
+            rows.push(RowInLine { text: "", line });
+        }
     }
 
     rows
@@ -612,24 +637,33 @@ fn step(text: &str) -> usize {
         .map_or(text.len(), |(offset, _)| offset)
 }
 
-/// Which row `column` display columns into the line falls on, and where in it.
+/// Which display row the cursor's (`line`, `column`) falls on, and where in it.
 ///
 /// A cursor at the very end of a full row belongs at the start of the next one,
-/// which is where the character about to be typed will appear.
-fn place(rows: &[&str], column: usize) -> (usize, usize) {
+/// which is where the character about to be typed will appear. The line is found
+/// first, then the column within its rows: a column into the whole text would be
+/// one place only on a prompt with no newlines.
+fn place(rows: &[RowInLine<'_>], line: usize, column: usize) -> (usize, usize) {
     let mut before = 0;
+    let mut last = 0;
 
     for (at, row) in rows.iter().enumerate() {
-        let wide = width::columns(row);
+        if row.line == line {
+            last = at;
+            let wide = width::columns(row.text);
 
-        if column < before + wide || at + 1 == rows.len() {
-            return (at, column - before.min(column));
+            if column < before + wide {
+                return (at, column - before.min(column));
+            }
+
+            before += wide;
         }
-
-        before += wide;
     }
 
-    (0, column)
+    // Past the line's last row is the end of it, which is where the eye reads a
+    // line as ending. A line the text does not have is the last one shown.
+    let wide = rows.get(last).map_or(0, |row| width::columns(row.text));
+    (last, column.min(wide))
 }
 
 /// How many columns of the line a terminal `columns` wide has room for.

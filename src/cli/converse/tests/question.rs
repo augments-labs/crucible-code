@@ -65,7 +65,10 @@ fn a_key_that_answers_nothing_is_not_read_as_an_answer() {
         Pressed::Clicked { row: 4, column: 2 },
         Pressed::Ignored,
     ] {
-        assert!(matches!(heard(arrived), Heard::Ignored), "{arrived:?}");
+        assert!(
+            matches!(heard(arrived.clone()), Heard::Ignored),
+            "{arrived:?}"
+        );
     }
 }
 
@@ -81,7 +84,7 @@ fn every_way_out_of_a_question_leaves_the_tool_unrun() {
         Pressed::Key(Key::Eof),
         Pressed::Key(Key::Enter),
     ] {
-        let Heard::Said(said) = heard(arrived) else {
+        let Heard::Said(said) = heard(arrived.clone()) else {
             panic!("{arrived:?} was not an answer");
         };
 
@@ -214,7 +217,7 @@ fn a_number_takes_the_answer_it_stands_against_and_nothing_else_does() {
         Pressed::Up,
     ] {
         assert!(
-            matches!(numbered(arrived, &question), Numbered::Left),
+            matches!(numbered(arrived.clone(), &question), Numbered::Left),
             "{arrived:?}"
         );
     }
