@@ -78,6 +78,8 @@ pub enum Slot {
     Quiet,
     /// The words a link was written under.
     Link,
+    /// A phrase the answer leant on rather than raised its voice for.
+    Emphasis,
     /// The mode that lets a file be written without asking.
     AllowEdits,
     /// The mode that asks about nothing at all.
@@ -509,6 +511,15 @@ impl Slot {
             Self::Accent => tones.accent,
             Self::Strong => tones.strong,
             Self::Quiet => QUIET,
+            // Slanted, and nothing else -- the same reasoning as the weight
+            // above it, one step quieter. A terminal without italics ignores
+            // the attribute and the phrase reads as the prose around it, which
+            // is what emphasis was worth in the first place.
+            Self::Emphasis => Ink {
+                exact: "\x1b[3m",
+                indexed: "\x1b[3m",
+                basic: "\x1b[3m",
+            },
             // A line under the words, and no colour: underline is what a
             // terminal has always meant a link by, it survives every rung
             // unchanged, and the destination is written out beside the words

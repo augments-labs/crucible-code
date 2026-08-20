@@ -58,7 +58,20 @@ struct Held {
 struct Line {
     heading: bool,
     code: bool,
-    strong: bool,
+    emphasis: Emphasis,
+}
+
+/// The emphasis open on the line being read.
+///
+/// Two of them, because markdown spells both with the same character and tells
+/// them apart by how many there are: one marker leans on a phrase and two raise
+/// it, and a phrase written with three is under both at once.
+#[derive(Debug, Default, Clone, Copy)]
+struct Emphasis {
+    /// One marker around the phrase.
+    leant: bool,
+    /// Two or more.
+    raised: bool,
 }
 
 /// What the scan is in the middle of, across lines.
@@ -283,8 +296,17 @@ impl Markdown {
                 self.line.code = !self.line.code;
                 false
             }
-            '*' | '_' if self.emphasises(held.mark, next) => {
-                self.line.strong = !self.line.strong;
+            // One marker is emphasis and two are weight, which is what markdown
+            // has always meant by them and what a model writes expecting to be
+            // read that way. Three or more are both, and the louder of the two
+            // is the one worth a reader's attention.
+            '*' | '_' if self.emphasises(held, next) => {
+                let worn = if held.count >= 2 {
+                    &mut self.line.emphasis.raised
+                } else {
+                    &mut self.line.emphasis.leant
+                };
+                *worn = !*worn;
                 false
             }
             _ => {
@@ -295,10 +317,18 @@ impl Markdown {
         }
     }
 
-    /// Whether a run of `mark` followed by `next` turns emphasis on or off.
-    fn emphasises(&self, mark: char, next: char) -> bool {
-        if mark == '_' {
-            return if self.line.strong {
+    /// Whether a run of markers followed by `next` turns emphasis on or off.
+    fn emphasises(&self, held: Held, next: char) -> bool {
+        // Whichever of the two this run would close, since what a marker may do
+        // depends on whether its own is already open.
+        let open = if held.count >= 2 {
+            self.line.emphasis.raised
+        } else {
+            self.line.emphasis.leant
+        };
+
+        if held.mark == '_' {
+            return if open {
                 // Closes at the end of a word rather than inside one, so
                 // `_borrowed_ from` closes and `_borrowed_from` does not.
                 !next.is_alphanumeric()
@@ -313,7 +343,7 @@ impl Markdown {
         // Something has to follow on the same line for a run to open. That is
         // what leaves `* item` a bullet instead of turning the rest of the
         // paragraph bold.
-        self.line.strong || !next.is_whitespace()
+        open || !next.is_whitespace()
     }
 
     /// Whether `character` opens a link where the scan stands.
@@ -496,8 +526,10 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose || self.line.code {
             Slot::Quiet
-        } else if self.line.heading || self.line.strong {
+        } else if self.line.heading || self.line.emphasis.raised {
             Slot::Strong
+        } else if self.line.emphasis.leant {
+            Slot::Emphasis
         } else {
             Slot::Plain
         }

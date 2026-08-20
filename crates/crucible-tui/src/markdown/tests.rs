@@ -47,10 +47,30 @@ fn the_marker_is_dropped_and_the_run_it_covered_wears_the_slot() {
 }
 
 #[test]
-fn one_marker_and_two_say_the_same_thing() {
+fn one_marker_is_emphasis_and_two_are_weight() {
     assert_eq!(
-        slots(&whole("a *loud* word")),
-        slots(&whole("a **loud** word"))
+        slots(&whole("a *leant on* word")),
+        vec![Slot::Plain, Slot::Emphasis, Slot::Plain]
+    );
+    assert_eq!(
+        slots(&whole("a **loud** word")),
+        vec![Slot::Plain, Slot::Strong, Slot::Plain]
+    );
+    assert_eq!(
+        slots(&whole("a ***both*** word")),
+        vec![Slot::Plain, Slot::Strong, Slot::Plain],
+        "three markers are both, and weight is the louder"
+    );
+}
+
+#[test]
+fn the_two_are_told_apart_inside_one_line() {
+    let said = whole("*this* and **that**");
+
+    assert_eq!(drawn(&said), "this and that");
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Emphasis, Slot::Plain, Slot::Strong]
     );
 }
 
@@ -146,6 +166,14 @@ fn an_underscore_inside_a_word_is_part_of_the_word() {
 #[test]
 fn an_underscore_around_a_word_is_emphasis() {
     let said = whole("it is _yours_ now");
+
+    assert_eq!(drawn(&said), "it is yours now");
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Emphasis, Slot::Plain]);
+}
+
+#[test]
+fn two_underscores_around_a_word_are_weight() {
+    let said = whole("it is __yours__ now");
 
     assert_eq!(drawn(&said), "it is yours now");
     assert_eq!(slots(&said), vec![Slot::Plain, Slot::Strong, Slot::Plain]);

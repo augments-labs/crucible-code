@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+**One marker is emphasis and two are weight, rather than both being weight.**
+`*leant on*` is now slanted and `**loud**` stays raised, which is what markdown
+has always meant by them and what a model writes expecting to be read that way.
+A terminal without italics ignores the slant and the phrase reads as the prose
+around it.
+
 **A link in an answer is read rather than shown as its markers.** The words are
 underlined and the address follows them in brackets, quietly, so a reader can
 copy it or click it in a terminal that finds its own links. A bracket that was

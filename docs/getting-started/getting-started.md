@@ -373,8 +373,9 @@ anything is drawn at all, so the count of them is the whole of what is still
 true about them.
 
 The answer itself is read as markdown rather than printed with the markers still
-in it. A heading loses its hashes and stands out, `**` or `_` around a phrase
-leaves it emphasised, backticks leave a run of code toned down, and a fenced
+in it. A heading loses its hashes and stands out, one `*` or `_` around a phrase
+leans on it and two raise its voice, backticks leave a run of code toned down,
+and a fenced
 block is toned for its whole length with the fence lines and the language
 written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have

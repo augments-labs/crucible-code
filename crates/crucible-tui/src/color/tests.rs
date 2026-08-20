@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 23] {
+fn all() -> [Slot; 24] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -68,24 +68,25 @@ fn all() -> [Slot; 23] {
             Slot::Strong => 2,
             Slot::Quiet => 3,
             Slot::Link => 4,
-            Slot::AllowEdits => 5,
-            Slot::FullAccess => 6,
-            Slot::Doing => 7,
-            Slot::DoingMark => 8,
-            Slot::Done => 9,
-            Slot::DoneMark => 10,
-            Slot::Removed => 11,
-            Slot::RemovedNumber => 12,
-            Slot::Added => 13,
-            Slot::AddedNumber => 14,
-            Slot::Prompt => 15,
-            Slot::PromptMark => 16,
-            Slot::Comment => 17,
-            Slot::Keyword => 18,
-            Slot::Str => 19,
-            Slot::Number => 20,
-            Slot::Name => 21,
-            Slot::Operator => 22,
+            Slot::Emphasis => 5,
+            Slot::AllowEdits => 6,
+            Slot::FullAccess => 7,
+            Slot::Doing => 8,
+            Slot::DoingMark => 9,
+            Slot::Done => 10,
+            Slot::DoneMark => 11,
+            Slot::Removed => 12,
+            Slot::RemovedNumber => 13,
+            Slot::Added => 14,
+            Slot::AddedNumber => 15,
+            Slot::Prompt => 16,
+            Slot::PromptMark => 17,
+            Slot::Comment => 18,
+            Slot::Keyword => 19,
+            Slot::Str => 20,
+            Slot::Number => 21,
+            Slot::Name => 22,
+            Slot::Operator => 23,
         }
     }
 
@@ -95,6 +96,7 @@ fn all() -> [Slot; 23] {
         Slot::Strong,
         Slot::Quiet,
         Slot::Link,
+        Slot::Emphasis,
         Slot::AllowEdits,
         Slot::FullAccess,
         Slot::Doing,
@@ -400,9 +402,9 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // So the check above is known to have skipped only what it should. Plain is
     // the reader's own foreground and Quiet is their theme's answer to "subdued
     // on this ground", which is the one judgement worth deferring to. The other
-    // three are that same foreground with an attribute on it -- weight, a line
-    // under it, and a line through it -- so what they are legible against is
-    // whatever Plain was. The band's ground is the reader's own and its ink is deliberately
+    // four are that same foreground with an attribute on it -- weight, a slant,
+    // a line under it, and a line through it -- so what they are legible
+    // against is whatever Plain was. The band's ground is the reader's own and its ink is deliberately
     // theirs as well, and the six code slots are a syntax theme's to fill —
     // empty until one is read, and never in any table here.
     let hueless: Vec<Slot> = all()
@@ -426,6 +428,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Plain,
             Slot::Quiet,
             Slot::Link,
+            Slot::Emphasis,
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,
