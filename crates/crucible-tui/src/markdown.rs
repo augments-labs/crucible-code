@@ -188,6 +188,14 @@ pub struct Markdown {
     started: bool,
     /// The character before the run being held, for the one rule that needs it.
     previous: char,
+    /// A backslash is standing, waiting to see what it was put in front of.
+    ///
+    /// Held rather than written, because what it does is decided by the next
+    /// character: a marker after it is drawn as itself and the backslash is
+    /// gone, and anything else gives the backslash back. It outlives a delta
+    /// for the reason everything here does -- a delta is a piece of the wire,
+    /// and the pair arrives split as often as not.
+    escaped: bool,
     line: Line,
     inside: Inside,
     /// What the opening fence said the block is written in, while that fence's
@@ -306,6 +314,26 @@ impl Markdown {
                 run = at;
             }
 
+            // A backslash is standing and this is the character it was put in
+            // front of.
+            if std::mem::take(&mut self.escaped) {
+                if Self::escapes(character) {
+                    self.say(delta.get(at..next).unwrap_or_default(), say);
+                    self.started = true;
+                    self.previous = character;
+                    run = next;
+                    continue;
+                }
+
+                // In front of nothing this scan would have acted on, so it was
+                // a character of the answer rather than a word about the next
+                // one. The run starts at this character, which is where the
+                // backslash left it.
+                self.say("\\", say);
+                self.started = true;
+                self.previous = '\\';
+            }
+
             if character == '\n' {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.end_line(room, say);
@@ -319,6 +347,10 @@ impl Markdown {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.table = Some(Table::opening());
                 self.tabled(character, room, say);
+                run = next;
+            } else if self.escaping(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.escaped = true;
                 run = next;
             } else if self.marks(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -371,6 +403,29 @@ impl Markdown {
                 _ => false,
             },
         }
+    }
+
+    /// Whether `character` is a backslash standing in front of something.
+    ///
+    /// Prose only. In code a backslash is a character like any other, and a
+    /// span is where a pattern goes to be written down exactly.
+    fn escaping(&self, character: char) -> bool {
+        character == '\\' && self.inside == Inside::Prose && !self.line.code
+    }
+
+    /// Whether a standing backslash was put in front of this to say it means
+    /// nothing.
+    ///
+    /// Only what this scan would otherwise have acted on, rather than every
+    /// piece of punctuation a stricter reading escapes: `\d` and `\.` are a
+    /// pattern far more often than they are prose that meant a `d` or a stop,
+    /// and dropping the backslash there would change what somebody copies off
+    /// the screen into something that no longer matches.
+    fn escapes(character: char) -> bool {
+        matches!(
+            character,
+            '\\' | '*' | '_' | '`' | '~' | '#' | '-' | '+' | '>' | '|' | '['
+        )
     }
 
     /// Decides what a finished run of markers was, given the character that
@@ -708,6 +763,12 @@ impl Markdown {
         // have been there too.
         if let Some(held) = self.held.take() {
             self.settle(held, '\n', room, say);
+        }
+
+        // The character that would have said what it was in front of never
+        // arrived, so it was in front of nothing.
+        if std::mem::take(&mut self.escaped) {
+            self.say("\\", say);
         }
 
         self.pay(say);

@@ -391,6 +391,10 @@ quote's bar, a number and its dot -- continues under its own words rather than
 back at the edge, so the mark is the only thing in its column and a list still
 reads as a list at any width.
 
+A backslash in front of a marker says the marker was meant as itself: `\*` is a
+star and `\|` is a pipe, and the backslash is gone. In front of anything else
+it stays exactly where it was, so `C:\Users` and `\d+` arrive whole.
+
 Between two backticks nothing else is a marker. `*ptr`, `_private` and
 `**kwargs` arrive on screen as they were written, because the words in a span
 are code and code is full of characters that mean something else in prose.

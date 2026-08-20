@@ -946,3 +946,50 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
         [Slot::Emphasis, Slot::Quiet, Slot::Emphasis, Slot::Plain]
     );
 }
+
+/// One whole answer, read as one delta and then ended.
+fn ended(answer: &str) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::default();
+    let mut said = read(&mut markdown, answer);
+    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+    said
+}
+
+#[test]
+fn a_marker_the_answer_escaped_is_drawn_as_itself() {
+    for (answer, drawn_text) in [
+        ("a \\*literal\\* star", "a *literal* star"),
+        (
+            "two \\_\\_underscores\\_\\_ here",
+            "two __underscores__ here",
+        ),
+        ("a \\| pipe", "a | pipe"),
+        ("a \\\\ backslash", "a \\ backslash"),
+        ("\\- not an item", "- not an item"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_escaped_marker_marks_nothing() {
+    let said = ended("a \\*literal\\* star");
+
+    assert_eq!(slots(&said), [Slot::Plain]);
+}
+
+#[test]
+fn a_backslash_before_anything_else_keeps_it() {
+    for answer in [
+        "C:\\Users\\name",
+        "the \\d+ in a pattern",
+        "a message that ended on one \\",
+    ] {
+        assert_eq!(drawn(&ended(answer)), answer, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_backslash_inside_a_code_span_is_left_where_it_was() {
+    assert_eq!(drawn(&ended("the `\\d+` in it")), "the \\d+ in it");
+}

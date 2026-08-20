@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A marker the answer escaped is drawn as itself.** `\*literal\*` lost both
+stars and leant the words between them. A backslash in front of a marker now
+draws the marker and goes; in front of anything else -- `C:\Users`, `\d+` -- it
+stays where it was.
+
 **A marker inside a code span stays where it was.** `` `*ptr` ``, ``
 `_private` `` and `` `**kwargs` `` lost the characters that carry their
 meaning, and the emphasis one of them opened ran on past the span. Between two
