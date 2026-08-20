@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**The edits every shell answers to, in the prompt box.** Ctrl+W takes the word
+behind the cursor, Ctrl+U the rest of the line behind it and Ctrl+K the rest of
+the line ahead; Ctrl+Backspace and Alt+Backspace take the word too, and Delete
+takes the character in front. A box that grew to many lines needed them —
+holding Backspace down was the only way to take a line back.
+
 ### Fixed
 
 **A multi-line prompt and a multi-line paste, which 0.13.2 announced and neither
