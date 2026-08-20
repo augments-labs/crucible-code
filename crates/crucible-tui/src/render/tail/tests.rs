@@ -477,3 +477,24 @@ fn a_slot_that_opens_after_the_last_space_travels_with_the_word_it_covers() {
         "the row left behind never opened the slot"
     );
 }
+
+#[test]
+fn a_tail_that_has_written_nothing_has_put_no_row_under_anything() {
+    let tail = Tail::new(20, 1);
+    assert!(tail.parted());
+}
+
+#[test]
+fn the_blank_row_a_paragraph_ended_on_is_remembered_after_it_has_gone() {
+    // The row is in the terminal's scrollback by then and cannot be looked at
+    // again. Measuring it on the way out is the only chance there is.
+    let mut tail = Tail::new(20, 1);
+    push(&mut tail, "one\n\n");
+    assert!(tail.parted());
+
+    push(&mut tail, "two");
+    assert!(!tail.parted(), "a row is being written into");
+
+    push(&mut tail, "\n");
+    assert!(!tail.parted(), "the row that left drew something");
+}
