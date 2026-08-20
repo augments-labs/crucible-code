@@ -2,8 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,26 scrolled 11
-|│                                  │ · ctrl+c     clears the line typed so far │|
+80x16 cursor 13,26 scrolled 12
+|│                                  │ · ctrl+c       clears the line typed so…  │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
