@@ -10,12 +10,17 @@
 //! that keeps the bytes, so a test can assert on the exact escape sequences
 //! written rather than on a screenshot.
 //!
-//! This module is where `crossterm` is named, and the three files below are the
-//! whole of it: [`system`] for the size and the handle, [`raw`] for the mode,
-//! [`keys`] for what arrives once the mode is raw. Everything the renderer
-//! writes is plain ANSI, so what a swap would cost is those three files.
+//! This module is where `crossterm` is named, and the files below are the whole
+//! of it: [`system`] for the size and the handle, [`raw`] for the mode,
+//! [`keys`] for what arrives once the mode is raw. Beside them sit the modes
+//! that are asked for in plain ANSI and so name nothing — [`mouse`] for the
+//! pointer, [`keyboard`] for how a modified key is spelled — and [`ground`],
+//! which is the one question this process asks a terminal. Everything the
+//! renderer writes is plain ANSI, so what a swap would cost is the first
+//! three.
 
 pub(crate) mod ground;
+pub(crate) mod keyboard;
 pub(crate) mod keys;
 pub(crate) mod mouse;
 pub(crate) mod raw;

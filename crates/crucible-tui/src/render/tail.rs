@@ -2,11 +2,13 @@
 //!
 //! Streamed output is wrapped into display rows as it arrives and held here.
 //! Once there are more rows than the bound, the oldest ones *overflow*: they are
-//! handed back to be written once and then forgotten. Everything above the tail
-//! belongs to the terminal's scrollback, so what this file holds is bounded by
-//! the tail's own size rather than by how long the session has run. The
-//! transcript is held whole by the runner, and is the one thing anywhere in
-//! this program that grows with the session.
+//! handed back to be written once and then forgotten -- all but whether the
+//! last of them drew anything, which is [`Tail::parted`] and is the only thing
+//! about a departed row that survives it. Everything above the tail belongs to
+//! the terminal's scrollback, so what this file holds is bounded by the tail's
+//! own size rather than by how long the session has run. The transcript is held
+//! whole by the runner, and is the one thing anywhere in this program that grows
+//! with the session.
 //!
 //! Wrapping happens here rather than being left to the terminal because the
 //! renderer has to know how many rows it drew in order to move back over them.
@@ -53,6 +55,13 @@ pub(crate) struct Tail {
     /// attribute on everything drawn after it, and the row settled into the
     /// record would carry it into the reader's scrollback for good.
     open: bool,
+    /// Whether the row that left most recently drew nothing.
+    ///
+    /// A row that has overflowed belongs to the terminal, and this tail is the
+    /// only party that ever measured it. [`Self::parted`] is what the
+    /// measurement is kept for. True to start with, because a tail that has let
+    /// nothing go has put no row under anything.
+    let_blank: bool,
 }
 
 /// One display row, with its width kept alongside so appending stays O(1).
@@ -77,6 +86,7 @@ impl Tail {
             worn: Worn::Chosen(""),
             close: "",
             open: false,
+            let_blank: true,
         }
     }
 
@@ -142,6 +152,7 @@ impl Tail {
             // The row that leaves is complete: only the last row is still being
             // appended to, and the bound is at least one.
             if let Some(row) = self.rows.pop_front() {
+                self.let_blank = row.width == 0;
                 overflow.push(row.text);
             }
         }
@@ -182,6 +193,17 @@ impl Tail {
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.rows.iter().all(|row| row.width == 0)
+    }
+
+    /// Whether what this tail has written ends in a blank row.
+    ///
+    /// Nothing live, and the row that left before it drew nothing — which is
+    /// what an answer that has just ended a paragraph looks like from here, and
+    /// the one thing the renderer cannot read off the tail itself, since the
+    /// row it is asking about has already gone to the terminal.
+    #[must_use]
+    pub(crate) fn parted(&self) -> bool {
+        self.is_empty() && self.let_blank
     }
 
     /// How many columns along the row being appended to the next character

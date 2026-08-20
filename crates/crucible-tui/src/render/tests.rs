@@ -857,6 +857,27 @@ fn a_row_is_never_parted_into_a_line_that_is_still_arriving() {
 }
 
 #[test]
+fn a_paragraph_break_the_wire_split_costs_one_row_and_not_two() {
+    // A model streams a word at a time, so the blank line between two
+    // paragraphs is regularly the end of one delta and the start of the next.
+    // What decides whether a row is owed is the row the tail last wrote, not
+    // whether the piece of wire that wrote it happened to carry anything.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.commit("\u{203a} what is 2+2").unwrap();
+    for delta in ["Two plus two ", "is four.\n\n", "Anything else?"] {
+        render.apart().unwrap();
+        render.stream(delta).unwrap();
+    }
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "\u{203a} what is 2+2\n\nTwo plus two is four.\n\nAnything else?\n"
+    );
+}
+
+#[test]
 fn rows_this_program_composed_settle_the_question_too() {
     // `present` is the other way into the record, and a component that ends on
     // a blank row -- which several do, to keep what follows off them -- has
