@@ -33,30 +33,39 @@ use serde_json::Value;
 
 /// Every model crucible offers, and the key the database lists it under.
 ///
-/// `None` where the database has no entry for it. Such a model gets no row, so
-/// the lookup answers "nothing known" and the session falls back to what the
-/// configuration says or to the provider refusing — which is the honest answer
-/// and is why nothing here invents a number from a name.
-const OFFERED: &[(&str, &str, Option<&str>)] = &[
-    ("anthropic", "claude-fable-5", Some("claude-fable-5")),
-    ("anthropic", "claude-opus-5", Some("claude-opus-5")),
-    ("anthropic", "claude-sonnet-5", Some("claude-sonnet-5")),
-    ("anthropic", "claude-haiku-4-5", Some("claude-haiku-4-5")),
-    ("moonshot", "k3", Some("kimi-k3")),
+/// The third field is `None` where the database has no entry at all: the model
+/// gets no row, the lookup answers "nothing known", and the session falls back
+/// to the configuration or to the provider refusing — the honest answer, and
+/// the reason nothing here invents a number from a name.
+///
+/// The fourth is a divisor applied to the database's window, for a model the
+/// vendor serves at a fraction of the size the database lists under the shared
+/// key. It is a fact somebody checked, written down once beside the model —
+/// never a figure read out of the model's own name, which is the guess this
+/// program must never make. The output ceiling is left alone: it is a property
+/// of the model, and the same model answers at the same length whatever slice
+/// of its window a request may use.
+const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
+    ("anthropic", "claude-fable-5", Some("claude-fable-5"), None),
+    ("anthropic", "claude-opus-5", Some("claude-opus-5"), None),
+    ("anthropic", "claude-sonnet-5", Some("claude-sonnet-5"), None),
+    ("anthropic", "claude-haiku-4-5", Some("claude-haiku-4-5"), None),
+    ("moonshot", "k3", Some("kimi-k3"), None),
     // The same model held to a quarter of its window, which the database does
-    // not list separately. Its size is in its name and reading it out would be
-    // this program guessing at a vendor's fact from a string.
-    ("moonshot", "k3-256k", None),
-    ("moonshot", "kimi-for-coding", Some("kimi-k2.7-code")),
+    // not list separately. The divisor is the vendor's stated figure, checked
+    // once and written down — not read out of the `256k` in the name.
+    ("moonshot", "k3-256k", Some("kimi-k3"), Some(4)),
+    ("moonshot", "kimi-for-coding", Some("kimi-k2.7-code"), None),
     (
         "moonshot",
         "kimi-for-coding-highspeed",
         Some("kimi-k2.7-code-highspeed"),
+        None,
     ),
-    ("openai", "gpt-5.6-sol", Some("gpt-5.6-sol")),
-    ("openai", "gpt-5.6-terra", Some("gpt-5.6-terra")),
-    ("openai", "gpt-5.6-luna", Some("gpt-5.6-luna")),
-    ("openai", "gpt-5.5", Some("gpt-5.5")),
+    ("openai", "gpt-5.6-sol", Some("gpt-5.6-sol"), None),
+    ("openai", "gpt-5.6-terra", Some("gpt-5.6-terra"), None),
+    ("openai", "gpt-5.6-luna", Some("gpt-5.6-luna"), None),
+    ("openai", "gpt-5.5", Some("gpt-5.5"), None),
 ];
 
 /// Which provider of the database each of crucible's is.
@@ -80,7 +89,7 @@ fn main() {
     };
 
     let mut rows: BTreeMap<(&str, &str), (u32, u32)> = BTreeMap::new();
-    for (provider, offered, key) in OFFERED {
+    for (provider, offered, key, divisor) in OFFERED {
         let Some(key) = key else { continue };
         let limit = database
             .get(listed(provider))
@@ -113,6 +122,13 @@ fn main() {
         let (Ok(window), Ok(output)) = (u32::try_from(window), u32::try_from(output)) else {
             eprintln!("generate-models: {provider}/{key} states a limit too large to hold");
             std::process::exit(1);
+        };
+
+        // A model served at a fraction of the listed window is written at that
+        // fraction, the divisor stated beside it rather than read from anywhere.
+        let window = match divisor {
+            Some(by) if *by > 1 => window / by,
+            _ => window,
         };
         rows.insert((provider, offered), (window, output));
     }
