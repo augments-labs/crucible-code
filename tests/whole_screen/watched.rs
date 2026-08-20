@@ -141,6 +141,31 @@ impl Watched {
         Self::started(case, columns, rows, Some(vendor), true)
     }
 
+    /// The same again, on a terminal crucible writes colour to.
+    ///
+    /// Every other case here runs with `NO_COLOR` set, which is what keeps a
+    /// picture readable — and it is also what leaves the markdown reader
+    /// unreached, since a run with no colour to put a marker into keeps the
+    /// marker instead. So the one thing this whole file exists to check about
+    /// an answer — that what a person sees is what the model meant, drawn by
+    /// the terminal they are actually in — was the one thing no case here
+    /// could see. This asks for colour outright, which outranks `NO_COLOR`.
+    ///
+    /// `ansi` because the screen keeps text and drops every colour it is told,
+    /// so what a snapshot is worth is the rows, and the sixteen a terminal
+    /// already has are the fewest escapes to get to them.
+    pub(crate) fn in_colour(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"output\": {{\"color\": \"always\", \"theme\": \"ansi\"}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+
+        Self::configured(case, columns, rows, &document, true)
+    }
+
     /// A provider to reach and nothing to sign a request with.
     ///
     /// The machine `/login` is for: a vendor is there and configured, and this

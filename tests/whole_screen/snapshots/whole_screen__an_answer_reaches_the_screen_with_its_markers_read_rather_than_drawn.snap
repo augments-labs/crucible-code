@@ -1,0 +1,37 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x32 cursor 26,4 scrolled 6
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
+|                                                                                |
+|› say something in markdown                                                     |
+|                                                                                |
+|                                                                                |
+|What I found                                                                    |
+|                                                                                |
+|The loud part, a span of code and a page (https://example.invalid) beside them. |
+|                                                                                |
+|· one                                                                           |
+|· two                                                                           |
+|                                                                                |
+|│ and a line somebody else said                                                 |
+|                                                                                |
+|                                                                                |
+|fn main() {}                                                                    |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
+|                                                                                |
+|                                                                                |
