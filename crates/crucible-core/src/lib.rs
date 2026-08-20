@@ -50,7 +50,8 @@ pub use provider::{
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
 pub use tool::{
-    Account, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched, Watch, Wrote,
+    Account, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched,
+    Watch, Wrote,
 };
 pub use transcript::{Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
