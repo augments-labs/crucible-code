@@ -2,17 +2,17 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 19,4 scrolled 2
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+80x24 cursor 19,4 scrolled 3
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
+|│                                  │ · /            opens the command list     │|
+|│                                  │ · shift+enter  adds a line without sendi… │|
+|│                                  │ · shift+tab    steps the permission mode  │|
+|│                                  │ · ctrl+c       clears the line typed so…  │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
