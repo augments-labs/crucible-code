@@ -587,6 +587,18 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
     }
 }
 
+/// Which press the `input` block said sends a prompt.
+///
+/// The translation from what a document may say to what the editor understands,
+/// and the only place the two spellings meet. Nothing said is Return sending,
+/// which is what almost every terminal makes possible and every reader expects.
+fn sends(settings: &crucible_config::Settings) -> crucible_tui::Sending {
+    match settings.sending() {
+        Some(crucible_config::Sending::AltEnter) => crucible_tui::Sending::AltEnter,
+        Some(crucible_config::Sending::Enter) | None => crucible_tui::Sending::Enter,
+    }
+}
+
 /// Builds everything, then hands over to the loop.
 fn run(cli: &Cli) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -699,6 +711,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // a reader who configured a theme look at a panel that says they have
         // not chosen.
         chosen: Cell::new(settings.theme()),
+        // Which press sends. Asked rather than worked out: a terminal that
+        // keeps Shift and Return for itself reports nothing this program could
+        // have read, and the reader is the one who can see that happening.
+        sending: sends(&settings),
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
         steer: crucible_core::Steer::new(),
@@ -738,6 +754,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
     renderer.wears(terms.style().palette());
+
+    // And beside it, for the marker the reader above drops rather than reads:
+    // a bullet and a quote bar are drawn out of the same set as every border
+    // and mark on screen, so a font missing one is missing all of them.
+    renderer.draws(terms.style().glyphs());
 
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the

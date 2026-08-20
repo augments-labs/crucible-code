@@ -188,6 +188,37 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// An answer with something of every shape the reader knows in it.
+///
+/// Written as one string rather than assembled, because what it is here to
+/// carry is the blank rows between the blocks as much as the blocks.
+const IN_MARKDOWN: &str = "## What I found\n\n\
+    The **loud** part, a `span` of code and a [page](https://example.invalid) \
+    beside them.\n\n\
+    - one\n- two\n\n\
+    > and a line somebody else said\n\n\
+    ```rust\nfn main() {}\n```\n";
+
+#[test]
+fn an_answer_reaches_the_screen_with_its_markers_read_rather_than_drawn() {
+    // The only case here that runs in colour, and the only one that can see
+    // this at all: `NO_COLOR` is what keeps every other picture in this file
+    // readable, and a run with no colour to put a marker into has no reason to
+    // take the marker out — so the reader that turns `##` into a heading and
+    // `-` into a bullet had never once been reached through a terminal.
+    //
+    // What the picture is worth is the text. The screen keeps no colour, so the
+    // heading and the bold word are told apart from prose only by the markers
+    // being gone; that they are gone, and that the rows and the blank rows
+    // between them are the ones a person would count, is the whole assertion.
+    let vendor = Vendor::answering(IN_MARKDOWN);
+    let mut window = Watched::in_colour("answered-markdown", 80, 32, &vendor);
+
+    window.types_until("say something in markdown\r", "fn main");
+
+    insta::assert_snapshot!(window.picture());
+}
+
 /// The file the call in [`a_call_that_changed_a_file_is_drawn_with_the_change`]
 /// is about, and the one line of it that moves.
 const BEFORE: &str = "# trend data\nbudgets:\n  name: release budgets\n";

@@ -2,11 +2,13 @@
 //!
 //! Streamed output is wrapped into display rows as it arrives and held here.
 //! Once there are more rows than the bound, the oldest ones *overflow*: they are
-//! handed back to be written once and then forgotten. Everything above the tail
-//! belongs to the terminal's scrollback, so what this file holds is bounded by
-//! the tail's own size rather than by how long the session has run. The
-//! transcript is held whole by the runner, and is the one thing anywhere in
-//! this program that grows with the session.
+//! handed back to be written once and then forgotten -- all but whether the
+//! last of them drew anything, which is [`Tail::parted`] and is the only thing
+//! about a departed row that survives it. Everything above the tail belongs to
+//! the terminal's scrollback, so what this file holds is bounded by the tail's
+//! own size rather than by how long the session has run. The transcript is held
+//! whole by the runner, and is the one thing anywhere in this program that grows
+//! with the session.
 //!
 //! Wrapping happens here rather than being left to the terminal because the
 //! renderer has to know how many rows it drew in order to move back over them.
@@ -46,6 +48,11 @@ pub(crate) struct Tail {
     worn: Worn,
     /// What closes [`Self::worn`].
     close: &'static str,
+    /// Where the row being appended to could be cut, if it has to be.
+    ///
+    /// `None` until a space lands on the row, and again as soon as the row
+    /// ends. See [`Broken`] for what a cut has to put back.
+    broken: Option<Broken>,
     /// Whether the row being appended to has [`Self::worn`] open on it.
     ///
     /// The invariant this keeps is that every row is closed once [`Self::push`]
@@ -53,7 +60,50 @@ pub(crate) struct Tail {
     /// attribute on everything drawn after it, and the row settled into the
     /// record would carry it into the reader's scrollback for good.
     open: bool,
+    /// Whether the row that left most recently drew nothing.
+    ///
+    /// A row that has overflowed belongs to the terminal, and this tail is the
+    /// only party that ever measured it. [`Self::parted`] is what the
+    /// measurement is kept for. True to start with, because a tail that has let
+    /// nothing go has put no row under anything.
+    let_blank: bool,
+    /// Whether anything has been written into this tail since it was cleared.
+    ///
+    /// Not the question [`Self::is_empty`] answers. A row is complete the
+    /// moment the newline ends it and leaves for scrollback on the frame after
+    /// that, so a tail in the middle of an answer holds nothing at all between
+    /// one row and the next -- which is what a boundary between two blocks
+    /// looks like too. This is what tells them apart.
+    live: bool,
 }
+
+/// The last place on a row a wrap could cut it, and what the cut has to mend.
+///
+/// A row is wrapped at the last space on it rather than at the column the text
+/// happened to reach: a word split across two rows is one the reader has to put
+/// back together, and an answer is prose far more often than it is a column of
+/// anything. Where no space landed on the row -- a word wider than the window,
+/// a line of code -- the cut is where the row ends, exactly as it always was.
+///
+/// The slot is here because a cut lands in the middle of one as often as not,
+/// and every row this tail hands out is balanced on its own: see
+/// [`Tail::break_row`] for why that is not negotiable.
+#[derive(Debug, Clone, Copy)]
+struct Broken {
+    /// Where the carried text starts, in bytes into the row.
+    at: usize,
+    /// What the row measured up to there.
+    width: usize,
+    /// The slot open across the cut, and what closes it.
+    worn: Worn,
+    close: &'static str,
+    /// Whether that slot was open at all.
+    open: bool,
+}
+
+/// The spaces a wrapped row is indented with, taken as a slice rather than
+/// built: a hang is a handful of columns and a wrap is on the render path.
+const SPACES: &str = "                                ";
 
 /// One display row, with its width kept alongside so appending stays O(1).
 #[derive(Debug, Default, Clone)]
@@ -77,6 +127,9 @@ impl Tail {
             worn: Worn::Chosen(""),
             close: "",
             open: false,
+            broken: None,
+            let_blank: true,
+            live: false,
         }
     }
 
@@ -120,6 +173,7 @@ impl Tail {
             if self.escapes.holds(character) {
                 continue;
             }
+            self.live = true;
 
             match character {
                 // A newline ends the row wherever it is.
@@ -142,6 +196,7 @@ impl Tail {
             // The row that leaves is complete: only the last row is still being
             // appended to, and the bound is at least one.
             if let Some(row) = self.rows.pop_front() {
+                self.let_blank = row.width == 0;
                 overflow.push(row.text);
             }
         }
@@ -184,6 +239,26 @@ impl Tail {
         self.rows.iter().all(|row| row.width == 0)
     }
 
+    /// Whether what this tail has written ends in a blank row.
+    ///
+    /// Nothing live, and the row that left before it drew nothing — which is
+    /// what an answer that has just ended a paragraph looks like from here, and
+    /// the one thing the renderer cannot read off the tail itself, since the
+    /// row it is asking about has already gone to the terminal.
+    #[must_use]
+    pub(crate) fn parted(&self) -> bool {
+        self.is_empty() && self.let_blank
+    }
+
+    /// Whether a message is still being written into this tail.
+    ///
+    /// What a caller asks before putting a row of its own down: a row inside an
+    /// answer that is still arriving is a row nobody wrote. See [`Self::live`].
+    #[must_use]
+    pub(crate) fn live(&self) -> bool {
+        self.live
+    }
+
     /// How many columns along the row being appended to the next character
     /// goes.
     ///
@@ -212,6 +287,10 @@ impl Tail {
         self.worn = Worn::Chosen("");
         self.close = "";
         self.open = false;
+        self.broken = None;
+        // The message that was being written into this tail is over. What
+        // comes next starts from nothing having been written.
+        self.live = false;
     }
 
     /// Ends the row being appended to and starts a fresh one, carrying the slot
@@ -225,7 +304,134 @@ impl Tail {
     /// only half of a pair would leave the other half unwritten for good.
     fn break_row(&mut self) {
         self.close_worn();
+        self.broken = None;
         self.rows.push_back(Row::default());
+    }
+
+    /// Ends the row being appended to at the last space on it, carrying what
+    /// followed onto the next.
+    ///
+    /// Falls back to [`Tail::break_row`] where there is nothing to carry: a row
+    /// with no space on it, and one whose space is the last thing on it.
+    fn wrap_row(&mut self) {
+        let hang = self.hang();
+
+        let Some(broken) = self.broken.take() else {
+            self.break_row();
+            self.indent(hang);
+            return;
+        };
+
+        let Some(row) = self.rows.back_mut() else {
+            self.break_row();
+            return;
+        };
+
+        if broken.at >= row.text.len() {
+            self.break_row();
+            self.indent(hang);
+            return;
+        }
+
+        let mut carried = row.text.split_off(broken.at);
+        let width = row.width.saturating_sub(broken.width);
+        row.width = broken.width;
+
+        // The cut fell inside a slot, so the half left behind is closed and the
+        // half carried over opens the same one again. Whatever was opened or
+        // closed after the cut travelled with the text it covers, so `open` is
+        // still what it was: this mends the seam and nothing else.
+        if broken.open {
+            row.text.push_str(broken.close);
+            carried.insert_str(0, broken.worn.as_str());
+        }
+
+        self.rows.push_back(Row {
+            text: carried,
+            width,
+        });
+        self.indent(hang);
+    }
+
+    /// How far a row started by a wrap is indented, so what continues a line
+    /// is drawn under the line's own text rather than under its mark.
+    ///
+    /// Read off the row being cut rather than remembered, which is what makes
+    /// it the same answer on the second wrap as on the first: an item's mark
+    /// gives way to the spaces standing in for it, and those spaces are the
+    /// leading indent the next wrap reads. A line break asks nothing of this,
+    /// so a fresh line starts flush wherever the line above it hung.
+    ///
+    /// A mark here is what a mark looks like -- one narrow character that is
+    /// not a letter, or a number and its dot, with a space after it. This is
+    /// the wrapper's own reading of the row in front of it: the tail is handed
+    /// text and never told what any of it meant, and a run of it can be an
+    /// answer the model wrote with its markers still in.
+    fn hang(&self) -> usize {
+        let Some(row) = self.rows.back() else {
+            return 0;
+        };
+
+        let mut escapes = Escapes::default();
+        let mut drawn = row
+            .text
+            .chars()
+            .filter(move |character| !escapes.holds(*character))
+            .peekable();
+
+        let mut hang = 0;
+        while drawn.next_if_eq(&' ').is_some() {
+            hang += 1;
+        }
+
+        let Some(mark) = drawn.next() else {
+            return 0;
+        };
+
+        let mut marked = 1;
+        if mark.is_ascii_digit() {
+            while drawn.next_if(char::is_ascii_digit).is_some() {
+                marked += 1;
+            }
+
+            if drawn.next_if(|next| matches!(next, '.' | ')')).is_none() {
+                return hang;
+            }
+
+            marked += 1;
+        } else if mark.is_alphanumeric() || width::advance(mark) != Some(1) {
+            return hang;
+        }
+
+        if drawn.next() == Some(' ') {
+            hang + marked + 1
+        } else {
+            hang
+        }
+    }
+
+    /// Pads the row a wrap has just started, where there is room to.
+    ///
+    /// A hang with no columns left behind it is no hang: the row would be
+    /// full before anything was written on it, and the character that would
+    /// not fit would push a fresh row under it every time.
+    fn indent(&mut self, hang: usize) {
+        let hang = hang.min(SPACES.len());
+        if hang == 0 {
+            return;
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            if hang + row.width >= self.width {
+                return;
+            }
+
+            // Before the sequence a wrap carried over rather than after it: a
+            // slot can paint what it covers, and what these stand in for is
+            // the mark on the row above, not the words beside it.
+            row.text.insert_str(0, &SPACES[..hang]);
+            row.width += hang;
+        }
     }
 
     /// Opens the worn slot on the current row, if it is not open already.
@@ -269,13 +475,31 @@ impl Tail {
         }
 
         if self.column() + advance > self.width {
-            self.break_row();
+            self.wrap_row();
+
+            // What a wrap carried over can be nearly a whole row wide, and a
+            // row counted short is a row the terminal wraps itself.
+            if self.column() + advance > self.width {
+                self.break_row();
+            }
         }
 
         self.open_worn();
         if let Some(row) = self.rows.back_mut() {
             row.text.push(character);
             row.width += advance;
+
+            // Recorded after the space rather than before it, so the space
+            // stays on the row it ended and the carried half opens on a word.
+            if character == ' ' {
+                self.broken = Some(Broken {
+                    at: row.text.len(),
+                    width: row.width,
+                    worn: self.worn,
+                    close: self.close,
+                    open: self.open,
+                });
+            }
         }
     }
 

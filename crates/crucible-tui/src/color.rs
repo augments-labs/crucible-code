@@ -76,6 +76,12 @@ pub enum Slot {
     Strong,
     /// Present but secondary — a hint, a timestamp, a label.
     Quiet,
+    /// The words a link was written under.
+    Link,
+    /// A phrase the answer leant on rather than raised its voice for.
+    Emphasis,
+    /// A phrase the answer wrote and then took back.
+    Struck,
     /// The mode that lets a file be written without asking.
     AllowEdits,
     /// The mode that asks about nothing at all.
@@ -507,6 +513,36 @@ impl Slot {
             Self::Accent => tones.accent,
             Self::Strong => tones.strong,
             Self::Quiet => QUIET,
+            // Slanted, and nothing else -- the same reasoning as the weight
+            // above it, one step quieter. A terminal without italics ignores
+            // the attribute and the phrase reads as the prose around it, which
+            // is what emphasis was worth in the first place.
+            Self::Emphasis => Ink {
+                exact: "\x1b[3m",
+                indexed: "\x1b[3m",
+                basic: "\x1b[3m",
+            },
+            // A line under the words, and no colour: underline is what a
+            // terminal has always meant a link by, it survives every rung
+            // unchanged, and the destination is written out beside the words
+            // anyway -- so the emphasis has one job, which is to say where the
+            // words end and the address begins.
+            Self::Link => Ink {
+                exact: "\x1b[4m",
+                indexed: "\x1b[4m",
+                basic: "\x1b[4m",
+            },
+            // A line through the words and nothing else. What a struck phrase
+            // means is that the answer changed its mind in front of the reader,
+            // so the words have to stay legible -- which is the whole reason
+            // this is an attribute rather than the grey `Done` wears beside it:
+            // a finished task is behind you and a retraction is still being
+            // read.
+            Self::Struck => Ink {
+                exact: "\x1b[9m",
+                indexed: "\x1b[9m",
+                basic: "\x1b[9m",
+            },
             Self::AllowEdits | Self::DoneMark => tones.green,
             Self::FullAccess | Self::DoingMark => tones.amber,
             // Weight and nothing else, at every rung: the reader's own

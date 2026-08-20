@@ -6,15 +6,114 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**A blank row no longer opens in the middle of an answer.** A row is complete
+the moment its newline arrives and belongs to the terminal by the next delta,
+so between one row and the next the live region holds nothing — which is also
+what the boundary between two blocks looks like, and the separating row was
+spent again on every list item and every line of a plan.
+
+**A block fenced with tildes is a block.** `~~~` was written into the answer as
+three tildes and everything between them was read as prose, so a block written
+that way lost the markers its code was made of. A block is now closed by the
+marker that opened it, and backticks inside one are backticks.
+
+**A pasted tab keeps its indentation.** A tab was dropped with the rest of what
+a terminal can hide in a paste, so a snippet written with tabs arrived flat --
+in the box and in the prompt that was sent. It now arrives as the four columns
+it stood for.
+
+**A fenced block indented under an item opens where it should.** The spaces in
+front of the fence used to be written into the answer -- stitched to the front
+of the block's first row, and to the item after it. They now go with the fence
+line they were part of.
+
+**Emphasis that runs over a line break is read as one phrase.** A bold or
+leant-on run opened on one line and closed on the next used to lose its opening
+marker and print its closing one into the prose. It now carries across the
+break, and no further than the paragraph it was written in.
+
+**An address written bare is drawn as the link it is.** A `https://` or
+`http://` address in prose now wears the link's own colour, and arrives exactly
+as it was written -- `/_private` and `/*/` used to lose the characters that
+carry their meaning. A full stop after one stays with the sentence.
+
+**A marker the answer escaped is drawn as itself.** `\*literal\*` lost both
+stars and leant the words between them. A backslash in front of a marker now
+draws the marker and goes; in front of anything else -- `C:\Users`, `\d+` -- it
+stays where it was.
+
+**A marker inside a code span stays where it was.** `` `*ptr` ``, ``
+`_private` `` and `` `**kwargs` `` lost the characters that carry their
+meaning, and the emphasis one of them opened ran on past the span. Between two
+backticks nothing but the closing backtick is a marker now.
+
+**A wrapped item continues under its own text.** An item longer than the
+terminal used to carry on at the edge, under its own bullet, which reads as a
+new item rather than as more of one. It now hangs under the words it belongs
+to -- a bullet, a task's box, a quote's bar or a number and its dot.
+
+**An answer wraps at a space rather than through a word.** A line longer than
+the terminal used to break wherever the edge fell, leaving words in halves on
+two rows. It now ends at the last space that fits, and only a word no row could
+hold is still broken where the row ends.
+
+**A marker the message ended on is no longer eaten.** An answer whose last delta
+stopped on a `*` or a `~` lost it: the run was held for the character that says
+what it was, and the message ended before one arrived. It now settles against
+the end of the message exactly as it would against a line break.
+
+**An underscore standing in for a value keeps it.** `Ok(_) | Err(_)` was drawn
+as `Ok() | Err()`, because a bracket either side of an underscore is not
+whitespace and that was all the rule asked for. Emphasis now opens only where a
+word starts after it.
+
 ### Added
 
-**The edits every shell answers to, in the prompt box.** Ctrl+W takes the word
-behind the cursor, Ctrl+U the rest of the line behind it and Ctrl+K the rest of
-the line ahead; Ctrl+Backspace and Alt+Backspace take the word too, and Delete
-takes the character in front. A box that grew to many lines needed them —
-holding Backspace down was the only way to take a line back.
+**A line of dashes in an answer is a rule across the window.** Three or more
+`-`, `*` or `_` alone on a line become one line drawn edge to edge, which is
+what a model means by them. Two are not enough, and `a --- b` is left alone.
+
+**A task in an answer is drawn as a task.** `- [ ] a thing` and `- [x] a done
+one` get a box in place of the bullet, and a finished one goes subdued and
+struck through — the same marks a plan is drawn with, because it is the same
+thing. The brackets have to open the item, so `- see [TODO] here` is left alone.
+
+**A table in an answer is drawn as a table.** The bars become one rule between
+the columns and one under the header, each column is as wide as the widest thing
+in it, and the row of dashes decides which side a column is drawn against. A
+table wider than the window gives up its widest column until it fits.
+
+**A phrase an answer took back is drawn with a line through it.** `~~this~~`
+is struck rather than shown with its tildes, and struck rather than dimmed,
+because a retraction is still being read. Exactly two tildes: `~/Projects` and
+`~40` are left where they were.
+
+**A list and a quote are read out of an answer rather than shown as their
+markers.** Every bullet opens with the same mark whichever of `-`, `*` or `+`
+the model wrote, nesting is kept, and a quoted line gets a bar down its left and
+goes quiet. Both marks come out of the set `output.glyphs` names.
+
+**One marker is emphasis and two are weight, rather than both being weight.**
+`*leant on*` is now slanted and `**loud**` stays raised, which is what markdown
+has always meant by them and what a model writes expecting to be read that way.
+A terminal without italics ignores the slant and the phrase reads as the prose
+around it.
+
+**A link in an answer is read rather than shown as its markers.** The words are
+underlined and the address follows them in brackets, quietly, so a reader can
+copy it or click it in a terminal that finds its own links. A bracket that was
+never a link — an index, a `[TODO]`, one the line ended before it closed — is
+left exactly as it was written.
 
 ### Fixed
+
+**Two blank rows no longer open where one belongs.** The row separating an
+answer from what comes next was spent again whenever a paragraph break landed
+on the edge of a delta, which for a model writing a word at a time is most of
+them. What decides the row is now the last row written rather than whether the
+piece of the wire that wrote it carried anything.
 
 **A multi-line prompt and a multi-line paste, which 0.13.2 announced and neither
 of which reached a terminal.** Both were built and neither was asked for: a
@@ -23,7 +122,6 @@ told to, so the editor's answers to them were never reached — and a paste's
 breaks are carriage returns, which it dropped. Alt+Enter and Ctrl+J now say the
 same thing where a terminal declines, and the wheel walks a list rather than
 meaning nothing while the pointer is held.
-
 
 ## [0.13.2] - 2026-08-20
 

@@ -12,6 +12,7 @@
 //! [`frame`]; this module decides when a frame happens.
 
 use crate::color::Palette;
+use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -99,6 +100,13 @@ pub struct Renderer<T: Terminal> {
     /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
     /// renderer nobody told showing the answer exactly as it arrived.
     palette: Palette,
+    /// Which characters the scan above draws a bullet and a quote bar with.
+    ///
+    /// Held beside the palette and settled the same way: a marker that is read
+    /// out of an answer has to be replaced by something the reader's font
+    /// actually has, and what that is is a fact about the terminal rather than
+    /// about the answer. Unicode until [`Renderer::draws`] says otherwise.
+    glyphs: Glyphs,
     /// How many rows the record has grown by this session.
     ///
     /// Never read for its own sake — what it is for is the difference between
@@ -118,6 +126,12 @@ pub struct Renderer<T: Terminal> {
     /// blank is owed is the thing that knows what was last written. True to
     /// start with, because the top of a session is already a boundary and a
     /// transcript that opens on an empty row has spent one for nothing.
+    ///
+    /// A committed line and a presented row each say for themselves. Streamed
+    /// output cannot: a delta is a piece of the wire, so whether the answer has
+    /// just ended a paragraph is a question about the rows the tail has written
+    /// and not about the bytes that happened to arrive together. [`Tail::parted`]
+    /// is what answers it.
     parted: bool,
 }
 
@@ -151,6 +165,7 @@ impl<T: Terminal> Renderer<T> {
             footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
+            glyphs: Glyphs::default(),
             record: 0,
             parted: true,
         }
@@ -165,6 +180,18 @@ impl<T: Terminal> Renderer<T> {
     /// there would take the emphasis away and put nothing in its place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
+    }
+
+    /// Tells this renderer which characters it may draw with.
+    ///
+    /// Said once, at startup, beside [`Renderer::wears`] and for the same
+    /// reason: which set a font has is settled before the first frame and no
+    /// command changes it. It reaches the transcript through the markdown
+    /// reader, which is the one thing here that puts a character of its own in
+    /// place of one the model wrote.
+    pub fn draws(&mut self, glyphs: Glyphs) {
+        self.glyphs = glyphs;
+        self.markdown = Markdown::new(glyphs);
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -183,19 +210,17 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
-        if !delta.trim().is_empty() {
-            self.parted = false;
-        }
-
         // Nowhere to put a slot is nowhere to put a marker either. A redirected
         // run, `NO_COLOR`, `--color never`: the answer arrives as the model
         // wrote it, which is markdown, and a file of markdown is worth more
         // than a file it has been taken out of.
         if !self.palette.writes_color() {
             self.tail.push(delta, &mut self.overflow);
+            self.parted = self.tail.parted();
             return self.draw();
         }
 
+        let columns = self.size.columns;
         let Self {
             markdown,
             tail,
@@ -205,11 +230,12 @@ impl<T: Terminal> Renderer<T> {
         } = self;
         let palette = *palette;
 
-        markdown.read(delta, &mut |slot, text| {
+        markdown.read(delta, columns, &mut |slot, text| {
             tail.wear(slot, &palette);
             tail.push(text, overflow);
         });
 
+        self.parted = self.tail.parted();
         self.draw()
     }
 
@@ -380,10 +406,36 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn settle(&mut self) -> Result<(), TerminalError> {
+        // Text held back for a shape that never arrived is text, and this is
+        // the last moment it can be written: the reader below is about to be
+        // dropped, and with it anything it was still holding.
+        let columns = self.size.columns;
+        let Self {
+            markdown,
+            tail,
+            overflow,
+            palette,
+            ..
+        } = self;
+        let palette = *palette;
+        let mut spilled = false;
+        markdown.finish(columns, &mut |slot, text| {
+            spilled = true;
+            tail.wear(slot, &palette);
+            tail.push(text, overflow);
+        });
+
+        // Only where something was put back, and always to false: what a
+        // reader gives up on is a bracket and the words after it, never a line
+        // break -- a break is what made it give up.
+        if spilled {
+            self.parted = false;
+        }
+
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
-        self.markdown = Markdown::default();
+        self.markdown = Markdown::new(self.glyphs);
 
         if !self.terminal.is_terminal() {
             return self.settle_plain();
@@ -507,18 +559,20 @@ impl<T: Terminal> Renderer<T> {
     /// under the final answer, and the shell's own prompt would come back one
     /// row lower than it left.
     ///
-    /// Blank rows do not accumulate, and none is owed at the very top, where
-    /// the boundary is the start of the session. Nor is one owed while the tail
-    /// still holds something: what comes next is then the rest of that line
-    /// rather than a block after it, and a caller that asks on every piece of a
-    /// streamed answer — which is the only way it can ask on the first — must
-    /// get a row before the answer and none inside it.
+    /// Blank rows do not accumulate, and none is owed once an answer has begun
+    /// arriving: what comes next is then the rest of that answer rather than a
+    /// block after it, and a caller that asks on every piece of a streamed
+    /// answer — which is the only way it can ask on the first — must get a row
+    /// before the answer and none inside it. The tail holding something is not
+    /// that question: a row is complete the moment its newline arrives and is
+    /// gone by the next delta, so an answer between one row and the next holds
+    /// nothing at all.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn apart(&mut self) -> Result<(), TerminalError> {
-        if self.parted || !self.tail.is_empty() {
+        if self.parted || self.tail.live() {
             return Ok(());
         }
 

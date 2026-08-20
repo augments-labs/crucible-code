@@ -143,8 +143,8 @@ fn paste_controls_cannot_move_the_terminal_cursor() {
     let mut editor = typed("safe ");
 
     assert_eq!(editor.paste("text\n\x1b[2J\tstill"), Typed::Changed);
-    assert_eq!(editor.text(), "safe text[2Jstill");
-    assert_eq!(editor.paste("\n\t\x07"), Typed::Ignored);
+    assert_eq!(editor.text(), "safe text[2J    still");
+    assert_eq!(editor.paste("\n\x07"), Typed::Ignored);
 }
 
 #[test]
@@ -530,6 +530,49 @@ fn every_edit_leaves_the_cursor_somewhere_the_line_actually_ends() {
         assert!(editor.at <= editor.text().len());
         assert_eq!(editor.column(), width::columns(editor.before()));
     }
+}
+
+#[test]
+fn a_pasted_tab_arrives_as_the_columns_it_stood_for() {
+    let mut editor = Editor::new().multiline();
+
+    assert_eq!(editor.paste("fn main() {\n\tlet a = 1;\n}"), Typed::Changed);
+    assert_eq!(editor.text(), "fn main() {\n    let a = 1;\n}");
+}
+
+#[test]
+fn return_sends_and_a_modified_return_opens_a_line() {
+    // The arrangement almost every reader has, and the one nothing has to be
+    // configured for.
+    let mut editor = typed("one").multiline();
+
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+}
+
+#[test]
+fn the_two_swap_for_a_terminal_that_keeps_the_modified_return() {
+    // What a reader asks for when Shift and Return never reach this process:
+    // Return opens the line it could not otherwise open, and the press that did
+    // arrive is the one that sends.
+    let mut editor = typed("one").multiline().sends(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Newline), Typed::Submitted);
+}
+
+#[test]
+fn the_swap_still_refuses_to_send_nothing() {
+    // Whichever press sends, an empty box has nothing to send — otherwise the
+    // arrangement below would turn a stray Alt+Return into a turn about
+    // nothing.
+    let mut editor = Editor::new().multiline().sends(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Newline), Typed::Ignored);
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "\n");
 }
 
 #[test]

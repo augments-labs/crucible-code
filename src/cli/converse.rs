@@ -38,7 +38,7 @@ use crucible_core::{
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Spelling, Terminal, pressed,
+    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Sending, Spelling, Terminal, pressed,
 };
 
 use super::draw;
@@ -191,6 +191,13 @@ pub(crate) struct Terms {
     /// The directory this conversation is about, which is what decides whose
     /// sessions are listed and which of them may be picked up.
     pub(crate) workspace: Workspace,
+    /// Which press finishes a prompt, and which one opens a line under it.
+    ///
+    /// Read once at startup and never again: it is a fact about the keyboard in
+    /// front of somebody, and no command changes it. Not a `Cell` for that
+    /// reason, and not part of the style either — it is about what arrives from
+    /// the terminal rather than about what is drawn to it.
+    pub(crate) sending: Sending,
 }
 
 impl Terms {
@@ -263,7 +270,7 @@ pub(crate) fn converse<T: Terminal>(
     // the line being typed, the lines finished behind it, what a result had no
     // room to say, the view over it, the plan, and where an answer comes from.
     // Held in one value for the reason its own prose gives.
-    let mut held = Held::new(terms.plan.clone(), Answers { input, keys });
+    let mut held = Held::new(terms.plan.clone(), terms.sending, Answers { input, keys });
 
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
@@ -1111,12 +1118,13 @@ struct Held<'a> {
 impl<'a> Held<'a> {
     /// What a session starts with: nothing typed, nothing queued, nothing kept
     /// and nothing said, over the plan the tools were built with.
-    fn new(plan: Plan, answers: Answers<'a>) -> Self {
+    fn new(plan: Plan, sending: Sending, answers: Answers<'a>) -> Self {
         Self {
             // The one editor that takes a newline: a prompt is a paragraph, not
             // a line, and the box grows a row for each. Every other editor — a
-            // permission note, a secret, a name — stays one line.
-            editor: Editor::new().multiline(),
+            // permission note, a secret, a name — stays one line, so this is
+            // also the one that has a second press to give away.
+            editor: Editor::new().multiline().sends(sending),
             queued: Prompts::default(),
             kept: Kept::default(),
             opened: Standing::default(),
