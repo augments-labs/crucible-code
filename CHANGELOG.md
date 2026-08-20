@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**Emphasis that runs over a line break is read as one phrase.** A bold or
+leant-on run opened on one line and closed on the next used to lose its opening
+marker and print its closing one into the prose. It now carries across the
+break, and no further than the paragraph it was written in.
+
 **An address written bare is drawn as the link it is.** A `https://` or
 `http://` address in prose now wears the link's own colour, and arrives exactly
 as it was written -- `/_private` and `/*/` used to lose the characters that

@@ -207,11 +207,17 @@ fn two_underscores_around_a_word_are_weight() {
 }
 
 #[test]
-fn a_marker_that_never_closes_costs_its_own_line_and_no_more() {
-    let said = whole("**never closed\nthe line after it\n");
+fn a_marker_that_never_closes_costs_its_own_paragraph_and_no_more() {
+    let said = whole("**never closed\nthe line after it\n\na new paragraph\n");
 
-    assert_eq!(drawn(&said), "never closed\nthe line after it\n");
-    assert_eq!(slots(&said), vec![Slot::Strong, Slot::Plain]);
+    assert_eq!(
+        drawn(&said),
+        "never closed\nthe line after it\n\na new paragraph\n"
+    );
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Strong, Slot::Plain, Slot::Strong, Slot::Plain]
+    );
 }
 
 #[test]
@@ -585,12 +591,16 @@ fn a_pair_left_dangling_at_the_end_of_a_line_strikes_nothing() {
 }
 
 #[test]
-fn a_retraction_ends_where_the_line_does() {
-    // Emphasis of every kind is a line's, not a message's: a model that opens
-    // one and never closes it costs the reader that line and no more.
-    let said = whole("~~opened here\nand plain here\n");
+fn a_retraction_ends_where_the_paragraph_does() {
+    // Emphasis of every kind is a paragraph's, not a message's: a model that
+    // opens one and never closes it costs the reader that paragraph and no
+    // more.
+    let said = whole("~~opened here\nand struck here\n\nand plain here\n");
 
-    assert_eq!(slots(&said), vec![Slot::Struck, Slot::Plain]);
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Struck, Slot::Plain, Slot::Struck, Slot::Plain]
+    );
 }
 
 #[test]
@@ -1092,4 +1102,40 @@ fn where_a_delta_ends_changes_nothing_about_what_is_drawn() {
         assert_eq!(drawn(&said), drawn(&whole), "{answer:?}");
         assert_eq!(slots(&said), slots(&whole), "{answer:?}");
     }
+}
+
+#[test]
+fn emphasis_that_opened_on_one_line_closes_on_the_next() {
+    let said = ended("**a phrase over\ntwo lines** and prose\n");
+
+    assert_eq!(drawn(&said), "a phrase over\ntwo lines and prose\n");
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Strong, Slot::Plain, Slot::Strong, Slot::Plain]
+    );
+}
+
+#[test]
+fn emphasis_nobody_closed_ends_with_the_paragraph() {
+    let said = ended("**opened and left open\n\na new paragraph\n");
+
+    assert_eq!(drawn(&said), "opened and left open\n\na new paragraph\n");
+    assert_eq!(slots(&said), vec![Slot::Strong, Slot::Plain]);
+}
+
+#[test]
+fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
+    let said = ended("- **opened and left open\n- a second item\n");
+
+    assert_eq!(drawn(&said), "· opened and left open\n· a second item\n");
+    assert_eq!(
+        slots(&said),
+        vec![
+            Slot::Quiet,
+            Slot::Strong,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain
+        ]
+    );
 }

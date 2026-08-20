@@ -90,10 +90,16 @@ enum Marked {
 
 /// What is open on the line being read.
 ///
-/// All of it ends where the line does. Markdown lets emphasis cross a line
-/// break and this does not: an unclosed marker then costs one line rather than
-/// the rest of the answer, and a model that opened one by accident is the case
-/// that actually happens.
+/// Most of it ends where the line does. Emphasis is the exception, because a
+/// model writes a bold phrase and lets it wrap, and a run closed on the line
+/// after the one that opened it is the case that actually happens -- read
+/// per-line, the opening marker is eaten and the closing one is printed into
+/// the prose, which is worse than either answer.
+///
+/// So emphasis crosses a line break and nothing else does, and it crosses only
+/// where the paragraph does: a blank line ends it, a block mark opening the
+/// next line ends it, and a fence ends it. An unclosed marker then costs the
+/// paragraph it was written in rather than the rest of the answer.
 #[derive(Debug, Default, Clone, Copy)]
 struct Line {
     heading: bool,
@@ -511,6 +517,7 @@ impl Markdown {
             // The hashes and the one space after them are the marker, and what
             // is left of the line is the heading itself.
             '#' if next == ' ' => {
+                self.opens_block();
                 self.line.heading = true;
                 true
             }
@@ -534,6 +541,7 @@ impl Markdown {
             // indentation before it has already gone out, so a nested item
             // stays nested. Owed rather than drawn here: see [`Line::owed`].
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
+                self.opens_block();
                 self.line.marked = Marked::Owed;
                 true
             }
@@ -542,6 +550,7 @@ impl Markdown {
             // goes quiet: the point of a quote is that the words are somebody
             // else's.
             '>' if held.opened && held.count == 1 && next == ' ' => {
+                self.opens_block();
                 self.line.quoted = true;
                 say(Slot::Quiet, self.glyphs.vertical());
                 say(Slot::Quiet, " ");
@@ -574,6 +583,14 @@ impl Markdown {
                 false
             }
         }
+    }
+
+    /// Drops the emphasis carried out of the line before this one.
+    ///
+    /// A block mark opens something of its own, and what it opens is not the
+    /// paragraph an unclosed marker was left open in. See [`Line`].
+    fn opens_block(&mut self) {
+        self.line.emphasis = Emphasis::default();
     }
 
     /// Whether a run of two tildes followed by `next` turns a retraction on or
@@ -931,6 +948,15 @@ impl Markdown {
         // A block is read in whatever its opening fence named, and the reader
         // is made here because this is where that name is finished. A block
         // that closes drops its reader with it: the next one names its own.
+        // Carried only out of a line of prose that had something on it: a
+        // blank line is the end of the paragraph, and a fence has no emphasis
+        // to speak of. Put back below rather than here -- see the line break.
+        let emphasis = if ended == Inside::Prose && self.started {
+            self.line.emphasis
+        } else {
+            Emphasis::default()
+        };
+
         let syntax = match ended {
             Inside::Opening => Syntax::of(&self.language),
             Inside::Closing => None,
@@ -955,6 +981,10 @@ impl Markdown {
         if !matches!(ended, Inside::Opening | Inside::Closing) {
             say(self.slot(), "\n");
         }
+
+        // After the break, so the slot the row ends under is the one it would
+        // have worn before emphasis learnt to cross a line at all.
+        self.line.emphasis = emphasis;
     }
 
     /// Hands on a run of text, if there is any.

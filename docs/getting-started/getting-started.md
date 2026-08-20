@@ -381,6 +381,12 @@ written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
 wrapped plain.
 
+A phrase the model leant on or raised may run over more than one line, and it
+is read that way: a run opened on one line and closed on the next carries across
+the break. It carries no further than the paragraph it was written in -- a blank
+line, a heading, an item or a quote ends it -- so a marker the model opened and
+never closed costs that paragraph and nothing after it.
+
 An answer wider than the terminal wraps at the last space before the edge, so a
 word arrives whole on one row rather than in halves on two. A word too long for
 any row -- a path, a hash, a line of code with no spaces in it -- is still broken
