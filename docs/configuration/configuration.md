@@ -211,6 +211,31 @@ neither may widen the directories a checkout can reach. A path such as
 `/home/someone/src/lib` is specific to one machine, which is another reason not
 to put it in project configuration.
 
+### `input`
+
+| Key | Answers | Means |
+| --- | --- | --- |
+| `send` | `enter`, `altEnter` | Which press sends a prompt, and which one opens a line under it. |
+
+```json
+{ "input": { "send": "altEnter" } }
+```
+
+Leave it alone and Return sends, while Shift+Return, Alt+Return and Ctrl+J each
+open a line under the one you are typing. That is what almost every terminal
+makes possible and it is what the prompt does out of the box.
+
+Set it to `altEnter` and the two swap: Return opens a line and a modified Return
+sends. That is the answer for a terminal that keeps Shift+Return for itself and
+never forwards it — you press Return for as many lines as you want, then
+Alt+Return to send. Ctrl+J sends too, because a terminal has always spelled it
+the same way as the other modified Returns.
+
+Control and Return is not on the list and cannot be. A terminal that has not
+agreed to the newer keyboard protocol sends exactly the same bytes for it as for
+Return alone, so nothing here could tell them apart and choosing it would leave
+you with no way to send at all.
+
 ### `output`
 
 | Key | Answers | Means |

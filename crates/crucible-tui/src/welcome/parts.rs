@@ -29,13 +29,22 @@ pub(super) const SHOWN: usize = 3;
 /// The heading over what the prompt itself reacts to.
 const TIPS: &str = "Tips";
 
-/// Three things the prompt does that nothing on screen would otherwise say.
+/// Four things the prompt does that nothing on screen would otherwise say.
 ///
 /// Not flags and not files: those are in `--help`, and this is the category
 /// `--help` cannot hold, because there is nothing to look up until you already
 /// know the key exists.
-const AFFORDANCES: [(&str, &str); 3] = [
+///
+/// The newline is the one that most needs saying, and the one whose entry is
+/// least honest: a terminal that will not spell a modified key sends the same
+/// bytes for Return and Shift+Return, so on that terminal this row names a key
+/// that does nothing. Naming the fallback instead would be worse — it would
+/// teach every reader a stranger key to avoid an answer some of them will never
+/// need — so the row names the one people already reach for, and the docs carry
+/// the other two.
+const AFFORDANCES: [(&str, &str); 4] = [
     ("/", "opens the command list"),
+    ("shift+enter", "adds a line without sending"),
     ("shift+tab", "steps the permission mode"),
     ("ctrl+c", "clears the line typed so far"),
 ];
