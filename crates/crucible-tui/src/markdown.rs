@@ -355,7 +355,15 @@ impl Markdown {
             // A fence's own line is dropped whole; nothing on it marks anything.
             Inside::Opening | Inside::Closing => false,
             Inside::Prose => match character {
-                '*' | '_' | '`' | '~' => true,
+                '`' => true,
+                // Inside a span the backtick above is the only marker left,
+                // for the reason a fence is: the words in there are code, and
+                // code is full of the others. `*ptr` is a pointer, `_private`
+                // is a name, and `**kwargs` is how one language spells an
+                // argument -- every one of them a thing a coding agent writes
+                // far more often than it writes emphasis inside a span.
+                _ if self.line.code => false,
+                '*' | '_' | '~' => true,
                 // Only where nothing else has been written on the line. A
                 // hash is a heading there and a comment everywhere else; a
                 // dash is a bullet there and a minus sign everywhere else.

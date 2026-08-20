@@ -391,6 +391,10 @@ quote's bar, a number and its dot -- continues under its own words rather than
 back at the edge, so the mark is the only thing in its column and a list still
 reads as a list at any width.
 
+Between two backticks nothing else is a marker. `*ptr`, `_private` and
+`**kwargs` arrive on screen as they were written, because the words in a span
+are code and code is full of characters that mean something else in prose.
+
 A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
 item opens with the same small mark, and the spaces that nest one list inside
 another are kept exactly as they were written. A line that opens with `>` gets a

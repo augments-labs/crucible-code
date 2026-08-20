@@ -916,3 +916,33 @@ fn a_marker_a_message_ended_on_and_that_meant_nothing_is_put_back() {
         assert_eq!(drawn(&said), answer, "every byte comes back exactly once");
     }
 }
+
+#[test]
+fn a_marker_inside_a_code_span_is_left_where_it_was() {
+    for (answer, drawn_text) in [
+        ("call `_private` first", "call _private first"),
+        ("the `*ptr` it points at", "the *ptr it points at"),
+        ("`**kwargs` and the rest", "**kwargs and the rest"),
+        ("a `~~draft~~` name", "a ~~draft~~ name"),
+    ] {
+        assert_eq!(drawn(&whole(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_code_span_is_still_toned_down_for_its_length() {
+    let said = whole("call `*ptr` first");
+
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn emphasis_around_a_code_span_still_closes_after_it() {
+    let said = whole("*the `*ptr` it points at*, then");
+
+    assert_eq!(drawn(&said), "the *ptr it points at, then");
+    assert_eq!(
+        slots(&said),
+        [Slot::Emphasis, Slot::Quiet, Slot::Emphasis, Slot::Plain]
+    );
+}

@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A marker inside a code span stays where it was.** `` `*ptr` ``, ``
+`_private` `` and `` `**kwargs` `` lost the characters that carry their
+meaning, and the emphasis one of them opened ran on past the span. Between two
+backticks nothing but the closing backtick is a marker now.
+
 **A wrapped item continues under its own text.** An item longer than the
 terminal used to carry on at the edge, under its own bullet, which reads as a
 new item rather than as more of one. It now hangs under the words it belongs
