@@ -49,8 +49,17 @@ use super::planning::Planning;
 /// How the turn is asked to stop, said after the clock.
 const STOPS: &str = "esc to interrupt";
 
-/// What the row under the working row calls the prompt waiting behind the turn.
-const NEXT: &str = "Next:";
+/// The most queued prompts the panel names before the rest become a count.
+///
+/// Three is enough to see the next few turns coming and few enough that a full
+/// queue cannot push the box off the screen: past it, the rest are the `… +2
+/// more` row, and Ctrl+Q opens the list that holds them all.
+const NAMED: usize = 3;
+
+/// What the panel's last row says when the queue outgrew the names above it.
+///
+/// The count is what the row is for; the key beside it is where the rest are.
+const MORE: &str = "more";
 
 /// The rows this puts above the box, blanks included.
 const ROWS: usize = 3;
@@ -182,10 +191,12 @@ pub(super) struct Turning {
     /// the tool said the call was about, without the mark: the mark is the part
     /// that moves, and it is drawn per frame.
     calling: Option<String>,
-    /// The prompt waiting behind this turn, already cut to a row, or `None`
-    /// where none is. Cut on the way in rather than on the way out for the
-    /// reason [`Turning::queueing`] gives.
-    queued: Option<String>,
+    /// The prompts waiting behind this turn, each already cut to a row, and how
+    /// many there are. Cut on the way in rather than on the way out for the
+    /// reason [`Turning::queueing`] gives. The whole list is kept rather than
+    /// the front one alone, because the panel names them all and the count has
+    /// to know how many it did not have room to name.
+    queued: Queued,
     /// What the call whose tool is out has printed, kept to the last rows of
     /// it. Emptied when the call comes back, so it holds one call's worth and
     /// never a turn's.
@@ -193,6 +204,21 @@ pub(super) struct Turning {
     /// What the footing was last drawn from, so a redraw that would draw the
     /// same rows again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
+}
+
+/// The prompts waiting behind a turn, as the panel draws them.
+///
+/// The lines themselves, cut to a row each, and how many there are — the count
+/// is its own field because a window can be too short to name them all, and the
+/// number is then the only place that says any are waiting at all.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Queued {
+    /// The waiting lines, oldest first, each already cut to a row.
+    lines: Vec<String>,
+    /// How many are waiting. `lines` may be shorter: it holds as many as the
+    /// panel was asked to keep, and the difference is what a `… +2 more` row
+    /// reads.
+    count: usize,
 }
 
 /// What a running command has printed, as much of it as is shown.
@@ -413,8 +439,8 @@ struct Drawn {
     beat: u64,
     /// The call standing over the row, where one is.
     calling: Option<String>,
-    /// The prompt named under it, where one is waiting.
-    queued: Option<String>,
+    /// The prompts named under it, where any are waiting.
+    queued: Queued,
     /// How many pieces the running command had printed, which is what stands in
     /// for the sample's rows.
     printed: u64,
@@ -441,7 +467,7 @@ impl Turning {
             part: 0,
             spent: None,
             calling: None,
-            queued: None,
+            queued: Queued::default(),
             printing: Printing::default(),
             drawn: None,
         }
@@ -458,8 +484,27 @@ impl Turning {
     /// Called again when the window changes, so a terminal made wider is not
     /// left reading a line cut for a narrower one. Cutting twice costs nothing
     /// and says the same thing: the second cut is the narrower of the two.
-    pub(super) fn queueing(&mut self, waiting: Option<&str>, columns: usize, style: Style) {
-        self.queued = waiting.map(|said| draw::clipped(said, columns, style.glyphs()));
+    pub(super) fn queueing<'a>(
+        &mut self,
+        waiting: impl Iterator<Item = &'a str>,
+        columns: usize,
+        style: Style,
+    ) {
+        let glyphs = style.glyphs();
+
+        // Every line is counted; as many as the panel names are cut and kept.
+        // The difference between the two is what a `… +2 more` row reads, and
+        // the reason the count is not `lines.len()`.
+        let mut count = 0;
+        let mut lines = Vec::new();
+        for said in waiting {
+            count += 1;
+            if lines.len() < NAMED {
+                lines.push(draw::clipped(said, columns, glyphs));
+            }
+        }
+
+        self.queued = Queued { lines, count };
     }
 
     /// Takes the word from one event on its way to the screen, and hands back
@@ -502,6 +547,8 @@ impl Turning {
                 self.printing.clear();
                 self.calling.take()
             }
+            // A steered line is committed to the transcript by the loop that
+            // reads it, not here: this row keeps naming what is still queued.
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
@@ -509,6 +556,7 @@ impl Turning {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Wrote { .. }
+            | Event::Steered { .. }
             | Event::Retrying => None,
         };
 
@@ -549,6 +597,7 @@ impl Turning {
             Event::TurnStarted { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
+            | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };
@@ -647,13 +696,17 @@ impl Turning {
             left: self.left,
         };
 
-        // What the call has to clear is a row taller where the prompt below is
-        // being drawn, since the two are standing in the same window.
-        let queued = self.queued.as_deref().filter(|_| room > QUEUED);
-        let standing = if queued.is_some() {
-            CALLING + 1
-        } else {
+        // What the call has to clear is taller where the queue panel below is
+        // being drawn, since the two are standing in the same window. The panel
+        // is measured against what the call and the working row leave, and what
+        // it cannot fit it does not draw — a queue is still in the queue, and
+        // its own turn will say it.
+        let spare = room.saturating_sub(QUEUED);
+        let panel_rows = self.queued.rows(spare, columns, style);
+        let standing = if panel_rows.is_empty() {
             CALLING
+        } else {
+            CALLING + panel_rows.len()
         };
 
         let mut rows = Vec::new();
@@ -688,9 +741,7 @@ impl Turning {
             rows.push(row);
         }
 
-        if let Some(said) = queued {
-            rows.push(next(said, columns, style));
-        }
+        rows.extend(panel_rows);
 
         rows.append(&mut panel);
         rows.push(Row::new());
@@ -758,41 +809,114 @@ impl Turning {
     }
 }
 
-/// The row naming the prompt that will be sent once this turn is over.
-///
-/// It starts in the column the word above it starts in and opens with no mark
-/// of its own, because a mark opening a line is what says a thing is happening
-/// and this is a thing that has not started. What it is is a second line of the
-/// row above rather than a second thing beside it.
-///
-/// Cut at the right where the prompt is wider than the window, which is the only
-/// answer available to it: a prompt is whatever somebody typed, and wrapping it
-/// would make the footing's height a function of that.
-fn next(said: &str, columns: usize, style: Style) -> Row {
-    let glyphs = style.glyphs();
-    let gutter = Working::gutter(glyphs);
-    let room = columns.saturating_sub(gutter);
-
-    // A window narrower than the column this row starts in. Nothing it could
-    // say would be anything but the terminal wrapping it, and a row of spaces
-    // is a row the reader is owed an explanation for.
-    if room == 0 {
-        return Row::new();
-    }
-
-    let row = Row::new()
-        .then(Slot::Plain, " ".repeat(gutter))
-        .then(Slot::Quiet, draw::clipped(NEXT, room, glyphs));
-
-    // The label is what the row is; the prompt is what it says. So a window
-    // that has room for one of the two keeps the label, the way the row above
-    // keeps its word and drops what is said after it.
-    match room.saturating_sub(crucible_tui::columns(NEXT)) {
-        left if left > 1 => {
-            let said = draw::clipped(said, left - 1, glyphs);
-            row.then(Slot::Plain, format!(" {said}"))
+impl Queued {
+    /// The panel naming the prompts waiting behind the turn, boxed.
+    ///
+    /// A frame of its own rather than a row under the word, because it is a
+    /// second region and not a second line of the working row: what is in it is
+    /// already typed and waiting, not the turn in front of it. The border takes
+    /// the accent the box below does, so the two read as the same kind of thing.
+    ///
+    /// As many lines as `spare` rows allow are named, each led by the mark a
+    /// line is typed after — they are the reader's own words, waiting — and past
+    /// that the rest are a count on the last row. An empty queue draws nothing
+    /// at all, and a window too short to open the frame keeps only the one line
+    /// that says anything is waiting, since that is the fact that cannot go.
+    fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
+        if self.count == 0 || spare == 0 {
+            return Vec::new();
         }
-        _ => row,
+
+        let glyphs = style.glyphs();
+        let (tl, tr) = glyphs.top();
+        let (bl, br) = glyphs.bottom();
+        let edge = glyphs.horizontal();
+        let side = glyphs.vertical();
+        let mark = glyphs.caret();
+
+        // Too short to open the frame: one line, indented under the word, says
+        // the count and no more. A queue is still a queue whether or not there
+        // is room to name it.
+        if spare < 3 || columns < 8 {
+            let said = format!("{} queued", self.count);
+            let gutter = Working::gutter(glyphs);
+            return vec![
+                Row::new()
+                    .then(Slot::Plain, " ".repeat(gutter.min(columns)))
+                    .then(
+                        Slot::Quiet,
+                        draw::clipped(&said, columns.saturating_sub(gutter), glyphs),
+                    ),
+            ];
+        }
+
+        // The frame's two borders, the names that fit between them, and the row
+        // that counts what the names left out. What the names get is what is
+        // left once the borders and the count row have taken theirs.
+        let room = columns - 2;
+
+        // The count is the one thing the top edge must say, so the title is cut
+        // to the room rather than drawn past it: a window too narrow for the
+        // whole of it still reads that there is a queue, and nothing overruns
+        // the last column into a row the terminal wraps and nothing counted.
+        let title_text = format!(" {} queued ", self.count);
+        let title = draw::clipped(&title_text, room, glyphs);
+        let fill = room.saturating_sub(crucible_tui::columns(&title));
+
+        let named = (spare - 2).min(self.lines.len());
+        let over = self.count - named;
+        // The count row is spent on names where nothing is left over.
+        let named = if over == 0 {
+            named.min(spare - 2)
+        } else {
+            named.min(spare - 3)
+        };
+        let named = named.max(1).min(self.lines.len());
+        let over = self.count - named;
+
+        let mut rows = Vec::with_capacity(named + 2 + usize::from(over > 0));
+        rows.push(
+            Row::new()
+                .then(Slot::Accent, tl)
+                .then(Slot::Quiet, title)
+                .then(Slot::Accent, edge.repeat(fill))
+                .then(Slot::Accent, tr),
+        );
+
+        for said in self.lines.get(..named).unwrap_or_default() {
+            let mut row = Row::new()
+                .then(Slot::Accent, side)
+                .then(Slot::Plain, " ")
+                .then(Slot::Accent, mark)
+                .then(
+                    Slot::Plain,
+                    format!(" {}", draw::clipped(said, room.saturating_sub(3), glyphs)),
+                );
+            row.pad(room);
+            rows.push(row.then(Slot::Accent, side));
+        }
+
+        if over > 0 {
+            let said = format!("… +{over} {MORE}  (ctrl+q to see all)");
+            let mut row = Row::new()
+                .then(Slot::Accent, side)
+                .then(Slot::Plain, " ")
+                .then(
+                    Slot::Quiet,
+                    draw::clipped(&said, room.saturating_sub(1), glyphs),
+                );
+            row.pad(room);
+            rows.push(row.then(Slot::Accent, side));
+        }
+
+        rows.push(
+            Row::new()
+                .then(Slot::Accent, bl)
+                .then(Slot::Accent, edge.repeat(room))
+                .then(Slot::Accent, br),
+        );
+
+        rows
     }
 }
 
@@ -809,6 +933,16 @@ mod tests {
     /// and is what every test here but the last two is about.
     fn nothing() -> Planning {
         Planning::new(crucible_tools::Plan::new())
+    }
+
+    #[test]
+    fn an_empty_queue_adds_no_row_to_the_footing() {
+        // The panel is for a queue that has something in it. With nothing
+        // waiting, the footing is the same three rows it has always been — the
+        // blank, the word, the blank — and not one row taller for a frame around
+        // nothing.
+        let rows = Turning::started().rows(&nothing(), 80, Style::plain(), 24);
+        assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
     }
 
     /// A plan of `count` open tasks, each named after where it is in the list.
@@ -1409,29 +1543,58 @@ mod tests {
         assert!(turning.moved(), "the call went and the footing did not");
     }
 
-    #[test]
-    fn a_prompt_finished_while_the_turn_runs_is_named_under_the_row() {
-        // The gap this closes: Return during a turn takes the line out of the
-        // box, and until this row nothing on the screen said where it went.
-        // The next acknowledgement it gets is its own turn starting, which is
-        // however long the turn in front of it takes.
+    /// A turn with `lines` waiting behind it, drawn to a picture.
+    ///
+    /// One place the queue is filled and the footing read, so the cases below
+    /// are about what the panel says rather than how it is fed.
+    fn queueing(lines: &[&str], columns: usize, room: usize) -> Vec<String> {
         let mut turning = Turning::started();
-        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+        turning.queueing(lines.iter().copied(), columns, Style::plain());
 
-        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
-        let said = rows.iter().map(Row::text).collect::<Vec<_>>();
+        turning
+            .rows(&nothing(), columns, Style::plain(), room)
+            .iter()
+            .map(Row::text)
+            .collect()
+    }
 
-        assert_eq!(said.len(), QUEUED, "{said:?}");
+    #[test]
+    fn prompts_finished_while_the_turn_runs_are_named_in_a_box() {
+        // The gap this closes: Return during a turn takes the line out of the
+        // box, and until the panel nothing on the screen said where it went —
+        // and a second or third line was nowhere at all, since only the front
+        // one was ever named. The next acknowledgement a line gets is its own
+        // turn starting, which is however long the turn in front of it takes.
+        let said = queueing(&["fix the failing test", "and then commit"], 80, 24);
+        let whole = said.join("\n");
 
-        // By position, since the position is the point: directly under the row
-        // it belongs to, with no blank between them, and in the column that
-        // row's own word starts in.
-        let at = |row: usize| said.get(row).cloned().unwrap_or_default();
+        // Both are named, each led by the mark a line is typed after, inside a
+        // frame whose top edge carries the count.
+        assert!(whole.contains("2 queued"), "{whole}");
+        assert!(whole.contains("› fix the failing test"), "{whole}");
+        assert!(whole.contains("› and then commit"), "{whole}");
+    }
 
-        assert!(at(0).is_empty(), "{said:?}");
-        assert!(at(1).starts_with("✳ thinking"), "{said:?}");
-        assert_eq!(at(2), "  Next: fix the failing test", "{said:?}");
-        assert!(at(3).is_empty(), "{said:?}");
+    #[test]
+    fn a_queue_longer_than_the_panel_compacts_the_rest_to_a_count() {
+        // Three are named and the rest are a row that says how many and where
+        // they are: a full queue cannot push the box off the screen, and a
+        // count that is not the count is worse than none.
+        let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);
+        let whole = said.join("\n");
+
+        assert!(whole.contains("5 queued"), "{whole}");
+        assert!(whole.contains("… +2 more"), "{whole}");
+        assert!(whole.contains("ctrl+q"), "{whole}");
+        assert!(!whole.contains("four"), "{whole}");
+    }
+
+    #[test]
+    fn an_empty_queue_draws_no_panel() {
+        // Absent rather than blank. A frame around nothing is rows of the
+        // window spent saying nothing, spent against the turn's own output.
+        let said = queueing(&[], 80, 24);
+        assert!(!said.join("\n").contains("queued"), "{}", said.join("\n"));
     }
 
     #[test]
@@ -1446,18 +1609,21 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_wider_than_the_window_is_cut_at_the_right() {
+    fn a_prompt_wider_than_the_panel_is_cut_at_the_right() {
         // Cut rather than wrapped: the footing's height is what the renderer
         // rewinds by, and a height that depended on how much somebody typed
         // would be a rewind that depended on it too.
-        let mut turning = Turning::started();
-        turning.queueing(Some(&"a".repeat(200)), 40, Style::plain());
+        let long = "a".repeat(200);
+        let said = queueing(&[&long], 40, 24);
 
-        let rows = turning.rows(&nothing(), 40, Style::plain(), 24);
-        let said = rows.get(2).map(Row::text).unwrap_or_default();
+        let named = said
+            .iter()
+            .find(|row| row.contains("aaa"))
+            .cloned()
+            .unwrap_or_default();
 
-        assert!(said.ends_with('…'), "{said:?}");
-        assert!(crucible_tui::columns(&said) <= 40, "{said:?}");
+        assert!(named.contains('…'), "{named:?}");
+        assert!(crucible_tui::columns(&named) <= 40, "{named:?}");
     }
 
     #[test]
@@ -1466,9 +1632,10 @@ mod tests {
         // second, and the box lets a prompt reach a megabyte. Cutting it where
         // it is taken is what keeps that clone the size of a row.
         let mut turning = Turning::started();
-        turning.queueing(Some(&"a".repeat(1024 * 1024)), 80, Style::plain());
+        let long = "a".repeat(1024 * 1024);
+        turning.queueing([long.as_str()].into_iter(), 80, Style::plain());
 
-        let held = turning.queued.clone().unwrap_or_default();
+        let held = turning.queued.lines.first().cloned().unwrap_or_default();
         assert!(crucible_tui::columns(&held) <= 80, "{}", held.len());
     }
 
@@ -1481,13 +1648,13 @@ mod tests {
         let mut turning = Turning::started();
         turning.moved();
 
-        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+        turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
         assert!(
             turning.moved(),
             "the prompt appeared and the footing did not"
         );
 
-        turning.queueing(None, 80, Style::plain());
+        turning.queueing(std::iter::empty(), 80, Style::plain());
         assert!(turning.moved(), "the prompt went and the footing did not");
     }
 
@@ -1499,12 +1666,17 @@ mod tests {
         // window, and the terminal would wrap it into a row nothing counted.
         for wide in [0, 1, 2, 3, 5, 6, 7, 8, 20, 80] {
             for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-                let said = next("fix the failing test", wide, Style::drawn(glyphs)).text();
+                let style = Style::drawn(glyphs);
+                let mut turning = Turning::started();
+                turning.queueing(["fix the failing test"].into_iter(), wide, style);
 
-                assert!(
-                    crucible_tui::columns(&said) <= wide,
-                    "{wide} {glyphs:?}: {said:?}"
-                );
+                for row in turning.rows(&nothing(), wide, style, 40) {
+                    let said = row.text();
+                    assert!(
+                        crucible_tui::columns(&said) <= wide,
+                        "{wide} {glyphs:?}: {said:?}"
+                    );
+                }
             }
         }
     }
@@ -1517,7 +1689,7 @@ mod tests {
         // saying a turn is running exists nowhere else, so it goes last.
         let mut turning = Turning::started();
         turning.saw(&requested());
-        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+        turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
         let said = |room: usize| {
             turning
@@ -1527,19 +1699,25 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let whole = said(CALLING + 2);
-        assert_eq!(whole.len(), CALLING + 1, "{whole:?}");
+        // Room for all three: the call, the panel, and the row saying a turn
+        // is running.
+        let whole = said(40);
         assert!(whole.concat().contains("Read"), "{whole:?}");
-        assert!(whole.concat().contains("Next:"), "{whole:?}");
+        assert!(whole.concat().contains("1 queued"), "{whole:?}");
+        assert!(whole.concat().contains("running"), "{whole:?}");
 
-        let shorter = said(CALLING + 1);
-        assert_eq!(shorter.len(), QUEUED, "{shorter:?}");
+        // A window short of rows drops the call first — it is committed to
+        // scrollback the moment its tool answers — and keeps the panel, which
+        // is still in the queue with its own turn to come.
+        let shorter = said(ROWS + 6);
         assert!(!shorter.concat().contains("Read"), "{shorter:?}");
-        assert!(shorter.concat().contains("Next:"), "{shorter:?}");
+        assert!(shorter.concat().contains("1 queued"), "{shorter:?}");
 
-        let shortest = said(QUEUED);
-        assert_eq!(shortest.len(), ROWS, "{shortest:?}");
-        assert!(!shortest.concat().contains("Next:"), "{shortest:?}");
+        // And the panel gives way before the row that says a turn is running:
+        // that row exists nowhere else, so it is the last thing to go.
+        let shortest = said(ROWS + 1);
+        assert!(!shortest.concat().contains("queued"), "{shortest:?}");
+        assert!(shortest.concat().contains("running"), "{shortest:?}");
     }
 
     #[test]
@@ -1566,7 +1744,7 @@ mod tests {
         // it from the box, so the panel is the last thing above one.
         let mut turning = Turning::started();
         turning.saw(&requested());
-        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+        turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
         let rows = turning.rows(&planned(3), 80, Style::plain(), 40);
         let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
@@ -1588,7 +1766,7 @@ mod tests {
         // on screen nowhere else.
         let mut turning = Turning::started();
         turning.saw(&requested());
-        turning.queueing(Some("fix the failing test"), 80, Style::plain());
+        turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
         let planning = planned(3);
         let panel = planning.rows(80, 40, Style::plain().glyphs()).len();
@@ -1601,20 +1779,24 @@ mod tests {
                 .collect::<String>()
         };
 
-        // One taller than it used to be, because the call now carries the row
-        // offering to leave its command running.
-        let whole = said(panel + 8);
+        // Room for all of it: the call, the queue panel, and the plan.
+        let whole = said(panel + 12);
         assert!(whole.contains("Read"), "{whole:?}");
-        assert!(whole.contains("Next:"), "{whole:?}");
+        assert!(whole.contains("1 queued"), "{whole:?}");
         assert!(whole.contains("Task 2"), "{whole:?}");
 
-        let shorter = said(panel + 7);
+        // A window short of rows drops the call before the panel — the call is
+        // committed to scrollback the moment its tool answers — and keeps both
+        // the queue and the plan, which are on screen nowhere else.
+        let shorter = said(panel + 8);
         assert!(!shorter.contains("Read"), "{shorter:?}");
-        assert!(shorter.contains("Next:"), "{shorter:?}");
+        assert!(shorter.contains("1 queued"), "{shorter:?}");
         assert!(shorter.contains("Task 2"), "{shorter:?}");
 
+        // And the panel gives way before the plan does, for the same reason the
+        // call does: a queued prompt has its own turn coming to say it.
         let shortest = said(panel + 4);
-        assert!(!shortest.contains("Next:"), "{shortest:?}");
+        assert!(!shortest.contains("queued"), "{shortest:?}");
         assert!(shortest.contains("Task 2"), "{shortest:?}");
     }
 }

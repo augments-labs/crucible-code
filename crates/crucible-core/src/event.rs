@@ -189,6 +189,16 @@ pub enum Event {
         /// What went wrong.
         error: TurnError,
     },
+
+    /// A line typed while the turn ran was worked into it.
+    ///
+    /// Posted where the line joins the turn — between one pass and the next —
+    /// so the screen can commit it where it belongs: as the reader's own words,
+    /// in the order they arrived, rather than as something the model said.
+    Steered {
+        /// The line, whole.
+        line: String,
+    },
 }
 
 #[cfg(test)]

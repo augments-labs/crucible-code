@@ -161,6 +161,7 @@ impl Leaving {
                 | Pressed::Plan
                 | Pressed::Clicked { .. }
                 | Pressed::Pasted(_)
+                | Pressed::Queue
                 | Pressed::Ignored => Moved::Still,
             };
         }
@@ -219,6 +220,7 @@ impl Leaving {
             | Pressed::Plan
             | Pressed::Clicked { .. }
             | Pressed::Pasted(_)
+            | Pressed::Queue
             | Pressed::Ignored => Moved::Still,
         }
     }

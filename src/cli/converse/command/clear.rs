@@ -145,6 +145,7 @@ mod tests {
             chosen: std::cell::Cell::new(None),
             reading: std::cell::RefCell::default(),
             cancel: Cancel::new(),
+            steer: crucible_core::Steer::new(),
             ledger: ledger.clone(),
             revealed: Revealed::new(),
             plan: plan.clone(),

@@ -55,7 +55,12 @@ pub enum Glyphs {
 
 impl Glyphs {
     /// The corners a frame opens with: left, then right.
-    pub(crate) fn top(self) -> (&'static str, &'static str) {
+    ///
+    /// Public because the prompt is not the only frame: the queue panel borders
+    /// itself the same way, and a second spelling of a corner would read as a
+    /// second kind of box.
+    #[must_use]
+    pub fn top(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("╭", "╮"),
             Self::Ascii => ("+", "+"),
@@ -63,7 +68,10 @@ impl Glyphs {
     }
 
     /// The corners a frame closes with: left, then right.
-    pub(crate) fn bottom(self) -> (&'static str, &'static str) {
+    ///
+    /// Public for the reason [`Glyphs::top`] is.
+    #[must_use]
+    pub fn bottom(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("╰", "╯"),
             Self::Ascii => ("+", "+"),
@@ -83,7 +91,10 @@ impl Glyphs {
     }
 
     /// One row of an edge that runs down.
-    pub(crate) fn vertical(self) -> &'static str {
+    ///
+    /// Public for the reason [`Glyphs::top`] is.
+    #[must_use]
+    pub fn vertical(self) -> &'static str {
         match self {
             Self::Unicode => "│",
             Self::Ascii => "|",
