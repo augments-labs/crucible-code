@@ -194,7 +194,7 @@ impl Prompt<'_> {
         } else {
             (FRAMED_ROW, FRAMED)
         };
-        let shown = self.window(inner(columns));
+        let shown = self.shown(inner(columns));
 
         Caret {
             row: first + shown.row,
@@ -223,7 +223,7 @@ impl Prompt<'_> {
             (FRAMED_ROW, FRAMED)
         };
 
-        let shown = self.window(inner(columns));
+        let shown = self.shown(inner(columns));
         let at = row.checked_sub(first)?;
         let line = shown.rows.get(at)?;
 
@@ -262,7 +262,7 @@ impl Prompt<'_> {
 
         let framed = columns >= FRAMED_AT;
         let first = if framed { FRAMED_ROW } else { 0 };
-        let typed = self.window(inner(columns)).rows.len();
+        let typed = self.shown(inner(columns)).rows.len();
         let border = usize::from(framed);
 
         row == first.saturating_add(typed).saturating_add(border)
@@ -374,7 +374,7 @@ impl Prompt<'_> {
         let inner = inner(columns);
         let edge = glyphs.vertical();
 
-        self.window(inner)
+        self.shown(inner)
             .rows
             .into_iter()
             .enumerate()
@@ -410,7 +410,7 @@ impl Prompt<'_> {
             return vec![Row::new()];
         }
 
-        self.window(inner(columns))
+        self.shown(inner(columns))
             .rows
             .into_iter()
             .enumerate()
@@ -529,7 +529,7 @@ impl Prompt<'_> {
     /// the border.
     ///
     /// [`room`]: Prompt::room
-    fn window(&self, inner: usize) -> Window<'_> {
+    fn shown(&self, inner: usize) -> Shown<'_> {
         let broken = broken(self.said, inner);
         let (row, column) = place(&broken, self.column);
 
@@ -546,7 +546,7 @@ impl Prompt<'_> {
             .map(|row| width::columns(row))
             .sum();
 
-        Window {
+        Shown {
             rows: broken.get(first..).unwrap_or_default().to_vec(),
             row: row - first,
             column,
@@ -556,7 +556,7 @@ impl Prompt<'_> {
 }
 
 /// What the box is showing of the line, and where the cursor is in it.
-struct Window<'a> {
+struct Shown<'a> {
     /// The rows on screen, top first.
     rows: Vec<&'a str>,
     /// Which of them the cursor is on.

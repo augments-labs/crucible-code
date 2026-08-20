@@ -230,6 +230,7 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
             running,
             spent: Some(1_200),
             stops: Some("esc to interrupt"),
+            left: None,
         }
         .row(COLUMNS, glyphs),
     );

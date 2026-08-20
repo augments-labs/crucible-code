@@ -60,9 +60,10 @@ mod shape;
 // to do with it, and a second way in is a second answer to which files exist.
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
-pub use remember::{allowing, asking, choosing, drawing, reading, thinking};
+pub use remember::{allowing, asking, choosing, drawing, reading, thinking, unasked};
 pub use settings::{
-    ClearScreen, Color, Glyphs, Mouse, Settings, ThemeChoice, ToolDetail, Updates, local, user,
+    ClearScreen, Color, Compaction, Glyphs, Mouse, Settings, ThemeChoice, ToolDetail, Updates,
+    When, local, user,
 };
 pub use shape::THEME;
 pub use shape::schema::schema;

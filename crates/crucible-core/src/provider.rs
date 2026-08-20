@@ -86,6 +86,19 @@ pub enum ProviderError {
         source: CredentialError,
     },
 
+    /// The provider refused the request because it did not fit the window.
+    ///
+    /// Separate from [`Self::Refused`], which carries a status and a vendor's
+    /// sentence, because this one has a remedy nothing else here has: make the
+    /// session smaller and send it again. Each wire decides it from its own
+    /// vendor's spelling — matching on a message here would be this crate
+    /// guessing at prose three vendors write differently and change freely.
+    #[error("{provider}: the request did not fit the model's window")]
+    WindowExceeded {
+        /// Which provider refused it.
+        provider: &'static str,
+    },
+
     /// The user cancelled mid-stream.
     #[error("{0}: cancelled")]
     Cancelled(&'static str),
@@ -108,7 +121,7 @@ impl ProviderError {
     #[must_use]
     pub fn redacted(self, redactions: &Redactions) -> Self {
         match self {
-            Self::Limit { .. } | Self::Cancelled(_) => self,
+            Self::Limit { .. } | Self::WindowExceeded { .. } | Self::Cancelled(_) => self,
             Self::Transport { provider, problem } => Self::Transport {
                 provider,
                 problem: redactions.redact(&problem).into(),
@@ -174,7 +187,11 @@ impl ProviderError {
                 matches!(status, 408 | 429) || matches!(status, 500..=599)
             }
 
-            Self::Limit { .. }
+            // Not about the moment: the same request will not fit a second
+            // time. What makes it recoverable is compaction, which is the
+            // turn's to do and not a retry's.
+            Self::WindowExceeded { .. }
+            | Self::Limit { .. }
             | Self::Protocol { .. }
             | Self::Credential { .. }
             | Self::Cancelled(_)
@@ -389,6 +406,40 @@ impl Spend {
     }
 }
 
+/// What one request carried to the model, counted in tokens.
+///
+/// The other half of what a usage reading holds, and the half [`Spend`] is not:
+/// that one counts what the model produced, and this counts what it was sent.
+/// Both arrive in the same object from every provider crucible speaks, and only
+/// one of them was ever read.
+///
+/// It is a **level rather than a total**, which is the whole of how it differs
+/// from [`Spend`] and why it has no `and`. crucible holds no conversation state
+/// at a vendor and sends the transcript whole on every request, so each reading
+/// is what *that* request carried and the next one supersedes it. Adding two
+/// together would count the same transcript twice and say a session was fuller
+/// than it is — which, since this is what compaction is decided on, is the one
+/// error here that spends somebody's context for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Carried(u64);
+
+impl Carried {
+    /// Nothing reported yet.
+    pub const NONE: Self = Self(0);
+
+    /// A reading of `tokens` carried.
+    #[must_use]
+    pub const fn new(tokens: u64) -> Self {
+        Self(tokens)
+    }
+
+    /// How many tokens that is.
+    #[must_use]
+    pub const fn tokens(self) -> u64 {
+        self.0
+    }
+}
+
 /// One piece of streamed output.
 ///
 /// A tool call arrives across several: the name comes first, then the arguments
@@ -410,6 +461,14 @@ pub enum Delta {
     ToolArgs(Box<str>),
     /// What this response has cost so far, replacing whatever it last said.
     Spent(Spend),
+    /// What the request this response answers carried, replacing whatever it
+    /// last said.
+    ///
+    /// Sent once by most providers and never by some. A provider that does not
+    /// report it produces no delta rather than a zero: nothing known and
+    /// nothing carried are different facts, and only one of them is safe to
+    /// decide compaction on.
+    Carried(Carried),
     /// The model stopped, and why.
     Stopped(StopReason),
 }

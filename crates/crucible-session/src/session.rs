@@ -376,6 +376,18 @@ impl Session {
         drop(to.send(wire::line(message).into()));
     }
 
+    /// Records that room was made, and what the notes stand in place of.
+    ///
+    /// The messages it replaced stay in the file. This log is what happened;
+    /// the transcript is what the model is sent, and here is where the two stop
+    /// being the same thing. A session continued later reads this line and
+    /// leaves those messages out of the transcript without losing them from the
+    /// record.
+    pub fn compacted(&self, replaced: usize, recap: &str) {
+        let Some(to) = &self.to else { return };
+        drop(to.send(wire::compacted(replaced, recap).into()));
+    }
+
     /// The first write that failed, if one has.
     ///
     /// A log that has quietly stopped recording is worse than no log, because

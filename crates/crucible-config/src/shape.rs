@@ -25,6 +25,18 @@ pub(crate) enum Shape {
     /// A string from a fixed set.
     Choice(&'static [&'static str]),
 
+    /// A whole number that cannot be negative — a count of tokens, of turns.
+    ///
+    /// A number rather than a string that looks like one. This document is
+    /// served to editors from a registry, so what the schema says a value is
+    /// is what somebody's editor will insist on: `"25000"` where a count
+    /// belongs would be a wrong type nobody could see was wrong.
+    ///
+    /// Nothing here has an upper bound. A ceiling written into the schema would
+    /// be this crate deciding how large somebody's model is, which is exactly
+    /// the fact it does not have.
+    Count,
+
     /// An object whose keys are exactly these, all of them optional.
     Fields(&'static [Field]),
 
@@ -119,6 +131,20 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Text,
         examples: &["https://gateway.example/v1/messages"],
         widens: true,
+    },
+    Field {
+        name: "defaultContextWindow",
+        about: "How many tokens to assume any model of this provider accepts, where it is not named above",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "contextWindow",
+        about: "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
+        shape: Shape::Named(&WINDOW),
+        examples: &[],
+        widens: false,
     },
 ]);
 
@@ -246,6 +272,59 @@ const UPDATES: &[Field] = &[Field {
 /// shows is what you would type here.
 pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 
+/// Every answer `compaction.when` accepts.
+pub(crate) const COMPACTION_WHEN: &[&str] = &["full", "never"];
+
+/// What a session does when the model's window fills.
+///
+/// A turn that reaches the end of a window has always had one of two endings:
+/// it fails, or it makes room and carries on. These keys are how somebody
+/// chooses which, and how much room is left for the exchange that follows.
+const COMPACTION: &[Field] = &[
+    Field {
+        name: "when",
+        about: "Whether a full window is answered by compacting the session, or by letting the turn fail",
+        shape: Shape::Choice(COMPACTION_WHEN),
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "reserve",
+        about: "Tokens to keep free for the next answer and the tools it calls, instead of the room crucible works out from the model",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "keep",
+        about: "How many recent turns are kept word for word after the rest becomes a recap",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "askOnResume",
+        about: "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "spendCeiling",
+        about: "The most tokens one turn may produce before crucible stops it, where a runaway turn is worth bounding",
+        shape: Shape::Count,
+        examples: &[],
+        widens: false,
+    },
+];
+
+/// How much one model accepts, under the name it is asked for.
+///
+/// Keyed by model rather than stated once for the provider, because a session
+/// changes which model it asks without changing which vendor it writes to — and
+/// a figure that stayed behind would describe the model somebody just left.
+const WINDOW: Shape = Shape::Count;
+
 /// One rule: a tool, and what it may act on.
 const RULE: Shape = Shape::Text;
 
@@ -366,6 +445,13 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         widens: false,
     },
     Field {
+        name: "compaction",
+        about: "What happens when the model's window fills up",
+        shape: Shape::Fields(COMPACTION),
+        examples: &[],
+        widens: false,
+    },
+    Field {
         name: "updates",
         about: "Whether crucible finds out that a newer release exists",
         shape: Shape::Fields(UPDATES),
@@ -382,7 +468,9 @@ impl Shape {
     pub(crate) fn keys(&self) -> Vec<&'static str> {
         match self {
             Self::Fields(fields) => fields.iter().map(|field| field.name).collect(),
-            Self::Text | Self::Choice(_) | Self::Named(_) | Self::List(_) => Vec::new(),
+            Self::Text | Self::Choice(_) | Self::Count | Self::Named(_) | Self::List(_) => {
+                Vec::new()
+            }
         }
     }
 
@@ -394,7 +482,7 @@ impl Shape {
     pub(crate) fn declared(&self, name: &str) -> Option<&'static Field> {
         match self {
             Self::Fields(fields) => fields.iter().find(|field| field.name == name),
-            Self::Text | Self::Choice(_) | Self::Named(_) | Self::List(_) => None,
+            Self::Text | Self::Choice(_) | Self::Count | Self::Named(_) | Self::List(_) => None,
         }
     }
 
@@ -403,7 +491,7 @@ impl Shape {
         match self {
             Self::Fields(_) => self.declared(name).map(|field| &field.shape),
             Self::Named(inner) => Some(inner),
-            Self::Text | Self::Choice(_) | Self::List(_) => None,
+            Self::Text | Self::Choice(_) | Self::Count | Self::List(_) => None,
         }
     }
 
@@ -415,7 +503,7 @@ impl Shape {
     pub(crate) fn element(&self) -> Option<&'static Shape> {
         match self {
             Self::List(inner) => Some(inner),
-            Self::Text | Self::Choice(_) | Self::Fields(_) | Self::Named(_) => None,
+            Self::Text | Self::Choice(_) | Self::Count | Self::Fields(_) | Self::Named(_) => None,
         }
     }
 
@@ -424,6 +512,7 @@ impl Shape {
         match self {
             Self::Text => "a string",
             Self::Choice(_) => "one of a fixed set of strings",
+            Self::Count => "a whole number that is not negative",
             Self::Fields(_) | Self::Named(_) => "an object",
             Self::List(_) => "a list",
         }

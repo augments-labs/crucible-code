@@ -16,6 +16,7 @@
 
 use std::time::SystemTime;
 
+use crucible_core::Compacting;
 use crucible_runner::{Recorded, Runner, Session, recent};
 use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
 
@@ -37,7 +38,8 @@ pub(super) fn run<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
-) -> Result<(), Fatal> {
+    keys: bool,
+) -> Result<Option<Compacting>, Fatal> {
     let listed = recent(&terms.sessions, &terms.workspace, SHOWN);
 
     // Read once, here, rather than per row: a list drawn against several
@@ -50,11 +52,13 @@ pub(super) fn run<T: Terminal>(
             Slot::Quiet,
             clip("nothing has been worked on here yet", columns),
         )];
-        return Ok(renderer.present(&rows, terms.style().palette())?);
+        renderer.present(&rows, terms.style().palette())?;
+        return Ok(None);
     }
 
     if said.is_empty() {
-        return Ok(renderer.present(&listing(&listed, now, columns), terms.style().palette())?);
+        renderer.present(&listing(&listed, now, columns), terms.style().palette())?;
+        return Ok(None);
     }
 
     let Some(picked) = chosen(said, &listed) else {
@@ -62,10 +66,10 @@ pub(super) fn run<T: Terminal>(
         // all can follow `/resume ` — so it goes out the way arrived text does.
         renderer.commit(&format!("! {said} is not on the list"))?;
         renderer.present(&listing(&listed, now, columns), terms.style().palette())?;
-        return Ok(());
+        return Ok(None);
     };
 
-    picking(picked, renderer, runner, terms, now)
+    picking(picked, renderer, runner, terms, keys)
 }
 
 /// Picks one up, having decided which.
@@ -74,8 +78,8 @@ fn picking<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
-    now: SystemTime,
-) -> Result<(), Fatal> {
+    keys: bool,
+) -> Result<Option<Compacting>, Fatal> {
     let columns = renderer.columns();
 
     // Answered before the log is opened. This session's own claim is on that
@@ -84,7 +88,8 @@ fn picking<T: Terminal>(
     // something.
     if runner.session().id() == Some(picked.id()) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
-        return Ok(renderer.present(&rows, terms.style().palette())?);
+        renderer.present(&rows, terms.style().palette())?;
+        return Ok(None);
     }
 
     let (session, transcript) =
@@ -93,7 +98,10 @@ fn picking<T: Terminal>(
             // A path is in every one of these, so it is committed rather than
             // presented. Nothing else changes: the session in hand is still
             // being recorded, and the loop carries on with it.
-            Err(problem) => return Ok(renderer.commit(&format!("! {problem}"))?),
+            Err(problem) => {
+                renderer.commit(&format!("! {problem}"))?;
+                return Ok(None);
+            }
         };
 
     let held = transcript.len();
@@ -112,10 +120,24 @@ fn picking<T: Terminal>(
     }
 
     renderer.present(
-        &picked_up(picked, held, now, columns, terms.style().glyphs()),
+        // Read here rather than carried in: one row is dated against one
+        // instant however it was reached, unlike the list above, which is
+        // several rows and has to share one.
+        &picked_up(
+            picked,
+            held,
+            SystemTime::now(),
+            columns,
+            terms.style().glyphs(),
+        ),
         terms.style().palette(),
     )?;
-    Ok(())
+
+    // Both of these are what a session picked up on the command line gets, and
+    // for the same reason: what it already said, and what it costs to carry,
+    // are facts about the session rather than about which way reached it.
+    super::super::replaying::replayed(renderer, runner, terms.style())?;
+    super::super::resuming::asked(renderer, runner, terms, keys)
 }
 
 /// The rows that say what was picked up.

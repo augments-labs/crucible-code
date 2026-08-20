@@ -18,6 +18,7 @@ mod draw;
 #[cfg(test)]
 mod fake;
 mod kept;
+mod models;
 mod release;
 mod remember;
 #[cfg(test)]
@@ -147,6 +148,20 @@ const PROVIDERS: [Served; 3] = [
         ],
     },
 ];
+
+/// What this build knows about a model's limits, if it knows anything.
+///
+/// Keyed on the name exactly as it was asked for. A name this build has never
+/// heard of answers `None` rather than the nearest thing it resembles: two
+/// models one word apart can differ five-fold in what they accept, and a
+/// session run against the wrong one of them throws away most of itself before
+/// anybody notices.
+pub(crate) fn facts(provider: &str, model: &str) -> Option<models::Facts> {
+    models::FACTS
+        .iter()
+        .find(|facts| facts.provider == provider && facts.model == model)
+        .copied()
+}
 
 /// What a model that takes every rung crucible has is written with.
 const EVERY: &[Effort] = &Effort::LADDER;

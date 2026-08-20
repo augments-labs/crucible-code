@@ -105,7 +105,7 @@ fn working(scratch: &Path) -> PathBuf {
 
 /// crucible, and the terminal it is drawing into.
 #[derive(Debug)]
-pub(crate) struct Window {
+pub(crate) struct Watched {
     /// The near side of the pair: what a terminal emulator would hold.
     terminal: File,
     /// The process being watched.
@@ -118,7 +118,7 @@ pub(crate) struct Window {
     scratch: PathBuf,
 }
 
-impl Window {
+impl Watched {
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     ///
@@ -165,6 +165,24 @@ impl Window {
         rule: &str,
     ) -> Self {
         let document = document(Some(vendor), Some(rule));
+        Self::configured(case, columns, rows, &document, true)
+    }
+
+    /// A provider that answers, and a session that is asked about the moment
+    /// it is picked up.
+    ///
+    /// `askOnResume` is set to one token so any session at all is large enough
+    /// to be worth the question. What the case is about is the panel and what
+    /// follows it, not the figure that decides whether they appear.
+    pub(crate) fn asking_on_resume(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"compaction\": {{\"askOnResume\": 1}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+
         Self::configured(case, columns, rows, &document, true)
     }
 
@@ -233,6 +251,49 @@ impl Window {
             .write_all(keys.as_bytes())
             .expect("keys go to the terminal");
         self.settle(&format!("{keys:?} was typed"), Some(wanted));
+    }
+
+    /// Types `keys` and reads until `wanted` is on screen, without waiting for
+    /// the screen to go still.
+    ///
+    /// [`Self::settle`] cannot be what a case about a screen redrawn on a beat
+    /// waits on: the thing it is watching is the thing that keeps bytes
+    /// arriving, so the quiet it waits for never comes and the step fails at
+    /// [`CEILING`] with the picture it wanted on it. This reads frames as they
+    /// land and stops at the first one carrying `wanted`.
+    ///
+    /// It terminates for the same reason `settle` does — every pass either
+    /// takes bytes off a stream a stopped process cannot add to, or waits
+    /// [`QUIET`] for one, and [`CEILING`] bounds the wait either way.
+    pub(crate) fn types_and_catches(&mut self, keys: &str, wanted: &str) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.catches(&format!("{keys:?} was typed"), wanted);
+    }
+
+    /// Reads frames until `wanted` is on screen.
+    pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
+        let deadline = Instant::now() + CEILING;
+
+        while !self.picture().contains(wanted) {
+            match self.bytes.recv_timeout(QUIET) {
+                Ok(bytes) => self.screen.feed(&bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!(
+                        "crucible left the terminal while {step}\n{}",
+                        self.picture()
+                    )
+                }
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}\n{}",
+                self.picture()
+            );
+        }
     }
 
     /// Changes the size of the window, the way dragging its corner would.
@@ -341,7 +402,7 @@ impl Window {
     }
 }
 
-impl Drop for Window {
+impl Drop for Watched {
     /// Takes the process and the directory back, however the case ended.
     ///
     /// In `Drop` rather than at the end of a case because the interesting exits

@@ -135,7 +135,7 @@ fn read(path: &Path, workspace: &Workspace) -> Option<Recorded> {
     }
 
     let opening = wire::opening(line.trim_end())?;
-    if opening.format != wire::FORMAT || Path::new(&opening.workspace) != workspace.root() {
+    if !wire::readable(opening.format) || Path::new(&opening.workspace) != workspace.root() {
         return None;
     }
 

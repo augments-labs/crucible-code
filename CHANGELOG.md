@@ -6,6 +6,26 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+**A turn is bounded by the model's window, not by counting what it does.** The
+four per-turn caps are gone, and with them the failure that ended a turn on a
+count and named a vendor for a bound that was crucible's own. When there is no
+longer room for another exchange, crucible replaces what is behind you with the
+model's own notes on it and the turn carries on; `/compact` does the same when
+you would rather choose the moment. Nothing freezes while the notes are being
+written — the box takes your next line and sends it once there is room, and
+escape stops them and leaves the session exactly as it was.
+
+**Picking up a large session asks first.** `--continue` and `/resume` on one
+past `compaction.askOnResume` offer notes, all of it, or an answer that stops
+the question being put again; escape carries it whole, which is the answer that
+changes nothing.
+
+**A session you pick up comes back on the screen it left.** The transcript is
+drawn above the box before the first prompt — your lines, the model's prose as
+the markdown it is, every call and what it answered — through the same builders
+a live turn draws through, so it arrives in the colours you are reading in now.
+A recap is drawn as the notes it is rather than as something you typed.
+
 ## [0.11.2] - 2026-08-19
 
 ### Fixed

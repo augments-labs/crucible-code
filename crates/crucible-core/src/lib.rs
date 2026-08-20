@@ -17,6 +17,7 @@
 
 mod ask;
 mod cancel;
+mod compaction;
 mod credential;
 mod diff;
 mod event;
@@ -31,6 +32,7 @@ mod workspace;
 
 pub use ask::{Answer, Answered, Put, Question};
 pub use cancel::Cancel;
+pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use credential::{
     ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
@@ -42,8 +44,8 @@ pub use permission::{
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
 pub use provider::{
-    Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit, Request,
-    Spend, ToolSchema,
+    Carried, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError, ProviderLimit,
+    Request, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};

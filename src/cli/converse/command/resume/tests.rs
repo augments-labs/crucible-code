@@ -41,6 +41,7 @@ fn over(session: Session) -> Runner {
         Model {
             name: "script".into(),
             max_tokens: 64,
+            window: None,
             system: None,
             effort: None,
         },
@@ -121,7 +122,9 @@ fn at(sample: &Sample, wanted: &str, of: usize) -> String {
 fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
 
-    run(said, &mut renderer, runner, &terms(sample)).expect("the terminal to be written");
+    // No keys: these drive a recording rather than a terminal somebody is at,
+    // and the question a large session asks has nobody to answer it.
+    run(said, &mut renderer, runner, &terms(sample), false).expect("the terminal to be written");
 
     renderer.terminal().written().to_string()
 }

@@ -44,10 +44,13 @@
 use std::fmt;
 
 use crucible_core::{
-    Change, Diff, Event, Question, Sensitivity, StopReason, Summary, ToolCall, ToolOutput,
+    Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason, Summary,
+    ToolCall, ToolOutput,
 };
 use crucible_tools::Ended;
-use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, TerminalError, columns, cut, fold};
+use crucible_tui::{
+    Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
+};
 
 use super::kept::Kept;
 use super::style::Style;
@@ -106,7 +109,26 @@ pub(crate) fn event<T: Terminal>(
         // the next arrived. A response nobody read a word of, asked for again
         // and answered, left nothing behind worth a line — a line per hiccup is
         // what a reader would have to look past to find the answer.
-        Event::Spent { .. } | Event::Retrying => Ok(()),
+        // How full the window is belongs to the same row, and for the same
+        // reason: it is true until it changes, and a line per reading would be
+        // a column of stale numbers. Room being made belongs there too, while
+        // it is happening.
+        Event::Spent { .. }
+        | Event::Retrying
+        | Event::Carried { .. }
+        | Event::Compacting { .. } => Ok(()),
+
+        // What it came to does not. Room having been made is a thing that
+        // happened to the session rather than a state it is in, and the row
+        // above the box takes its rows back — so this is written down where the
+        // record of the session is, under the turn it happened in.
+        Event::Compacted { compacted } => {
+            renderer.apart()?;
+            renderer.present(
+                &compacted_rows(compacted, columns, style.glyphs()),
+                style.palette(),
+            )
+        }
 
         // Kept and not drawn. What a running command prints stands under the
         // call it belongs to, in rows the footing lays out and hands back; what
@@ -141,15 +163,7 @@ pub(crate) fn event<T: Terminal>(
         // asking what the call did is asking both halves of the same question.
         Event::ToolFinished { output, .. } => {
             let beyond = beyond(&output);
-            let mut rows = vec![finished(
-                &output,
-                beyond,
-                style.output(columns),
-                style.glyphs(),
-            )];
-            if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
-                rows.extend(block(diff, columns, style.glyphs()));
-            }
+            let rows = finished_rows(&output, columns, style);
 
             renderer.present(&rows, style.palette())?;
 
@@ -572,7 +586,8 @@ pub(crate) fn pascal(name: &str) -> String {
 /// in its answer to the model. Both are true of the same call, and only one is
 /// about the file: how many replacements `edit` made is a fact about the
 /// instruction it was sent, and the reader is looking at what is in the file.
-fn finished(output: &ToolOutput, beyond: usize, width: usize, glyphs: Glyphs) -> Row {
+fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> Row {
+    let glyphs = style.glyphs();
     let mut row = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
     row.push(Slot::Quiet, format!("{} ", glyphs.hangs()));
 
@@ -580,15 +595,25 @@ fn finished(output: &ToolOutput, beyond: usize, width: usize, glyphs: Glyphs) ->
         row.push(Slot::Plain, format!("{} ", glyphs.failed()));
     }
 
+    // Measured off the row itself rather than worked out from the glyphs a
+    // second time: the corner, the space after it and the cross a failure wears
+    // are the window's columns rather than the words', and a row that spends
+    // them without taking them off is one the terminal wraps and this process
+    // never counted. How much of a wide screen a result may take is the style's
+    // answer; how much is there at all is the window's, and it wins.
+    let room = style
+        .output(window)
+        .min(window.saturating_sub(row.columns()));
+
     if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
-        counted(&mut row, diff);
+        counted(&mut row, diff, room);
         return row;
     }
 
     let said = output.text().lines().next().unwrap_or_default();
 
     if beyond == 0 {
-        row.push(Slot::Quiet, clipped(said, width, glyphs));
+        row.push(Slot::Quiet, clipped(said, room, glyphs));
         return row;
     }
 
@@ -598,13 +623,42 @@ fn finished(output: &ToolOutput, beyond: usize, width: usize, glyphs: Glyphs) ->
     // hiding the offer behind the thing being offered.
     let tail = format!(" (+{beyond} lines {} ctrl+o to expand)", glyphs.dot());
 
+    // And where the window is too narrow for even that, the line is what the
+    // row keeps: an offer alone says nothing about what came back, and the key
+    // it names works whether or not the row had room to mention it.
+    if columns(&tail) >= room {
+        row.push(Slot::Quiet, clipped(said, room, glyphs));
+        return row;
+    }
+
     row.push(
         Slot::Quiet,
-        clipped(said, width.saturating_sub(columns(&tail)), glyphs),
+        clipped(said, room.saturating_sub(columns(&tail)), glyphs),
     );
     row.push(Slot::Quiet, tail);
 
     row
+}
+
+/// Every row one answered call comes back as.
+///
+/// The row that says what came back, and under it the lines a call that changed
+/// a file moved. No row parts them, because a reader asking what the call did is
+/// asking both halves of the same question.
+///
+/// One builder rather than two, for the reason [`words`] is one: this is drawn
+/// when the call answers and again when the session is put back on the screen,
+/// and a result that read one way live and another way on the way back in is two
+/// results as far as a reader is concerned.
+pub(crate) fn finished_rows(output: &ToolOutput, window: usize, style: Style) -> Vec<Row> {
+    let glyphs = style.glyphs();
+    let mut rows = vec![finished(output, beyond(output), window, style)];
+
+    if let Some(diff) = output.diff().filter(|diff| !diff.is_empty()) {
+        rows.extend(block(diff, window, glyphs));
+    }
+
+    rows
 }
 
 /// How many lines of a result its row has no room to say.
@@ -630,7 +684,9 @@ fn beyond(output: &ToolOutput) -> usize {
 /// because this is the row that claims a number — a reader told nine lines went
 /// in and shown six of them has been told the truth about the call, and a block
 /// that stopped without saying so reads as the whole of what happened.
-fn counted(row: &mut Row, diff: &Diff) {
+fn counted(row: &mut Row, diff: &Diff, room: usize) {
+    let before = row.columns();
+
     match (diff.added(), diff.removed()) {
         (0, removed) => count(row, "Removed ", removed),
         (added, 0) => count(row, "Added ", added),
@@ -641,11 +697,12 @@ fn counted(row: &mut Row, diff: &Diff) {
         }
     }
 
-    if diff.dropped() > 0 {
-        row.push(
-            Slot::Quiet,
-            format!(" ({} of them not shown)", diff.dropped()),
-        );
+    // Left off a window with no room for it rather than clipped, and the
+    // numbers above are never either: half of "(5 of them not shown)" says
+    // nothing, and a clipped count says something untrue.
+    let said = format!(" ({} of them not shown)", diff.dropped());
+    if diff.dropped() > 0 && row.columns() - before + columns(&said) <= room {
+        row.push(Slot::Quiet, said);
     }
 }
 
@@ -721,18 +778,120 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
         .collect()
 }
 
+/// The record of room having been made, as it goes to scrollback.
+///
+/// Ruled above and below, like anything else that is true of the session rather
+/// than of the row above it. It says what caused it before what it came to,
+/// because the cause is the part a reader can do something about.
+pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
+    let why = match compacted.why {
+        Compacting::Asked => "you asked",
+        Compacting::Resumed => "you chose notes over carrying this session whole",
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+    };
+    let turns = if compacted.kept == 1 { "turn" } else { "turns" };
+
+    vec![
+        rule(),
+        Row::new()
+            .then(Slot::Plain, " compacted ")
+            .then(Slot::Quiet, format!("{} {why}", glyphs.dot())),
+        Row::new().then(
+            Slot::Quiet,
+            format!(
+                " {} messages became a recap {} {} → {} carried {} {} {turns} kept whole",
+                compacted.replaced,
+                glyphs.dot(),
+                tokens(compacted.before),
+                tokens(compacted.after),
+                glyphs.dot(),
+                compacted.kept,
+            ),
+        ),
+        rule(),
+    ]
+}
+
+/// What a request to make room says when there was none to make.
+///
+/// A session with nothing behind the turns it keeps whole has no middle for a
+/// recap to stand in place of, and compaction spends nothing on it. Said out
+/// loud rather than passed over in silence: somebody who asked for room, or
+/// chose notes over carrying a session whole, is owed the answer either way.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn unmade<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let window = renderer.columns();
+    let rows = [Row::new().then(Slot::Quiet, clip(NOTHING, window))];
+
+    renderer.present(&rows, style.palette())
+}
+
+/// And what it says.
+const NOTHING: &str = "there is nothing behind this turn worth replacing yet";
+
+/// What a request to make room says when the key that stops a turn stopped it.
+///
+/// Told apart from [`unmade`] because the two leave the same session behind and
+/// mean opposite things to the person reading: that one says this session has
+/// no middle worth replacing, and this one says the thing they already know
+/// they did. A reader who pressed the key and was told the session was too
+/// short would go looking for what was wrong with their session.
+///
+/// The words are [`notice`]'s, for the reason a stopped turn gets them: it is
+/// the same event — a request that was going and is not any more — and two
+/// spellings of it would come apart.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn stopped<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let window = renderer.columns();
+    let said = notice(StopReason::Cancelled).unwrap_or_default();
+    let rows = [Row::new().then(Slot::Quiet, clip(said, window))];
+
+    renderer.present(&rows, style.palette())
+}
+
+/// A token count, as a row says it.
+pub(crate) fn tokens(tokens: u64) -> String {
+    match tokens {
+        0..=999 => tokens.to_string(),
+        1_000..=999_999 => format!("{}k", tokens / 1_000),
+        _ => format!("{}.{}M", tokens / 1_000_000, (tokens % 1_000_000) / 100_000),
+    }
+}
+
 /// What to say about a turn that ended, if anything.
 ///
 /// Every variant is named rather than caught by a rest pattern: a stop reason
 /// this file has not considered is exactly the one that would go unmentioned,
 /// and the whole point of the set being closed is that a new one cannot.
-fn notice(stop: StopReason) -> Option<&'static str> {
+pub(crate) fn notice(stop: StopReason) -> Option<&'static str> {
     match stop {
         // The ordinary ending, and the one taken every time. The answer speaks
         // for itself; a line under each turn saying it finished is noise.
         StopReason::Yielded | StopReason::WantsTools => None,
 
         StopReason::OutOfTokens => Some("! unfinished: the answer reached the token ceiling"),
+
+        // The request never fit, so there is no answer to be unfinished. Said
+        // in the words of the remedy rather than of the failure: what the
+        // reader can do about it is make the session smaller, and nothing about
+        // asking again unchanged will help.
+        StopReason::WindowExceeded => {
+            Some("! the session no longer fits this model's window; try /compact")
+        }
 
         // Named apart from the ceiling because the remedy is the opposite: a
         // shorter request buys nothing, so a user told the wrong reason retries

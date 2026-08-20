@@ -109,11 +109,26 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
     let problem = match read {
         // Lossy on purpose: this is already the failure path, and a message
         // that is not quite text is still better than no message.
-        Ok(()) => ProviderError::Refused {
-            provider: refusal.provider,
-            status: refusal.status,
-            message: explain(&String::from_utf8_lossy(&said)).into(),
-        },
+        Ok(()) => {
+            let body = String::from_utf8_lossy(&said);
+
+            // A request that did not fit is a refusal with a remedy no other
+            // refusal has, so it is told apart before the rest are given their
+            // sentence. Decided from the vendor's own code rather than from the
+            // prose beside it: a code is a value the vendor enumerates, and the
+            // prose is a sentence they rewrite whenever they like.
+            if outgrew(&body) {
+                ProviderError::WindowExceeded {
+                    provider: refusal.provider,
+                }
+            } else {
+                ProviderError::Refused {
+                    provider: refusal.provider,
+                    status: refusal.status,
+                    message: explain(&body).into(),
+                }
+            }
+        }
         Err(ReadError::Cancelled) => ProviderError::Cancelled(refusal.provider),
         Err(ReadError::Body(problem)) => ProviderError::Refused {
             provider: refusal.provider,
@@ -123,6 +138,40 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
     };
 
     problem.redacted(refusal.redactions)
+}
+
+/// Every code a vendor uses to say the request did not fit its model's window.
+///
+/// Read off the published APIs as they stood when this was written, the way the
+/// stop reasons beside them are, and they go stale the same way. A code that has
+/// been renamed costs a compaction that would have recovered the turn — the
+/// refusal still reaches the user, saying what the vendor said.
+///
+/// One list rather than one per provider because a code is not ambiguous: no
+/// vendor uses another's code to mean something else, and a wire that never
+/// sends any of these is unaffected by all of them.
+const OUTGREW: &[&str] = &[
+    "context_length_exceeded",
+    "string_above_max_length",
+    "invalid_request_too_large",
+];
+
+/// Whether this refusal is the model saying the request was too large for it.
+///
+/// The **code**, never the sentence. Matching prose would be reading three
+/// vendors' phrasing, in whatever language they answered in, and getting it
+/// wrong in the direction that compacts a session for a refusal about something
+/// else entirely.
+fn outgrew(body: &str) -> bool {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+
+    payload
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|code| OUTGREW.contains(&code))
 }
 
 /// Why reading the bounded refusal stopped.
@@ -350,5 +399,31 @@ mod tests {
         );
 
         assert!(matches!(problem, ProviderError::Cancelled("test")));
+    }
+    #[test]
+    fn a_request_too_large_for_the_model_is_told_apart_from_every_other_refusal() {
+        // The one refusal with a remedy: make the session smaller and ask the
+        // same question again. Every other 400 is about the request itself.
+        let said = r#"{"error":{"code":"context_length_exceeded",
+            "message":"This model's maximum context length is 272000 tokens"}}"#;
+
+        assert!(matches!(
+            plain_refused(400, reading(said)),
+            ProviderError::WindowExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn a_refusal_whose_prose_mentions_the_context_is_still_only_a_refusal() {
+        // Decided from the code, never the sentence. A vendor apologising in
+        // prose about context length, with a code that says something else, is
+        // not a session to compact.
+        let said = r#"{"error":{"code":"invalid_api_key",
+            "message":"maximum context length is not your problem here"}}"#;
+
+        assert!(matches!(
+            plain_refused(400, reading(said)),
+            ProviderError::Refused { .. }
+        ));
     }
 }

@@ -195,6 +195,7 @@ mod tests {
             Model {
                 name: "script".into(),
                 max_tokens: 64,
+                window: None,
                 system: None,
                 effort: None,
             },
@@ -292,7 +293,7 @@ mod tests {
         assert_eq!(listed(&sample, 1), ["what was said before"]);
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
-        super::super::resume::run("1", &mut renderer, &mut runner, &terms)
+        super::super::resume::run("1", &mut renderer, &mut runner, &terms, false)
             .expect("the terminal to be written");
 
         let written = renderer.terminal().written().to_string();
@@ -314,6 +315,7 @@ mod tests {
             Model {
                 name: "script".into(),
                 max_tokens: 64,
+                window: None,
                 system: None,
                 effort: None,
             },

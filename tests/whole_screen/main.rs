@@ -33,10 +33,10 @@
 
 mod screen;
 mod vendor;
-mod window;
+mod watched;
 
 use vendor::Vendor;
-use window::Window;
+use watched::Watched;
 
 /// A line long enough to need more rows than the box is allowed to grow to.
 ///
@@ -69,7 +69,7 @@ fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
     // both `/login` and `/model` — and what stands under it is the prompt box,
     // not a panel. A run that opened on a panel instead would put the reader in
     // front of a question before it had said where they were.
-    let window = Window::open("welcome", 80, 24);
+    let window = Watched::open("welcome", 80, 24);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -79,7 +79,7 @@ fn a_remembered_provider_without_its_credential_still_opens_the_session() {
     // `/model` persists all three names, but the credential may belong only to
     // the shell that selected them. Once that variable is unset, the remembered
     // names become dormant setup rather than an error before the prompt exists.
-    let window = Window::unavailable("remembered-without-key", 80, 24);
+    let window = Watched::unavailable("remembered-without-key", 80, 24);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -89,7 +89,7 @@ fn the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width() {
     // Half the width, where the welcome drops to one column and the wordmark
     // has to go. Two widths rather than one because a row that fits at eighty
     // and overflows at forty is the failure this is watching for.
-    let window = Window::open("narrow", 40, 24);
+    let window = Watched::open("narrow", 40, 24);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -99,7 +99,7 @@ fn a_typed_line_that_reaches_the_edge_wraps_and_grows_the_box() {
     // The box grows on the keystroke that fills a row, which pushes everything
     // above it up the screen. The rewind on the next frame has to stop at the
     // top of the taller box and not at the top of the shorter one it replaced.
-    let mut window = Window::open("wrapped", 80, 24);
+    let mut window = Watched::open("wrapped", 80, 24);
 
     window.types(&"the quick brown fox jumps over the lazy dog. ".repeat(3));
 
@@ -112,7 +112,7 @@ fn a_line_past_what_the_box_has_room_for_scrolls_inside_it() {
     // edge. A short window, because the ceiling is worked out from the height:
     // a box that went on growing here would be taller than the screen and could
     // not be taken back at all.
-    let mut window = Window::open("scrolled", 80, 16);
+    let mut window = Watched::open("scrolled", 80, 16);
 
     window.types(&overlong());
 
@@ -123,7 +123,7 @@ fn a_line_past_what_the_box_has_room_for_scrolls_inside_it() {
 fn a_slash_opens_the_command_list_above_the_box() {
     // A live region that is suddenly much taller than the box on its own, drawn
     // over rows the terminal has already been given.
-    let mut window = Window::open("commands", 80, 24);
+    let mut window = Watched::open("commands", 80, 24);
 
     window.types("/");
 
@@ -138,7 +138,7 @@ fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     // the running turn had and has handed back: a live region that grew scrolled
     // the terminal to make room, and shrinking it again cannot scroll back.
     let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::answering("answered", 80, 24, &vendor);
+    let mut window = Watched::answering("answered", 80, 24, &vendor);
 
     window.types("what is 2+2\r");
 
@@ -153,7 +153,7 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     // grew. A short window, because what decides it is how much of the screen
     // the answer fills.
     let vendor = Vendor::answering(&taller_than_the_window());
-    let mut window = Window::answering("answered-long", 80, 16, &vendor);
+    let mut window = Watched::answering("answered-long", 80, 16, &vendor);
 
     window.types("say something long\r");
 
@@ -177,7 +177,7 @@ fn a_call_that_changed_a_file_is_drawn_with_the_change() {
         r##"{"path":"release.yml","find":"# trend data","replace":"# what stops a tag"}"##,
         "Renamed. Nothing else in the file moved.",
     );
-    let mut window = Window::allowing("tool-called", 80, 24, &vendor, "edit(*)");
+    let mut window = Watched::allowing("tool-called", 80, 24, &vendor, "edit(*)");
     let file = window.workspace().join("release.yml");
     std::fs::write(&file, BEFORE).expect("a file for the call to change");
 
@@ -197,7 +197,7 @@ fn an_environment_authenticated_session_never_claims_logout_removed_it() {
     // can remove only Crucible's protected store, so this screen must name the
     // inherited source and leave the selected provider and model in force.
     let vendor = Vendor::answering("still authenticated");
-    let mut window = Window::answering("environment-logout", 80, 24, &vendor);
+    let mut window = Watched::answering("environment-logout", 80, 24, &vendor);
 
     window.types("/logout\r");
 
@@ -216,7 +216,7 @@ fn a_key_given_to_login_is_what_the_turn_after_it_is_sent_with() {
     // Named on the line, which is what skips the provider panel: this is the
     // way in for somebody who already knows whose key they hold.
     let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::keyless("logged-in", 80, 24, &vendor);
+    let mut window = Watched::keyless("logged-in", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
@@ -233,7 +233,7 @@ fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
     // key. `/model` remains a separate explicit choice; this proves what comes
     // off the login panel signs the next turn after that choice.
     let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::keyless("login-walked", 80, 24, &vendor);
+    let mut window = Watched::keyless("login-walked", 80, 24, &vendor);
 
     window.types("/login\r");
     // Down twice to the console account, past the two plans; Enter opens the
@@ -259,7 +259,7 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
     // driven off a pipe has nothing to type into one. It is the one case in
     // this suite with no snapshot, because what it asserts is a file.
     let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::keyless("login-written", 80, 24, &vendor);
+    let mut window = Watched::keyless("login-written", 80, 24, &vendor);
 
     window.types("/login\r");
     window.types("\x1b[B\x1b[B\r");
@@ -282,7 +282,7 @@ fn openai_account_login_offers_browser_and_device_code_methods() {
     // path; device code stays visible for a remote terminal or another device.
     // This stops before either network flow starts and snapshots Crucible's
     // own inline panel rather than a provider's interface.
-    let mut window = Window::open("openai-login-methods", 80, 24);
+    let mut window = Watched::open("openai-login-methods", 80, 24);
 
     window.types("/login\r");
     window.types("\r");
@@ -299,7 +299,7 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
     // and it is a whole-screen one rather than a component one because fitting
     // is a fact about the window and the box underneath, not about the rows.
     let vendor = Vendor::answering("Two plus two is four.");
-    let mut window = Window::keyless("effort-ladder", 80, 24, &vendor);
+    let mut window = Watched::keyless("effort-ladder", 80, 24, &vendor);
 
     window.types("/login anthropic\r");
     window.types_until("not-a-key-and-nothing-reads-it\r", "logged in to anthropic");
@@ -316,7 +316,7 @@ fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
     // variable each reads from — three rows into the scrollback, for somebody
     // who had just said they did not want to be asked. One line is what it owes:
     // enough that the record says the question was asked, and no more.
-    let mut window = Window::open("login-left", 80, 24);
+    let mut window = Watched::open("login-left", 80, 24);
 
     window.types("/login\r");
     window.types("\x1b");
@@ -329,10 +329,95 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // The size changes under a line that was laid out for the old one. What was
     // committed stays where the terminal put it; what is live is drawn again,
     // and the row count it rewinds over is the count from before the resize.
-    let mut window = Window::open("resized", 80, 24);
+    let mut window = Watched::open("resized", 80, 24);
 
     window.types("the quick brown fox jumps over the lazy dog");
     window.resize(52, 20);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn picking_a_session_up_asks_before_carrying_it_whole() {
+    // The panel in the binary rather than in a component test: it stands where
+    // the box was, and what it says has to be readable against a real screen.
+    let vendor = Vendor::answering("The first thing this session said.");
+    let mut window = Watched::asking_on_resume("resume-asks", 80, 24, &vendor);
+
+    window.types_until("say something\r", "The first thing");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume 1\r", "This session is large");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn choosing_notes_makes_room_and_says_what_it_took() {
+    // Three turns, because a recap stands in place of what is behind the two
+    // this keeps whole: a shorter session has no middle to replace, and the
+    // choice would spend nothing.
+    let vendor = Vendor::answering("Notes on everything that came before.");
+    let mut window = Watched::asking_on_resume("resume-notes", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "Notes on");
+    window.types_until("the second thing\r", "ask mode on");
+    window.types_until("the third thing\r", "ask mode on");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume 1\r", "This session is large");
+
+    // Enter takes the first answer, which is the one that spends a request.
+    window.types_until("\r", "compacted");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn escape_while_room_is_being_made_stops_it_and_replaces_nothing() {
+    // Escape, with the notes half written. Two things are owed and neither used
+    // to arrive: a line saying it stopped, and a session left exactly as it was
+    // — half a memory of one, stood in place of the messages it was meant to
+    // replace, loses the rest for good.
+    //
+    // The recap answer is long so the key lands while it is still arriving; the
+    // vendor writes a word every few milliseconds, which is what makes the
+    // middle of a stream somewhere a test can press a key.
+    let notes = "notes to self about everything that has happened so far ".repeat(24);
+    let vendor = Vendor::answering_each(&["one answer", "two answer", "three answer", &notes]);
+    let mut window = Watched::answering("compact-stopped", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "one answer");
+    window.types_until("the second thing\r", "two answer");
+    window.types_until("the third thing\r", "three answer");
+    window.types_and_catches("/compact\r", "compacting");
+    window.types_until("\x1b", "! stopped");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
+    // The box under a compaction is a box, not a picture of one: keys reach it
+    // while the notes are being written, and the line finished there is sent
+    // afterwards — against the session that has just been made smaller, which
+    // is the whole reason it waits rather than going first.
+    let notes = "notes to self about everything that has happened so far ".repeat(24);
+    let vendor = Vendor::answering_each(&[
+        "one answer",
+        "two answer",
+        "three answer",
+        &notes,
+        "the answer to what was queued",
+    ]);
+    let mut window = Watched::answering("compact-typing", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "one answer");
+    window.types_until("the second thing\r", "two answer");
+    window.types_until("the third thing\r", "three answer");
+
+    // Typed into the box while the row above it still says what is happening.
+    window.types_and_catches("/compact\r", "compacting");
+    window.types_and_catches("what next", "what next");
+    window.types_until("\r", "the answer to what was queued");
 
     insta::assert_snapshot!(window.picture());
 }

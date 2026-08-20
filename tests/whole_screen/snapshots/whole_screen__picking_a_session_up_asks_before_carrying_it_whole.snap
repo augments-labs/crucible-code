@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 23,0 scrolled 33
+|                                                                                |
+|› say something                                                                 |
+|                                                                                |
+|The first thing this session said.                                              |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|This session is large                                                           |
+|                                                                                |
+|4 carried, from a session started just now. Carrying it whole spends that again |
+|on every turn.                                                                  |
+|                                                                                |
+|› Carry on from summary                                                         |
+|  one request now, and every request after it is smaller                        |
+|                                                                                |
+|  Carry all of it                                                               |
+|  all of it goes back to the model, on every turn from here                     |
+|                                                                                |
+|  Stop asking                                                                   |
+|  written down; sessions are carried whole from now on                          |
+|                                                                                |
+|enter to choose · esc to carry it whole                                         |

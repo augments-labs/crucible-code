@@ -99,7 +99,7 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
         return Ok(false);
     }
 
-    if opening.format == wire::FORMAT {
+    if wire::readable(opening.format) {
         Ok(true)
     } else {
         Err(SessionError::Foreign {
@@ -178,6 +178,17 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
             before = through;
+            through += read as u64;
+            continue;
+        }
+
+        // Room having been made. The notes replace exactly the messages the
+        // line says they replace — counted back from here rather than taken to
+        // mean everything above, so a log that ever holds more than one thread
+        // of messages still reads correctly.
+        if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
+            transcript.behind(replaced);
+            transcript.push(Message::User(recap.into()));
             through += read as u64;
             continue;
         }

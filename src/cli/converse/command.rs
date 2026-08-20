@@ -19,7 +19,7 @@
 //! the path that wraps and drops escape sequences, and it is the one every
 //! other `!` line in this program already takes.
 
-use crucible_core::Mode;
+use crucible_core::{Compacting, Mode};
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
 
@@ -58,6 +58,8 @@ pub(super) enum Command {
     Theme,
     /// The sessions recorded here, and picking one of them up.
     Resume,
+    /// Make room in the model's window now, rather than when it fills.
+    Compact,
     /// A new session with nothing said in it, this one left on `/resume`.
     Clear,
     /// End the session.
@@ -69,7 +71,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 10] = [
+const EVERY: [Command; 11] = [
     Command::Help,
     Command::Model,
     Command::Effort,
@@ -78,6 +80,7 @@ const EVERY: [Command; 10] = [
     Command::Mode,
     Command::Theme,
     Command::Resume,
+    Command::Compact,
     Command::Clear,
     Command::Exit,
 ];
@@ -103,6 +106,14 @@ pub(super) enum Ran {
     Again,
     /// The session is over.
     Leave,
+    /// The command asked for room to be made, for the reason it names.
+    ///
+    /// Handed back rather than done here, because making room is a request and
+    /// the loop above is where a request is run: on a worker, with the box live
+    /// under it and the key that stops it doing something. A command that ran
+    /// one on this thread would be a screen that draws nothing and a keyboard
+    /// that answers nothing for as long as the model takes.
+    Room(Compacting),
 }
 
 impl Command {
@@ -117,6 +128,7 @@ impl Command {
             Self::Mode => "/mode",
             Self::Theme => "/theme",
             Self::Resume => "/resume",
+            Self::Compact => "/compact",
             Self::Clear => "/clear",
             Self::Exit => "/exit",
         }
@@ -139,6 +151,10 @@ impl Command {
             Self::Mode => mode::ring(glyphs),
             Self::Theme => "pick the colours crucible draws with",
             Self::Resume => "pick up an earlier session here",
+            // What it does to the session rather than what it is for: somebody
+            // reading this row is deciding whether to spend a request on it,
+            // and what they lose is the part they cannot get back.
+            Self::Compact => "replace what is behind you with notes on it",
             // What it is for rather than what it does to the session: the
             // row is read by somebody who wants the context empty, and
             // "leaving this one" is what they need warning of.
@@ -228,10 +244,10 @@ pub(super) fn run<T: Terminal>(
     // block's neighbours — the line that asked, the box below — are rows the
     // eye is already resting on.
     renderer.commit("")?;
-    answer(wanted, renderer, runner, terms, keys)?;
+    let making = answer(wanted, renderer, runner, terms, keys)?;
     renderer.commit("")?;
 
-    Ok(Ran::Again)
+    Ok(making.map_or(Ran::Again, Ran::Room))
 }
 
 /// What one command has to say, drawn.
@@ -241,7 +257,7 @@ fn answer<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
     keys: bool,
-) -> Result<(), Fatal> {
+) -> Result<Option<Compacting>, Fatal> {
     let columns = renderer.columns();
     let style = terms.style();
     let glyphs = style.glyphs();
@@ -259,6 +275,13 @@ fn answer<T: Terminal>(
             command: Command::Help,
             ..
         } => renderer.present(&listing(columns, glyphs), style.palette())?,
+
+        // Nothing is drawn for it here. What it asks for is run above, where a
+        // request is run, and everything a reader sees of one comes from there.
+        Wanted::Known {
+            command: Command::Compact,
+            ..
+        } => return Ok(Some(Compacting::Asked)),
 
         Wanted::Known {
             command: Command::Model,
@@ -290,10 +313,13 @@ fn answer<T: Terminal>(
             rest,
         } => theme::run(rest, renderer, terms, keys)?,
 
+        // The one other command that can end in a request: a session picked up
+        // is put to the reader before it is carried, and one of the three
+        // answers costs one.
         Wanted::Known {
             command: Command::Resume,
             rest,
-        } => resume::run(rest, renderer, runner, terms)?,
+        } => return resume::run(rest, renderer, runner, terms, keys),
 
         Wanted::Known {
             command: Command::Clear,
@@ -307,7 +333,7 @@ fn answer<T: Terminal>(
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 /// `/mode`: the mode in force and the ring it is one of, or the mode named, put

@@ -53,6 +53,11 @@ pub(crate) fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes down that picking a session up should stop asking about its size.
+pub(crate) fn unasked(file: &Path) -> Result<(), RememberError> {
+    answering(file, crucible_config::unasked)
+}
+
 /// Writes `theme` down as the syntax theme fenced code is read in.
 pub(crate) fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {

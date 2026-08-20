@@ -118,8 +118,8 @@ fn the_list_closes_the_moment_the_line_becomes_something_else() {
     // none of them is a list of commands what they are looking at.
     for said in [
         "",
-        "/mode ",
-        "/mode allowEdits",
+        "/mode      ",
+        "/mode      allowEdits",
         "/etc/hosts",
         "hello",
         " /",
@@ -141,16 +141,17 @@ fn help_answers_with_a_name_and_what_it_does() {
     assert_eq!(
         art(&listing(60, Glyphs::Unicode)),
         [
-            "/help     what these are",
-            "/model    pick which model answers",
-            "/effort   pick how hard it thinks",
-            "/login    sign in to a provider account",
-            "/logout   remove a stored account or API key",
-            "/mode     ask · allowEdits · fullAccess",
-            "/theme    pick the colours crucible draws with",
-            "/resume   pick up an earlier session here",
-            "/clear    start a new session, leaving this one",
-            "/exit     leave",
+            "/help      what these are",
+            "/model     pick which model answers",
+            "/effort    pick how hard it thinks",
+            "/login     sign in to a provider account",
+            "/logout    remove a stored account or API key",
+            "/mode      ask · allowEdits · fullAccess",
+            "/theme     pick the colours crucible draws with",
+            "/resume    pick up an earlier session here",
+            "/compact   replace what is behind you with notes on it",
+            "/clear     start a new session, leaving this one",
+            "/exit      leave",
         ]
     );
 }
@@ -160,16 +161,17 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
     assert_eq!(
         art(&listing(60, Glyphs::Ascii)),
         [
-            "/help     what these are",
-            "/model    pick which model answers",
-            "/effort   pick how hard it thinks",
-            "/login    sign in to a provider account",
-            "/logout   remove a stored account or API key",
-            "/mode     ask, allowEdits, fullAccess",
-            "/theme    pick the colours crucible draws with",
-            "/resume   pick up an earlier session here",
-            "/clear    start a new session, leaving this one",
-            "/exit     leave",
+            "/help      what these are",
+            "/model     pick which model answers",
+            "/effort    pick how hard it thinks",
+            "/login     sign in to a provider account",
+            "/logout    remove a stored account or API key",
+            "/mode      ask, allowEdits, fullAccess",
+            "/theme     pick the colours crucible draws with",
+            "/resume    pick up an earlier session here",
+            "/compact   replace what is behind you with notes on it",
+            "/clear     start a new session, leaving this one",
+            "/exit      leave",
         ]
     );
 }
@@ -204,14 +206,18 @@ fn the_mark_in_a_listing_row_comes_out_of_the_glyph_set() {
     // the sentence is a question mark between the line and what it does.
     assert_eq!(
         about(
-            "/login openai",
+            "/login     openai",
             "a key from OPENAI_API_KEY",
             Glyphs::Unicode
         ),
-        "/login openai — a key from OPENAI_API_KEY"
+        "/login     openai — a key from OPENAI_API_KEY"
     );
     assert_eq!(
-        about("/login openai", "a key from OPENAI_API_KEY", Glyphs::Ascii),
-        "/login openai -- a key from OPENAI_API_KEY"
+        about(
+            "/login     openai",
+            "a key from OPENAI_API_KEY",
+            Glyphs::Ascii
+        ),
+        "/login     openai -- a key from OPENAI_API_KEY"
     );
 }

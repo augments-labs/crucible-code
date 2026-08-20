@@ -76,6 +76,8 @@ Keyed by provider name — `anthropic`, `moonshot`, `openai`.
 | `effort` | How hard to think before answering, when `--effort` does not say. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
+| `contextWindow` | How many tokens a model accepts, keyed by the model name. |
+| `defaultContextWindow` | The same, for any model of this provider not named above. |
 
 `effort` is one of `low`, `medium`, `high`, `xhigh` or `max`, and it is set per
 provider because which rungs exist is the vendor's business — a rung chosen for
@@ -105,6 +107,62 @@ read for the provider whose key this machine holds, and `/model <name>` writes
 it here for you. With nothing set here and nothing on the command line, crucible
 starts and asks rather than picking a model on your behalf. See
 [Providers and models](../providers/providers.md).
+
+`contextWindow` is keyed by model because a session changes which model it asks
+without changing which vendor it writes to, and a figure left behind would
+describe the model you had just left:
+
+```json
+{ "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
+```
+
+crucible knows the limits of the models it offers and asks for nothing here
+unless you disagree with one — check your provider's documentation, because a
+vendor may serve the same model at more than one size. `defaultContextWindow`
+covers a model crucible has never heard of, which is otherwise a session with no
+reading on screen and no compaction until the provider refuses a request.
+
+Neither is sent anywhere. They decide when crucible makes room, and nothing
+else, so setting one too large means a request the provider refuses — recovered
+by compacting and asking again — while setting one too small means a session
+that compacts earlier than it had to.
+
+### `compaction`
+
+What happens when the model's window fills up. See
+[Sessions](../sessions/sessions.md#when-the-window-fills).
+
+| Key | Means |
+| --- | --- |
+| `when` | `full` to make room when there is none left, or `never`. |
+| `reserve` | Tokens kept free for the next answer and the tools it calls. |
+| `keep` | How many recent turns are kept word for word after the rest becomes a recap. |
+| `askOnResume` | How large a session must be, in tokens, before picking it up asks about it. |
+| `spendCeiling` | The most tokens one turn may produce before crucible stops it. |
+
+```json
+{ "compaction": { "when": "full", "keep": 4 } }
+```
+
+Left alone, crucible makes room when it has to and stops a turn for nothing
+else. `never` does not disable `/compact` — that is you asking rather than
+crucible deciding — it means a turn that runs out of room fails instead of
+recovering.
+
+`reserve` is worked out from the model if you do not set it: enough for one
+answer of the length crucible asks for, plus the tool results a pass carries
+back. **Raising what an answer may be raises the reserve**, because a request
+and its answer have to fit the window together — so a larger answer ceiling
+means compacting sooner, not later. The reserve is never more than half the
+window, so a small model still has half of itself to work in.
+
+`askOnResume` is a number of tokens, and `0` means never ask — which is what
+the *stop asking* answer writes down. See
+[Sessions](../sessions/sessions.md#picking-up-a-large-one).
+
+`spendCeiling` is off unless you set it. It bounds what a runaway turn actually
+consumes rather than counting the calls it makes, because a turn that is long
+because there is work in it is not a turn to stop.
 
 ### `permissions`
 

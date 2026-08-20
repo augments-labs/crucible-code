@@ -31,6 +31,21 @@ pub enum TurnError {
     #[error("{0} was not allowed")]
     Refused(Box<str>),
 
+    /// The turn produced more than it was allowed to.
+    ///
+    /// Only where somebody asked for a ceiling. What it bounds is what a
+    /// runaway turn actually consumes, rather than a count of calls standing in
+    /// for it — a turn making progress is not one to stop for being long.
+    #[error("this turn produced more than the {ceiling}-token ceiling it was given")]
+    Spent {
+        /// The ceiling that was set.
+        ceiling: u64,
+    },
+
+    /// Making room did not make enough of it.
+    #[error("there is no room left in the model's window, and compacting it freed none")]
+    NoRoom,
+
     /// Tool results crossed the turn's retained-output boundary.
     #[error("tool results exceeded the {maximum}-byte per-turn limit")]
     ToolOutputBytes {
@@ -120,6 +135,40 @@ pub enum Event {
     /// screen is being taken back. What it replaces is a turn that ended over a
     /// socket the provider closed while the tools ran.
     Retrying,
+
+    /// How much of the model's window is left, where a window is known.
+    ///
+    /// `None` where none is: nothing draws a fraction of a number nobody
+    /// stated, and a session on a model this build has never heard of is one
+    /// where the reading is simply absent.
+    Carried {
+        /// The percentage still free, rounded down.
+        left: Option<u8>,
+    },
+
+    /// Room is being made, and the turn has not ended.
+    ///
+    /// Reported again as the notes are written, so the row saying so can move
+    /// rather than sit still for the length of one request.
+    Compacting {
+        /// What asked for it.
+        why: crate::Compacting,
+        /// How much of the notes has been written, as a percentage of the room
+        /// they were given.
+        ///
+        /// A fraction of what was *asked for*, not of how long it will take —
+        /// nothing here knows that. It is honest about being an answer arriving
+        /// rather than a clock running down, and it is why the room a recap is
+        /// given is a figure this program chooses rather than the model's own
+        /// ceiling.
+        part: u8,
+    },
+
+    /// Room was made, and by how much.
+    Compacted {
+        /// What it took.
+        compacted: crate::Compacted,
+    },
 
     /// What the turn has spent so far, every response of it added up.
     Spent {

@@ -21,7 +21,27 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 3;
+pub(crate) const FORMAT: u32 = 4;
+
+/// The formats this build reads, newest first.
+///
+/// A log is refused rather than half-understood, and that is what this list is
+/// careful about: a format is on it only where every line an older build could
+/// have written still means here exactly what it meant there. Format 3 is,
+/// because 4 only *added* — a word for a stop reason that build never produced,
+/// and a line kind it never wrote. Nothing was renamed and nothing changed
+/// meaning, so a log from it replays whole.
+///
+/// A format that changed the meaning of a line does not go on this list however
+/// small the change looks. What it would buy is somebody's history; what it
+/// would cost is a session that looks fine and is missing turns, which is the
+/// failure the refusal exists for.
+pub(crate) const READS: &[u32] = &[4, 3];
+
+/// Whether this build can replay a log written under `format`.
+pub(crate) fn readable(format: u32) -> bool {
+    READS.contains(&format)
+}
 
 /// Whether this line says everything above it was forgotten.
 ///
@@ -37,6 +57,33 @@ pub(crate) fn forgets(line: &str) -> bool {
         .ok()
         .and_then(|value| value.get("forgotten").and_then(Value::as_bool))
         .unwrap_or_default()
+}
+
+/// A line saying room was made, and what the notes stand in place of.
+///
+/// Written where a compaction happened, the way the forgetting marker above is,
+/// and for the same reason: the log is append-only and cannot be rewritten, so
+/// what happened *to* the transcript is recorded as another thing that happened
+/// in it. Every message it replaced stays in the file — that is the record —
+/// and replay is what leaves them out of the transcript.
+///
+/// It carries **what it replaced** rather than standing for everything above
+/// it. A count is a fact about this compaction; a position is a fact about the
+/// file, and a file that ever holds more than one thread of messages has no
+/// meaningful "everything above".
+pub(crate) fn compacted(replaced: usize, recap: &str) -> String {
+    json!({ "compacted": { "replaced": replaced, "recap": recap } }).to_string()
+}
+
+/// What a compaction line says, or `None` if this is not one.
+pub(crate) fn made_room(line: &str) -> Option<(usize, String)> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let made = value.get("compacted")?;
+
+    Some((
+        usize::try_from(made.get("replaced")?.as_u64()?).ok()?,
+        made.get("recap")?.as_str()?.to_owned(),
+    ))
 }
 
 /// The first line, which says what the file is and what it belongs to.
@@ -115,6 +162,7 @@ fn stopped(stop: StopReason) -> &'static str {
         StopReason::Yielded => "yielded",
         StopReason::WantsTools => "tools",
         StopReason::OutOfTokens => "tokens",
+        StopReason::WindowExceeded => "window",
         StopReason::Filtered => "filtered",
         StopReason::Paused => "paused",
         StopReason::Cancelled => "cancelled",
@@ -138,6 +186,7 @@ fn stops(value: Option<&Value>) -> Option<StopReason> {
         "yielded" => StopReason::Yielded,
         "tools" => StopReason::WantsTools,
         "tokens" => StopReason::OutOfTokens,
+        "window" => StopReason::WindowExceeded,
         "filtered" => StopReason::Filtered,
         "paused" => StopReason::Paused,
         "cancelled" => StopReason::Cancelled,

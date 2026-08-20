@@ -227,6 +227,71 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 }
 
 #[test]
+fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
+    // The refusal exists so a log is never half-understood. This format only
+    // added — a word for a stop reason the older build never produced, and a
+    // line kind it never wrote — so a log from it means here exactly what it
+    // meant there, and refusing it would cost somebody their history to protect
+    // them from nothing.
+    let sample = Sample::new("session-older-format");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("what an older build recorded"));
+    drop(session);
+
+    // The same log, headed the way the build before this one headed it.
+    let text = fs::read_to_string(&path).expect("the log");
+    let older = text.replacen(
+        &format!("\"format\":{}", wire::FORMAT),
+        &format!("\"format\":{}", wire::FORMAT - 1),
+        1,
+    );
+    fs::write(&path, older).expect("a writable log");
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the older session");
+
+    assert_eq!(
+        transcript.messages(),
+        &[said("what an older build recorded")]
+    );
+}
+
+#[test]
+fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
+    // The split the whole thing turns on: the log holds every message, and the
+    // transcript holds what the model is sent. Replay is where they part, and
+    // it parts them by the count the line carries — not by taking the line to
+    // mean everything standing above it, which is a fact about the file rather
+    // than about the compaction.
+    let sample = Sample::new("session-compacted");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&said("one"));
+    session.append(&said("two"));
+    session.append(&said("three"));
+    session.compacted(2, "notes on two and three");
+    session.append(&said("four"));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let replayed: Vec<&str> = transcript
+        .messages()
+        .iter()
+        .map(|message| match message {
+            Message::User(text) => text.as_ref(),
+            _ => "",
+        })
+        .collect();
+
+    // `one` survives. The line said it replaced two, and two is what it
+    // replaced.
+    assert_eq!(replayed, ["one", "notes on two and three", "four"]);
+}
+
+#[test]
 fn a_log_that_says_it_forgot_is_continued_from_where_it_says_so() {
     // A shape on somebody's disk rather than one this build can produce:
     // `/clear` forgot in place once, and leaves a session of its own now, so

@@ -71,6 +71,7 @@ impl Reader<'_> {
         match shape {
             Shape::Text => self.text_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
+            Shape::Count => self.count(value, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
             Shape::Named(inner) => self.named(value, inner, shape, spot),
             Shape::List(inner) => self.list(value, inner, shape, spot),
@@ -81,6 +82,19 @@ impl Reader<'_> {
     /// mistake worth stopping for rather than coercing.
     fn text_at(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
         if value.is_string() {
+            return Ok(());
+        }
+        Err(self.wrong_type(shape, spot))
+    }
+
+    /// A whole number that is not negative, and nothing else.
+    ///
+    /// `as_u64` is the whole of the check: it refuses a string that looks like
+    /// a number, a negative, and a fraction together, which are the three ways
+    /// a count gets written wrong. A number too large for it is refused for the
+    /// same reason a negative is — nothing here can mean it.
+    fn count(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
+        if value.as_u64().is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))

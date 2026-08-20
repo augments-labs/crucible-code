@@ -219,19 +219,36 @@ impl Glyphs {
     /// where that is checked, in both sets.
     #[must_use]
     pub fn doing(self) -> &'static str {
+        self.filled()
+    }
+
+    /// A mark with its middle in, whatever it is standing for.
+    ///
+    /// The shape rather than a meaning, for the callers that want a shape: a
+    /// bar is filled and hollow marks in a row, and asking for the one that
+    /// means *a task somebody is on* would be borrowing another picture's word
+    /// for a rectangle.
+    #[must_use]
+    pub fn filled(self) -> &'static str {
         match self {
             Self::Unicode => "■",
             Self::Ascii => "*",
         }
     }
 
-    /// The mark on a task nobody has started.
+    /// And the same mark with its middle out.
     #[must_use]
-    pub fn open(self) -> &'static str {
+    pub fn hollow(self) -> &'static str {
         match self {
             Self::Unicode => "□",
             Self::Ascii => "-",
         }
+    }
+
+    /// The mark on a task nobody has started.
+    #[must_use]
+    pub fn open(self) -> &'static str {
+        self.hollow()
     }
 
     /// The mark on a task that is finished.

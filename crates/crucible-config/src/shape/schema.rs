@@ -72,6 +72,10 @@ fn of(shape: &Shape) -> Value {
     match shape {
         Shape::Text => json!({ "type": "string" }),
         Shape::Choice(allowed) => json!({ "type": "string", "enum": allowed }),
+
+        // `minimum` rather than an upper bound as well: how large a count may
+        // be is a fact about somebody's model, which this crate does not have.
+        Shape::Count => json!({ "type": "integer", "minimum": 0 }),
         Shape::Fields(_) | Shape::Named(_) => object(shape),
 
         // `uniqueItems` because no list here means anything by a repeat: the
@@ -118,7 +122,9 @@ fn described(field: &Field) -> Value {
 
     let holder = match shape {
         Shape::List(_) => described.get_mut("items"),
-        Shape::Text | Shape::Choice(_) | Shape::Fields(_) | Shape::Named(_) => Some(&mut described),
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Fields(_) | Shape::Named(_) => {
+            Some(&mut described)
+        }
     };
     if let Some(into) = holder.and_then(Value::as_object_mut) {
         into.insert("examples".into(), json!(examples));
@@ -159,7 +165,7 @@ fn object(shape: &Shape) -> Value {
             "additionalProperties": false,
         }),
 
-        Shape::Text | Shape::Choice(_) | Shape::List(_) => of(shape),
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::List(_) => of(shape),
     }
 }
 

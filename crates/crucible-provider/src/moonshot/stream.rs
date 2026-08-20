@@ -13,7 +13,9 @@ pub(super) type Stream = Response<Completions>;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crucible_core::{Cancel, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId};
+    use crucible_core::{
+        Cancel, Carried, Delta, DeltaStream, ProviderError, Spend, StopReason, ToolId,
+    };
 
     use super::*;
 
@@ -63,9 +65,10 @@ pub(super) mod tests {
     #[test]
     fn an_answer_arrives_as_text_a_stop_and_then_what_it_cost() {
         // In that order, because that is the order this endpoint sends them.
-        // The counts come last, in a chunk with no choice in it at all — after
+        // Both counts come last, in a chunk with no choice in it at all — after
         // the reason the model stopped, which is the one place a reader is
-        // tempted to stop reading.
+        // tempted to stop reading. What the request carried is read from the
+        // same chunk as what the answer cost.
         let mut stream = reading(ANSWER, &Cancel::new());
 
         assert_eq!(
@@ -74,8 +77,21 @@ pub(super) mod tests {
                 Delta::Text("Hello".into()),
                 Delta::Text(", world".into()),
                 Delta::Stopped(StopReason::Yielded),
+                Delta::Carried(Carried::new(9)),
                 Delta::Spent(Spend::new(4)),
             ]
+        );
+    }
+
+    #[test]
+    fn the_chunk_that_carries_the_counts_says_what_the_request_carried_too() {
+        // `prompt_tokens` sits beside `completion_tokens` in the one chunk this
+        // endpoint sends them in, and only one of them was ever read.
+        let mut stream = reading(ANSWER, &Cancel::new());
+
+        assert!(
+            deltas(&mut stream).contains(&Delta::Carried(Carried::new(9))),
+            "the usage chunk carries prompt_tokens and it is not reported"
         );
     }
 

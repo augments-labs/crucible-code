@@ -37,7 +37,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_core::Event;
+use crucible_core::{Compacting, Event};
 #[cfg(test)]
 use crucible_tui::Theme;
 use crucible_tui::{Row, Slot, Working};
@@ -96,6 +96,13 @@ const BACKGROUND: &str = "(ctrl+b to background)";
 /// rather than a promise.
 const SAMPLE: usize = 5;
 
+/// How wide the bar under the word is, in columns.
+///
+/// The same figure the panel that offers to make room uses, because the two
+/// pictures are one picture at two moments and a bar that changed width between
+/// them would read as a different thing.
+const BAR: usize = 28;
+
 /// How far in the sample stands, in columns.
 ///
 /// The depth the panel that asks about a command already indents the command
@@ -127,6 +134,8 @@ enum Doing {
     Interrupting,
     /// The response failed before it said anything and is being asked for again.
     Retrying,
+    /// The window filled and room is being made. The turn has not ended.
+    Compacting,
 }
 
 impl Doing {
@@ -138,6 +147,7 @@ impl Doing {
             Self::Running => "running",
             Self::Interrupting => "interrupting",
             Self::Retrying => "retrying",
+            Self::Compacting => "compacting",
         }
     }
 }
@@ -151,6 +161,23 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
+    /// How much of the model's window is left, or `None` where no window is
+    /// known and while room is being made.
+    left: Option<u8>,
+    /// Why room is being made, and `None` when it is not.
+    ///
+    /// What the row under the word says while it happens — the reason rather
+    /// than a fixed sentence, because a window that filled and a provider that
+    /// refused are different things to be told, and neither is true when
+    /// somebody simply asked.
+    making: Option<Compacting>,
+    /// How much of the notes has been written, as a percentage.
+    ///
+    /// What the bar under the word fills to. A fraction of the room the notes
+    /// were given rather than of how long it will take — the answer is arriving
+    /// and this is how much of it has, which is the only thing here that is
+    /// actually known.
+    part: u8,
     /// The words of the call whose tool is out, or `None` where none is. What
     /// the tool said the call was about, without the mark: the mark is the part
     /// that moves, and it is drawn per frame.
@@ -374,6 +401,13 @@ struct Drawn {
     doing: Doing,
     /// The count beside it.
     spent: Option<u64>,
+    /// The reading against the far end of it.
+    ///
+    /// Part of what decides a redraw, because anything the row says and this
+    /// value does not carry reaches the screen only when something else on the
+    /// row happens to change with it — a stale number, arriving late, on the
+    /// row somebody is reading to find out what is going on.
+    left: Option<u8>,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
     beat: u64,
@@ -384,6 +418,16 @@ struct Drawn {
     /// How many pieces the running command had printed, which is what stands in
     /// for the sample's rows.
     printed: u64,
+    /// Why room is being made, where it is, and how far the notes have got.
+    ///
+    /// Both, because both are on the row under the word: one decides whether
+    /// that row is there at all and the other is the length of the bar on it.
+    /// A compaction draws nothing else for as long as it runs, so the something
+    /// else these would otherwise wait for is the clock — a bar that moves in
+    /// steps of a beat, on the one row that is telling the reader anything.
+    making: Option<Compacting>,
+    /// How far the notes have got, as the row reads it.
+    part: u8,
 }
 
 impl Turning {
@@ -392,6 +436,9 @@ impl Turning {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
+            left: None,
+            making: None,
+            part: 0,
             spent: None,
             calling: None,
             queued: None,
@@ -458,6 +505,9 @@ impl Turning {
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::Spent { .. }
+            | Event::Carried { .. }
+            | Event::Compacting { .. }
+            | Event::Compacted { .. }
             | Event::Wrote { .. }
             | Event::Retrying => None,
         };
@@ -469,13 +519,36 @@ impl Turning {
             return returned;
         }
 
+        // How full the window is, kept whether or not a turn is running: the
+        // reading is on screen from the first frame of the session to the last,
+        // and the one moment it is not is while the number it would show is the
+        // one being replaced.
+        match event {
+            Event::Carried { left } => self.left = *left,
+            // Reported again as the notes are written, so what the row shows
+            // moves rather than sitting still for one request. The reading is
+            // taken away for the duration: the number it would show is the one
+            // being replaced.
+            Event::Compacting { why, part } => {
+                self.making = Some(*why);
+                self.part = *part;
+                self.left = None;
+            }
+            Event::Compacted { .. } => self.making = None,
+            _ => {}
+        }
+
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
             Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
-            Event::ToolFinished { .. } => Doing::Thinking,
+            // Room having been made puts the turn back where a finished tool
+            // does: waiting on the model, with the next request not yet asked.
+            Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
+            Event::Compacting { .. } => Doing::Compacting,
             Event::TurnStarted { .. }
             | Event::Spent { .. }
+            | Event::Carried { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };
@@ -498,6 +571,7 @@ impl Turning {
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
             doing: self.doing,
+            left: self.left,
             spent: self.spent,
             beat: Working::beat(self.running()),
 
@@ -518,6 +592,9 @@ impl Turning {
             // that moves whenever they do answers the only question the loop is
             // asking.
             printed: self.printing.changed,
+
+            making: self.making,
+            part: self.part,
         };
         let moved = self.drawn.as_ref() != Some(&now);
 
@@ -567,6 +644,7 @@ impl Turning {
             running: self.running(),
             spent: self.spent,
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
+            left: self.left,
         };
 
         // What the call has to clear is a row taller where the prompt below is
@@ -601,6 +679,15 @@ impl Turning {
         rows.push(Row::new());
         rows.push(working.row(columns, style.glyphs()));
 
+        // Under the word and with no blank between them, because it is a second
+        // line of the same thing rather than a second thing beside it — the
+        // rule the prompt waiting behind a turn already keeps.
+        if let Some(why) = self.making
+            && let Some(row) = making(why, self.part, columns, style)
+        {
+            rows.push(row);
+        }
+
         if let Some(said) = queued {
             rows.push(next(said, columns, style));
         }
@@ -610,7 +697,46 @@ impl Turning {
 
         rows
     }
+}
 
+/// The row under the word while room is being made, or nothing where there is
+/// no room for one.
+///
+/// It says why, because the three reasons are three different things to be told
+/// and only one of them is the window having filled.
+fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row> {
+    let glyphs = style.glyphs();
+    let gutter = Working::gutter(glyphs);
+    let said = match why {
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+        Compacting::Asked | Compacting::Resumed => "you asked for this",
+    };
+
+    let row = Row::new().then(Slot::Quiet, " ".repeat(gutter));
+
+    // The bar where there is room for one and something to draw in it, and the
+    // words alone otherwise: what the reader needs is why this is happening,
+    // and the bar is what says how far along it is.
+    //
+    // Nothing has arrived while `part` is 0, and nothing is what the request is
+    // doing — the model is reading a session it has not begun writing down,
+    // which on a full window is seconds. An empty bar held through all of them
+    // is what a reader calls stuck, and it is claiming a length it does not
+    // have; the words claim nothing and say the same thing.
+    let row = if part > 0 && columns >= gutter + BAR + 8 {
+        let full = usize::from(part) * BAR / 100;
+        row.then(Slot::Plain, glyphs.filled().repeat(full))
+            .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
+            .then(Slot::Quiet, format!("  {part}%  {said}"))
+    } else {
+        row.then(Slot::Quiet, said.to_owned())
+    };
+
+    (row.columns() <= columns).then_some(row)
+}
+
+impl Turning {
     /// The line for the call whose tool is out.
     ///
     /// The mark pulses rather than turning: a call is one thing waiting on one
@@ -844,6 +970,57 @@ mod tests {
             spend: Spend::new(1_400),
         });
         assert!(turning.moved(), "the count changed and the row did not");
+    }
+
+    #[test]
+    fn the_bar_moves_on_the_notes_rather_than_on_whatever_else_changes() {
+        // The bar is a segment of the row, so it belongs to the value the loop
+        // keys a redraw on. Left out of it, it reaches the screen only when
+        // something else on the row happens to change with it — and on a
+        // request that draws nothing else for a minute, the something else is
+        // the clock.
+        let mut turning = Turning::started();
+        assert!(turning.moved(), "the first row was never drawn");
+
+        turning.saw(&Event::Compacting {
+            why: Compacting::Asked,
+            part: 0,
+        });
+        assert!(
+            turning.moved(),
+            "room was asked for and the row did not say"
+        );
+
+        turning.saw(&Event::Compacting {
+            why: Compacting::Asked,
+            part: 12,
+        });
+        assert!(turning.moved(), "the bar moved and the row did not");
+    }
+
+    #[test]
+    fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
+        // Nothing is measurable until the first word of the recap arrives: the
+        // request is out and the model is reading the session it is about to
+        // write down, which on a full window is seconds. A bar at nothing for
+        // all of it is what a reader calls stuck, and the words beside it say
+        // the same thing without claiming a length.
+        let style = Style::plain();
+        let glyphs = style.glyphs();
+
+        let before = making(Compacting::Full, 0, 80, style)
+            .expect("a row")
+            .text();
+
+        assert!(!before.contains(glyphs.hollow()), "{before:?}");
+        assert!(before.contains("the window was full"), "{before:?}");
+
+        let under = making(Compacting::Full, 12, 80, style)
+            .expect("a row")
+            .text();
+
+        assert!(under.contains(glyphs.filled()), "{under:?}");
+        assert!(under.contains("12%"), "{under:?}");
     }
 
     #[test]

@@ -68,7 +68,7 @@ enum Over {
 /// which is not known until they are laid out. So the frame that discovers it
 /// writes it here, and the next key acts on a number the picture agrees with.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Window {
+pub(super) struct View {
     /// How far down the whole of it the window is open.
     from: usize,
     /// The furthest down it may go, as of the last frame drawn.
@@ -77,7 +77,7 @@ pub(super) struct Window {
     over: Over,
 }
 
-impl Window {
+impl View {
     /// A window at the top of `over`, before a frame has said how far it goes.
     fn onto(over: Over) -> Self {
         Self {
@@ -101,7 +101,7 @@ pub(super) enum Standing {
     #[default]
     Closed,
     /// The view is standing, with the window this far down it.
-    Open(Window),
+    Open(View),
 }
 
 impl Standing {
@@ -138,7 +138,7 @@ impl Standing {
             return;
         }
 
-        *self = Self::Open(Window::onto(Over::Everything(kept.cut())));
+        *self = Self::Open(View::onto(Over::Everything(kept.cut())));
     }
 
     /// Opens the view over the one result the record row `at` offered.
@@ -152,7 +152,7 @@ impl Standing {
             return;
         }
 
-        *self = Self::Open(Window::onto(Over::One(at)));
+        *self = Self::Open(View::onto(Over::One(at)));
     }
 
     /// Gives one key to the view, and answers whether a frame is owed.
@@ -161,11 +161,11 @@ impl Standing {
     /// reported here: the caller draws something either way, and which of the
     /// two it draws is a question about the state and not about the key.
     pub(super) fn against(&mut self, arrived: Pressed) -> bool {
-        let Self::Open(window) = self else {
+        let Self::Open(view) = self else {
             return false;
         };
 
-        match moving(arrived, window) {
+        match moving(arrived, view) {
             Moved::Redraw => true,
             Moved::Still => false,
 
@@ -193,20 +193,20 @@ pub(super) fn stand<T: Terminal>(
     kept: &Kept,
     standing: &mut Standing,
 ) -> Result<(), Fatal> {
-    let Standing::Open(window) = standing else {
+    let Standing::Open(view) = standing else {
         return Ok(());
     };
 
     let glyphs = style.glyphs();
-    let picture = |window: &mut Window, columns: usize, rows: usize| {
-        (laying(kept, window, glyphs, columns, rows), None)
+    let picture = |view: &mut View, columns: usize, rows: usize| {
+        (laying(kept, view, glyphs, columns, rows), None)
     };
 
     // Nothing is taken here and nothing is committed, so every way out is the
     // same way out: the region goes back and the box comes up under it. A
     // window with no room to stand it in is one of them — a component that
     // never drew and read no key, which here is a view the reader never saw.
-    region::stand(renderer, |_| style, window, picture, moving)?;
+    region::stand(renderer, |_| style, view, picture, moving)?;
     *standing = Standing::Closed;
     Ok(())
 }
@@ -228,7 +228,7 @@ pub(super) fn under<T: Terminal>(
     kept: &Kept,
     standing: &mut Standing,
 ) -> Result<bool, Fatal> {
-    let Standing::Open(window) = standing else {
+    let Standing::Open(view) = standing else {
         return Ok(false);
     };
 
@@ -237,7 +237,7 @@ pub(super) fn under<T: Terminal>(
     // the top of that has already scrolled past the reach of the next rewind.
     // The row it gives up is the one the turn goes on writing into.
     let room = renderer.rows().saturating_sub(1);
-    let rows = laying(kept, window, style.glyphs(), renderer.columns(), room);
+    let rows = laying(kept, view, style.glyphs(), renderer.columns(), room);
 
     let Some(row) = rows.len().checked_sub(1) else {
         *standing = Standing::Closed;
@@ -258,14 +258,8 @@ pub(super) fn under<T: Terminal>(
 /// view closing. That is a result the ceiling dropped while somebody was
 /// reading it — rare, and the honest answer to it is the screen coming back
 /// rather than a frame of chrome with nothing under it.
-fn laying(
-    kept: &Kept,
-    window: &mut Window,
-    glyphs: Glyphs,
-    columns: usize,
-    rows: usize,
-) -> Vec<Row> {
-    let shown: Vec<Shown<'_>> = match window.over {
+fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: usize) -> Vec<Row> {
+    let shown: Vec<Shown<'_>> = match view.over {
         // Stepped over rather than counted up to, because the end that gives is
         // the other one: what arrived after the view opened is at the front of
         // `newest`, and what was dropped to stay under the ceiling has gone
@@ -298,13 +292,13 @@ fn laying(
 
     let expanded = Expanded {
         shown: &shown,
-        from: window.from,
+        from: view.from,
     };
 
     // Written before the rows are asked for, so the key pressed against this
     // picture is clamped to what this picture could reach.
-    window.end = expanded.end(columns, rows);
-    window.from = window.from.min(window.end);
+    view.end = expanded.end(columns, rows);
+    view.from = view.from.min(view.end);
 
     expanded.within(columns, rows, glyphs)
 }
@@ -324,15 +318,15 @@ fn showing(whole: &Whole) -> Shown<'_> {
 /// standing is either something it does or something it has decided to ignore,
 /// and a new [`Pressed`] must be decided about here rather than quietly join the
 /// second group.
-fn moving(arrived: Pressed, window: &mut Window) -> Moved {
+fn moving(arrived: Pressed, view: &mut View) -> Moved {
     match arrived {
         Pressed::Up => {
-            let next = window.from.checked_sub(1);
-            region::step(&mut window.from, next)
+            let next = view.from.checked_sub(1);
+            region::step(&mut view.from, next)
         }
         Pressed::Down => {
-            let next = Some(window.from.saturating_add(1)).filter(|next| *next <= window.end);
-            region::step(&mut window.from, next)
+            let next = Some(view.from.saturating_add(1)).filter(|next| *next <= view.end);
+            region::step(&mut view.from, next)
         }
 
         // Ctrl+O closes what Ctrl+O opened, which is the whole of what the rows
