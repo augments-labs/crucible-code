@@ -88,6 +88,46 @@ fn the_arrows_walk_the_list_and_stop_at_its_ends() {
 }
 
 #[test]
+fn a_click_on_a_row_marks_it_and_a_second_click_opens_it() {
+    // The first click is the arrows' work done at once — it moves the mark to
+    // the row pointed at; the second, on the row already marked, is the enter
+    // that shows what the command has printed.
+    let (left, _here) = running("clicking", 2);
+    let mut leaving = Leaving::default();
+
+    // Row HEAD is the first command, HEAD + 1 the second; the rows above them
+    // are the heading and its blanks. `Pressed` is not `Copy` — a paste carries
+    // a string — so the same click is spelled twice.
+    let second = || Pressed::Clicked {
+        row: super::HEAD + 1,
+        column: 4,
+    };
+    assert_eq!(leaving.against(second(), &left), Moved::Redraw);
+    assert_eq!(leaving.at, 1, "the click marked the second row");
+    assert!(leaving.shown.is_none(), "one click only marks");
+
+    assert_eq!(leaving.against(second(), &left), Moved::Redraw);
+    assert!(leaving.shown.is_some(), "a second click opened it");
+}
+
+#[test]
+fn a_click_on_the_chrome_or_past_the_list_is_a_click_on_nothing() {
+    let (left, _here) = running("clicking-past", 1);
+
+    // The heading row, and a row below the one command there is.
+    for row in [0, super::HEAD - 1, super::HEAD + 1] {
+        let mut leaving = Leaving::default();
+        assert_eq!(
+            leaving.against(Pressed::Clicked { row, column: 2 }, &left),
+            Moved::Still,
+            "row {row}"
+        );
+        assert_eq!(leaving.at, 0, "row {row} moved the mark");
+        assert!(leaving.shown.is_none(), "row {row} opened something");
+    }
+}
+
+#[test]
 fn the_key_that_opened_it_closes_it() {
     // What every other `ctrl+` key here does, and what makes it a toggle rather
     // than a door.
