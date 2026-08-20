@@ -2,7 +2,7 @@
 source: crates/crucible-tui/src/prompt/tests.rs
 expression: "dump(&prompt.rows(columns, glyphs), columns)"
 ---
-<FullAccess>╭──────────────────────────────────────────────────────────────────────────────╮</>
-<FullAccess>│</> <Accent>›</>                                                                            <FullAccess>│</>
-<FullAccess>╰──────────────────────────────────────────────────────────────────────────────╯</>
+<Quiet>╭──────────────────────────────────────────────────────────────────────────────╮</>
+<Quiet>│</> <Accent>›</>                                                                            <Quiet>│</>
+<Quiet>╰──────────────────────────────────────────────────────────────────────────────╯</>
 <FullAccess>full access mode on</><Quiet> (shift+tab to cycle)</>

@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+**The prompt box is framed in one colour, whatever permission mode is in
+force.** The mode's own sentence under the box keeps its ramp, so the screen
+still says which one you are in — but the border is the largest thing on it and
+is up in every frame, and a hue meaning *be careful* stretched along it had
+stopped being a warning by the second prompt.
+
 ### Fixed
 
 **The panel naming queued prompts is drawn like the box under it.** Its rows

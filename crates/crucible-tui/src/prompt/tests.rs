@@ -33,7 +33,7 @@ const RUNG: &str = "high";
 const MODEL: &str = "anthropic/claude-sonnet-5 · high";
 
 /// The three modes as the row under the box spells them, the colour each puts
-/// on the border, and the name of the picture each is checked against.
+/// on its own sentence, and the name of the picture each is checked against.
 ///
 /// The words a session actually shows, unlike [`MODE`] above, which is a
 /// fixture for the tests that are about the row rather than about the mode.
@@ -136,13 +136,6 @@ fn pictured(name: &str, prompt: &Prompt<'_>, columns: usize, glyphs: Glyphs) {
     insta::with_settings!({snapshot_suffix => columns.to_string()}, {
         insta::assert_snapshot!(name, dump(&prompt.rows(columns, glyphs), columns));
     });
-}
-
-/// A palette that writes every hue it has.
-fn colourful() -> Palette {
-    Palette::resolve(true, Theme::Dark, None, &|name| {
-        (name == "COLORTERM").then(|| "truecolor".to_owned())
-    })
 }
 
 #[test]
@@ -271,10 +264,10 @@ fn a_terminal_too_narrow_for_a_frame_gets_the_mark_and_the_mode() {
 }
 
 #[test]
-fn a_mode_is_a_colour_on_the_border_and_a_sentence_under_the_box() {
+fn a_mode_is_a_sentence_under_the_box_drawn_in_its_own_colour() {
     // Three pictures rather than three assertions about a slot: what the reader
-    // meets is the border and the row under it changing together, and a mode
-    // given one and not the other is a screen that says two things.
+    // meets is the whole screen, and the picture is what says the border stayed
+    // where it was while the sentence under it changed.
     for (mode, tone, name) in MODES {
         let prompt = Prompt {
             mode,
@@ -571,31 +564,46 @@ fn a_question_is_clipped_to_the_width_rather_than_dropped() {
 
 #[test]
 fn the_mode_is_readable_with_no_colour_at_all() {
-    // The border carries it as a hue and this row carries it as words, which is
-    // what keeps the colour from being the only thing that says it.
+    // This row carries it as a hue and as words, which is what keeps the colour
+    // from being the only thing that says it — and matters more now that the
+    // border says nothing about the mode at all.
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         assert!(row(&typed(""), 3, 80, glyphs).contains(MODE));
     }
 }
 
 #[test]
-fn the_border_is_drawn_in_the_tone_the_mode_was_given() {
-    // Every part of it, so a mode that changed cannot leave one edge behind in
-    // the last mode's colour.
-    let prompt = Prompt {
-        tone: Slot::FullAccess,
-        ..typed("")
-    };
+fn the_border_is_one_colour_whatever_mode_is_in_force() {
+    // The border is the largest thing on the screen and it is up in every
+    // frame, so a hue that means *be careful* painted along it is a warning
+    // that has stopped being one by the second prompt. The mode's own sentence
+    // is one row, is read when it changes, and is where the ramp went.
+    //
+    // Both ends of every framed row, so a mode cannot leave one edge behind.
+    for (mode, tone, _) in MODES {
+        let prompt = Prompt {
+            mode,
+            tone,
+            ..typed("hello")
+        };
 
-    let opened = colourful().open(Slot::FullAccess).as_str().to_owned();
-    assert!(!opened.is_empty(), "the palette had no hue to test with");
+        let rows = prompt.rows(80, Glyphs::Unicode);
+        let (_, framed) = rows.split_last().expect("a status row under the box");
 
-    for row in prompt.rows(80, Glyphs::Unicode).iter().take(3) {
-        assert!(
-            row.paint(&colourful()).starts_with(&opened),
-            "{:?}",
-            row.text()
-        );
+        for row in framed {
+            assert_eq!(
+                row.spans().next().map(|(slot, _)| slot),
+                Some(Prompt::BORDER),
+                "{mode}: {:?}",
+                row.text()
+            );
+            assert_eq!(
+                row.spans().last().map(|(slot, _)| slot),
+                Some(Prompt::BORDER),
+                "{mode}: {:?}",
+                row.text()
+            );
+        }
     }
 }
 

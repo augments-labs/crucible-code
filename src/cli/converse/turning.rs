@@ -935,12 +935,12 @@ impl Queued {
         let mut rows = vec![Row::new()];
         rows.push(
             Row::new()
-                .then(Slot::Accent, format!("{tl}{edge}"))
+                .then(Prompt::BORDER, format!("{tl}{edge}"))
                 .then(Slot::Plain, " ")
                 .then(Slot::Quiet, title)
                 .then(Slot::Plain, " ")
-                .then(Slot::Accent, edge.repeat(fill))
-                .then(Slot::Accent, tr),
+                .then(Prompt::BORDER, edge.repeat(fill))
+                .then(Prompt::BORDER, tr),
         );
 
         for said in self.lines.get(..named).unwrap_or_default() {
@@ -964,9 +964,9 @@ impl Queued {
 
         rows.push(
             Row::new()
-                .then(Slot::Accent, bl)
-                .then(Slot::Accent, edge.repeat(across))
-                .then(Slot::Accent, br),
+                .then(Prompt::BORDER, bl)
+                .then(Prompt::BORDER, edge.repeat(across))
+                .then(Prompt::BORDER, br),
         );
 
         rows
@@ -975,6 +975,10 @@ impl Queued {
     /// One row inside the frame: the border, the space inside it, `mark` in the
     /// column the box keeps for one, `said` padded out to `inner`, and the
     /// space and border on the other side.
+    ///
+    /// Drawn in the colour the box below is framed in, taken from it rather
+    /// than named again here: two frames in two colours read as two things,
+    /// and this one is the box's own queue.
     ///
     /// Every row is built through here rather than each at its own call, which
     /// is what makes the right border a column the rows share rather than one
@@ -989,13 +993,13 @@ impl Queued {
         said.pad(inner);
 
         Row::new()
-            .then(Slot::Accent, side)
+            .then(Prompt::BORDER, side)
             .then(Slot::Plain, " ")
             .join(mark)
             .then(Slot::Plain, " ")
             .join(said)
             .then(Slot::Plain, " ")
-            .then(Slot::Accent, side)
+            .then(Prompt::BORDER, side)
     }
 }
 
