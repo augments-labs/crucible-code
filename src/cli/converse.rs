@@ -922,7 +922,10 @@ impl<'a> Held<'a> {
     /// and nothing said, over the plan the tools were built with.
     fn new(plan: Plan, answers: Answers<'a>) -> Self {
         Self {
-            editor: Editor::new(),
+            // The one editor that takes a newline: a prompt is a paragraph, not
+            // a line, and the box grows a row for each. Every other editor — a
+            // permission note, a secret, a name — stays one line.
+            editor: Editor::new().multiline(),
             queued: Prompts::default(),
             kept: Kept::default(),
             opened: Standing::default(),
@@ -1070,6 +1073,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan
+        | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Heard::Ignored,
     }

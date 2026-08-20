@@ -157,6 +157,7 @@ impl Leaving {
                 | Pressed::Expand
                 | Pressed::Plan
                 | Pressed::Clicked { .. }
+                | Pressed::Pasted(_)
                 | Pressed::Ignored => Moved::Still,
             };
         }
@@ -214,6 +215,7 @@ impl Leaving {
             | Pressed::Expand
             | Pressed::Plan
             | Pressed::Clicked { .. }
+            | Pressed::Pasted(_)
             | Pressed::Ignored => Moved::Still,
         }
     }

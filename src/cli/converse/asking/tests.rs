@@ -285,7 +285,7 @@ fn the_way_out_of_a_question_is_the_way_out_of_everything_else_and_it_refuses() 
         Pressed::Key(Key::Eof),
     ] {
         let mut standing = Standing::new(false);
-        assert_eq!(moving(arrived, &mut standing), Moved::Left, "{arrived:?}");
+        assert_eq!(moving(arrived.clone(), &mut standing), Moved::Left, "{arrived:?}");
     }
 
     // Including when the mark was standing on an allow at the time. What was

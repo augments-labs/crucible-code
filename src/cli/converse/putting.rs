@@ -530,6 +530,7 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan
+        | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Ignored => Moved::Still,
     }

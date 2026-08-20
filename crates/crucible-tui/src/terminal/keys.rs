@@ -43,10 +43,18 @@ const READY_CHARACTERS: usize = 1024 * 1024;
 /// mode the session is in and whatever is listed above it, and the editor stays
 /// what its own module says it is — a string and an offset — rather than
 /// growing a case for every key that acts on something beside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pressed {
     /// A key the editor knows what to do with.
     Key(Key),
+    /// A bracketed paste: a block of text the terminal marked as pasted rather
+    /// than typed.
+    ///
+    /// Its own variant rather than a run of characters because its newlines are
+    /// structure, not submissions — typed, each one would be a Return. The text
+    /// is boxed so the variant costs the enum no more than a pointer: a paste
+    /// is bounded by the editor it lands in, not by what this type can hold.
+    Pasted(Box<str>),
     /// Shift+Tab: step the mode on to the next one.
     Cycle,
     /// Ctrl+E: show what is on screen in full, or hide it again.
@@ -230,6 +238,10 @@ fn meaning(event: Event) -> Pressed {
         Event::Resize(..) => Pressed::Resized,
         Event::Key(key) => key_pressed(key),
         Event::Mouse(mouse) => clicked(mouse),
+        // A paste arrives whole, terminator and all. Its newlines are kept here
+        // rather than turned into submissions, which is what reading it as a run
+        // of key events did. The editor bounds what it retains of the text.
+        Event::Paste(text) => Pressed::Pasted(text.into()),
         _ => Pressed::Ignored,
     }
 }
@@ -348,8 +360,23 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::BackTab => Pressed::Cycle,
         KeyCode::Esc => Pressed::Escape,
 
-        // The line is one row, so up and down are never about it. What they
-        // move through is whatever the line has opened above the box.
+        // A newline, spelled the two ways a terminal here spells it. The prompt
+        // is many lines, so one of these inserts a break and the bare key is
+        // left meaning *finished*: a Return that both broke the line and sent
+        // it is a prompt nobody could write a second line into deliberately.
+        // Which of the two a terminal delivers is its own — some send neither —
+        // so the editor answers both, and where neither arrives a newline is
+        // still a paste away.
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            Pressed::Key(Key::Newline)
+        }
+        KeyCode::Enter if alt => Pressed::Key(Key::Newline),
+        KeyCode::Enter => Pressed::Key(Key::Enter),
+
+        // Up and down walk whatever a panel or a list is showing, so they are
+        // not the line's keys here. The one place they are is the prompt when
+        // its text is many rows: it routes them to the editor itself, which is
+        // the caller that knows whether there is a row to move to.
         KeyCode::Up => Pressed::Up,
         KeyCode::Down => Pressed::Down,
 
@@ -359,7 +386,6 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Right => Pressed::Key(Key::Right),
         KeyCode::Home => Pressed::Key(Key::Home),
         KeyCode::End => Pressed::Key(Key::End),
-        KeyCode::Enter => Pressed::Key(Key::Enter),
         _ => Pressed::Ignored,
     }
 }
@@ -468,10 +494,25 @@ mod tests {
 
     #[test]
     fn the_arrows_that_move_down_a_list_are_not_keys_the_editor_sees() {
-        // A line is one row. Up and down could only mean the line if there
-        // were a second one, and what is above the box is not the line.
+        // A panel or a list is what they walk, so they are not the line's keys
+        // here. The one place they reach the line is the prompt when its text
+        // is many rows, and that routing is the prompt's rather than the
+        // reader's — it is the one holding both.
         assert_eq!(meaning(press(KeyCode::Up)), Pressed::Up);
         assert_eq!(meaning(press(KeyCode::Down)), Pressed::Down);
+    }
+
+    #[test]
+    fn a_newline_is_spelled_the_two_ways_a_terminal_spells_it() {
+        // Shift+Enter and Alt+Enter both insert a break; the bare key is left
+        // meaning *finished*. A terminal that sends neither still has the paste.
+        let shifted = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(meaning(shifted), Pressed::Key(Key::Newline));
+        assert_eq!(
+            meaning(alt(KeyCode::Enter)),
+            Pressed::Key(Key::Newline)
+        );
+        assert_eq!(meaning(press(KeyCode::Enter)), Pressed::Key(Key::Enter));
     }
 
     #[test]
@@ -487,11 +528,13 @@ mod tests {
         // Three spellings and one meaning. A reader who learned the binding on
         // one of these platforms is not asked to learn it again on the next.
         for held in [control(KeyCode::Left), alt(KeyCode::Left)] {
-            assert_eq!(meaning(held), Pressed::Key(Key::WordLeft), "{held:?}");
+            let spelling = format!("{held:?}");
+            assert_eq!(meaning(held), Pressed::Key(Key::WordLeft), "{spelling}");
         }
 
         for held in [control(KeyCode::Right), alt(KeyCode::Right)] {
-            assert_eq!(meaning(held), Pressed::Key(Key::WordRight), "{held:?}");
+            let spelling = format!("{held:?}");
+            assert_eq!(meaning(held), Pressed::Key(Key::WordRight), "{spelling}");
         }
 
         assert_eq!(
@@ -541,13 +584,13 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_paste_is_absent_from_the_cross_platform_event_build() {
-        // Crossterm implements `Copy` for Event only when its bracketed-paste
-        // feature is absent. This assertion is target-independent, so the same
-        // dependency features are proved on Unix and Windows builds.
-        fn needs_copy<T: Copy>() {}
-
-        needs_copy::<Event>();
+    fn a_bracketed_paste_arrives_as_text_rather_than_as_keystrokes() {
+        // The variant the whole feature exists for: a paste's newlines are
+        // structure, and read as keystrokes each one would be a Return.
+        assert_eq!(
+            meaning(Event::Paste("two\nlines".to_owned())),
+            Pressed::Pasted("two\nlines".into())
+        );
     }
 
     #[test]

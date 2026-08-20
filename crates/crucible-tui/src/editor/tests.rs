@@ -12,6 +12,23 @@ fn typed(said: &str) -> Editor {
     editor
 }
 
+/// The same, many lines: typed through `press`, which is the only way a newline
+/// reaches the text — a `paste` is sanitized, and a `Key::Char('\n')` is a
+/// control a one-line editor drops.
+fn lines(said: &str) -> Editor {
+    let mut editor = Editor::new().multiline();
+    for character in said.chars() {
+        let key = if character == '\n' {
+            Key::Newline
+        } else {
+            Key::Char(character)
+        };
+        assert_eq!(editor.press(key), Typed::Changed);
+    }
+
+    editor
+}
+
 /// The same, with `back` presses of the left arrow after it.
 fn back(said: &str, back: usize) -> Editor {
     let mut editor = typed(said);
@@ -62,6 +79,7 @@ fn a_large_middle_paste_moves_each_side_once() {
     let mut editor = Editor {
         said: format!("{}{}", "a".repeat(SIDE), "z".repeat(SIDE)),
         at: SIDE,
+        ..Editor::new()
     };
     let pasted = "middle ".repeat(SIDE / 7);
 
@@ -283,6 +301,98 @@ fn a_character_a_terminal_would_act_on_is_not_a_character_that_was_typed() {
     }
 
     assert!(editor.is_empty());
+}
+
+#[test]
+fn a_newline_is_a_character_only_where_the_editor_is_many_lines() {
+    // The prompt is the one caller that asks for it: everywhere else a newline
+    // is noise, and the key that sends it is still the line's end.
+    let mut single = typed("one");
+    assert_eq!(single.press(Key::Newline), Typed::Ignored);
+    assert_eq!(single.text(), "one");
+
+    let mut multi = typed("one").multiline();
+    assert_eq!(multi.press(Key::Newline), Typed::Changed);
+    for character in "two".chars() {
+        multi.press(Key::Char(character));
+    }
+    assert_eq!(multi.text(), "one\ntwo");
+    assert_eq!(multi.line(), 1);
+    assert_eq!(multi.column(), 3);
+}
+
+#[test]
+fn a_multi_line_paste_keeps_its_newlines_and_drops_the_rest() {
+    let mut editor = Editor::new().multiline();
+
+    assert_eq!(editor.paste("first\nsecond\x07\nthird"), Typed::Changed);
+    assert_eq!(editor.text(), "first\nsecond\nthird");
+    assert_eq!(editor.line(), 2);
+
+    // And the same paste into a one-line editor still loses the breaks, which is
+    // what a permission note or a secret wants of them.
+    let mut single = Editor::new();
+    assert_eq!(single.paste("first\nsecond"), Typed::Changed);
+    assert_eq!(single.text(), "firstsecond");
+}
+
+#[test]
+fn up_and_down_cross_lines_and_remember_the_column() {
+    let mut editor = lines("long line here\nshort\nlong again");
+    // Start at the end of the last line, column 10.
+    assert_eq!(editor.line(), 2);
+    assert_eq!(editor.column(), 10);
+
+    // Up to the short line: the column is past its end, so the cursor takes the
+    // end rather than a column that line does not have.
+    assert_eq!(editor.press(Key::Up), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 5, "the short line's end");
+
+    // Up again to the first line, which has the column.
+    assert_eq!(editor.press(Key::Up), Typed::Changed);
+    assert_eq!(editor.line(), 0);
+    assert_eq!(editor.column(), 10);
+
+    // Down twice returns to where the cursor started: the column is kept across
+    // the short line rather than drifting left with it.
+    assert_eq!(editor.press(Key::Down), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.press(Key::Down), Typed::Changed);
+    assert_eq!(editor.line(), 2);
+    assert_eq!(editor.column(), 10, "the column it left from");
+
+    // And past the ends there is nowhere to go, which costs no frame.
+    assert_eq!(editor.press(Key::Down), Typed::Ignored);
+    let mut top = lines("only");
+    assert_eq!(top.press(Key::Up), Typed::Ignored);
+}
+
+#[test]
+fn home_and_end_reach_the_line_the_cursor_is_on() {
+    // On many lines the ends are the line's, not the text's: the cursor crosses
+    // a line with the arrows, and Home is still the start of what it is on.
+    let mut editor = lines("first line\nsecond line");
+
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 0);
+
+    assert_eq!(editor.press(Key::End), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 11);
+}
+
+#[test]
+fn backspace_joins_a_line_onto_the_one_above() {
+    let mut editor = lines("one\ntwo");
+    editor.press(Key::Home);
+
+    // At the start of the second line, the character behind the cursor is the
+    // newline, and taking it joins the two lines into one.
+    assert_eq!(editor.press(Key::Backspace), Typed::Changed);
+    assert_eq!(editor.text(), "onetwo");
+    assert_eq!(editor.line(), 0);
 }
 
 #[test]

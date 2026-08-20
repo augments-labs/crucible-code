@@ -394,6 +394,10 @@ pub(crate) fn ask<T: Terminal>(
 
             // Through whatever the line has open above the box. With nothing
             // open, or at the end it is already on, the key costs no frame.
+            // The reader no longer turns the bare arrows into list steps: they
+            // arrive as the line's own keys, and the arms above decide which
+            // thing they move. What is left here is a press this loop cannot
+            // get, named so a new one has to be decided about.
             Pressed::Up => open.up() || offered.is_some(),
             Pressed::Down => open.down() || offered.is_some(),
 
@@ -418,6 +422,35 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(LIMITED);
                 }
                 inserted.redraw || offered.is_some()
+            }
+
+            // A bracketed paste, inserted whole. Its newlines are characters in
+            // the line rather than submissions, which is the difference between
+            // this and a run of typed characters — and the reason it is not one.
+            Pressed::Pasted(text) => match editor.paste(&text) {
+                Typed::Changed => {
+                    open = Opened::filtered(editor.text(), glyphs);
+                    true
+                }
+                Typed::Refused => {
+                    says.asking = Some(LIMITED);
+                    true
+                }
+                _ => offered.is_some(),
+            },
+
+            // Up and down are the line's while it has a row to move to, and
+            // the list's the rest of the time: a one-line line has no second
+            // row, and a list open above the box is what the key has always
+            // walked. The editor says whether there is a row, which is also the
+            // answer to whether the cursor moved.
+            Pressed::Up if editor.moves(Key::Up) => {
+                editor.press(Key::Up);
+                true
+            }
+            Pressed::Down if editor.moves(Key::Down) => {
+                editor.press(Key::Down);
+                true
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -693,6 +726,18 @@ pub(super) fn during<T: Terminal>(
                 }
             }
 
+            Meant::Pasting(text) => match editor.paste(&text) {
+                Typed::Changed => {
+                    moved = true;
+                    notice = None;
+                }
+                Typed::Refused => {
+                    moved = true;
+                    notice = Some(LIMITED);
+                }
+                _ => {}
+            },
+
             Meant::Editing(key) => match editor.press(key) {
                 Typed::Changed => {
                     moved = true;
@@ -831,8 +876,9 @@ pub(super) enum Meanwhile {
 /// Every key is named rather than caught by a rest arm. One arriving mid turn
 /// either belongs to the turn, to the line in the box, or to nothing — and a
 /// variant added to `Pressed` later has to be decided about here rather than
-/// silently join the third group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// silently join the third group. Clone rather than Copy, because one variant
+/// carries a paste.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Meant {
     /// The window changed under the box.
     Resized,
@@ -842,6 +888,10 @@ enum Meant {
     Queue,
     /// A run of characters beginning here, taken into the line in one edit.
     Typing(char),
+    /// A bracketed paste, taken into the line whole: its newlines are characters
+    /// in it rather than submissions, which is the difference between this and
+    /// [`Meant::Typing`].
+    Pasting(Box<str>),
     /// The line's own key — a cursor move, a delete, Ctrl-C against it, Ctrl-D.
     Editing(Key),
     /// Ctrl+O: the whole of what the transcript cut down to a row, stood under
@@ -880,6 +930,9 @@ fn meant(arrived: Pressed) -> Meant {
 
         Pressed::Key(Key::Enter) => Meant::Queue,
         Pressed::Key(Key::Char(first)) => Meant::Typing(first),
+        // A paste mid-turn is typed into the box like any other: the turn above
+        // it is none of the line's business, and its newlines are characters.
+        Pressed::Pasted(text) => Meant::Pasting(text),
 
         // Ctrl-C among them, which is the point: it reaches the editor here the
         // same way it does between turns, so it throws away the line rather
@@ -1109,6 +1162,7 @@ fn left(left: Option<u8>, columns: usize) -> Option<Row> {
 fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
     Prompt {
         said: editor.text(),
+        line: editor.line(),
         column: editor.column(),
         mode: says.mode.as_ref(),
         tone: says.tone,
@@ -1203,11 +1257,14 @@ fn landed<T: Terminal>(
         return Landed::Counted;
     }
 
-    let Some(into) = prompt.clicked(renderer.columns(), row, at.column) else {
+    // A line and a column within it, which is what the box's arithmetic knows:
+    // a newline makes a bare column into the whole text ambiguous, so the editor
+    // is placed by the pair rather than by one number.
+    let Some((line, into)) = prompt.clicked(renderer.columns(), row, at.column) else {
         return Landed::Nothing;
     };
 
-    if editor.place(into) == Typed::Changed {
+    if editor.place_at(line, into) == Typed::Changed {
         Landed::Line
     } else {
         Landed::Nothing

@@ -425,6 +425,7 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         | Pressed::Expand
         | Pressed::Plan
         | Pressed::Clicked { .. }
+        | Pressed::Pasted(_)
         | Pressed::Ignored => Moved::Still,
     }
 }

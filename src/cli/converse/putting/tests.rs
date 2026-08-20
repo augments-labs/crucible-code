@@ -248,7 +248,7 @@ fn every_way_out_but_enter_leaves_the_ask_unanswered() {
     ] {
         let mut standing = Standing::new(&questions);
         assert_eq!(
-            moving(arrived, &mut standing, &questions),
+            moving(arrived.clone(), &mut standing, &questions),
             Moved::Left,
             "{arrived:?}"
         );

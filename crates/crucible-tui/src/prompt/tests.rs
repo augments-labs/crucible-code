@@ -65,6 +65,7 @@ const SAID: [&str; 4] = [
 fn typing(said: &str, column: usize) -> Prompt<'_> {
     Prompt {
         said,
+        line: 0,
         column,
         mode: MODE,
         tone: Slot::Accent,
@@ -825,13 +826,13 @@ fn a_click_on_the_line_says_how_far_into_it_the_pointer_was() {
     let said = "abcdefghijklmnopqrstuvwxyz";
     let prompt = typed(said);
 
-    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED), Some(0));
-    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5), Some(5));
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED), Some((0, 0)));
+    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5), Some((0, 5)));
 
     // The second row of the same line carries on where the first left off.
     assert_eq!(
         prompt.clicked(FRAMED_AT, FRAMED_ROW + 1, FRAMED + 3),
-        Some(21)
+        Some((0, 21))
     );
 }
 
@@ -841,7 +842,7 @@ fn a_click_past_the_end_of_a_row_lands_where_the_line_ends() {
     // terminal does with the same click.
     let prompt = typed("hello");
 
-    assert_eq!(prompt.clicked(80, FRAMED_ROW, FRAMED + 40), Some(5));
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, FRAMED + 40), Some((0, 5)));
 }
 
 #[test]
@@ -862,8 +863,8 @@ fn a_click_left_of_the_mark_lands_at_the_start_of_the_row() {
     // that is chrome rather than line.
     let prompt = typed("hello");
 
-    assert_eq!(prompt.clicked(80, FRAMED_ROW, 0), Some(0));
-    assert_eq!(prompt.clicked(80, FRAMED_ROW, 2), Some(0));
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 0), Some((0, 0)));
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, 2), Some((0, 0)));
 }
 
 #[test]
@@ -876,7 +877,7 @@ fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
             let caret = prompt.caret(FRAMED_AT);
             let back = prompt.clicked(FRAMED_AT, caret.row, caret.column);
 
-            assert_eq!(back, Some(column), "{said:?} at {column}");
+            assert_eq!(back, Some((0, column)), "{said:?} at {column}");
         }
     }
 }

@@ -355,6 +355,7 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Explain
         | Pressed::Plan
         | Pressed::Clicked { .. }
+        | Pressed::Pasted(_)
         | Pressed::Ignored => Moved::Still,
     }
 }
