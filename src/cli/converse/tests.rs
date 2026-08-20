@@ -273,6 +273,36 @@ fn the_whole_queue_is_named_and_a_line_taken_back_leaves_the_rest_in_order() {
 }
 
 #[test]
+fn a_line_the_turn_steered_by_stops_waiting_behind_it() {
+    // The defect this pins: a line typed mid-turn was both steered into the
+    // running turn and left in the queue, so it reached the transcript and
+    // went on being named above the box as though it were still owed -- and
+    // then ran a second time as its own turn.
+    let mut waiting = Prompts::default();
+    for line in ["first", "second", "third"] {
+        let mut editor = typed(line);
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    // The turn drains the whole queue at one boundary and says so a line at a
+    // time, so the middle of the three is dropped without disturbing its
+    // neighbours -- and the bytes it reserved come back with it.
+    assert!(waiting.steered("second"));
+    assert_eq!(
+        waiting.waiting_all().collect::<Vec<_>>(),
+        vec!["first", "third"]
+    );
+    assert_eq!(waiting.bytes, "first".len() + "third".len());
+
+    // A line the queue does not have changes nothing. The turn reports every
+    // line it worked in, including one the reader took back into the box
+    // between the turn reading the queue and saying what it read.
+    assert!(!waiting.steered("second"));
+    assert!(!waiting.steered("never typed"));
+    assert_eq!(waiting.waiting_count(), 2);
+}
+
+#[test]
 fn what_is_waiting_is_the_line_that_goes_next_rather_than_the_one_typed_last() {
     // The row above the box names it, so which of the queue it names is what
     // the reader checks their typing against. The oldest is the one the next

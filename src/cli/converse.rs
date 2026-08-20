@@ -649,6 +649,17 @@ fn take<T: Terminal>(
                     returned = turning.saw(event);
                 }
 
+                // And a line the turn says it worked in stops waiting behind
+                // it. The turn is the only side that knows which lines it
+                // reached — one typed a moment too late is still queued and
+                // still owed its own turn — so the panel is corrected here,
+                // where the turn says what it took, and nowhere earlier.
+                if let Seen::Turn(Event::Steered { line }) = &one
+                    && held.queued.steered(line)
+                {
+                    turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
+                }
+
                 // And the line of a call whose tool has answered is written
                 // before the event that ended it is drawn, so that the result
                 // hangs under the call it answers. It goes out through its own
@@ -945,6 +956,23 @@ impl Prompts {
         let prompt = self.lines.remove(at)?;
         self.bytes = self.bytes.saturating_sub(prompt.len());
         Some(prompt)
+    }
+
+    /// Drops the oldest waiting prompt that says `line`, and answers whether
+    /// there was one.
+    ///
+    /// What a turn taking a line to steer by leaves behind. From the moment it
+    /// is taken the line is in the transcript, so a panel that goes on naming
+    /// it says the reader is owed a turn they have already had — and the count
+    /// beside it says so twice. Matched on what the line says rather than on
+    /// where it sat, because the reader may have taken an earlier one back
+    /// between the turn reading the queue and saying what it read.
+    fn steered(&mut self, line: &str) -> bool {
+        let Some(at) = self.lines.iter().position(|waiting| waiting == line) else {
+            return false;
+        };
+
+        self.drop(at).is_some()
     }
 
     /// Takes the oldest waiting prompt and releases its byte reservation.
