@@ -64,6 +64,30 @@ struct Held {
     opened: bool,
 }
 
+/// A bulleted item's mark, through the life of the item it belongs to.
+///
+/// A mark is not drawn where its bullet settles, because what the mark *is*
+/// depends on what comes after it: `- [ ] a thing` is a task and a task's mark
+/// is a box. A scan reading one character at a time cannot know that yet, so
+/// the mark is owed until the first thing that is not a box arrives, and paid
+/// immediately before it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Marked {
+    /// Nothing on this line is a bulleted item.
+    #[default]
+    Nothing,
+    /// A bullet whose mark is owed.
+    Owed,
+    /// A mark already drawn: a plain bullet, or a task nobody has finished.
+    Drawn,
+    /// A task somebody has finished.
+    ///
+    /// Its words wear [`Slot::Done`] whatever else is written into them: a
+    /// finished task is behind you, and the emphasis inside one is something
+    /// leant on while it was still ahead.
+    Done,
+}
+
 /// What is open on the line being read.
 ///
 /// All of it ends where the line does. Markdown lets emphasis cross a line
@@ -74,6 +98,8 @@ struct Held {
 struct Line {
     heading: bool,
     code: bool,
+    /// What the line's bullet is marked with, where it has one.
+    marked: Marked,
     /// Whether the line opened with a quote mark, so the rest of it is
     /// somebody else's words.
     quoted: bool,
@@ -370,10 +396,9 @@ impl Markdown {
             // drawn in their place is a mark and a space of this crate's own,
             // out of the set the rest of the interface is drawn from. The
             // indentation before it has already gone out, so a nested item
-            // stays nested.
+            // stays nested. Owed rather than drawn here: see [`Line::owed`].
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
-                say(Slot::Quiet, self.glyphs.dot());
-                say(Slot::Quiet, " ");
+                self.line.marked = Marked::Owed;
                 true
             }
             // A quote is a bar down the left and the words beside it, which is
@@ -507,6 +532,49 @@ impl Markdown {
         true
     }
 
+    /// Draws the bullet's own mark, where one is owed.
+    ///
+    /// Called immediately before the first thing on the item reaches the
+    /// terminal, whichever path that is — a run of prose, a link that arrived
+    /// whole, a bracket that turned out not to be one, or the break of an item
+    /// with nothing after its marker at all.
+    fn pay(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        if self.line.marked != Marked::Owed {
+            return;
+        }
+
+        self.line.marked = Marked::Drawn;
+        say(Slot::Quiet, self.glyphs.dot());
+        say(Slot::Quiet, " ");
+    }
+
+    /// Whether what a bullet is holding is a task's box rather than a link.
+    ///
+    /// Only where the mark is still owed, so `- [ ] a thing` is a task and
+    /// `- see [ ] in the grammar` is a bracket somebody wrote. `character` is
+    /// the space that follows the box, which is part of the marker and goes
+    /// with it.
+    fn boxed(&self, link: &Link, character: char) -> bool {
+        self.line.marked == Marked::Owed
+            && link.part == Part::Between
+            && character == ' '
+            && matches!(link.label.as_str(), "" | " " | "x" | "X")
+    }
+
+    /// Draws a task's box in place of the bullet's mark, and says whether the
+    /// task is one somebody has finished.
+    fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str)) {
+        if matches!(label, "x" | "X") {
+            self.line.marked = Marked::Done;
+            say(Slot::DoneMark, self.glyphs.done());
+        } else {
+            self.line.marked = Marked::Drawn;
+            say(Slot::Quiet, self.glyphs.open());
+        }
+
+        say(Slot::Quiet, " ");
+    }
+
     /// Whether `character` opens a link where the scan stands.
     ///
     /// Prose only, and not inside a span of code: a bracket in `` `arr[0]` ``
@@ -542,8 +610,16 @@ impl Markdown {
             }
             (Part::Label, held) if carries => link.label.push(held),
             (Part::Target, held) if carries => link.target.push(held),
+            // A box takes the bullet's mark rather than following it, which is
+            // why this stands above the arm that puts a bracket back: the
+            // space after `]` is the marker's own and goes with it.
+            _ if self.boxed(&link, character) => {
+                self.tick(&link.label, say);
+                return true;
+            }
             // `[TODO] fix this`, and every other bracket somebody meant.
             _ => {
+                self.pay(say);
                 spill(&link, say);
                 return false;
             }
@@ -563,6 +639,8 @@ impl Markdown {
     /// is bytes a model chose, and the rule this file opens with is that none
     /// of them leaves as an instruction.
     fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str)) {
+        self.pay(say);
+
         let target = target(&link.target);
         let words = if link.label.is_empty() {
             target
@@ -593,6 +671,8 @@ impl Markdown {
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+        self.pay(say);
+
         if let Some(link) = self.link.take() {
             spill(&link, say);
         }
@@ -656,6 +736,8 @@ impl Markdown {
             return;
         }
 
+        self.pay(say);
+
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
             return;
@@ -696,6 +778,8 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose || self.line.code || self.line.quoted {
             Slot::Quiet
+        } else if self.line.marked == Marked::Done {
+            Slot::Done
         } else if self.line.emphasis.struck {
             // Above weight and emphasis both. A slot says one thing, and of the
             // things a phrase can be at once, the one a reader most needs is

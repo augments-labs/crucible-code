@@ -15,6 +15,11 @@ word starts after it.
 
 ### Added
 
+**A task in an answer is drawn as a task.** `- [ ] a thing` and `- [x] a done
+one` get a box in place of the bullet, and a finished one goes subdued and
+struck through — the same marks a plan is drawn with, because it is the same
+thing. The brackets have to open the item, so `- see [TODO] here` is left alone.
+
 **A table in an answer is drawn as a table.** The bars become one rule between
 the columns and one under the header, each column is as wide as the widest thing
 in it, and the row of dashes decides which side a column is drawn against. A

@@ -769,3 +769,58 @@ fn a_block_of_bars_that_never_ends_is_written_out_rather_than_held() {
         written.len()
     );
 }
+
+#[test]
+fn a_task_a_bullet_opens_is_a_box_rather_than_the_brackets_it_was_written_with() {
+    let said = whole("- [ ] a task not done\n- [x] one that is\n");
+
+    assert_eq!(drawn(&said), "□ a task not done\n✓ one that is\n");
+}
+
+#[test]
+fn a_finished_task_is_drawn_as_one_that_is_behind_you() {
+    let said = whole("- [x] one that is\n");
+
+    assert_eq!(
+        slots(&said),
+        vec![Slot::DoneMark, Slot::Quiet, Slot::Done, Slot::Plain],
+        "the mark, the space after it, the words, and the break"
+    );
+}
+
+#[test]
+fn a_task_nobody_has_started_reads_as_the_prose_around_it() {
+    let said = whole("- [ ] a task not done\n");
+
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn a_bracket_that_is_not_a_box_leaves_the_bullet_it_follows_alone() {
+    let said = whole("- see [TODO] in the grammar\n");
+
+    assert_eq!(drawn(&said), "· see [TODO] in the grammar\n");
+}
+
+#[test]
+fn a_box_that_does_not_open_an_item_is_the_brackets_somebody_wrote() {
+    let said = whole("the set is [ ] until something is in it\n");
+
+    assert_eq!(drawn(&said), "the set is [ ] until something is in it\n");
+}
+
+#[test]
+fn a_link_that_opens_an_item_still_gets_its_bullet() {
+    let said = whole("- [the page](https://example.invalid)\n");
+
+    assert_eq!(drawn(&said), "· the page (https://example.invalid)\n");
+}
+
+#[test]
+fn a_task_split_across_two_deltas_is_still_a_task() {
+    let mut markdown = Markdown::default();
+    let mut said = read(&mut markdown, "- [x");
+    said.extend(read(&mut markdown, "] one that is\n"));
+
+    assert_eq!(drawn(&said), "✓ one that is\n");
+}

@@ -391,6 +391,12 @@ else's. Both marks come out of the same set as every border on screen, so
 A dash is only a bullet at the start of a line with a space after it. `5 - 3`,
 `--colour never` and `a -> b` are left exactly where they were.
 
+An item that opens with `[ ]` or `[x]` is a task, and its box takes the bullet's
+place rather than following it: an unfinished one gets a hollow mark, a finished
+one gets a tick and its words go behind you, subdued and struck through. The
+brackets have to open the item — `- see [TODO] in the grammar` is a bracket
+somebody wrote, and it stays one.
+
 A phrase between two `~~` is one the answer wrote and then took back, and it is
 drawn with a line through it and nothing else — struck rather than dimmed,
 because a retraction is still being read. Exactly two: `~/Projects` is a path,
