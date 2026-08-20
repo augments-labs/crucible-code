@@ -71,6 +71,13 @@ const TICK: Duration = Duration::from_millis(100);
 /// The one word the row says while this runs.
 const DOING: &str = "compacting";
 
+/// And what it says once somebody has asked it to stop.
+///
+/// On screen from the press rather than from the moment the request notices:
+/// what a reader needs to know is that the key landed, and the provider may be
+/// a second or two behind that.
+const STOPPING: &str = "stopping";
+
 /// And the key that stops it, named because it is read.
 const STOPS: &str = "esc to stop";
 
@@ -259,7 +266,16 @@ fn recap<T: Terminal>(
                 break;
             }
 
-            standing(renderer, since, &says, part, style)?;
+            standing(
+                renderer,
+                since,
+                &says,
+                Making {
+                    part,
+                    stopping: cancel.requested(),
+                },
+                style,
+            )?;
         }
 
         working
@@ -284,26 +300,50 @@ fn recap<T: Terminal>(
 
 /// The row above the box, the bar under it, and the box, while room is made.
 ///
-/// The same three rows a running turn puts there, which is what `METERED` is:
-/// the blank, the word, and one row under it. No blank between the word and the
-/// bar — it is a second line of the same thing rather than a second thing.
+/// Drawn the way the box is drawn *between turns*, because that is where this
+/// is: `live` owns the region and settles whatever came before it. The footing
+/// call beside it is for a turn that is streaming into a tail, and using it
+/// here paints under a region that is not there.
+///
+/// The box says what it says at rest rather than standing blank — it cannot be
+/// typed into while this runs, and a box gone empty as well reads as a program
+/// that has fallen over.
 fn standing<T: Terminal>(
     renderer: &mut Renderer<T>,
     since: Instant,
     says: &typing::Says,
-    part: u8,
+    making: Making,
     style: Style,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let glyphs = style.glyphs();
 
+    let prompt = Prompt {
+        said: "",
+        column: 0,
+        mode: says.mode.as_ref(),
+        tone: says.tone,
+        hint: "",
+        model: says.model.as_str(),
+        provider: says.provider,
+        effort: says.effort,
+        asking: None,
+        running: None,
+        room: Prompt::room(renderer.rows()),
+    };
+
+    let mut boxed = prompt.rows(columns, glyphs);
+    let mut caret = prompt.caret(columns);
+
     let mut rows = vec![
         Row::new(),
         Working {
-            doing: DOING,
+            doing: if making.stopping { STOPPING } else { DOING },
             running: since.elapsed(),
             spent: None,
-            stops: Some(STOPS),
+            // Nothing left to offer once it has been asked: a row still naming
+            // the key is a row saying the press did not land.
+            stops: (!making.stopping).then_some(STOPS),
             // Taken off while this runs: the number it would show is the one
             // being replaced.
             left: None,
@@ -311,30 +351,31 @@ fn standing<T: Terminal>(
         .row(columns, glyphs),
     ];
 
-    if let Some(row) = bar(part, columns, glyphs) {
+    if let Some(row) = bar(making.part, columns, glyphs) {
         rows.push(row);
     }
-
     rows.push(Row::new());
-    rows.extend(
-        Prompt {
-            said: "",
-            column: 0,
-            mode: says.mode.as_ref(),
-            tone: says.tone,
-            hint: "",
-            model: says.model.as_str(),
-            provider: says.provider,
-            effort: says.effort,
-            asking: None,
-            running: None,
-            room: 1,
-        }
-        .rows(columns, glyphs),
-    );
 
-    renderer.under(&rows, None, style.palette())?;
+    // The caret belongs to the box, which is however many rows below the top of
+    // the region it now is.
+    caret.row += rows.len();
+    rows.append(&mut boxed);
+
+    renderer.live(&rows, caret, style.palette())?;
     Ok(())
+}
+
+/// How far the notes have got, and whether somebody has asked it to stop.
+///
+/// Two facts about one row, carried together rather than as two arguments: what
+/// the row says is one picture, and a call taking every part of it separately
+/// is a call nobody can read.
+#[derive(Debug, Clone, Copy)]
+struct Making {
+    /// How much of the notes has been written, as a percentage.
+    part: u8,
+    /// Whether the key has been pressed.
+    stopping: bool,
 }
 
 /// The bar under the word, or nothing where there is no room for one.

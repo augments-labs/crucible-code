@@ -1301,3 +1301,52 @@ fn the_recap_stands_where_the_messages_it_replaced_were() {
         "the recap is not standing in the transcript"
     );
 }
+
+#[test]
+fn a_window_the_provider_disproves_stops_being_claimed_at_all() {
+    // The failure this answers: a table one generation out of date says a model
+    // takes far less than it does, and the reading pins to nothing while the
+    // session goes on working perfectly. The provider reading the request is
+    // the only authority on what fits, and it has just read one larger than
+    // anybody wrote down — which disproves the figure without supplying
+    // another, so nothing is claimed rather than a number being invented.
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(500_000)),
+        Delta::Text("done".into()),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+
+    let mut scripted = Scripted::within(script, 200_000, Compaction::default());
+    scripted.turn("go").expect("a turn");
+
+    // Disproved, and not replaced: the vendor showed this much fits and
+    // nothing about how much more would have, so claiming the window is
+    // exactly the size of the thing that just fitted would pin the reading at
+    // nothing all over again.
+    assert_eq!(
+        scripted.runner.model.window, None,
+        "a figure the provider disproved is still being claimed"
+    );
+    assert_eq!(
+        scripted.runner.left(),
+        None,
+        "a reading is drawn against a window nobody knows"
+    );
+}
+
+#[test]
+fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() {
+    // Only ever upwards. A short request is not evidence of a small window, and
+    // treating it as one would shrink the window on every quiet turn until the
+    // session compacted itself to nothing.
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(1_000)),
+        Delta::Text("done".into()),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+
+    let mut scripted = Scripted::within(script, 200_000, Compaction::default());
+    scripted.turn("go").expect("a turn");
+
+    assert_eq!(scripted.runner.model.window, Some(200_000));
+}

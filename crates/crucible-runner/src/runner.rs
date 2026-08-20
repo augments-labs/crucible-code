@@ -533,11 +533,6 @@ impl Runner {
             window: self.model.window,
         };
 
-        let reserve = load::reserve(
-            self.model.max_tokens,
-            self.model.window,
-            self.compacting.reserve,
-        );
         let mut fruitless = 0;
 
         loop {
@@ -545,6 +540,16 @@ impl Runner {
             // runner rather than here; reading it back at the top of each pass
             // is what makes the check below see the results of the last one.
             counting.load = self.load;
+
+            // Worked out per pass rather than once, because what it is measured
+            // against can be corrected mid-turn: a window learned from a
+            // response is a different window, and a reserve left behind would
+            // be held against the figure that was just disproved.
+            let reserve = load::reserve(
+                self.model.max_tokens,
+                counting.window,
+                self.compacting.reserve,
+            );
 
             if let Some(ceiling) = self.compacting.spend_ceiling
                 && counting.spent.tokens() >= ceiling
@@ -583,8 +588,10 @@ impl Runner {
             let (answer, said) = heard;
 
             // And what the response reported goes the other way: the counts a
-            // provider sends are read here and belong to the session.
+            // provider sends are read here and belong to the session, as does a
+            // window it proved larger than anybody had written down.
             self.load = counting.load;
+            self.model.window = counting.window;
 
             // The provider read the request and could not fit it. Making room
             // and asking the same question again is the whole remedy, and it is
@@ -882,6 +889,28 @@ impl Runner {
                 // running sum of them would describe a session nobody had.
                 Delta::Carried(carried) => {
                     counting.load.carried(carried);
+
+                    // A request that carried more than this model was believed
+                    // to accept is that belief disproved by the only authority
+                    // there is. What it does not give is a replacement: the
+                    // vendor has shown this much fits and nothing about how
+                    // much more would have.
+                    //
+                    // So the size becomes unknown rather than becoming this
+                    // number — which would say the window is exactly as large
+                    // as the thing that just fitted in it, and pin the reading
+                    // at nothing all over again. Unknown is a state everything
+                    // here already handles: no reading is drawn, nothing
+                    // compacts against a figure nobody has, and the provider
+                    // refusing is what makes room. A request *smaller* than the
+                    // window is evidence of nothing and changes none of it.
+                    if counting
+                        .window
+                        .is_some_and(|window| carried.tokens() > u64::from(window))
+                    {
+                        counting.window = None;
+                    }
+
                     events.post(Event::Carried {
                         left: counting.load.left(counting.window),
                     });
