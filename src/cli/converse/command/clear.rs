@@ -166,6 +166,7 @@ mod tests {
             }),
             sessions: sample.logs(),
             workspace: sample.workspace(),
+            sending: crucible_tui::Sending::default(),
         }
     }
 
