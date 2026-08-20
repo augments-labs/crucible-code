@@ -357,7 +357,7 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
     // this keeps whole: a shorter session has no middle to replace, and the
     // choice would spend nothing.
     let vendor = Vendor::answering("Notes on everything that came before.");
-    let mut window = Watched::asking_on_resume("resume-notes", 80, 24, &vendor);
+    let mut window = Watched::compacting("resume-notes", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "Notes on");
     window.types_until("the second thing\r", "ask mode on");
@@ -383,7 +383,7 @@ fn escape_while_room_is_being_made_stops_it_and_replaces_nothing() {
     // middle of a stream somewhere a test can press a key.
     let notes = "notes to self about everything that has happened so far ".repeat(24);
     let vendor = Vendor::answering_each(&["one answer", "two answer", "three answer", &notes]);
-    let mut window = Watched::answering("compact-stopped", 80, 24, &vendor);
+    let mut window = Watched::compacting("compact-stopped", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "one answer");
     window.types_until("the second thing\r", "two answer");
@@ -408,7 +408,7 @@ fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
         &notes,
         "the answer to what was queued",
     ]);
-    let mut window = Watched::answering("compact-typing", 80, 24, &vendor);
+    let mut window = Watched::compacting("compact-typing", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "one answer");
     window.types_until("the second thing\r", "two answer");

@@ -130,7 +130,9 @@ be the one being replaced.
 When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down
 what is worth keeping, and that recap stands where the messages it replaced
-were, with the most recent turns kept word for word:
+were, with the most recent turns kept word for word — bounded in tokens rather
+than counted in turns, so a turn that is mostly tool output cannot carry the
+tail past the window on its own. The turn you are in is always kept whole:
 
 ```text
 ────────────────────────────────────────────────────────────────────────────────

@@ -135,6 +135,63 @@ impl fmt::Debug for Summary {
     }
 }
 
+/// A file a call touched, volunteered for a compaction to remember.
+///
+/// The model's memory of a session is rebuilt from a recap, and the thing a
+/// compacted session most needs back is *which files it was working in*. The
+/// call's tool is the only code that knows which argument is the path — the
+/// runner never parses arguments, for the reason [`Tool::summary`] gives — so
+/// the tool says it here. A newtype rather than a `String`, for the reason
+/// [`ToolArgs`] is one: it is made out of a call's arguments, which may name a
+/// file somebody did not mean to share.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Remembered {
+    /// The path, as the call spelled it.
+    path: Box<str>,
+    /// Whether the call changed the file rather than only read it. A modified
+    /// file is one a later turn may need to know the state of; a read one is
+    /// context the model may simply want back.
+    modified: bool,
+}
+
+impl Remembered {
+    /// A file the call read.
+    #[must_use]
+    pub fn read(path: impl Into<Box<str>>) -> Self {
+        Self {
+            path: path.into(),
+            modified: false,
+        }
+    }
+
+    /// A file the call changed.
+    #[must_use]
+    pub fn modified(path: impl Into<Box<str>>) -> Self {
+        Self {
+            path: path.into(),
+            modified: true,
+        }
+    }
+
+    /// The path, as the call spelled it.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Whether the call changed the file rather than only read it.
+    #[must_use]
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
+}
+
+impl fmt::Debug for Remembered {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Remembered([redacted])")
+    }
+}
+
 /// What the model said this call is for, on its way to whoever decides it.
 ///
 /// The panel a call waits behind is drawn by a thread with no provider behind
@@ -444,6 +501,23 @@ pub trait Tool: Send + Sync {
     /// [`Tool::run`] a moment later, and words invented for it would describe
     /// something that never happened.
     fn summary(&self, args: &ToolArgs) -> Summary;
+
+    /// What a compaction should remember of this call, where there is anything.
+    ///
+    /// `None` is the ordinary answer: most calls leave nothing a rebuilt session
+    /// needs to find again. The ones that do are the file tools — `read`, `edit`
+    /// and `write` — and what they volunteer is the path, read off the same
+    /// argument [`Tool::summary`] reads for the reason it gives: the tool is the
+    /// only code that knows which field is the path, and the runner must never
+    /// parse the arguments to find out.
+    ///
+    /// A default rather than a method every tool must write, because tools are
+    /// an open set and most have no file to name. A tool that says nothing here
+    /// is simply not tracked, which is the right answer for `grep`, `bash` and
+    /// the rest.
+    fn remember(&self, _args: &ToolArgs) -> Option<Remembered> {
+        None
+    }
 
     /// Runs the call.
     ///

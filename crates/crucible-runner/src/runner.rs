@@ -136,8 +136,12 @@ pub struct Compaction {
     pub automatic: bool,
     /// Room to leave for the next exchange, in tokens, where somebody said.
     pub reserve: Option<u64>,
-    /// How many turns are kept word for word after the recap.
-    pub keep: usize,
+    /// How many tokens of recent turns are kept word for word after the recap.
+    ///
+    /// Bounded in tokens rather than counted in turns because a turn can be
+    /// enormous: the kept tail is what has to fit beside the recap, and only a
+    /// figure in the window's own unit can promise that.
+    pub keep_tokens: u64,
     /// The most one turn may produce before it is stopped, in tokens.
     pub spend_ceiling: Option<u64>,
     /// How large a session must be before picking it up asks about it.
@@ -153,9 +157,11 @@ impl Default for Compaction {
         Self {
             automatic: true,
             reserve: None,
-            // Enough to hold what the turn is in the middle of and the one
-            // before it, which is what "carry on from here" needs.
-            keep: 2,
+            // Enough of the recent turns to hold what the model is doing and
+            // the exchange that led to it, which is what "carry on from here"
+            // needs. In tokens, so a turn that is mostly tool output cannot
+            // blow straight past it.
+            keep_tokens: 20_000,
             spend_ceiling: None,
             ask_on_resume: None,
         }

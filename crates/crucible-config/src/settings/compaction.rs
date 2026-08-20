@@ -73,7 +73,13 @@ pub struct Compaction {
     /// a user asking for no room at all, which is a different answer and is
     /// theirs to give.
     pub reserve: Option<u64>,
-    /// How many whole turns are kept after the recap, where a layer said.
+    /// How many tokens of recent turns are kept word for word after the recap,
+    /// where a layer said.
+    ///
+    /// In tokens rather than in turns because a turn can be enormous: the kept
+    /// tail has to fit the window beside the recap, and only a figure in the
+    /// window's own unit can promise that. The newest turn is always kept whole
+    /// whatever it has cost; this bounds the turns before it.
     pub keep: Option<u64>,
     /// How large a session must be before picking it up asks about it.
     ///
@@ -142,7 +148,7 @@ mod tests {
     #[test]
     fn every_answer_is_read_back_as_the_value_it_becomes() {
         let said = r#"{"compaction": {"when": "never", "reserve": 25000,
-            "keep": 4, "spendCeiling": 500000}}"#;
+            "keep": 40000, "spendCeiling": 500000}}"#;
         let settings = Settings::resolve(vec![Document::sample(said, Origin::User)]);
 
         assert_eq!(
@@ -150,7 +156,7 @@ mod tests {
             Compaction {
                 when: When::Never,
                 reserve: Some(25_000),
-                keep: Some(4),
+                keep: Some(40_000),
                 ask_on_resume: None,
                 spend_ceiling: Some(500_000),
             }

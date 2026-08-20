@@ -144,6 +144,28 @@ impl Load {
             .unwrap_or(0)
     }
 
+    /// What `bytes` of transcript is estimated to cost the window, in tokens.
+    ///
+    /// At this model's own rate where a response has calibrated one, and at the
+    /// deliberately pessimistic uncalibrated rate before that. It is the
+    /// arithmetic of [`Self::estimated`] lifted out, so the compaction walk can
+    /// measure a message it is deciding whether to keep at the same rate the
+    /// load measures what was appended.
+    #[must_use]
+    pub(super) fn bytes_to_tokens(&self, bytes: u64) -> u64 {
+        if self.sent == 0 || self.carried == 0 {
+            return bytes / UNCALIBRATED;
+        }
+
+        // `bytes * carried / sent` — the bytes at the rate the last request's
+        // true token count implies, multiplied before dividing so a short
+        // message does not round to nothing.
+        bytes
+            .saturating_mul(self.carried)
+            .checked_div(self.sent)
+            .unwrap_or(0)
+    }
+
     /// How much of the window is left, as a percentage, where one is known.
     ///
     /// Rounded down, so a reading of `1%` is never drawn over a window that has

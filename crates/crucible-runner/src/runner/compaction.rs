@@ -25,6 +25,8 @@
 //! session's memory is not one, and standing it in place of the messages it
 //! was meant to replace would lose the rest of them for good.
 
+use std::fmt::Write as _;
+
 use crucible_core::{
     Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, StopReason, ToolId,
     ToolOutput, Transcript, TurnError,
@@ -53,13 +55,36 @@ const MINIMUM: u64 = 30_000;
 /// Written as an instruction to carry on rather than as a request for prose: an
 /// answer that reads as a report about a session is one the model then has to
 /// re-read as its own memory. What this asks for is the memory itself.
+///
+/// The shape is fixed rather than free-form because a fixed one is harder to
+/// drop a category from: left to its own wording, a recap quietly omits the one
+/// decision that mattered. Each heading is a thing the next turn cannot do
+/// without. The files are not the model's to recall — they are collected from
+/// the calls being replaced and appended under a line the model is told to
+/// reproduce and extend, so the list survives a second compaction instead of
+/// going out with the first recap.
 const RECAP: &str = "\
 Before anything else, write down what is worth keeping from everything above, \
-for yourself, so that you can carry on with it and nothing else. Include what \
-was asked for, what has been decided, what has been changed and where, what \
-failed and why, and what you were about to do next. Leave out anything you \
-would not need again. Write it as notes to yourself, not as a report to \
-somebody else, and write nothing before or after it.";
+for yourself, so that you can carry on with it and nothing else. Use exactly \
+these headings, and leave one out only where there is genuinely nothing to say \
+under it:\n\n\
+## Goal — what was asked for\n\
+## Decisions — what was settled, and why\n\
+## Changes — what was changed, and where\n\
+## State — where things stand: what failed, what is blocked, what is next\n\n\
+After the last heading, reproduce the `Files so far` list below in full and \
+extend it with any files this span read or changed, one per line, \
+`path (read)` or `path (modified)`. Write it as notes to yourself, not as a \
+report to somebody else, and write nothing before the first heading or after \
+the list.";
+
+/// The line the tracked files stand under in a recap.
+///
+/// Read back on replay to pull the list a previous recap carried into the next
+/// one, so the record of which files a session touched survives being compacted
+/// twice. The log line is the only copy — the runner keeps no state of its own
+/// across compactions, and the recap it already wrote is the record.
+const FILES: &str = "Files so far:";
 
 /// The most a recap may be, in tokens.
 ///
@@ -102,8 +127,7 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<Room, TurnError> {
-        let kept = self.keeping();
-        let Some(replacing) = self.replacing(kept) else {
+        let Some(replacing) = self.replacing() else {
             return Ok(Room::Nothing);
         };
 
@@ -114,17 +138,23 @@ impl Runner {
         // sent, here and on every request after.
         self.prune();
 
+        // The files the replaced span touched, and the files every recap before
+        // it already carried. Collected before anything is recorded, while the
+        // whole transcript is still there to walk: the model is told to carry
+        // this list forward, so a second compaction extends it rather than
+        // losing what the first one kept.
+        let touched = self.tracked(replacing);
+
         let before = self.load.tokens();
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let Some(recap) = self.recap(why, events, cancel)? else {
+        let Some(recap) = self.recap(why, &touched, events, cancel)? else {
             return Ok(Room::Stopped);
         };
         if recap.is_empty() {
             return Ok(Room::Nothing);
         }
 
-        let tail = self.transcript.len() - replacing;
         let mut messages = std::mem::take(&mut self.transcript).into_messages();
 
         // Drained rather than collected into a second transcript: this is the
@@ -152,46 +182,95 @@ impl Runner {
             self.load.recorded(message);
         }
 
+        // Turns kept whole rather than messages, because that is the shape a
+        // reader thinks in: the recap stands in for the front, and what is left
+        // standing is the last few things they asked for.
+        let kept = self.transcript.turns();
+
         let compacted = Compacted {
             why,
             replaced: replacing,
             before,
             after: self.load.tokens(),
-            kept: tail,
+            kept,
         };
         events.post(crucible_core::Event::Compacted { compacted });
 
         Ok(Room::Made(compacted))
     }
 
-    /// How many turns are kept word for word after the recap.
-    fn keeping(&self) -> usize {
-        self.compacting.keep.max(1)
-    }
-
     /// How many messages from the front the recap stands in place of, or
     /// `None` where there is not enough behind to be worth replacing.
     ///
-    /// Counted back from the end by user prompts, because a turn begins at one:
-    /// keeping a whole number of turns is what stops a recap landing between a
-    /// call and the result that answers it, which no provider will accept.
-    fn replacing(&self, keep: usize) -> Option<usize> {
-        let starts: Vec<usize> = self
-            .transcript
-            .messages()
+    /// Counted back from the end in **estimated tokens**, not in turns: a turn
+    /// can be enormous, so a fixed number of them can be most of the window,
+    /// and the kept tail is the thing that has to fit beside the recap. The
+    /// current turn is always kept, whatever it has cost so far — cutting into
+    /// it would drop work the model is in the middle of. Each turn before it is
+    /// kept while the running byte estimate stays under the budget, and the cut
+    /// lands on a user prompt, which is the boundary that never parts a call
+    /// from the result answering it. That boundary is a rule, not a
+    /// coincidence: a message kind added later that does not open a turn has to
+    /// be counted into the turn it belongs to here, or the cut would land
+    /// between a call and its answer.
+    ///
+    /// The estimate uses the model's own calibrated bytes-per-token where the
+    /// load has one, and the pessimistic uncalibrated rate before any response
+    /// has been seen — the same figure the load is measured by, so a full
+    /// window is judged by the number that decided it was full.
+    fn replacing(&self) -> Option<usize> {
+        let budget = self.compacting.keep_tokens.max(1);
+        let messages = self.transcript.messages();
+
+        // The newest turn is kept whole. Starting one user prompt back from the
+        // end puts the boundary before whatever the model is doing now, and a
+        // session with a single turn has nothing behind it to replace.
+        let mut marks = messages
             .iter()
             .enumerate()
             .filter(|(_, message)| matches!(message, Message::User(_)))
-            .map(|(at, _)| at)
-            .collect();
+            .map(|(at, _)| at);
+        let mut cut = marks.next_back()?;
 
-        // Nothing to do until there is at least one whole turn behind the ones
-        // being kept. Compacting a session that is all tail would spend a
-        // request to replace nothing.
-        let at = starts.len().checked_sub(keep)?;
-        let front = *starts.get(at)?;
+        // Walk the earlier turns newest-first, spending the budget on each.
+        // `cut` only ever moves to a user prompt, so it is always a boundary.
+        let mut tokens = 0_u64;
+        for (at, message) in messages.iter().enumerate().rev() {
+            if at >= cut {
+                continue;
+            }
+            tokens = tokens.saturating_add(self.estimated(message));
+            if matches!(message, Message::User(_)) {
+                if tokens >= budget {
+                    break;
+                }
+                cut = at;
+            }
+        }
 
-        (front > 0).then_some(front)
+        // Nothing to do where the budget swallowed everything behind the
+        // current turn: compacting would spend a request to replace nothing.
+        (cut > 0).then_some(cut)
+    }
+
+    /// What one message is estimated to cost the window, in tokens.
+    ///
+    /// Measured in bytes and converted at the load's own rate, so the tail is
+    /// bounded in the unit the window is bounded in and at the rate the last
+    /// response proved. Before any response has calibrated the rate, the
+    /// pessimistic figure over-counts — which errs toward keeping less, the
+    /// direction that costs context rather than the turn.
+    fn estimated(&self, message: &Message) -> u64 {
+        let bytes = match message {
+            Message::User(said) => said.len(),
+            Message::Agent { text, .. } => text.len(),
+            Message::ToolResults(results) => results
+                .iter()
+                .map(|result| result.output.text().len())
+                .sum::<usize>(),
+        } as u64;
+
+        self.load.bytes_to_tokens(bytes)
     }
 
     /// Asks the model to write down what is worth keeping.
@@ -203,13 +282,75 @@ impl Runner {
     /// `None` where the answer was stopped part way. What has arrived by then
     /// is notes that break off mid-sentence, and the caller may not stand them
     /// in place of anything: a stop is somebody saying leave the session alone.
+    /// The files to carry into the recap, read and modified apart.
+    ///
+    /// Two sources, in the order they happened: the lists every previous recap
+    /// already stands over, then what the calls in the span about to be
+    /// replaced volunteer through [`Tool::remember`]. A file in both collapses
+    /// to one mention, and a modified one stays modified — a file that was
+    /// changed is one a later turn may need the state of, however many times it
+    /// was only read afterwards. The runner keeps no list of its own across
+    /// compactions; the recaps already written are the record, and this reads
+    /// them back rather than hold a second copy that could drift from it.
+    fn tracked(&self, replacing: usize) -> (Vec<String>, Vec<String>) {
+        let mut files = Files::default();
+
+        for message in self.transcript.messages() {
+            // A recap from a compaction before this one. The span being
+            // replaced starts after the latest of them, but the files it kept
+            // are still this session's to remember.
+            if let Message::User(said) = message
+                && let Some(recap) = said.strip_prefix(crucible_core::RECAP)
+            {
+                for (path, changed) in listed(recap) {
+                    files.note(path, changed);
+                }
+            }
+        }
+
+        // The calls in the span being replaced. Only an agent message carries
+        // them, and only a tool that has a file to name answers `remember` —
+        // the rest return `None` and are nobody's to track. `take` rather than a
+        // slice, because `replacing` was just decided from this length and a
+        // panic on the way back through it is a bug, not a bound to re-check.
+        for message in self.transcript.messages().iter().take(replacing) {
+            if let Message::Agent { calls, .. } = message {
+                for call in calls {
+                    if let Some(tool) = self.tools.find(&call.name)
+                        && let Some(file) = tool.remember(&call.args)
+                    {
+                        files.note(file.path(), file.is_modified());
+                    }
+                }
+            }
+        }
+
+        (files.read, files.modified)
+    }
+
     fn recap(
         &mut self,
         why: Compacting,
+        touched: &(Vec<String>, Vec<String>),
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<Option<String>, TurnError> {
-        self.transcript.push(Message::User(RECAP.into()));
+        let mut asking = RECAP.to_owned();
+        asking.push_str("\n\n");
+        asking.push_str(FILES);
+        asking.push('\n');
+        if touched.0.is_empty() && touched.1.is_empty() {
+            asking.push_str("(none yet)");
+        } else {
+            for path in &touched.0 {
+                let _ = writeln!(asking, "{path} (read)");
+            }
+            for path in &touched.1 {
+                let _ = writeln!(asking, "{path} (modified)");
+            }
+        }
+
+        self.transcript.push(Message::User(asking.into()));
 
         let asked = self.provider.stream(
             Request {
@@ -342,6 +483,64 @@ fn reached(bytes: u64) -> u8 {
     u8::try_from(part).unwrap_or(99)
 }
 
+/// The files a session has touched, read and modified kept apart.
+///
+/// The two lists a recap carries, accumulated as the span being replaced is
+/// walked. Each file appears once, in the order it was first noted; a file that
+/// was ever changed is on the modified list and nowhere else, because that is
+/// the fact a later turn cannot do without.
+#[derive(Default)]
+struct Files {
+    read: Vec<String>,
+    modified: Vec<String>,
+}
+
+impl Files {
+    /// Notes one file, read or changed.
+    ///
+    /// A change wins over a read: the same file may be opened a dozen times and
+    /// edited once, and the edit is what the next session needs to know about.
+    /// A file already changed stays changed however many reads follow, and one
+    /// already listed is not listed again.
+    fn note(&mut self, path: &str, changed: bool) {
+        if changed {
+            self.read.retain(|kept| kept != path);
+            if !self.modified.iter().any(|kept| kept == path) {
+                self.modified.push(path.to_owned());
+            }
+        } else if !self.modified.iter().any(|kept| kept == path)
+            && !self.read.iter().any(|kept| kept == path)
+        {
+            self.read.push(path.to_owned());
+        }
+    }
+}
+
+/// The files a prior recap carried, read back off the text it left.
+///
+/// Everything from the `Files so far:` line to the end, one `path (read)` or
+/// `path (modified)` per line. Anything that does not parse as one of those is
+/// left out rather than guessed at: the list is the model's to keep accurate,
+/// and a line it wrote some other way is not a file this session touched.
+fn listed(recap: &str) -> Vec<(&str, bool)> {
+    let Some((_, files)) = recap.split_once(FILES) else {
+        return Vec::new();
+    };
+
+    files
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if let Some(path) = line.strip_suffix("(modified)") {
+                Some((path.trim(), true))
+            } else {
+                line.strip_suffix("(read)").map(|path| (path.trim(), false))
+            }
+        })
+        .filter(|(path, _)| !path.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +569,59 @@ mod tests {
         // low corner, where every recap ever written reads as barely started.
         assert!(reached(1_447) > 25, "{}", reached(1_447));
         assert!(reached(5_766) > 60, "{}", reached(5_766));
+    }
+
+    #[test]
+    fn a_recap_without_a_file_list_carries_none_forward() {
+        // A recap written before this existed, or by a model that left the list
+        // out, has nothing to carry — and that is an answer, not a failure.
+        assert!(listed("## Goal\nbuild the thing").is_empty());
+    }
+
+    #[test]
+    fn the_files_a_recap_kept_are_read_back_the_way_they_were_written() {
+        let recap =
+            "## State\nnext: ship it\n\nFiles so far:\nsrc/main.rs (modified)\nREADME.md (read)\n";
+
+        assert_eq!(listed(recap), [("src/main.rs", true), ("README.md", false)]);
+    }
+
+    #[test]
+    fn a_line_that_is_not_a_file_is_not_read_as_one() {
+        // The list is the model's to keep accurate. A line it wrote some other
+        // way — a heading, a stray sentence — is not a file the session
+        // touched, and is left out rather than guessed at.
+        let recap = "Files so far:\nsrc/main.rs (read)\nnot a file line\n(modified)\n";
+
+        assert_eq!(listed(recap), [("src/main.rs", false)]);
+    }
+
+    #[test]
+    fn a_file_is_listed_once_and_a_change_outranks_a_read() {
+        // The rules the recap's accuracy rests on: no file twice, and the edit
+        // is the fact a later turn needs about a file it also only read.
+        let mut files = Files::default();
+        files.note("src/main.rs", false);
+        files.note("src/main.rs", false);
+        assert_eq!(files.read, ["src/main.rs".to_owned()]);
+
+        // Read first, then changed: it moves, because the read is no longer the
+        // truest thing to say about it.
+        files.note("src/main.rs", true);
+        assert!(
+            files.read.is_empty(),
+            "a changed file is still listed as read"
+        );
+        assert_eq!(files.modified, ["src/main.rs".to_owned()]);
+
+        // And changed first, then read: it stays changed, however many reads
+        // follow.
+        files.note("src/lib.rs", true);
+        files.note("src/lib.rs", false);
+        assert_eq!(
+            files.modified,
+            ["src/main.rs".to_owned(), "src/lib.rs".to_owned()]
+        );
+        assert!(!files.read.iter().any(|kept| kept == "src/lib.rs"));
     }
 }
