@@ -30,7 +30,7 @@
 //! belongs in the record is the answer to it, in the words of whatever asked —
 //! which is the caller's to commit after this returns.
 
-use crucible_tui::{Caret, Pressed, Renderer, Row, Terminal, pressed};
+use crucible_tui::{Caret, Pressed, Renderer, Row, Terminal, caret, pressed};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -110,6 +110,26 @@ pub(super) fn stand<T: Terminal, S>(
         if arrived == Pressed::Resized {
             renderer.resized()?;
         }
+
+        // A click is reported against the whole screen, and a component thinks
+        // in the rows it drew. This is the one place both are known — the
+        // region's origin from where the cursor is parked, the click's row from
+        // the press — so the click is rewritten to a row of the region here,
+        // and one that landed outside it is nothing the component is asked
+        // about. Asked of the terminal per click and never per frame, for the
+        // reason typing.rs's `cursor` gives: it costs a round trip.
+        let arrived = match arrived {
+            Pressed::Clicked { row, column } => {
+                let Some(cursor) = caret().ok().map(|(row, _)| row) else {
+                    continue;
+                };
+                match renderer.within(row, cursor) {
+                    Some(row) => Pressed::Clicked { row, column },
+                    None => continue,
+                }
+            }
+            other => other,
+        };
 
         match keys(arrived, state) {
             Moved::Redraw => changed = true,

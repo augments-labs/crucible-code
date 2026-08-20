@@ -667,7 +667,22 @@ fn take<T: Terminal>(
         // exited is not one of them. A number that only moved when something else
         // on the row did would be exactly the stale fact this row exists to
         // report.
-        drop(terms.leaving.reap());
+        //
+        // And said, the way one that ended between turns is said: a command that
+        // finished while the turn ran is otherwise a count that moved with no
+        // line to say why, and the reader is owed the line the moment there is
+        // room for it rather than after the turn. The model is told separately,
+        // at the top of its next turn.
+        if drawn.is_ok() {
+            for ended in terms.leaving.reap() {
+                drawn = stop_if_failed(
+                    draw::gone(renderer, &ended, terms.style()).map_err(Fatal::from),
+                    &terms.cancel,
+                );
+            }
+        } else {
+            drop(terms.leaving.reap());
+        }
         says.running = terms.leaving.count();
 
         // After the event rather than before it, so what the turn said is on

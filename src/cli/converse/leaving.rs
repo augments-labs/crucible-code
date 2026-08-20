@@ -27,6 +27,12 @@ use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved};
 
+/// Rows above the first command: the rule, the blank, the heading, the blank
+/// under it. The list starts on the next one, so a click on region row `HEAD +
+/// i` is a click on command `i`. Kept beside the drawing it counts, which is
+/// [`Running::rows`].
+const HEAD: usize = 4;
+
 /// What the list is showing, between one key and the next.
 #[derive(Debug, Default)]
 pub(super) struct Leaving {
@@ -178,6 +184,23 @@ impl Leaving {
                 region::step(&mut self.at, on)
             }
 
+            // A click on a command's row is the arrows' work done at once: it
+            // marks the row, and a click on the row already marked opens it —
+            // the two things a reader reaching for the mouse means. One that
+            // landed on the chrome around the list is a click on nothing.
+            Pressed::Clicked { row, .. } => match row.checked_sub(HEAD) {
+                Some(hit) if hit < running.len() => {
+                    if hit == self.at {
+                        self.shown = running.get(hit).map(|standing| standing.number);
+                        self.from = 0;
+                    } else {
+                        self.at = hit;
+                    }
+                    Moved::Redraw
+                }
+                _ => Moved::Still,
+            },
+
             // Shows what it has printed. Nothing is taken and the list is still
             // behind it, so this is a step further in rather than the way out.
             Pressed::Key(Key::Enter) => match running.get(self.at) {
@@ -218,7 +241,6 @@ impl Leaving {
             | Pressed::Explain
             | Pressed::Expand
             | Pressed::Plan
-            | Pressed::Clicked { .. }
             | Pressed::Pasted(_)
             | Pressed::Queue
             | Pressed::Ignored => Moved::Still,
