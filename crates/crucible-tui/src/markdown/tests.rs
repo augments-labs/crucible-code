@@ -1059,3 +1059,37 @@ fn an_address_a_link_names_is_still_the_link_it_names() {
     assert_eq!(drawn(&said), "the docs (https://example.com)");
     assert_eq!(slots(&said), [Slot::Link, Slot::Quiet]);
 }
+
+/// Every shape this file reads, as one answer each.
+const SHAPES: [&str; 12] = [
+    "**strong** and *leaning* words",
+    "a [link](https://example.com) here",
+    "| a | b |\n|---|---|\n| 1 | 2 |\n",
+    "- [x] done\n- [ ] not\n",
+    "```rust\nfn main() {}\n```\n",
+    "see https://example.com/a_b for more",
+    "a \\*literal\\* star",
+    "---\n\ntext\n",
+    "> quoted\n",
+    "a `*ptr*` span",
+    "~~struck~~ words",
+    "# heading\n",
+];
+
+#[test]
+fn where_a_delta_ends_changes_nothing_about_what_is_drawn() {
+    for answer in SHAPES {
+        let whole = ended(answer);
+
+        let mut markdown = Markdown::default();
+        let mut said = Vec::new();
+        for character in answer.chars() {
+            let mut delta = [0; 4];
+            said.extend(read(&mut markdown, character.encode_utf8(&mut delta)));
+        }
+        markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+
+        assert_eq!(drawn(&said), drawn(&whole), "{answer:?}");
+        assert_eq!(slots(&said), slots(&whole), "{answer:?}");
+    }
+}
