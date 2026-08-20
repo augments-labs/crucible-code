@@ -682,8 +682,8 @@ impl Turning {
         // Under the word and with no blank between them, because it is a second
         // line of the same thing rather than a second thing beside it — the
         // rule the prompt waiting behind a turn already keeps.
-        if let Some(why) = self.making
-            && let Some(row) = making(why, self.part, columns, style)
+        if self.making.is_some()
+            && let Some(row) = making(self.part, columns, style)
         {
             rows.push(row);
         }
@@ -699,39 +699,29 @@ impl Turning {
     }
 }
 
-/// The row under the word while room is being made, or nothing where there is
-/// no room for one.
+/// The bar under the word while room is being made, or nothing where there is
+/// no room for one or nothing to measure yet.
 ///
-/// It says why, because the three reasons are three different things to be told
-/// and only one of them is the window having filled.
-fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row> {
+/// The bar is the whole row, starting in the column the word above it starts
+/// in, so it reads as a second line of the same thing. It says how far the
+/// notes have got, which is the one thing the reader cannot see for themselves.
+/// Nothing has arrived while `part` is 0 — the model is reading a session it
+/// has not begun writing down, which on a full window is seconds — so there is
+/// no bar to draw and no row.
+fn making(part: u8, columns: usize, style: Style) -> Option<Row> {
     let glyphs = style.glyphs();
     let gutter = Working::gutter(glyphs);
-    let said = match why {
-        Compacting::Full => "the window was full",
-        Compacting::Refused => "the model would not take another request this size",
-        Compacting::Asked | Compacting::Resumed => "you asked for this",
-    };
 
-    let row = Row::new().then(Slot::Quiet, " ".repeat(gutter));
+    if part == 0 || columns < gutter + BAR + 8 {
+        return None;
+    }
 
-    // The bar where there is room for one and something to draw in it, and the
-    // words alone otherwise: what the reader needs is why this is happening,
-    // and the bar is what says how far along it is.
-    //
-    // Nothing has arrived while `part` is 0, and nothing is what the request is
-    // doing — the model is reading a session it has not begun writing down,
-    // which on a full window is seconds. An empty bar held through all of them
-    // is what a reader calls stuck, and it is claiming a length it does not
-    // have; the words claim nothing and say the same thing.
-    let row = if part > 0 && columns >= gutter + BAR + 8 {
-        let full = usize::from(part) * BAR / 100;
-        row.then(Slot::Plain, glyphs.filled().repeat(full))
-            .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
-            .then(Slot::Quiet, format!("  {part}%  {said}"))
-    } else {
-        row.then(Slot::Quiet, said.to_owned())
-    };
+    let full = usize::from(part) * BAR / 100;
+    let row = Row::new()
+        .then(Slot::Quiet, " ".repeat(gutter))
+        .then(Slot::Plain, glyphs.filled().repeat(full))
+        .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
+        .then(Slot::Quiet, format!("  {part}%"));
 
     (row.columns() <= columns).then_some(row)
 }
@@ -1002,25 +992,26 @@ mod tests {
     fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
         // Nothing is measurable until the first word of the recap arrives: the
         // request is out and the model is reading the session it is about to
-        // write down, which on a full window is seconds. A bar at nothing for
-        // all of it is what a reader calls stuck, and the words beside it say
-        // the same thing without claiming a length.
+        // write down, which on a full window is seconds. There is no row until
+        // then, because a bar at nothing is claiming a length it does not have.
         let style = Style::plain();
         let glyphs = style.glyphs();
 
-        let before = making(Compacting::Full, 0, 80, style)
-            .expect("a row")
-            .text();
+        assert!(making(0, 80, style).is_none(), "a bar at nothing drew");
 
-        assert!(!before.contains(glyphs.hollow()), "{before:?}");
-        assert!(before.contains("the window was full"), "{before:?}");
-
-        let under = making(Compacting::Full, 12, 80, style)
-            .expect("a row")
-            .text();
+        let under = making(12, 80, style).expect("a row").text();
 
         assert!(under.contains(glyphs.filled()), "{under:?}");
         assert!(under.contains("12%"), "{under:?}");
+
+        // The bar starts in the column the word above it starts in: the mark
+        // and the space after it, so it reads as a second line of that row.
+        let gutter = Working::gutter(glyphs);
+        assert_eq!(
+            under.chars().take(gutter).filter(|c| *c == ' ').count(),
+            gutter,
+            "{under:?}"
+        );
     }
 
     #[test]

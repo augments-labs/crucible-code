@@ -6,6 +6,17 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-20
+
+### Fixed
+
+**The compaction row moves while it has nothing to measure.** While the recap
+request is out and the model is still reading the session — seconds on a full
+window — the row under the word now turns a mark on the beat, the same face the
+word above it wears, instead of holding still until the first word of the recap
+arrives. The bar appears when there is something to measure and moves with what
+streams back; the stillness that read as stuck before it did is gone.
+
 ## [0.13.0] - 2026-08-20
 
 ### Changed
