@@ -377,6 +377,39 @@ impl ToolOutput {
     pub fn forget_diff(&mut self) {
         self.diff = None;
     }
+
+    /// Replaces the text with a placeholder saying it was cleared, and says how
+    /// much that freed.
+    ///
+    /// The lightest-touch form of compaction: a result deep enough in the
+    /// transcript that the model has long since used it is bulk it will never
+    /// read again, and a placeholder of a few words answers the only question
+    /// the gap could raise — the call has a result, and the result is gone on
+    /// purpose. The original is untouched in the session log, which is the
+    /// record; this is only what the model is sent from here on. Returns the
+    /// bytes freed, so the caller can decide whether clearing paid.
+    ///
+    /// A result small enough that the placeholder would cost more than it saves
+    /// is left alone and frees nothing — clearing is for the results that
+    /// dominate a transcript, and churning the small ones buys nothing.
+    pub fn prune(&mut self) -> usize {
+        let freed = self.text.len();
+        if freed < Self::MIN_PRUNE_BYTES {
+            return 0;
+        }
+
+        self.text = format!("[cleared to make room — {freed} bytes]").into();
+        freed
+    }
+
+    /// The smallest result worth clearing, in bytes.
+    ///
+    /// Under it the placeholder costs more than the result did, and clearing
+    /// would grow the very thing it is meant to shrink. On the type rather than
+    /// in a module, so the caller that estimates what a pass would recover
+    /// reads the same figure the clearing enforces — two copies would drift
+    /// apart the first time one moved.
+    pub const MIN_PRUNE_BYTES: usize = 64;
 }
 
 /// One tool the agent can call.

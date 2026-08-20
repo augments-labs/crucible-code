@@ -86,6 +86,37 @@ pub(crate) fn made_room(line: &str) -> Option<(usize, String)> {
     ))
 }
 
+/// A line saying old tool results were cleared, and which.
+///
+/// The same append-only shape as the compaction line, for the same reason: a
+/// result is cleared from what the model is sent, not from the record, so the
+/// clearing is written down as another thing that happened. It names the
+/// results rather than a span, because a pruning does not move a boundary the
+/// way a compaction does — the same results stay where they were, holding a
+/// placeholder instead of what they held. `freed` is how much it recovered, so
+/// a reader can tell a pruning that paid from one that did not.
+pub(crate) fn pruned(freed: usize, results: &[ToolId]) -> String {
+    json!({
+        "pruned": {
+            "freed": freed,
+            "results": results.iter().map(ToolId::as_str).collect::<Vec<_>>(),
+        }
+    })
+    .to_string()
+}
+
+/// What a pruning line says, or `None` if this is not one: the results it
+/// cleared, by the id each shares with the call it answered.
+pub(crate) fn cleared(line: &str) -> Option<Vec<ToolId>> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let results = value.get("pruned")?.get("results")?.as_array()?;
+
+    results
+        .iter()
+        .map(|one| Some(ToolId::new(one.as_str()?)))
+        .collect()
+}
+
 /// The first line, which says what the file is and what it belongs to.
 pub(crate) fn header(session: &SessionId, workspace: &Path) -> String {
     json!({
