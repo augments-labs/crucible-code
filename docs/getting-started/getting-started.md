@@ -386,6 +386,11 @@ word arrives whole on one row rather than in halves on two. A word too long for
 any row -- a path, a hash, a line of code with no spaces in it -- is still broken
 where the row ends, since there is nowhere else to break it.
 
+A line that wraps and opens with a mark -- an item's bullet, a task's box, a
+quote's bar, a number and its dot -- continues under its own words rather than
+back at the edge, so the mark is the only thing in its column and a list still
+reads as a list at any width.
+
 A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
 item opens with the same small mark, and the spaces that nest one list inside
 another are kept exactly as they were written. A line that opens with `>` gets a

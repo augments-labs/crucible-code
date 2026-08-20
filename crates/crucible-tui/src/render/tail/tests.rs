@@ -477,3 +477,56 @@ fn a_slot_that_opens_after_the_last_space_travels_with_the_word_it_covers() {
         "the row left behind never opened the slot"
     );
 }
+
+#[test]
+fn a_wrapped_item_continues_under_its_own_text() {
+    let mut tail = Tail::new(12, 5);
+    push(&mut tail, "· alpha beta gamma");
+    assert_eq!(rows(&tail), ["· alpha ", "  beta gamma"]);
+}
+
+#[test]
+fn a_nested_item_hangs_under_its_own_text_rather_than_under_the_one_above() {
+    let mut tail = Tail::new(10, 5);
+    push(&mut tail, "  · alpha beta");
+    assert_eq!(rows(&tail), ["  · alpha ", "    beta"]);
+}
+
+#[test]
+fn a_numbered_item_hangs_under_its_own_text_too() {
+    let mut tail = Tail::new(12, 5);
+    push(&mut tail, "1. alpha beta");
+    assert_eq!(rows(&tail), ["1. alpha ", "   beta"]);
+}
+
+#[test]
+fn a_line_that_opens_with_a_word_wraps_flush_to_the_edge() {
+    let mut tail = Tail::new(12, 5);
+    push(&mut tail, "alpha beta gamma");
+    assert_eq!(rows(&tail), ["alpha beta ", "gamma"]);
+}
+
+#[test]
+fn a_line_break_starts_a_row_flush_however_the_line_above_hung() {
+    let mut tail = Tail::new(12, 5);
+    push(&mut tail, "· alpha beta gamma\nplain");
+    assert_eq!(rows(&tail).last(), Some(&"plain"));
+}
+
+#[test]
+fn no_row_is_ever_wider_than_the_tail_however_far_it_hangs() {
+    for width in [1, 2, 3, 4, 7, 40] {
+        let mut tail = Tail::new(width, 200);
+        push(
+            &mut tail,
+            "· the quick brown fox jumps over the lazy dog, and \
+             antidisestablishmentarianism follows it",
+        );
+        for row in rows(&tail) {
+            assert!(
+                row.width() <= width,
+                "{row:?} is wider than the {width} columns it was wrapped for"
+            );
+        }
+    }
+}

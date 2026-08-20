@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A wrapped item continues under its own text.** An item longer than the
+terminal used to carry on at the edge, under its own bullet, which reads as a
+new item rather than as more of one. It now hangs under the words it belongs
+to -- a bullet, a task's box, a quote's bar or a number and its dot.
+
 **An answer wraps at a space rather than through a word.** A line longer than
 the terminal used to break wherever the edge fell, leaving words in halves on
 two rows. It now ends at the last space that fits, and only a word no row could

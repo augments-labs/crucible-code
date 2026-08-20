@@ -84,6 +84,10 @@ struct Broken {
     open: bool,
 }
 
+/// The spaces a wrapped row is indented with, taken as a slice rather than
+/// built: a hang is a handful of columns and a wrap is on the render path.
+const SPACES: &str = "                                ";
+
 /// One display row, with its width kept alongside so appending stays O(1).
 #[derive(Debug, Default, Clone)]
 struct Row {
@@ -266,8 +270,11 @@ impl Tail {
     /// Falls back to [`Tail::break_row`] where there is nothing to carry: a row
     /// with no space on it, and one whose space is the last thing on it.
     fn wrap_row(&mut self) {
+        let hang = self.hang();
+
         let Some(broken) = self.broken.take() else {
             self.break_row();
+            self.indent(hang);
             return;
         };
 
@@ -278,6 +285,7 @@ impl Tail {
 
         if broken.at >= row.text.len() {
             self.break_row();
+            self.indent(hang);
             return;
         }
 
@@ -298,6 +306,88 @@ impl Tail {
             text: carried,
             width,
         });
+        self.indent(hang);
+    }
+
+    /// How far a row started by a wrap is indented, so what continues a line
+    /// is drawn under the line's own text rather than under its mark.
+    ///
+    /// Read off the row being cut rather than remembered, which is what makes
+    /// it the same answer on the second wrap as on the first: an item's mark
+    /// gives way to the spaces standing in for it, and those spaces are the
+    /// leading indent the next wrap reads. A line break asks nothing of this,
+    /// so a fresh line starts flush wherever the line above it hung.
+    ///
+    /// A mark here is what a mark looks like -- one narrow character that is
+    /// not a letter, or a number and its dot, with a space after it. This is
+    /// the wrapper's own reading of the row in front of it: the tail is handed
+    /// text and never told what any of it meant, and a run of it can be an
+    /// answer the model wrote with its markers still in.
+    fn hang(&self) -> usize {
+        let Some(row) = self.rows.back() else {
+            return 0;
+        };
+
+        let mut escapes = Escapes::default();
+        let mut drawn = row
+            .text
+            .chars()
+            .filter(move |character| !escapes.holds(*character))
+            .peekable();
+
+        let mut hang = 0;
+        while drawn.next_if_eq(&' ').is_some() {
+            hang += 1;
+        }
+
+        let Some(mark) = drawn.next() else {
+            return 0;
+        };
+
+        let mut marked = 1;
+        if mark.is_ascii_digit() {
+            while drawn.next_if(char::is_ascii_digit).is_some() {
+                marked += 1;
+            }
+
+            if drawn.next_if(|next| matches!(next, '.' | ')')).is_none() {
+                return hang;
+            }
+
+            marked += 1;
+        } else if mark.is_alphanumeric() || width::advance(mark) != Some(1) {
+            return hang;
+        }
+
+        if drawn.next() == Some(' ') {
+            hang + marked + 1
+        } else {
+            hang
+        }
+    }
+
+    /// Pads the row a wrap has just started, where there is room to.
+    ///
+    /// A hang with no columns left behind it is no hang: the row would be
+    /// full before anything was written on it, and the character that would
+    /// not fit would push a fresh row under it every time.
+    fn indent(&mut self, hang: usize) {
+        let hang = hang.min(SPACES.len());
+        if hang == 0 {
+            return;
+        }
+
+        if let Some(row) = self.rows.back_mut() {
+            if hang + row.width >= self.width {
+                return;
+            }
+
+            // Before the sequence a wrap carried over rather than after it: a
+            // slot can paint what it covers, and what these stand in for is
+            // the mark on the row above, not the words beside it.
+            row.text.insert_str(0, &SPACES[..hang]);
+            row.width += hang;
+        }
     }
 
     /// Opens the worn slot on the current row, if it is not open already.
