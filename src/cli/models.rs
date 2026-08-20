@@ -57,6 +57,12 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "moonshot",
+        model: "k3-256k",
+        window: 262_144,
+        output: 131_072,
+    },
+    Facts {
+        provider: "moonshot",
         model: "kimi-for-coding",
         window: 262_144,
         output: 262_144,
