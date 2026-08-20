@@ -1139,3 +1139,17 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
         ]
     );
 }
+
+#[test]
+fn the_spaces_in_front_of_a_fence_go_with_it() {
+    let said = ended("- item\n  ```rs\n  let a = 1;\n  ```\n- next\n");
+
+    assert_eq!(drawn(&said), "· item\n  let a = 1;\n· next\n");
+}
+
+#[test]
+fn the_spaces_in_front_of_a_nested_item_stay_where_they_were() {
+    let said = ended("- item\n  - nested\n");
+
+    assert_eq!(drawn(&said), "· item\n  · nested\n");
+}

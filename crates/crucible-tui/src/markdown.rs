@@ -239,6 +239,13 @@ pub struct Markdown {
     /// for the reason everything here does -- a delta is a piece of the wire,
     /// and the pair arrives split as often as not.
     escaped: bool,
+    /// The spaces this line opened with, held for whatever follows them.
+    ///
+    /// Whether they were indentation at all is the first marker's to say: the
+    /// ones in front of a fence are part of the fence and go with its line,
+    /// and every other marker keeps them, which is what nests one list inside
+    /// another. Counted rather than kept, since a space is a space.
+    indent: usize,
     line: Line,
     inside: Inside,
     /// What the opening fence said the block is written in, while that fence's
@@ -284,6 +291,10 @@ pub struct Markdown {
 /// anything that matters to the budget. A line longer than this is drawn plain
 /// rather than dropped or held.
 const MOST: usize = 4096;
+
+/// The spaces a held indentation is handed on from, taken as a slice rather
+/// than built: an indent is a handful of columns and this is the render path.
+const SPACES: &str = "                                ";
 
 impl Markdown {
     /// A reader drawing its bullets and quote bars with `glyphs`.
@@ -412,7 +423,14 @@ impl Markdown {
                 self.escaped = true;
                 run = next;
             } else if self.marks(character) {
-                self.say(delta.get(run..at).unwrap_or_default(), say);
+                // Nothing has been written on the line yet, so what stands in
+                // front of this marker is the whitespace that indented it, and
+                // it is held rather than said until the marker says what it was.
+                if self.started {
+                    self.say(delta.get(run..at).unwrap_or_default(), say);
+                } else {
+                    self.indent += delta.get(run..at).map_or(0, str::len);
+                }
                 self.held = Some(Held {
                     mark: character,
                     count: 1,
@@ -509,6 +527,7 @@ impl Markdown {
             // nothing but markers cannot also be emphasis, a bullet, or the
             // start of anything.
             '-' | '*' | '_' if held.opened && held.count >= 3 && next == '\n' => {
+                self.indent = 0;
                 for _ in 0..room {
                     say(Slot::Quiet, self.glyphs.horizontal());
                 }
@@ -524,6 +543,10 @@ impl Markdown {
             // Three or more open a block that outlives the line it is on, or
             // close the one already open.
             '`' if held.count >= 3 => {
+                // A fence's own line goes whole, and the spaces in front of it
+                // are part of that line: an item's block would otherwise open
+                // with the item's indentation stitched to its first row.
+                self.indent = 0;
                 self.inside = if self.inside == Inside::Fence {
                     Inside::Closing
                 } else {
@@ -552,6 +575,7 @@ impl Markdown {
             '>' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block();
                 self.line.quoted = true;
+                self.spend(say);
                 say(Slot::Quiet, self.glyphs.vertical());
                 say(Slot::Quiet, " ");
                 true
@@ -919,6 +943,9 @@ impl Markdown {
             self.say("\\", say);
         }
 
+        // After the settle above, so a fence at the very end of a message has
+        // had its chance to take the spaces in front of it with it.
+        self.spend(say);
         self.pay(say);
 
         if let Some(link) = self.link.take() {
@@ -997,8 +1024,30 @@ impl Markdown {
             return;
         }
 
+        // The line's own order: what indented it, then the mark it owes, then
+        // the words themselves.
+        self.spend(say);
         self.pay(say);
+        self.wears(text, say);
+    }
 
+    /// Hands on the indentation the line opened with, where it kept any.
+    ///
+    /// Called wherever the first thing on a line reaches the terminal, which
+    /// is the moment the marker that could have claimed those spaces has
+    /// either claimed them or gone. See [`Markdown::indent`].
+    fn spend(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        let mut indent = std::mem::take(&mut self.indent);
+        while indent > 0 {
+            let spaces = indent.min(SPACES.len());
+            self.wears(&SPACES[..spaces], say);
+            indent -= spaces;
+        }
+    }
+
+    /// Hands on a run under the slot the line is wearing, or into the block
+    /// being read where one is open.
+    fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
             return;

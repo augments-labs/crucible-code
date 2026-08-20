@@ -411,6 +411,10 @@ Between two backticks nothing else is a marker. `*ptr`, `_private` and
 `**kwargs` arrive on screen as they were written, because the words in a span
 are code and code is full of characters that mean something else in prose.
 
+A block indented under an item is the item's: the spaces in front of its fence
+go with the fence, so the code inside it opens at the item's own column rather
+than at one stitched to the front of its first row.
+
 A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
 item opens with the same small mark, and the spaces that nest one list inside
 another are kept exactly as they were written. A line that opens with `>` gets a

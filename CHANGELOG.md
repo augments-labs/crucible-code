@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A fenced block indented under an item opens where it should.** The spaces in
+front of the fence used to be written into the answer -- stitched to the front
+of the block's first row, and to the item after it. They now go with the fence
+line they were part of.
+
 **Emphasis that runs over a line break is read as one phrase.** A bold or
 leant-on run opened on one line and closed on the next used to lose its opening
 marker and print its closing one into the prose. It now carries across the
