@@ -441,10 +441,15 @@ impl Markdown {
                 // `_borrowed_ from` closes and `_borrowed_from` does not.
                 !next.is_alphanumeric()
             } else {
-                // Opens only where a word is not already under way:
-                // `read_to_string` is a function far more often than it is a
-                // sentence with emphasis in the middle of it.
-                !self.previous.is_alphanumeric() && !next.is_whitespace()
+                // Opens only between two words rather than beside one: a
+                // word must not already be under way, and one has to start
+                // here. `read_to_string` is a function far more often than it
+                // is a sentence with emphasis in the middle of it -- and
+                // `Ok(_)` is a pattern far more often than it is the start of
+                // one, which the whitespace this used to ask about could not
+                // tell apart, since the bracket that closes it is not
+                // whitespace either.
+                !self.previous.is_alphanumeric() && next.is_alphanumeric()
             };
         }
 

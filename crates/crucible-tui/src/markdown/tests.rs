@@ -174,6 +174,22 @@ fn an_underscore_inside_a_word_is_part_of_the_word() {
 }
 
 #[test]
+fn an_underscore_standing_in_for_a_value_is_not_emphasis() {
+    let said = whole("match it { Ok(_) | Err(_) => () }");
+
+    assert_eq!(drawn(&said), "match it { Ok(_) | Err(_) => () }");
+    assert_eq!(slots(&said), vec![Slot::Plain]);
+}
+
+#[test]
+fn an_underscore_a_word_does_not_follow_is_not_emphasis() {
+    let said = whole("let (_, rest) = it.split_at(1);");
+
+    assert_eq!(drawn(&said), "let (_, rest) = it.split_at(1);");
+    assert_eq!(slots(&said), vec![Slot::Plain]);
+}
+
+#[test]
 fn an_underscore_around_a_word_is_emphasis() {
     let said = whole("it is _yours_ now");
 

@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**An underscore standing in for a value keeps it.** `Ok(_) | Err(_)` was drawn
+as `Ok() | Err()`, because a bracket either side of an underscore is not
+whitespace and that was all the rule asked for. Emphasis now opens only where a
+word starts after it.
+
 ### Added
 
 **A table in an answer is drawn as a table.** The bars become one rule between
