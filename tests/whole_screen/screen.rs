@@ -321,24 +321,31 @@ impl Screen {
     /// Acts on one control sequence, or refuses it by name.
     ///
     /// The whole set the renderer promises: move up, set the column, erase
-    /// down, colour, the two that hold a frame until all of it has arrived, and
-    /// the one question crucible asks the terminal at startup.
+    /// down, colour, the two that hold a frame until all of it has arrived, the
+    /// modes crucible borrows from the terminal, and the one question it asks.
     fn act(&mut self, params: &str, ends: char) {
         // Every one of these defaults to one where the parameter is left out.
         let count = params.parse::<usize>().unwrap_or(1);
 
         match (params, ends) {
-            // Colour, the mouse switched on at the prompt and off again, and
-            // the device-attributes question crucible asks once at startup.
-            // None of the three moves the cursor or fills a column: two are
-            // state borrowed from the terminal, and the third is a question.
+            // Colour, the modes crucible borrows from the terminal, and the
+            // device-attributes question it asks once at startup. None of them
+            // moves the cursor or fills a column: the modes are state handed
+            // back by a guard, and the last is a question.
+            //
+            // The modes are the mouse switched on at the prompt, bracketed
+            // paste so a pasted newline is not a submission, and the level of
+            // the newer key encoding that says which modifier was held — that
+            // last one pushed with `>1u` and popped with `<u`, which is a stack
+            // on the terminal rather than a pair of switches.
             //
             // Device attributes is not asked for its own sake. It is what says
             // the answer to the question before it has already arrived, because
             // a terminal replies in the order it was asked — without it, a
             // terminal implementing neither would be waited on for the whole
             // patience rather than answered at once.
-            (_, 'm') | ("?1000" | "?1006", 'h' | 'l') | ("", 'c') => {}
+            (_, 'm') | ("?1000" | "?1006" | "?2004", 'h' | 'l') | (">1" | "<", 'u') | ("", 'c') => {
+            }
             (_, 'A') => self.up(count),
             (_, 'G') => self.park(count),
             ("" | "0", 'J') => self.erase_down(),
