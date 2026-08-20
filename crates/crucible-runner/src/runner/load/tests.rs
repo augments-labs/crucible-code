@@ -97,6 +97,20 @@ fn a_window_already_over_full_reads_as_none_left_rather_than_wrapping() {
 }
 
 #[test]
+fn bytes_become_tokens_at_the_rate_the_last_response_proved() {
+    // Uncalibrated, the pessimistic divisor over-counts — the direction that
+    // keeps less rather than the one that costs the turn.
+    let mut load = Load::default();
+    assert_eq!(load.bytes_to_tokens(3_000), 1_000);
+
+    // Once a response has said what 400 000 bytes carried, the same bytes are
+    // read at that rate instead.
+    load.recorded(&results(400_000));
+    load.carried(Carried::new(100_000));
+    assert_eq!(load.bytes_to_tokens(40_000), 10_000);
+}
+
+#[test]
 fn the_reserve_is_the_answer_and_a_pass_of_tool_results() {
     // 16 000 for the answer, and two tool results at the rate above.
     assert_eq!(reserve(16_000, Some(1_000_000), None), 36_000);

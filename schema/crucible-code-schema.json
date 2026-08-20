@@ -26,7 +26,7 @@
           "type": "integer"
         },
         "keep": {
-          "description": "How many recent turns are kept word for word after the rest becomes a recap",
+          "description": "How many tokens of recent turns are kept word for word after the rest becomes a recap",
           "minimum": 0,
           "type": "integer"
         },
