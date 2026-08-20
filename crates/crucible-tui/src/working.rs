@@ -51,21 +51,7 @@ pub struct Working<'a> {
     /// The key that stops it. `None` where there is nothing left to ask for —
     /// a turn already stopping is not one to offer to stop again.
     pub stops: Option<&'a str>,
-    /// How much of the model's window is left, as a percentage.
-    ///
-    /// Against the far end of the row, where the model's name is on the row
-    /// under the box: two facts about different things, which run together as
-    /// one sentence if they share an end.
-    ///
-    /// `None` is drawn as nothing at all, and means one of two things that come
-    /// to the same: no window is known for this model, or room is being made
-    /// right now and the number that would be shown is the one being replaced.
-    /// Neither is a reading of zero, and neither may look like one.
-    pub left: Option<u8>,
 }
-
-/// At least this much between what the row says and the reading at its end.
-const APART: usize = 2;
 
 impl Working<'_> {
     /// Which beat of the mark's turn `running` falls in.
@@ -122,32 +108,7 @@ impl Working<'_> {
             row.push(Slot::Quiet, said);
         }
 
-        self.reading(&mut row, columns);
-
         row
-    }
-
-    /// Puts how much of the window is left against the end of the row.
-    ///
-    /// Whole or not at all, and only with a gap before it: half a percentage is
-    /// a number, and a number that is not the percentage is worse than no
-    /// reading at all. It gives way before the clock and before the key that
-    /// stops the turn, which are what a narrow window is for.
-    fn reading(&self, row: &mut Row, columns: usize) {
-        let Some(left) = self.left else {
-            return;
-        };
-
-        let said = format!("{left}% window left");
-        let wide = crate::width::columns(&said);
-        let taken = row.columns();
-
-        if taken + APART + wide > columns {
-            return;
-        }
-
-        row.push(Slot::Quiet, " ".repeat(columns - wide - taken));
-        row.push(Slot::Quiet, said);
     }
 
     /// What is said after the word, in `room` columns or not at all.
@@ -232,46 +193,6 @@ fn elapsed(running: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    /// A row saying `word`, with `left` of the window free.
-    fn reading(word: &str, left: Option<u8>, columns: usize) -> String {
-        Working {
-            doing: word,
-            running: Duration::from_secs(12),
-            spent: None,
-            stops: None,
-            left,
-        }
-        .row(columns, Glyphs::Ascii)
-        .text()
-    }
-
-    #[test]
-    fn how_much_of_the_window_is_left_stands_against_the_end_of_the_row() {
-        let row = reading("writing", Some(72), 60);
-
-        assert!(row.contains("72% window left"), "{row}");
-        assert!(row.trim_end().ends_with("72% window left"), "{row}");
-    }
-
-    #[test]
-    fn a_window_nobody_knows_the_size_of_draws_no_reading_at_all() {
-        // Not a zero, and not a guess. Where no window is known there is no
-        // fraction of it to state, and the row is the one it has always been.
-        let row = reading("writing", None, 60);
-
-        assert!(!row.contains('%'), "{row}");
-    }
-
-    #[test]
-    fn the_reading_gives_way_before_the_word_the_row_exists_to_say() {
-        // On a window too narrow for both, what goes is the number: it is back
-        // next second, and the word is what says the stillness is work.
-        let row = reading("writing", Some(72), 14);
-
-        assert!(!row.contains('%'), "{row}");
-        assert!(row.contains("writing"), "{row}");
-    }
-
     use super::*;
 
     /// A turn that has been running for `seconds`, with the key to stop it.
@@ -281,7 +202,6 @@ mod tests {
             running: Duration::from_secs(seconds),
             spent: None,
             stops: Some("esc to interrupt"),
-            left: None,
         }
     }
 

@@ -693,7 +693,6 @@ impl Turning {
             running: self.running(),
             spent: self.spent,
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
-            left: self.left,
         };
 
         // What the call has to clear is taller where the queue panel below is
@@ -743,11 +742,41 @@ impl Turning {
 
         rows.extend(panel_rows);
 
+        // The window left, on a row of its own directly above the box — where it
+        // stands between turns — rather than against the end of the working row,
+        // so the one number that moves while a turn runs sits in the same place
+        // whether the turn is going or not.
+        if let Some(row) = left(self.left, columns) {
+            rows.push(row);
+        }
+
         rows.append(&mut panel);
         rows.push(Row::new());
 
         rows
     }
+}
+
+/// How much of the window is left, right-aligned on a row of its own.
+///
+/// The same row the prompt box draws between turns, so the number sits in the
+/// one place it is looked for whether a turn is running or not. Whole or not at
+/// all, for the reason that row says it: half a percentage is a number that is
+/// not the percentage. Nothing where no window is known, which is not a reading
+/// of zero.
+fn left(left: Option<u8>, columns: usize) -> Option<Row> {
+    let said = format!("{}% window left", left?);
+    let wide = crucible_tui::columns(&said);
+
+    if wide >= columns {
+        return None;
+    }
+
+    Some(
+        Row::new()
+            .then(Slot::Quiet, " ".repeat(columns - wide))
+            .then(Slot::Quiet, said),
+    )
 }
 
 /// The bar under the word while room is being made, or nothing where there is
@@ -1056,6 +1085,37 @@ mod tests {
         });
 
         assert!(said(&turning).contains("↓ 12.8k"), "{:?}", said(&turning));
+    }
+
+    #[test]
+    fn the_window_left_is_a_row_of_its_own_above_the_box_not_on_the_working_row() {
+        // The one number that moves while a turn runs stands where it stands
+        // between turns — its own row, directly over the box — rather than
+        // against the end of the row the word is on.
+        let mut turning = Turning::started();
+        turning.saw(&Event::Carried { left: Some(72) });
+
+        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+        let texts: Vec<String> = rows.iter().map(Row::text).collect();
+
+        let working = texts
+            .iter()
+            .find(|row| row.contains("thinking") || row.contains("writing"))
+            .expect("a working row");
+        assert!(!working.contains('%'), "the working row: {working:?}");
+
+        let own = texts
+            .iter()
+            .find(|row| row.contains("72% window left"))
+            .expect("a window-left row");
+        assert!(
+            own.trim_end().ends_with("72% window left"),
+            "right-aligned on its own row: {own:?}"
+        );
+        assert!(
+            !own.contains("thinking") && !own.contains("writing"),
+            "a row of its own: {own:?}"
+        );
     }
 
     #[test]
