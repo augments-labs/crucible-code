@@ -66,6 +66,7 @@ pub use render::{Caret, Renderer};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use terminal::ground::asked;
+pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, caret, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
 pub use terminal::raw::{Raw, RawError};

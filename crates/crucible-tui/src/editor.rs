@@ -289,36 +289,48 @@ impl Editor {
     /// character. That makes a bulk insertion into the middle linear in the
     /// line plus the inserted text. Control characters are left out for the
     /// reason `insert` leaves them out — drawn, they would move a cursor the
-    /// renderer had already placed — with one exception: a newline, on an
-    /// editor that is many lines, is kept. That is what a paste of several
-    /// lines comes to, and dropping it was what turned such a paste into one
-    /// long line with the breaks gone.
+    /// renderer had already placed — with one exception: a break, on an editor
+    /// that is many lines, is kept. That is what a paste of several lines comes
+    /// to, and dropping it was what turned such a paste into one long line with
+    /// the breaks gone.
+    ///
+    /// A break arrives spelled three ways and is stored one. A terminal spells
+    /// the break inside a paste the way Return spells it — a carriage return,
+    /// not a newline — so the spelling this editor keeps is the one a paste is
+    /// *least* likely to arrive in, and reading only that one is the same bug
+    /// as dropping every break. A clipboard filled on another platform carries
+    /// the pair, which is one break rather than two.
     pub fn paste(&mut self, pasted: &str) -> Typed {
         let multiline = self.multiline;
         let keeps = |character: char| !character.is_control() || (multiline && character == '\n');
 
-        let Some(first_control) = pasted.find(|character: char| !keeps(character)) else {
+        // Nothing to rewrite: every character stands as it is, including a
+        // break already spelled the way this editor stores one.
+        let Some(first_rewritten) = pasted.find(|character: char| !keeps(character)) else {
             return self.insert_text(pasted);
         };
 
         let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
-        let mut kept = 0;
-        for character in pasted.chars().filter(|character| keeps(*character)) {
-            kept += character.len_utf8();
-            if kept > remaining {
+        let mut plain = String::with_capacity(pasted.len().min(remaining));
+        plain.push_str(pasted.get(..first_rewritten).unwrap_or_default());
+
+        let mut after_return = false;
+        for character in pasted.get(first_rewritten..).unwrap_or_default().chars() {
+            let paired = std::mem::replace(&mut after_return, character == '\r');
+
+            let carried = match character {
+                '\n' if paired => continue,
+                '\r' | '\n' if multiline => '\n',
+                kept if keeps(kept) => kept,
+                _ => continue,
+            };
+
+            if plain.len() + carried.len_utf8() > remaining {
                 return Typed::Refused;
             }
+            plain.push(carried);
         }
 
-        let mut plain = String::with_capacity(kept);
-        plain.push_str(pasted.get(..first_control).unwrap_or_default());
-        plain.extend(
-            pasted
-                .get(first_control..)
-                .unwrap_or_default()
-                .chars()
-                .filter(|character| keeps(*character)),
-        );
         self.insert_text(&plain)
     }
 

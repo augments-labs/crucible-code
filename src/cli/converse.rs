@@ -37,7 +37,9 @@ use crucible_core::{
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
-use crucible_tui::{Editor, Key, Pressed, Raw, Renderer, Reporting, Terminal, pressed};
+use crucible_tui::{
+    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Spelling, Terminal, pressed,
+};
 
 use super::draw;
 use super::kept::Kept;
@@ -224,6 +226,22 @@ pub(crate) fn converse<T: Terminal>(
     // at one end or the other, which reads whole lines instead.
     let raw = Raw::enter()?;
     let keys = raw.is_some();
+
+    // Held the same way and for the same length, and asked for unconditionally
+    // rather than from a setting: the older key encoding has no room for the
+    // modifier on Shift+Return, so without this the editor's answer to it is
+    // never reached. A terminal that does not implement the newer spelling
+    // discards the request and loses nothing, which is why there is no
+    // capability to consult — and why there is no query either, since an answer
+    // would arrive in the queue the prompt is about to read keys from.
+    let _spelling = Spelling::distinct()?;
+
+    // And the other half of what the old encoding cannot carry. Pasted text is
+    // just bytes, so every line break in it is the byte Return sends: without
+    // this, pasting three lines into the box sends the first as a turn and
+    // leaves the other two typed into the next prompt. Bracketed, the block
+    // arrives whole and its newlines stay newlines.
+    let _pasting = Pasting::bracketed()?;
 
     // Held beside it and for as long, because a click means something at both
     // ends of a turn: it puts the cursor where the pointer is in the box
