@@ -683,7 +683,7 @@ impl Turning {
         // line of the same thing rather than a second thing beside it — the
         // rule the prompt waiting behind a turn already keeps.
         if let Some(why) = self.making
-            && let Some(row) = making(why, self.part, columns, style)
+            && let Some(row) = making(why, self.part, Working::beat(self.running()), columns, style)
         {
             rows.push(row);
         }
@@ -704,7 +704,13 @@ impl Turning {
 ///
 /// It says why, because the three reasons are three different things to be told
 /// and only one of them is the window having filled.
-fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row> {
+///
+/// It opens with a mark turning on the beat, the same face the word above it
+/// wears, because the two rows are one picture: a compaction draws nothing else
+/// for as long as it runs, and a row that held still through all of it would
+/// read as stuck no matter what it said. The mark is what moves while nothing
+/// has arrived; the bar is what moves once something has.
+fn making(why: Compacting, part: u8, beat: u64, columns: usize, style: Style) -> Option<Row> {
     let glyphs = style.glyphs();
     let gutter = Working::gutter(glyphs);
     let said = match why {
@@ -713,7 +719,7 @@ fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row
         Compacting::Asked | Compacting::Resumed => "you asked for this",
     };
 
-    let row = Row::new().then(Slot::Quiet, " ".repeat(gutter));
+    let row = Row::new().then(Slot::Accent, glyphs.turning(beat)).then(Slot::Quiet, " ");
 
     // The bar where there is room for one and something to draw in it, and the
     // words alone otherwise: what the reader needs is why this is happening,
@@ -721,9 +727,10 @@ fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row
     //
     // Nothing has arrived while `part` is 0, and nothing is what the request is
     // doing — the model is reading a session it has not begun writing down,
-    // which on a full window is seconds. An empty bar held through all of them
-    // is what a reader calls stuck, and it is claiming a length it does not
-    // have; the words claim nothing and say the same thing.
+    // which on a full window is seconds. The turning mark, not an empty bar, is
+    // what fills them: a bar at nothing is claiming a length it does not have,
+    // and the words claim nothing and say the same thing. The bar appears with
+    // the first word of the recap and moves with the ones after it.
     let row = if part > 0 && columns >= gutter + BAR + 8 {
         let full = usize::from(part) * BAR / 100;
         row.then(Slot::Plain, glyphs.filled().repeat(full))
@@ -1002,25 +1009,27 @@ mod tests {
     fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
         // Nothing is measurable until the first word of the recap arrives: the
         // request is out and the model is reading the session it is about to
-        // write down, which on a full window is seconds. A bar at nothing for
-        // all of it is what a reader calls stuck, and the words beside it say
-        // the same thing without claiming a length.
+        // write down, which on a full window is seconds. The turning mark is
+        // what fills them; the bar waits for the first word, because a bar at
+        // nothing is claiming a length it does not have.
         let style = Style::plain();
         let glyphs = style.glyphs();
 
-        let before = making(Compacting::Full, 0, 80, style)
+        let before = making(Compacting::Full, 0, 0, 80, style)
             .expect("a row")
             .text();
 
+        assert!(before.contains(glyphs.turning(0)), "{before:?}");
         assert!(!before.contains(glyphs.hollow()), "{before:?}");
         assert!(before.contains("the window was full"), "{before:?}");
 
-        let under = making(Compacting::Full, 12, 80, style)
+        let under = making(Compacting::Full, 12, 0, 80, style)
             .expect("a row")
             .text();
 
         assert!(under.contains(glyphs.filled()), "{under:?}");
         assert!(under.contains("12%"), "{under:?}");
+        assert!(under.contains(glyphs.turning(0)), "{under:?}");
     }
 
     #[test]
