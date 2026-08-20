@@ -69,6 +69,7 @@ pub(super) fn plain() -> Terms {
         // that are there is proved where they are recorded.
         sessions: unwritten.join("sessions"),
         workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
+        sending: crucible_tui::Sending::default(),
     }
 }
 

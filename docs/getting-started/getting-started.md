@@ -401,6 +401,33 @@ put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taki
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
+A prompt can be more than one line. <kbd>Shift+Enter</kbd> adds a line without
+sending, and the box grows a row for it. Some terminals cannot send that key —
+the encoding they use has no room for the modifier, so they send the same bytes
+for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks each terminal
+for the newer encoding on the way in. Where it declines, <kbd>Alt+Enter</kbd> and
+<kbd>Ctrl+J</kbd> do the same thing and need nothing asked for.
+
+If your terminal keeps all three for itself, swap the two presses over:
+`"input": { "send": "altEnter" }` in your
+[configuration](../configuration/configuration.md) makes <kbd>Enter</kbd> add a
+line and <kbd>Alt+Enter</kbd> send.
+
+Pasting several lines pastes several lines. The breaks arrive as breaks rather
+than as a send at the first one, because crucible asks the terminal to mark where
+a paste begins and ends. A terminal that cannot do that is one where a pasted
+break is indistinguishable from a keypress, and there the paste sends its first
+line.
+
+The edits a shell answers to work in the box as well. <kbd>Ctrl+W</kbd> takes the
+word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
+<kbd>Ctrl+K</kbd> the rest of the line ahead; <kbd>Ctrl+Backspace</kbd> and
+<kbd>Alt+Backspace</kbd> take the word too, for fingers that came from an editor
+rather than a shell. <kbd>Delete</kbd> takes the character in front of the
+cursor, which stays where it is. A word goes on being a word across a break, so
+rubbing one out at the start of a line joins it to the line above — the same as
+<kbd>Backspace</kbd> does.
+
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
 again to leave`, under the mode — and a second press within two seconds takes the
