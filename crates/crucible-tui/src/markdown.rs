@@ -11,9 +11,14 @@
 //! The scan is one character at a time and its state outlives a delta, because a
 //! delta is a piece of the wire rather than a piece of the answer: a marker
 //! arrives split across two of them as often as not. Nothing looks ahead past
-//! the single character that ends a run of markers, and nothing is buffered
-//! waiting for a closing marker that may never come — an answer that stopped
+//! the single character that ends a run of markers — an answer that stopped
 //! mid-sentence has already been drawn up to where it stopped.
+//!
+//! Two things are held back, and both are bounded and both are given up on. A
+//! line inside a fence is held because a highlighter reads whole lines, and a
+//! link's words are held because nothing says they were a link's words until
+//! the `](` after them. Either one that runs past its bound, or past the line
+//! it is on, is handed out as the text it turned out to be.
 
 use crate::color::Slot;
 use crate::syntax::Syntax;
@@ -75,6 +80,43 @@ enum Inside {
     Closing,
 }
 
+/// Which part of a link's shape is arriving.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// Between `[` and the `]` that ends it.
+    #[default]
+    Label,
+    /// Just past the `]`, where only a `(` carries on being a link.
+    Between,
+    /// Between `(` and the `)` that ends it.
+    Target,
+}
+
+/// A link's words and its address, while the shape that decides them is still
+/// arriving.
+///
+/// The one thing here that cannot be handed on as it is read. Nothing says the
+/// words were a link's words until the `](` after them, so they are held until
+/// it arrives -- and put back exactly as they were written where it does not,
+/// which is what leaves `[TODO] fix this` alone.
+#[derive(Debug, Default, Clone)]
+struct Link {
+    part: Part,
+    label: String,
+    target: String,
+}
+
+impl Link {
+    /// Whether there is room for another character.
+    ///
+    /// Bounded for the reason the line of code beside it is: a buffer that
+    /// grows with the answer is the one thing this crate may not have. Past the
+    /// bound the shape stops being a link and is put back as the text it is.
+    fn holds(&self) -> bool {
+        self.label.len().saturating_add(self.target.len()) < MOST
+    }
+}
+
 /// Reads markdown out of a stream of deltas.
 #[derive(Debug, Default)]
 pub struct Markdown {
@@ -97,6 +139,8 @@ pub struct Markdown {
     /// is not open at all — and then a block is drawn exactly as it was before
     /// any of this existed, quiet and whole.
     syntax: Option<Syntax>,
+    /// A link whose shape is still arriving, and the text held back for it.
+    link: Option<Link>,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
     ///
@@ -149,9 +193,27 @@ impl Markdown {
                 None => {}
             }
 
+            // Held text, not a run: a link's words are the one thing here that
+            // cannot be handed on where they stand, so while one is arriving
+            // the run is empty and every character is decided below.
+            if self.link.is_some() {
+                if self.links(character, say) {
+                    run = next;
+                    continue;
+                }
+                // Not a link after all. What was held has gone back into the
+                // stream and this character is ordinary, so it starts the run.
+                run = at;
+            }
+
             if character == '\n' {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.end_line(say);
+                run = next;
+            } else if self.opens_link(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.link = Some(Link::default());
+                self.started = true;
                 run = next;
             } else if self.marks(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -254,9 +316,100 @@ impl Markdown {
         self.line.strong || !next.is_whitespace()
     }
 
+    /// Whether `character` opens a link where the scan stands.
+    ///
+    /// Prose only, and not inside a span of code: a bracket in `` `arr[0]` ``
+    /// is an index somebody wrote, and reading it as a link would take the
+    /// index off the screen.
+    fn opens_link(&self, character: char) -> bool {
+        character == '[' && self.inside == Inside::Prose && !self.line.code
+    }
+
+    /// Reads `character` into the link being held. Answers whether it belonged
+    /// to the link.
+    ///
+    /// `false` says the shape was not a link: what was held has already gone
+    /// back out as the text it turned out to be, and `character` is the
+    /// caller's again.
+    fn links(&mut self, character: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+        let Some(mut link) = self.link.take() else {
+            return false;
+        };
+
+        // A link does not cross a line break. Markdown allows one inside the
+        // brackets; a model that opened a bracket and never closed it is the
+        // case that actually happens, and it costs one line here rather than
+        // the rest of the answer. Past the bound, the same.
+        let carries = character != '\n' && link.holds();
+
+        match (link.part, character) {
+            (Part::Label, ']') if carries => link.part = Part::Between,
+            (Part::Between, '(') if carries => link.part = Part::Target,
+            (Part::Target, ')') if carries => {
+                self.wrote_link(&link, say);
+                return true;
+            }
+            (Part::Label, held) if carries => link.label.push(held),
+            (Part::Target, held) if carries => link.target.push(held),
+            // `[TODO] fix this`, and every other bracket somebody meant.
+            _ => {
+                spill(&link, say);
+                return false;
+            }
+        }
+
+        self.link = Some(link);
+        true
+    }
+
+    /// Hands on a link that arrived whole.
+    ///
+    /// The words wear the link's own slot and the address follows them in
+    /// brackets, quietly. Both, because a terminal is where the address is the
+    /// part that can be acted on -- copied, or clicked by a terminal that finds
+    /// its own links -- and words alone would be a destination the reader
+    /// cannot reach. Neither is ever written as anything but text: an address
+    /// is bytes a model chose, and the rule this file opens with is that none
+    /// of them leaves as an instruction.
+    fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str)) {
+        let target = target(&link.target);
+        let words = if link.label.is_empty() {
+            target
+        } else {
+            &link.label
+        };
+
+        say(Slot::Link, words);
+        self.previous = words.chars().next_back().unwrap_or(')');
+
+        // Said once. A link written `[https://example.com](https://example.com)`
+        // is the address twice, and so is one whose words a model copied out of
+        // it.
+        if !target.is_empty() && target != words {
+            say(Slot::Quiet, " (");
+            say(Slot::Quiet, target);
+            say(Slot::Quiet, ")");
+            self.previous = ')';
+        }
+    }
+
+    /// Puts back whatever a link was holding, where the message ended in the
+    /// middle of one.
+    ///
+    /// The last moment there is: the reader is dropped between messages, and
+    /// text still held when that happens is text the reader never sees.
+    pub fn finish(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        if let Some(link) = self.link.take() {
+            spill(&link, say);
+        }
+    }
+
     /// Ends the line, and with it everything markdown ends at one.
     fn end_line(&mut self, say: &mut dyn FnMut(Slot, &str)) {
         let ended = self.inside;
+        // Belt and braces: the line break puts a link back before it gets here,
+        // and the reset below would drop what one was holding without a sound.
+        self.finish(say);
 
         // The line of code is complete, so this is the moment it can be read.
         self.read_code(say);
@@ -349,6 +502,39 @@ impl Markdown {
             Slot::Plain
         }
     }
+}
+
+/// Writes a link back as the characters it was written with.
+///
+/// Exactly them, in order, so a bracket that was never a link costs the reader
+/// nothing at all.
+fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str)) {
+    say(Slot::Plain, "[");
+    if !link.label.is_empty() {
+        say(Slot::Plain, &link.label);
+    }
+    if link.part != Part::Label {
+        say(Slot::Plain, "]");
+    }
+    if link.part == Part::Target {
+        say(Slot::Plain, "(");
+        if !link.target.is_empty() {
+            say(Slot::Plain, &link.target);
+        }
+    }
+}
+
+/// The address out of what stood between the brackets.
+///
+/// Markdown lets a title follow the address, and lets the address itself be
+/// wrapped in angle brackets. Neither is the destination, and the destination
+/// is the whole of what is worth a reader's columns.
+fn target(between: &str) -> &str {
+    between
+        .split_ascii_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|character| character == '<' || character == '>')
 }
 
 /// The text a run is put back as, where it meant nothing.

@@ -76,6 +76,8 @@ pub enum Slot {
     Strong,
     /// Present but secondary — a hint, a timestamp, a label.
     Quiet,
+    /// The words a link was written under.
+    Link,
     /// The mode that lets a file be written without asking.
     AllowEdits,
     /// The mode that asks about nothing at all.
@@ -507,6 +509,16 @@ impl Slot {
             Self::Accent => tones.accent,
             Self::Strong => tones.strong,
             Self::Quiet => QUIET,
+            // A line under the words, and no colour: underline is what a
+            // terminal has always meant a link by, it survives every rung
+            // unchanged, and the destination is written out beside the words
+            // anyway -- so the emphasis has one job, which is to say where the
+            // words end and the address begins.
+            Self::Link => Ink {
+                exact: "\x1b[4m",
+                indexed: "\x1b[4m",
+                basic: "\x1b[4m",
+            },
             Self::AllowEdits | Self::DoneMark => tones.green,
             Self::FullAccess | Self::DoingMark => tones.amber,
             // Weight and nothing else, at every rung: the reader's own

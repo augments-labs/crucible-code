@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**A link in an answer is read rather than shown as its markers.** The words are
+underlined and the address follows them in brackets, quietly, so a reader can
+copy it or click it in a terminal that finds its own links. A bracket that was
+never a link — an index, a `[TODO]`, one the line ended before it closed — is
+left exactly as it was written.
+
 ## [0.13.2] - 2026-08-20
 
 ### Added

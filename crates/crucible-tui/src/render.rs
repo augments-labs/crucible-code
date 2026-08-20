@@ -380,6 +380,31 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn settle(&mut self) -> Result<(), TerminalError> {
+        // Text held back for a shape that never arrived is text, and this is
+        // the last moment it can be written: the reader below is about to be
+        // dropped, and with it anything it was still holding.
+        let Self {
+            markdown,
+            tail,
+            overflow,
+            palette,
+            ..
+        } = self;
+        let palette = *palette;
+        let mut spilled = false;
+        markdown.finish(&mut |slot, text| {
+            spilled = true;
+            tail.wear(slot, &palette);
+            tail.push(text, overflow);
+        });
+
+        // Only where something was put back, and always to false: what a
+        // reader gives up on is a bracket and the words after it, never a line
+        // break -- a break is what made it give up.
+        if spilled {
+            self.parted = false;
+        }
+
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.

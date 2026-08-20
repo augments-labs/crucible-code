@@ -271,3 +271,97 @@ fn a_block_read_a_character_at_a_time_says_the_same_thing() {
 
     assert_eq!(joined(&apart), joined(&together));
 }
+
+#[test]
+fn a_link_is_its_words_and_the_address_after_them() {
+    let said = whole("see [the guide](https://example.com/guide) for more");
+
+    assert_eq!(
+        drawn(&said),
+        "see the guide (https://example.com/guide) for more"
+    );
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Plain, Slot::Link, Slot::Quiet, Slot::Plain]
+    );
+}
+
+#[test]
+fn a_link_whose_words_are_its_address_says_it_once() {
+    let said = whole("[https://example.com](https://example.com)");
+
+    assert_eq!(drawn(&said), "https://example.com");
+    assert_eq!(slots(&said), vec![Slot::Link]);
+}
+
+#[test]
+fn a_link_with_no_words_is_its_address() {
+    let said = whole("[](https://example.com)");
+
+    assert_eq!(drawn(&said), "https://example.com");
+    assert_eq!(slots(&said), vec![Slot::Link]);
+}
+
+#[test]
+fn the_title_after_an_address_is_not_part_of_it() {
+    let said = whole("[a](<https://example.com> \"The title\")");
+
+    assert_eq!(drawn(&said), "a (https://example.com)");
+}
+
+#[test]
+fn a_bracket_that_was_never_a_link_is_left_exactly_as_it_was() {
+    for written in [
+        "[TODO] fix this",
+        "an array is arr[0] and no more",
+        "[unclosed and then the line ends\n",
+        "[half](and then the line ends\n",
+    ] {
+        assert_eq!(drawn(&whole(written)), written, "{written:?}");
+    }
+}
+
+#[test]
+fn a_bracket_inside_a_span_of_code_is_an_index() {
+    let said = whole("`arr[0](x)` and arr[1](y)");
+
+    assert_eq!(drawn(&said), "arr[0](x) and arr1 (y)");
+}
+
+#[test]
+fn a_link_split_across_deltas_is_still_one_link() {
+    // Every boundary a socket could put in the middle of one, one at a time.
+    let whole_link = "see [the guide](https://example.com) now";
+    for at in 0..whole_link.len() {
+        if !whole_link.is_char_boundary(at) {
+            continue;
+        }
+
+        let mut markdown = Markdown::default();
+        let mut said = read(&mut markdown, &whole_link[..at]);
+        said.extend(read(&mut markdown, &whole_link[at..]));
+        markdown.finish(&mut |slot, text| said.push((slot, text.to_owned())));
+
+        assert_eq!(
+            drawn(&said),
+            "see the guide (https://example.com) now",
+            "split at {at}"
+        );
+    }
+}
+
+#[test]
+fn a_message_that_ended_inside_a_link_keeps_what_it_wrote() {
+    let mut markdown = Markdown::default();
+    let mut said = read(&mut markdown, "see [the guide");
+    markdown.finish(&mut |slot, text| said.push((slot, text.to_owned())));
+
+    assert_eq!(drawn(&said), "see [the guide");
+}
+
+#[test]
+fn a_link_in_a_fenced_block_is_code() {
+    let said = whole("```\n[a](b)\n```\n");
+
+    assert_eq!(drawn(&said), "[a](b)\n");
+}

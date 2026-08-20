@@ -380,6 +380,11 @@ written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
 wrapped plain.
 
+A link is read the same way, and keeps both halves of itself: the words are
+underlined and the address follows them in brackets, quietly, so it can be
+copied — or clicked, in a terminal that finds its own links. A bracket that was
+not a link is left exactly as it was written.
+
 Where there is no colour to read it into, the markers are left where the model
 put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking
 a marker out there would drop the emphasis and put nothing in its place, and
