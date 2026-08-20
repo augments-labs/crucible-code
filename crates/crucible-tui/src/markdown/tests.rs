@@ -574,10 +574,10 @@ fn a_retraction_outranks_the_weight_it_was_written_in() {
 
 #[test]
 fn a_tilde_that_is_not_a_pair_is_left_exactly_where_it_was() {
-    // A home directory, a fence somebody wrote with tildes, and an
-    // approximation. None of them is a retraction and all of them are text.
+    // A home directory and an approximation. Neither is a retraction and both
+    // are text: one tilde is a character somebody wrote, and it takes exactly
+    // two to put a phrase under one.
     assert_eq!(drawn(&whole("look in ~/Projects")), "look in ~/Projects");
-    assert_eq!(drawn(&whole("~~~\ncode\n~~~\n")), "~~~\ncode\n~~~\n");
     assert_eq!(drawn(&whole("about ~40 lines")), "about ~40 lines");
 }
 
@@ -1152,4 +1152,19 @@ fn the_spaces_in_front_of_a_nested_item_stay_where_they_were() {
     let said = ended("- item\n  - nested\n");
 
     assert_eq!(drawn(&said), "· item\n  · nested\n");
+}
+
+#[test]
+fn a_block_fenced_with_tildes_is_a_block() {
+    let said = ended("~~~\nlet a = **1**;\n~~~\n");
+
+    assert_eq!(drawn(&said), "let a = **1**;\n");
+    assert_eq!(slots(&said), vec![Slot::Quiet]);
+}
+
+#[test]
+fn a_block_is_closed_by_the_marker_that_opened_it() {
+    let said = ended("~~~\n```\nstill code\n~~~\n");
+
+    assert_eq!(drawn(&said), "```\nstill code\n");
 }

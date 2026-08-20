@@ -248,6 +248,13 @@ pub struct Markdown {
     indent: usize,
     line: Line,
     inside: Inside,
+    /// The marker the open block was fenced with.
+    ///
+    /// A block is closed by the marker that opened it and by no other, so a
+    /// row of backticks inside a block fenced with tildes is a row of
+    /// backticks. Read only while a block is open, which is the only time it
+    /// has been written.
+    fenced: char,
     /// What the opening fence said the block is written in, while that fence's
     /// own line is still being read.
     language: String,
@@ -460,7 +467,7 @@ impl Markdown {
         match self.inside {
             // Inside a fence the only marker left is the fence that closes it,
             // and only at the start of a line. Code is full of the others.
-            Inside::Fence => character == '`' && !self.started,
+            Inside::Fence => character == self.fenced && !self.started,
             // A fence's own line is dropped whole; nothing on it marks anything.
             Inside::Opening | Inside::Closing => false,
             Inside::Prose => match character {
@@ -542,7 +549,11 @@ impl Markdown {
             }
             // Three or more open a block that outlives the line it is on, or
             // close the one already open.
-            '`' if held.count >= 3 => {
+            // Either marker, because a model reaches for tildes exactly when
+            // the block is full of backticks -- and a block read as prose is
+            // code with its markers taken out of it, which is the worst thing
+            // this reader can do to an answer.
+            '`' | '~' if held.count >= 3 && self.fences(held.mark) => {
                 // A fence's own line goes whole, and the spaces in front of it
                 // are part of that line: an item's block would otherwise open
                 // with the item's indentation stitched to its first row.
@@ -550,6 +561,7 @@ impl Markdown {
                 self.inside = if self.inside == Inside::Fence {
                     Inside::Closing
                 } else {
+                    self.fenced = held.mark;
                     Inside::Opening
                 };
                 false
@@ -582,8 +594,8 @@ impl Markdown {
             }
             // Exactly two, because that is the only run markdown has ever
             // meant a retraction by -- which is also what keeps `~/Projects` a
-            // path and `~~~` the fence somebody wrote: one tilde and three
-            // both fall through and are written back as themselves.
+            // path: one tilde falls through and is written back as itself,
+            // and three are the fence handled above.
             '~' if held.count == 2 && self.strikes(next) => {
                 self.line.emphasis.struck = !self.line.emphasis.struck;
                 false
@@ -615,6 +627,14 @@ impl Markdown {
     /// paragraph an unclosed marker was left open in. See [`Line`].
     fn opens_block(&mut self) {
         self.line.emphasis = Emphasis::default();
+    }
+
+    /// Whether a run of three or more `mark` is this line's fence.
+    ///
+    /// One opens a block wherever a block is not already open, and closes only
+    /// the block its own marker opened. See [`Markdown::fenced`].
+    fn fences(&self, mark: char) -> bool {
+        self.inside != Inside::Fence || self.fenced == mark
     }
 
     /// Whether a run of two tildes followed by `next` turns a retraction on or
@@ -996,6 +1016,7 @@ impl Markdown {
             // over so much as never given up: they are what the terminal can
             // draw, which no line of an answer changes.
             inside,
+            fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
             ..Self::default()

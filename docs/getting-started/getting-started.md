@@ -416,6 +416,10 @@ Between two backticks nothing else is a marker. `*ptr`, `_private` and
 `**kwargs` arrive on screen as they were written, because the words in a span
 are code and code is full of characters that mean something else in prose.
 
+A block is fenced with three backticks or three tildes, and is closed by the
+marker that opened it -- so a block written with tildes can have backticks
+inside it, which is what a model reaches for tildes to do.
+
 A block indented under an item is the item's: the spaces in front of its fence
 go with the fence, so the code inside it opens at the item's own column rather
 than at one stitched to the front of its first row.

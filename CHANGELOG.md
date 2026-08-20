@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A block fenced with tildes is a block.** `~~~` was written into the answer as
+three tildes and everything between them was read as prose, so a block written
+that way lost the markers its code was made of. A block is now closed by the
+marker that opened it, and backticks inside one are backticks.
+
 **A pasted tab keeps its indentation.** A tab was dropped with the rest of what
 a terminal can hide in a paste, so a snippet written with tabs arrived flat --
 in the box and in the prompt that was sent. It now arrives as the four columns
