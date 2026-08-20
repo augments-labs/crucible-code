@@ -6,6 +6,47 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-20
+
+### Added
+
+**The prompt takes many lines, a real paste, and a click that places the
+cursor.** A newline is a character the box grows a row for — inserted with
+Shift+Enter or Alt+Enter, or pasted whole now that bracketed paste keeps a
+block's breaks instead of reading each as a Return. Clicking in the box puts
+the cursor where the pointer was, on the line and column it landed on.
+
+**The prompts waiting behind a turn are a panel, and a line sent mid-turn
+steers it.** Rather than a single `Next:` row, the queue now names what fits
+in a box of its own and counts the rest; Ctrl+Q opens the whole list, where a
+line can be taken back into the editor. A prompt sent while a turn runs is
+worked into that turn at the next exchange — the agent adjusts course instead
+of finishing a plan already moved past — and is still answered as its own turn
+after.
+
+**The list of background commands answers the mouse.** A click on a command's
+row marks it, and a click on the row already marked opens what it has printed.
+
+### Fixed
+
+**A background command that ends mid-turn is announced.** It was reaped and
+counted — the row under the box moved — but the line saying why was dropped.
+The line is now written the moment the beat finds it, the way one that ended
+between turns is. The model is told as it always was, at the top of its next
+turn.
+
+**A compaction that freed room no longer reads as freeing none.** When pruning
+old tool results made room but the recap that followed came out near-neutral,
+the whole compaction was misread as fruitless — and two of those stopped a
+turn for a full window that had room all along. The room is measured before
+anything moves, so a freeing prune counts as the progress it is.
+
+**The window-left reading has a row of its own above the box.** It rode
+against the far end of the row a turn runs on, inside the thinking block
+rather than where it is looked for. Between turns it always stood on its own
+row directly over the box; now it stands there during a turn too, and still
+moves as the turn spends the window down.
+
 ## [0.13.1] - 2026-08-20
 
 ### Fixed
@@ -2173,7 +2214,9 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/augments-labs/crucible-code/compare/v0.13.1...v0.13.2
+[0.13.1]: https://github.com/augments-labs/crucible-code/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/augments-labs/crucible-code/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/augments-labs/crucible-code/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...v0.11.2
