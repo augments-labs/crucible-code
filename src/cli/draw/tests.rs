@@ -18,11 +18,6 @@ fn args() -> usize {
     Style::plain().args(WIDE)
 }
 
-/// How much of a call's output, or of a failure, it shows.
-fn shown() -> usize {
-    Style::plain().output(WIDE)
-}
-
 /// The set every assertion that spells a mark out is written against.
 fn unicode() -> Glyphs {
     Style::plain().glyphs()
@@ -33,8 +28,12 @@ fn unicode() -> Glyphs {
 /// How much the row has no room for is worked out here the way the transcript
 /// works it out, rather than passed in: what a result says about what it left
 /// over is the thing most of these are checking.
-fn hung(output: &ToolOutput, width: usize, glyphs: Glyphs) -> String {
-    finished(output, beyond(output), width, glyphs).text()
+///
+/// Handed a window rather than a room, because that is what the transcript hands
+/// it: how much of a wide one a result may take is the style's answer, and the
+/// row takes its own marks off whatever that leaves.
+fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
+    finished(output, beyond(output), window, style).text()
 }
 
 /// One tool answering with `text`, drawn and held the way a turn does both.
@@ -265,7 +264,7 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
     let output = ToolOutput::ok("one\ntwo\nthree");
 
     assert_eq!(
-        hung(&output, shown(), unicode()),
+        hung(&output, WIDE, Style::plain()),
         "  └ one (+2 lines · ctrl+o to expand)"
     );
 }
@@ -276,7 +275,7 @@ fn a_single_line_of_output_gets_no_count() {
     // row that named it here would send the reader to a view their result is
     // not in.
     assert_eq!(
-        hung(&ToolOutput::ok("done"), shown(), unicode()),
+        hung(&ToolOutput::ok("done"), WIDE, Style::plain()),
         "  └ done"
     );
 }
@@ -287,7 +286,7 @@ fn a_failure_is_marked_as_one() {
     // and the user goes looking for the mistake in the wrong place. The mark
     // goes on the result rather than on the call above it: one thing says a
     // call failed, and it is the row that says what the failure was.
-    let line = hung(&ToolOutput::failed("no such file"), shown(), unicode());
+    let line = hung(&ToolOutput::failed("no such file"), WIDE, Style::plain());
 
     assert!(line.contains('✗'), "{line}");
     assert!(line.starts_with("  └ ✗ "), "{line}");
@@ -301,7 +300,7 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
     // Both sets, because both draw the pair.
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         let mark = columns(glyphs.called());
-        let under = hung(&ToolOutput::ok("done"), shown(), glyphs);
+        let under = hung(&ToolOutput::ok("done"), WIDE, Style::drawn(glyphs));
         let corner = under.find(glyphs.hangs()).unwrap_or_default();
 
         assert_eq!(corner, mark + 1, "{glyphs:?}: {under:?}");
@@ -310,7 +309,7 @@ fn a_result_hangs_off_the_column_the_mark_that_opened_the_call_is_in() {
 
 #[test]
 fn no_output_at_all_is_still_a_line() {
-    assert_eq!(hung(&ToolOutput::ok(""), shown(), unicode()), "  └ ");
+    assert_eq!(hung(&ToolOutput::ok(""), WIDE, Style::plain()), "  └ ");
 }
 
 #[test]
@@ -874,7 +873,7 @@ fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
     let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
 
     assert_eq!(
-        hung(&output, shown(), unicode()),
+        hung(&output, WIDE, Style::plain()),
         "  └ Added 3 lines, removed 3 lines"
     );
 }
@@ -882,7 +881,7 @@ fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
 #[test]
 fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
-    let said = |output| hung(&output, shown(), unicode());
+    let said = |output| hung(&output, WIDE, Style::plain());
 
     assert_eq!(said(one(Change::Added)), "  └ Added 1 line");
     assert_eq!(said(one(Change::Removed)), "  └ Removed 1 line");
@@ -896,7 +895,7 @@ fn a_block_that_stopped_short_says_so_where_the_counts_are() {
     let whole = (1..=Diff::LINES + 4).map(|at| Line::new(at, Change::Added, "line"));
     let output = ToolOutput::ok("wrote it").showing(Diff::new(whole));
 
-    let said = hung(&output, shown(), unicode());
+    let said = hung(&output, WIDE, Style::plain());
 
     assert!(said.contains("Added 68 lines"), "{said}");
     assert!(said.contains("(4 of them not shown)"), "{said}");
@@ -964,7 +963,7 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
     let output = ToolOutput::ok("created one.rs, 0 lines").showing(Diff::new([]));
 
     assert_eq!(
-        hung(&output, shown(), unicode()),
+        hung(&output, WIDE, Style::plain()),
         "  └ created one.rs, 0 lines"
     );
     assert!(block(&Diff::new([]), 40, unicode()).is_empty());

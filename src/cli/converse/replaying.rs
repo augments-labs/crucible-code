@@ -8,30 +8,44 @@
 //!
 //! **It is not a re-run.** No tool is called again, nothing is asked of a
 //! provider, and no file is read. What goes down is what the log recorded, in
-//! the order it recorded it, marked so a reader can tell it from what happens
-//! next.
+//! the order it recorded it.
 //!
-//! **Tool calls are named rather than replayed whole.** What a tool said can be
-//! megabytes, it is already in the transcript the model reads, and a reader
-//! picking a session back up wants to know what was done rather than to read
-//! every line of it again. The prompts and the answers go down in full, because
-//! those are the conversation.
+//! **And it is drawn by the code that drew it the first time.** Every row here
+//! comes out of `draw` and the components under it — the prompt row the box
+//! commits, the call line the footing settles into, the result row, the model's
+//! prose through the same markdown the live path renders it with. A second set
+//! of row builders for the same messages would be a second answer to what a
+//! session looks like, and the two would disagree the first time either was
+//! touched: the theme somebody chose, the mark in front of a prompt, the colour
+//! a tool's name is in. So there is one set, and this walks messages into it.
+//!
+//! What this module adds to the screen is a rule and a heading, saying where the
+//! session picked up stops and this one starts. That is the one thing the
+//! messages cannot say for themselves.
+//!
+//! One thing does not come back, and it is the record's doing rather than this
+//! module's: a diff reaches no log, for the reason `crucible-core` gives beside
+//! the type, so a call that changed a file replays as the result it returned
+//! rather than as the lines it moved.
 
-use crucible_core::{Message, RECAP, StopReason, Transcript};
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_core::{Message, RECAP};
+use crucible_runner::Runner;
+use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
+use crate::cli::draw;
 use crate::cli::style::Style;
-
-/// What stands in front of a line that happened before this run.
-///
-/// One mark, quiet, on the left of the rows that came back — so the point where
-/// the old session stops and this one starts is a thing a reader can see rather
-/// than a thing they have to remember.
-const BEFORE: &str = "│ ";
 
 /// The heading over the lot.
 const OPENED: &str = "picking up where this left off";
+
+/// What stands over the notes a compaction left.
+///
+/// They ride a user message because the closed set of messages has no variant
+/// for them and no provider would know what to do with one — so without a line
+/// saying otherwise they would go down behind the mark a typed line wears,
+/// which would say the user wrote them.
+const NOTES: &str = "notes on everything before this";
 
 /// Puts what a session already said back on the screen.
 ///
@@ -43,165 +57,159 @@ const OPENED: &str = "picking up where this left off";
 /// [`Fatal::Terminal`] if the terminal could not be written to.
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    transcript: &Transcript,
+    runner: &Runner,
     style: Style,
 ) -> Result<(), Fatal> {
-    if transcript.is_empty() {
+    if runner.transcript().is_empty() {
         return Ok(());
     }
 
-    let columns = renderer.columns();
-    let glyphs = style.glyphs();
-
-    // One call with the lot, not one per row: presenting settles what came
-    // before it, so a row at a time would put each line where the last one was
-    // and leave only the final message standing.
-    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
-    let mut shown = vec![rule(), Row::new().then(Slot::Quiet, clip(OPENED, columns))];
-
-    for message in transcript.messages() {
-        shown.extend(rows(message, columns, style));
-    }
-    shown.push(rule());
-
     renderer.commit("")?;
-    renderer.present(&shown, style.palette())?;
+    renderer.present(&opened(renderer.columns(), style), style.palette())?;
+
+    for message in runner.transcript().messages() {
+        said(renderer, runner, message, style)?;
+    }
+
+    // Whatever the last message left live, ended: a session whose last turn was
+    // the model talking leaves a tail in the region the renderer owns, and the
+    // rule below belongs under it rather than over it.
+    renderer.settle()?;
+    renderer.apart()?;
+    renderer.present(&[rule(renderer.columns(), style)], style.palette())?;
     renderer.commit("")?;
 
     Ok(())
 }
 
-/// One message, as the rows that say it happened.
-fn rows(message: &Message, columns: usize, style: Style) -> Vec<Row> {
-    let glyphs = style.glyphs();
-    let room = columns.saturating_sub(BEFORE.chars().count());
+/// The rule and the heading that open it.
+fn opened(columns: usize, style: Style) -> Vec<Row> {
+    vec![
+        rule(columns, style),
+        Row::new().then(Slot::Quiet, clip(OPENED, columns)),
+    ]
+}
+
+/// One rule across the window.
+fn rule(columns: usize, style: Style) -> Row {
+    Row::new().then(Slot::Quiet, style.glyphs().horizontal().repeat(columns))
+}
+
+/// One message, put back the way it went down.
+///
+/// The arms are in the order a turn produces them, which is the order the
+/// transcript holds them in — so walking it hands the renderer the same calls
+/// in the same order the turn did, and the picture is the picture.
+fn said<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &Runner,
+    message: &Message,
+    style: Style,
+) -> Result<(), Fatal> {
+    let columns = renderer.columns();
 
     match message {
-        // The notes a compaction left standing. They ride a user message
-        // because the closed set of messages has no variant for them and no
-        // provider would know what to do with one — but they are the model's
-        // own words, and drawing them behind the mark somebody's typing wears
-        // would say the user wrote them.
+        // The notes a compaction left standing, under a line saying whose words
+        // they are, and through the same door the model's prose goes through —
+        // because that is what they are.
         Message::User(said) if said.starts_with(RECAP) => {
-            let notes = said.strip_prefix(RECAP).unwrap_or(said);
-            let mut rows = vec![
-                Row::new()
-                    .then(Slot::Quiet, BEFORE)
-                    .then(Slot::Quiet, clip("notes on everything before this", room)),
-            ];
-            rows.extend(prose(notes, room, Slot::Quiet));
-            rows
+            renderer.apart()?;
+            renderer.present(
+                &[Row::new().then(Slot::Quiet, clip(NOTES, columns))],
+                style.palette(),
+            )?;
+            renderer.stream(said.strip_prefix(RECAP).unwrap_or(said))?;
+            renderer.settle()?;
         }
 
-        // What was asked, behind the mark the box puts in front of a line being
-        // typed, so a reader finds their own words the way they left them.
-        Message::User(said) => said
-            .lines()
-            .flat_map(|line| {
-                let mark = format!("{} ", glyphs.caret());
-                fold(line, room.saturating_sub(mark.chars().count()))
-                    .into_iter()
-                    .map(|part| {
-                        Row::new()
-                            .then(Slot::Quiet, BEFORE)
-                            .then(Slot::Quiet, mark.clone())
-                            .then(Slot::Plain, part.to_owned())
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect(),
+        // What was asked, in the row the box commits when it is typed: the mark,
+        // the ground behind it, the break at the column rather than at a space.
+        // A reader finds their own words the way they left them.
+        Message::User(said) => draw::queued(renderer, said, style)?,
 
         Message::Agent { text, calls, stop } => {
-            let mut rows = prose(text, room, Slot::Plain);
+            if !text.trim().is_empty() {
+                renderer.apart()?;
+                renderer.stream(text)?;
+            }
 
-            // Named, not replayed: what a tool said is in the transcript the
-            // model reads, and a reader wants what was done.
+            // Settled whether or not anything was said, because what follows is
+            // presented, and presenting over a live region is the one thing the
+            // renderer will not do.
+            renderer.settle()?;
+
+            // The line the footing was drawing while the tool was out, with the
+            // motion gone — which is the line that went to scrollback when it
+            // answered. What the call was about is asked of the tool that owns
+            // the arguments, the same way it was asked the first time.
             for call in calls {
-                rows.push(
-                    Row::new()
-                        .then(Slot::Quiet, BEFORE)
-                        .then(Slot::Accent, glyphs.called())
-                        .then(Slot::Quiet, format!(" {}", clip(&call.name, room))),
-                );
+                draw::returned(renderer, &draw::called(call, &runner.about(call)), style)?;
             }
 
             // An answer that did not end the way the model meant it to is worth
             // the same line here it got the first time: a half answer read back
             // as a whole one is the one thing a transcript may not do.
-            if let Some(said) = stop.and_then(cut) {
-                rows.push(
-                    Row::new()
-                        .then(Slot::Quiet, BEFORE)
-                        .then(Slot::Quiet, clip(said, room)),
-                );
+            if let Some(said) = stop.and_then(draw::notice) {
+                renderer.apart()?;
+                renderer.commit(said)?;
             }
-
-            rows
         }
 
-        // Counted rather than shown, for the reason the module doc gives.
+        // Under the call line above it, which is where a reader asking what a
+        // call did is already looking.
         Message::ToolResults(results) => {
-            let said = match results.len() {
-                1 => "1 result".to_owned(),
-                many => format!("{many} results"),
-            };
-
-            vec![
-                Row::new()
-                    .then(Slot::Quiet, BEFORE)
-                    .then(Slot::Quiet, format!("  {said}")),
-            ]
+            for result in results {
+                renderer.present(
+                    &draw::finished_rows(&result.output, columns, style),
+                    style.palette(),
+                )?;
+            }
         }
     }
-}
 
-/// Prose, wrapped to the room it has.
-///
-/// **Folded, never clipped.** A transcript put back with its right-hand edge
-/// cut off is a transcript somebody has to go and read the log to understand —
-/// which is the whole of what this exists to save them.
-fn prose(text: &str, room: usize, slot: Slot) -> Vec<Row> {
-    text.lines()
-        .flat_map(|line| {
-            // A blank line in the middle of an answer is a paragraph break, and
-            // folding drops it — so it is kept here rather than lost.
-            if line.trim().is_empty() {
-                return vec![Row::new().then(Slot::Quiet, BEFORE)];
-            }
-
-            fold(line, room)
-                .into_iter()
-                .map(|part| {
-                    Row::new()
-                        .then(Slot::Quiet, BEFORE)
-                        .then(slot, part.to_owned())
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-/// What an ending is worth saying about, replayed.
-const fn cut(stop: StopReason) -> Option<&'static str> {
-    match stop {
-        StopReason::Yielded | StopReason::WantsTools => None,
-        StopReason::OutOfTokens => Some("  (cut off at the token ceiling)"),
-        StopReason::WindowExceeded => Some("  (the request did not fit)"),
-        StopReason::Filtered => Some("  (cut short by the provider's filter)"),
-        StopReason::Paused => Some("  (paused, and never carried on)"),
-        StopReason::Cancelled => Some("  (stopped)"),
-        StopReason::Unknown => Some("  (ended for an unknown reason)"),
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{ToolCall, ToolId, ToolOutput, ToolResult};
+    use crucible_core::{
+        Cancel, Effort, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript,
+        Workspace,
+    };
+    use crucible_runner::{Model, Session, Tools};
+    use crucible_tui::{Recording, Renderer};
+
+    use crate::cli::fake::Script;
 
     use super::*;
 
+    /// A runner with the real `read` tool on it, so what a call is about is
+    /// answered by the tool that owns the arguments rather than invented here.
+    fn resumed(transcript: Transcript) -> Runner {
+        let mut offered = Tools::new();
+        offered.add(Box::new(crucible_tools::Read::new(
+            Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace"),
+            Cancel::new(),
+            crucible_tools::Ledger::default(),
+        )));
+
+        Runner::new(
+            Box::new(Script::new(Vec::new())),
+            offered,
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: None,
+                system: None,
+                effort: None::<Effort>,
+            },
+            Session::nowhere(),
+        )
+        .resuming(transcript)
+    }
+
     /// A transcript with one of everything in it.
-    fn said() -> Transcript {
+    fn everything() -> Transcript {
         let mut transcript = Transcript::new();
         transcript.push(Message::User(
             "read the config and tell me what it says".into(),
@@ -211,13 +219,13 @@ mod tests {
             calls: vec![ToolCall {
                 id: ToolId::new("c-1"),
                 name: "read".into(),
-                args: crucible_core::ToolArgs::new("{}"),
+                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
             }],
             stop: Some(StopReason::WantsTools),
         });
         transcript.push(Message::ToolResults(vec![ToolResult {
             id: ToolId::new("c-1"),
-            output: ToolOutput::ok("a very long file, most of which nobody wants again"),
+            output: ToolOutput::ok("theme = midnight\nand nine hundred lines after it"),
         }]));
         transcript.push(Message::Agent {
             text: "It sets the theme and nothing else.".into(),
@@ -227,38 +235,104 @@ mod tests {
         transcript
     }
 
-    #[test]
-    fn a_resumed_session_is_put_back_on_the_screen() {
-        let drawn: Vec<String> = said()
-            .messages()
-            .iter()
-            .flat_map(|message| rows(message, 80, Style::plain()))
-            .map(|row| row.text())
-            .collect();
-        let screen = drawn.join("\n");
-        println!("\n{screen}");
+    /// What the recording put on the screen, a row at a time.
+    ///
+    /// The escape sequences come out, because a row is measured in the columns a
+    /// reader sees and every one of those bytes is none. What is left is split
+    /// where the cursor went back to the first column, which is where one row
+    /// ends and the next begins however the renderer got there — a newline under
+    /// a committed line, a return at the head of a frame.
+    fn rows(written: &str) -> Vec<String> {
+        let mut rows = vec![String::new()];
+        let mut rest = written.chars().peekable();
 
-        // What was asked and what was answered, in full: those are the
-        // conversation, and a reader picking it up is looking for both.
-        assert!(screen.contains("read the config"), "{screen}");
-        assert!(screen.contains("It sets the theme"), "{screen}");
+        while let Some(letter) = rest.next() {
+            match letter {
+                // A control sequence: the bracket, then its parameters, ended by
+                // the first byte in the final range.
+                '\u{1b}' => {
+                    if rest.next_if_eq(&'[').is_some() {
+                        while rest.next().is_some_and(|byte| !matches!(byte, '@'..='~')) {}
+                    }
+                }
+                '\n' | '\r' => rows.push(String::new()),
+                letter => rows.last_mut().expect("a row").push(letter),
+            }
+        }
 
-        // The tool named rather than replayed whole — what it said is already
-        // in what the model reads, and it can be megabytes.
-        assert!(screen.contains("read"), "{screen}");
-        assert!(
-            !screen.contains("most of which nobody wants again"),
-            "{screen}"
-        );
-        assert!(screen.contains("1 result"), "{screen}");
+        rows
+    }
+
+    /// What a terminal `columns` wide is left holding, having replayed it.
+    fn screen(transcript: Transcript, columns: usize) -> String {
+        painted(transcript, columns, Style::plain())
+    }
+
+    /// The same, in `style` — and dressed in it, the way the run dresses the
+    /// renderer once the style is settled. The markers in the model's markdown
+    /// are read or left alone according to that, so a replay judged on a
+    /// renderer nobody told would be judged with the colour switched off.
+    fn painted(transcript: Transcript, columns: usize, style: Style) -> String {
+        let runner = resumed(transcript);
+        let mut renderer = Renderer::new(Recording::new(columns, 24));
+        renderer.wears(style.palette());
+
+        replayed(&mut renderer, &runner, style).expect("a recording cannot fail");
+
+        renderer.terminal().written().to_string()
     }
 
     #[test]
-    fn a_long_answer_is_wrapped_rather_than_cut_off_at_the_edge() {
-        // A transcript put back with its right-hand edge missing is one
-        // somebody has to open the log to understand, which is the whole of
-        // what this exists to save them.
-        let long = "a ".repeat(120);
+    fn a_resumed_session_is_put_back_on_the_screen() {
+        let screen = screen(everything(), 80);
+        println!("\n{screen}");
+
+        // What was asked and what was answered: those are the conversation, and
+        // a reader picking it up is looking for both.
+        assert!(screen.contains("read the config"), "{screen}");
+        assert!(screen.contains("It sets the theme"), "{screen}");
+        assert!(screen.contains(OPENED), "{screen}");
+    }
+
+    #[test]
+    fn a_call_replays_as_the_line_it_was_drawn_as_rather_than_as_its_bare_name() {
+        // Live, a call is the tool's name with what it was about beside it. A
+        // session picked up has to show the same line, or it is a stranger's.
+        let screen = screen(everything(), 80);
+        println!("\n{screen}");
+
+        assert!(
+            screen.contains("Read("),
+            "no arguments on the call: {screen}"
+        );
+        assert!(screen.contains("crucible.json"), "{screen}");
+    }
+
+    #[test]
+    fn a_result_replays_as_the_rows_the_live_path_draws_for_it() {
+        // Held to the live builder itself rather than to words copied out of
+        // it: what this keeps true is that the two agree, and a second list of
+        // expected strings here would be a second thing to keep in step.
+        let output = ToolOutput::ok("theme = midnight\nand nine hundred lines after it");
+        let live = draw::finished_rows(&output, 80, Style::plain());
+        let screen = screen(everything(), 80);
+        println!("\n{screen}");
+
+        for row in live.iter().map(Row::text) {
+            let row = row.trim_end();
+            assert!(!row.is_empty() && screen.contains(row), "missing {row:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_of_a_long_answer_goes_missing_on_the_way_back() {
+        // A transcript put back with its right-hand edge cut off is one somebody
+        // has to open the log to understand, which is the whole of what this
+        // exists to save them.
+        //
+        // Counted a character at a time, because the answer is broken at the
+        // column on its way down and a word count would be counting the breaks.
+        let long = "x".repeat(300);
         let mut transcript = Transcript::new();
         transcript.push(Message::Agent {
             text: long.clone().into(),
@@ -266,25 +340,14 @@ mod tests {
             stop: Some(StopReason::Yielded),
         });
 
-        let drawn: Vec<String> = transcript
-            .messages()
-            .iter()
-            .flat_map(|message| rows(message, 40, Style::plain()))
-            .map(|row| row.text())
-            .collect();
+        let screen = screen(transcript, 40);
 
-        assert!(drawn.len() > 1, "it was cut instead of wrapped: {drawn:?}");
-        for row in &drawn {
-            assert!(crucible_tui::columns(row) <= 40, "{row:?}");
-        }
-
-        // And nothing of it went missing on the way.
-        let back: String = drawn
-            .iter()
-            .map(|row| row.trim_start_matches(['│', ' ']))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(back.split_whitespace().count() >= long.split_whitespace().count());
+        assert!(
+            screen.matches('x').count() >= long.len(),
+            "{} of {} came back",
+            screen.matches('x').count(),
+            long.len()
+        );
     }
 
     #[test]
@@ -297,19 +360,10 @@ mod tests {
             format!("{RECAP}what was decided, and what is left").into(),
         ));
 
-        let drawn: Vec<String> = transcript
-            .messages()
-            .iter()
-            .flat_map(|message| rows(message, 80, Style::plain()))
-            .map(|row| row.text())
-            .collect();
-        let screen = drawn.join("\n");
+        let screen = screen(transcript, 80);
         println!("\n{screen}");
 
-        assert!(
-            screen.contains("notes on everything before this"),
-            "{screen}"
-        );
+        assert!(screen.contains(NOTES), "{screen}");
         assert!(screen.contains("what was decided"), "{screen}");
         assert!(
             !screen.contains('›'),
@@ -328,14 +382,75 @@ mod tests {
             stop: Some(StopReason::OutOfTokens),
         });
 
-        let screen: String = transcript
-            .messages()
-            .iter()
-            .flat_map(|message| rows(message, 80, Style::plain()))
-            .map(|row| row.text())
-            .collect::<Vec<_>>()
-            .join("\n");
+        assert!(screen(transcript, 80).contains("token ceiling"));
+    }
 
-        assert!(screen.contains("token ceiling"), "{screen}");
+    #[test]
+    fn a_resumed_session_comes_back_in_the_colours_it_was_drawn_in() {
+        // The whole of what drawing it through the live builders buys. A
+        // transcript put back in the reader's foreground, or with the theme
+        // they chose taken out of it, is a second answer to what a session
+        // looks like — and the one they are looking at is the one that is
+        // wrong.
+        // Grounded rather than merely coloured: the mark in front of a prompt
+        // and the ground behind it are worked out from the reader's own
+        // background, and a palette that was never told one has nothing to
+        // paint them with.
+        let style = Style::grounded((12, 12, 12));
+        let palette = style.palette();
+        let screen = painted(everything(), 80, style);
+
+        for (slot, text) in [
+            (Slot::PromptMark, style.glyphs().caret()),
+            (Slot::Accent, style.glyphs().called()),
+            (Slot::Strong, "Read"),
+            (Slot::Quiet, "(crucible.json)"),
+        ] {
+            let wanted = format!("{}{text}{}", palette.open(slot), palette.close());
+
+            assert!(screen.contains(&wanted), "{screen:?} is missing {wanted:?}");
+        }
+
+        // And the ground behind what was asked, which is a slot rather than a
+        // word: the band down the side of a prompt is what a reader picks their
+        // own lines out by, and a transcript that came back without it is one
+        // where nothing marks where they were.
+        let ground = palette.open(Slot::Prompt).to_string();
+        assert!(
+            screen.contains(&ground),
+            "nothing behind the prompt: {screen:?}"
+        );
+    }
+
+    #[test]
+    fn the_prose_of_a_resumed_session_is_read_as_the_markdown_it_is() {
+        // Through the same door the live path streams it through, which is
+        // what puts a heading in the weight a heading is drawn in. A transcript
+        // put back as plain text is one where every answer the model formatted
+        // reads as the markers it was formatted with.
+        let style = Style::coloured();
+        let mut transcript = Transcript::new();
+        transcript.push(Message::Agent {
+            text: "# Heading\n\nand a word.".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        });
+
+        let screen = painted(transcript, 80, style);
+
+        assert!(!screen.contains("# Heading"), "the markers are still in it");
+        assert!(screen.contains("Heading"), "{screen:?}");
+    }
+
+    #[test]
+    fn no_row_of_it_is_wider_than_the_terminal_it_was_drawn_for() {
+        // The failure `responsive-components.md` is about: a row past the last
+        // column is one the terminal wraps itself, and every frame after it
+        // rewinds over the wrong number of rows.
+        for columns in [40, 60, 80, 120] {
+            for row in rows(&screen(everything(), columns)) {
+                assert!(crucible_tui::columns(&row) <= columns, "{columns}: {row:?}");
+            }
+        }
     }
 }

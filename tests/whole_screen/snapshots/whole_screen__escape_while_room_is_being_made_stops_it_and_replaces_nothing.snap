@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 18,4 scrolled 16
+|› the first thing                                                               |
+|                                                                                |
+|one answer                                                                      |
+|                                                                                |
+|› the second thing                                                              |
+|                                                                                |
+|two answer                                                                      |
+|                                                                                |
+|› the third thing                                                               |
+|                                                                                |
+|three answer                                                                    |
+|                                                                                |
+|› /compact                                                                      |
+|                                                                                |
+|                                                                                |
+|! stopped                                                                       |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                                                |
+|                                                                                |
+|                                                                                |

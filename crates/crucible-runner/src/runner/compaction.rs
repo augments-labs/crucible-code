@@ -8,15 +8,23 @@
 //! **The turn does not end.** This runs inside the loop, between one request
 //! and the next, and the loop carries on afterwards against a transcript that
 //! now fits. A session that ended its turn to make room would answer the
-//! question the user is still waiting on with a stop.
+//! question the user is still waiting on with a stop. The one turn that does
+//! end here is one somebody stopped, and it ends saying so.
 //!
 //! **The log is not touched.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
 //! drops. The two stop being the same thing here, and that is the point: one is
 //! a working set and the other is the record.
+//!
+//! **A stop replaces nothing.** The transcript is rebuilt once the notes are
+//! whole, so a recap somebody stopped part way through — or one a failed
+//! request never finished — leaves the session exactly as it was. Half a
+//! session's memory is not one, and standing it in place of the messages it
+//! was meant to replace would lose the rest of them for good.
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Post, Request, StopReason, Transcript, TurnError,
+    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, StopReason, Transcript,
+    TurnError,
 };
 
 use super::Runner;
@@ -38,25 +46,31 @@ somebody else, and write nothing before or after it.";
 ///
 /// Notes rather than an essay, and far under what an answer may be: a recap
 /// that ran to the model's whole answer ceiling would be replacing a session
-/// with something nearly as large as the part it replaced. It is also what the
-/// row saying so measures against, which is the other reason it is a figure
-/// this program chooses rather than the model's own.
+/// with something nearly as large as the part it replaced.
 const ROOM: u32 = 4_096;
 
-/// Roughly how many bytes a token comes to.
+/// How far a recap has run when the row that says so reads half done, in bytes.
 ///
-/// Only ever used to turn a length into a fraction for the row that says room
-/// is being made. Nothing decided on it, and deliberately low — a bar that
-/// reaches its end a moment early is better than one that stalls short of it.
-const BYTES: u64 = 3;
+/// The row cannot measure against the ceiling above, because a recap never
+/// approaches it: notes come in at a fraction of the room they are given, so a
+/// fraction of that room is a bar that crawls to a tenth of its length and then
+/// vanishes — which is what a reader watching it called stuck.
+///
+/// Nor can it measure against the end, because nobody knows where the end is
+/// until the model stops. So it measures against how far a recap usually gets:
+/// `len / (len + HALFWAY)`, which moves from the first line, slows as the notes
+/// run long, and never claims to have finished something still arriving. What
+/// finishes it is the notes finishing, and the row goes with them.
+const HALFWAY: u64 = 2_048;
 
 impl Runner {
     /// Makes room, and says what it took.
     ///
-    /// `Ok(None)` where there was nothing worth compacting — a session too
-    /// short to have a middle. The turn carries on either way; what it must not
-    /// do is loop, and a compaction that freed nothing is what the caller
-    /// checks for.
+    /// [`Room::Nothing`] where there was nothing worth compacting — a session
+    /// too short to have a middle — and [`Room::Stopped`] where somebody
+    /// stopped the recap while it was being written. The turn carries on after
+    /// the first; what it must not do is loop, and a compaction that freed
+    /// nothing is what the caller checks for.
     ///
     /// # Errors
     ///
@@ -68,18 +82,20 @@ impl Runner {
         why: Compacting,
         events: &dyn Post,
         cancel: &Cancel,
-    ) -> Result<Option<Compacted>, TurnError> {
+    ) -> Result<Room, TurnError> {
         let kept = self.keeping();
         let Some(replacing) = self.replacing(kept) else {
-            return Ok(None);
+            return Ok(Room::Nothing);
         };
 
         let before = self.load.tokens();
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let recap = self.recap(why, events, cancel)?;
+        let Some(recap) = self.recap(why, events, cancel)? else {
+            return Ok(Room::Stopped);
+        };
         if recap.is_empty() {
-            return Ok(None);
+            return Ok(Room::Nothing);
         }
 
         let tail = self.transcript.len() - replacing;
@@ -119,7 +135,7 @@ impl Runner {
         };
         events.post(crucible_core::Event::Compacted { compacted });
 
-        Ok(Some(compacted))
+        Ok(Room::Made(compacted))
     }
 
     /// How many turns are kept word for word after the recap.
@@ -157,12 +173,16 @@ impl Runner {
     /// The instruction is pushed onto the transcript and taken off again rather
     /// than copied alongside it, because a copy of the transcript is the one
     /// allocation this crate may not make.
+    ///
+    /// `None` where the answer was stopped part way. What has arrived by then
+    /// is notes that break off mid-sentence, and the caller may not stand them
+    /// in place of anything: a stop is somebody saying leave the session alone.
     fn recap(
         &mut self,
         why: Compacting,
         events: &dyn Post,
         cancel: &Cancel,
-    ) -> Result<String, TurnError> {
+    ) -> Result<Option<String>, TurnError> {
         self.transcript.push(Message::User(RECAP.into()));
 
         let asked = self.provider.stream(
@@ -177,15 +197,14 @@ impl Runner {
             cancel,
         );
 
-        // The bytes the notes would run to if they filled the room they were
-        // given. Counted from the text rather than from what the provider says
-        // it has produced: one of them reports that only in its last chunk, so
-        // a bar following it would sit at nothing for the whole request and
-        // then be over — which is what a reader watching it called broken.
-        let full = u64::from(ROOM.min(self.model.max_tokens)).saturating_mul(BYTES) | 1;
+        // Counted from the text rather than from what the provider says it has
+        // produced: one of them reports that only in its last chunk, so a bar
+        // following it would sit at nothing for the whole request and then be
+        // over — which is what a reader watching it called broken.
         let said = asked.map(|mut stream| {
             let mut said = String::new();
             let mut part = 0;
+            let mut stopped = false;
 
             while let Some(delta) = stream.next() {
                 match delta {
@@ -196,21 +215,66 @@ impl Runner {
                         // which for a row redrawn on a beat is the difference
                         // between reporting a hundred times and a hundred
                         // thousand.
-                        let now =
-                            u8::try_from((said.len() as u64 * 100 / full).min(100)).unwrap_or(100);
+                        let now = reached(said.len() as u64);
                         if now != part {
                             part = now;
                             events.post(crucible_core::Event::Compacting { why, part });
                         }
                     }
-                    Ok(Delta::Stopped(StopReason::Cancelled)) | Err(_) => break,
+                    Ok(Delta::Stopped(StopReason::Cancelled)) => {
+                        stopped = true;
+                        break;
+                    }
+                    Err(_) => break,
                     Ok(_) => {}
                 }
             }
-            said
+            (!stopped).then_some(said)
         });
 
         self.transcript.pop();
         Ok(said?)
+    }
+}
+
+/// How far along the notes read, given how far they have run.
+///
+/// A curve rather than a ratio, for the reason [`HALFWAY`] gives: there is no
+/// end to be a fraction of until the model has stopped, and the one number
+/// available is how much has arrived.
+fn reached(bytes: u64) -> u8 {
+    let part = bytes.saturating_mul(100) / bytes.saturating_add(HALFWAY);
+
+    u8::try_from(part).unwrap_or(99)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_row_moves_from_the_first_line_and_never_reads_finished_early() {
+        // The two failures a reader sees: a bar that sits at nothing while the
+        // notes are being written, and one that reads done while they are still
+        // arriving.
+        assert_eq!(reached(0), 0);
+        assert!(reached(120) > 0, "nothing had moved after a line of notes");
+        assert!(reached(HALFWAY * 8) < 100, "it read finished before it was");
+
+        // And it only ever goes one way.
+        let mut before = 0;
+        for bytes in (0..16_384).step_by(97) {
+            let now = reached(bytes);
+            assert!(now >= before, "{bytes}: {now} after {before}");
+            before = now;
+        }
+    }
+
+    #[test]
+    fn a_recap_the_size_recaps_actually_come_in_at_fills_most_of_it() {
+        // Measured against real ones: what these have to stay clear of is the
+        // low corner, where every recap ever written reads as barely started.
+        assert!(reached(1_447) > 25, "{}", reached(1_447));
+        assert!(reached(5_766) > 60, "{}", reached(5_766));
     }
 }

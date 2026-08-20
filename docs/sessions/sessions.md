@@ -146,6 +146,19 @@ can go back and look at.
 `/compact` does the same thing between turns, when you would rather choose the
 moment. A session with nothing behind it says so instead of spending a request.
 
+Nothing is frozen while the notes are being written. The box takes what you type
+throughout, and a line finished there is sent as the next turn once there is
+room. Escape stops the notes, and the session is left exactly as it was:
+
+```text
+! stopped
+```
+
+Half a recap is not a session's memory, and standing it in place of the messages
+it was meant to replace would lose the rest of them for good. So a stop replaces
+nothing, and a turn that was making room for itself ends there rather than
+asking for the notes again.
+
 If a provider refuses a request for want of room — because crucible had the
 window wrong, or was never told it — the same thing happens and the question
 goes back once the session is smaller. A compaction that frees nothing is not
@@ -179,9 +192,11 @@ Nothing is decided for you. The one case where carrying it whole is right — yo
 are about to ask about something said two hours ago — is the case crucible
 cannot see from here.
 
-Escape carries it whole, which is the answer that changes nothing. *Stop asking*
-writes `compaction.askOnResume` down as `0`; set it to a number of tokens
-instead to move the point where the question appears.
+Escape carries it whole, which is the answer that changes nothing — and it means
+the same thing once the notes have started, where it stops them and leaves the
+session as it was. *Stop asking* writes `compaction.askOnResume` down as `0`;
+set it to a number of tokens instead to move the point where the question
+appears.
 
 ## When recording stops
 

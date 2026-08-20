@@ -418,6 +418,16 @@ struct Drawn {
     /// How many pieces the running command had printed, which is what stands in
     /// for the sample's rows.
     printed: u64,
+    /// Why room is being made, where it is, and how far the notes have got.
+    ///
+    /// Both, because both are on the row under the word: one decides whether
+    /// that row is there at all and the other is the length of the bar on it.
+    /// A compaction draws nothing else for as long as it runs, so the something
+    /// else these would otherwise wait for is the clock — a bar that moves in
+    /// steps of a beat, on the one row that is telling the reader anything.
+    making: Option<Compacting>,
+    /// How far the notes have got, as the row reads it.
+    part: u8,
 }
 
 impl Turning {
@@ -582,6 +592,9 @@ impl Turning {
             // that moves whenever they do answers the only question the loop is
             // asking.
             printed: self.printing.changed,
+
+            making: self.making,
+            part: self.part,
         };
         let moved = self.drawn.as_ref() != Some(&now);
 
@@ -702,10 +715,16 @@ fn making(why: Compacting, part: u8, columns: usize, style: Style) -> Option<Row
 
     let row = Row::new().then(Slot::Quiet, " ".repeat(gutter));
 
-    // The bar where there is room for one, and the words alone where there is
-    // not: what the reader needs is why this is happening, and the bar is what
-    // says how far along it is.
-    let row = if columns >= gutter + BAR + 8 {
+    // The bar where there is room for one and something to draw in it, and the
+    // words alone otherwise: what the reader needs is why this is happening,
+    // and the bar is what says how far along it is.
+    //
+    // Nothing has arrived while `part` is 0, and nothing is what the request is
+    // doing — the model is reading a session it has not begun writing down,
+    // which on a full window is seconds. An empty bar held through all of them
+    // is what a reader calls stuck, and it is claiming a length it does not
+    // have; the words claim nothing and say the same thing.
+    let row = if part > 0 && columns >= gutter + BAR + 8 {
         let full = usize::from(part) * BAR / 100;
         row.then(Slot::Plain, glyphs.filled().repeat(full))
             .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
@@ -951,6 +970,57 @@ mod tests {
             spend: Spend::new(1_400),
         });
         assert!(turning.moved(), "the count changed and the row did not");
+    }
+
+    #[test]
+    fn the_bar_moves_on_the_notes_rather_than_on_whatever_else_changes() {
+        // The bar is a segment of the row, so it belongs to the value the loop
+        // keys a redraw on. Left out of it, it reaches the screen only when
+        // something else on the row happens to change with it — and on a
+        // request that draws nothing else for a minute, the something else is
+        // the clock.
+        let mut turning = Turning::started();
+        assert!(turning.moved(), "the first row was never drawn");
+
+        turning.saw(&Event::Compacting {
+            why: Compacting::Asked,
+            part: 0,
+        });
+        assert!(
+            turning.moved(),
+            "room was asked for and the row did not say"
+        );
+
+        turning.saw(&Event::Compacting {
+            why: Compacting::Asked,
+            part: 12,
+        });
+        assert!(turning.moved(), "the bar moved and the row did not");
+    }
+
+    #[test]
+    fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
+        // Nothing is measurable until the first word of the recap arrives: the
+        // request is out and the model is reading the session it is about to
+        // write down, which on a full window is seconds. A bar at nothing for
+        // all of it is what a reader calls stuck, and the words beside it say
+        // the same thing without claiming a length.
+        let style = Style::plain();
+        let glyphs = style.glyphs();
+
+        let before = making(Compacting::Full, 0, 80, style)
+            .expect("a row")
+            .text();
+
+        assert!(!before.contains(glyphs.hollow()), "{before:?}");
+        assert!(before.contains("the window was full"), "{before:?}");
+
+        let under = making(Compacting::Full, 12, 80, style)
+            .expect("a row")
+            .text();
+
+        assert!(under.contains(glyphs.filled()), "{under:?}");
+        assert!(under.contains("12%"), "{under:?}");
     }
 
     #[test]

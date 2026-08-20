@@ -336,3 +336,88 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
 
     insta::assert_snapshot!(window.picture());
 }
+
+#[test]
+fn picking_a_session_up_asks_before_carrying_it_whole() {
+    // The panel in the binary rather than in a component test: it stands where
+    // the box was, and what it says has to be readable against a real screen.
+    let vendor = Vendor::answering("The first thing this session said.");
+    let mut window = Watched::asking_on_resume("resume-asks", 80, 24, &vendor);
+
+    window.types_until("say something\r", "The first thing");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume 1\r", "This session is large");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn choosing_notes_makes_room_and_says_what_it_took() {
+    // Three turns, because a recap stands in place of what is behind the two
+    // this keeps whole: a shorter session has no middle to replace, and the
+    // choice would spend nothing.
+    let vendor = Vendor::answering("Notes on everything that came before.");
+    let mut window = Watched::asking_on_resume("resume-notes", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "Notes on");
+    window.types_until("the second thing\r", "ask mode on");
+    window.types_until("the third thing\r", "ask mode on");
+    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/resume 1\r", "This session is large");
+
+    // Enter takes the first answer, which is the one that spends a request.
+    window.types_until("\r", "compacted");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn escape_while_room_is_being_made_stops_it_and_replaces_nothing() {
+    // Escape, with the notes half written. Two things are owed and neither used
+    // to arrive: a line saying it stopped, and a session left exactly as it was
+    // — half a memory of one, stood in place of the messages it was meant to
+    // replace, loses the rest for good.
+    //
+    // The recap answer is long so the key lands while it is still arriving; the
+    // vendor writes a word every few milliseconds, which is what makes the
+    // middle of a stream somewhere a test can press a key.
+    let notes = "notes to self about everything that has happened so far ".repeat(24);
+    let vendor = Vendor::answering_each(&["one answer", "two answer", "three answer", &notes]);
+    let mut window = Watched::answering("compact-stopped", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "one answer");
+    window.types_until("the second thing\r", "two answer");
+    window.types_until("the third thing\r", "three answer");
+    window.types_and_catches("/compact\r", "compacting");
+    window.types_until("\x1b", "! stopped");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
+    // The box under a compaction is a box, not a picture of one: keys reach it
+    // while the notes are being written, and the line finished there is sent
+    // afterwards — against the session that has just been made smaller, which
+    // is the whole reason it waits rather than going first.
+    let notes = "notes to self about everything that has happened so far ".repeat(24);
+    let vendor = Vendor::answering_each(&[
+        "one answer",
+        "two answer",
+        "three answer",
+        &notes,
+        "the answer to what was queued",
+    ]);
+    let mut window = Watched::answering("compact-typing", 80, 24, &vendor);
+
+    window.types_until("the first thing\r", "one answer");
+    window.types_until("the second thing\r", "two answer");
+    window.types_until("the third thing\r", "three answer");
+
+    // Typed into the box while the row above it still says what is happening.
+    window.types_and_catches("/compact\r", "compacting");
+    window.types_and_catches("what next", "what next");
+    window.types_until("\r", "the answer to what was queued");
+
+    insta::assert_snapshot!(window.picture());
+}

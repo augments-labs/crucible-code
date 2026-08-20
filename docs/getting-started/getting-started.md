@@ -207,10 +207,10 @@ is busy rather than stuck — a screen that has been still for a minute looks th
 same either way. The word says what is being waited on: `thinking` for the
 model, `writing` while prose is arriving, `running` while a tool has not
 answered, `retrying` while a response that went away is being asked for again,
-and `interrupting` once <kbd>Esc</kbd> has been pressed and the turn has not
-stopped yet. The clock counts from the moment the prompt was sent and never
-pauses — not for a permission question, which is time spent waiting just as
-much.
+`compacting` while room is being made, and `interrupting` once <kbd>Esc</kbd>
+has been pressed and the turn has not stopped yet. The clock counts from the
+moment the prompt was sent and never pauses — not for a permission question,
+which is time spent waiting just as much.
 
 `↓` is what the turn has spent so far, counted in the tokens the model has
 produced and added up across every response of the turn. It is written the way
@@ -239,6 +239,27 @@ second line of that row rather than a second thing beside it. On a window too
 short for everything standing over the box, this row goes before the one above
 it does: the prompt is still in the queue and its own turn will say it, and the
 row saying a turn is running is written nowhere else.
+
+While room is being made, a second line under the word says why it is happening
+and how far the notes have got:
+
+```
+✳ compacting (18s · esc to interrupt)
+  ■■■■■■■■■■■□□□□□□□□□□□□□□□□□  39%  the window was full
+```
+
+The reason is one of three — the window filled, the model would not take another
+request this size, or you asked. The bar measures how far the notes have run
+rather than how much is left of them, because nobody knows where they end until
+the model stops, and it appears with the first of them: until then the line is
+the reason alone, since the model is still reading the session it is about to
+write down.
+
+The box under it is a box throughout. What you type reaches it, <kbd>Enter</kbd>
+queues the line, and it is sent as the next turn once there is room — against
+the session that has just been made smaller, which is why it waits rather than
+going first. <kbd>Esc</kbd> stops the notes and leaves the session exactly as it
+was.
 
 Under everything the turn says, and over the box, is the plan — when the agent
 has written one:

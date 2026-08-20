@@ -1193,6 +1193,87 @@ fn keeping_one() -> Compaction {
 }
 
 #[test]
+fn a_recap_stopped_part_way_replaces_nothing() {
+    // Escape, while the notes are being written. What has arrived by then is
+    // half a memory of the session, and standing it in place of the messages it
+    // was meant to replace would lose the rest of them for good — the log still
+    // holds them, but nothing the model is sent ever would again. So a recap
+    // that did not finish makes no room at all.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        // What the recap request is answered with: notes that stop half way
+        // through a word, which is what a stream cut off looks like.
+        vec![
+            Delta::Text("half the not".into()),
+            Delta::Stopped(StopReason::Cancelled),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let before = scripted.runner.transcript().messages().to_vec();
+
+    let made = scripted
+        .runner
+        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .expect("a recap somebody stopped is not a failure");
+
+    assert_eq!(made, Room::Stopped, "a stopped recap made room");
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        before.as_slice(),
+        "a stopped recap changed the transcript"
+    );
+}
+
+#[test]
+fn a_turn_whose_recap_was_stopped_ends_rather_than_asking_again() {
+    // Escape, while a turn was making room for itself. The session is exactly
+    // as it was, and the one thing that must not happen next is the request
+    // going out again: somebody has just said they did not want to pay for it.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        // The provider refuses the second turn for want of room, which is what
+        // sends the loop to make some.
+        vec![Delta::Stopped(StopReason::WindowExceeded)],
+        vec![
+            Delta::Text("half the not".into()),
+            Delta::Stopped(StopReason::Cancelled),
+        ],
+        // Never reached, and that is the assertion: a fourth round here would
+        // be the question going out after the key that stopped it.
+        vec![
+            Delta::Text("asked again".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 10_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+
+    let stop = scripted
+        .turn("go")
+        .expect("a stopped recap is not a failure");
+
+    assert_eq!(stop, StopReason::Cancelled);
+    assert!(
+        !scripted.said().contains("asked again"),
+        "the turn asked again after the recap was stopped"
+    );
+}
+
+#[test]
 fn a_full_window_is_answered_by_making_room_and_the_turn_carries_on() {
     // A first turn to have something behind, then a second whose response says
     // the request carried nearly the whole window. The loop compacts before

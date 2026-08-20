@@ -315,6 +315,19 @@ impl Style {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
     }
+
+    /// And what it uses when the band down the side of a prompt is.
+    ///
+    /// The mark in front of a prompt and the ground behind it are blended off
+    /// the reader's own background rather than read off a theme, so a palette
+    /// never told one paints them with nothing at all. That is the right answer
+    /// on a terminal that announced no background, and no instrument at all for
+    /// a test about the band.
+    pub(crate) fn grounded(background: (u8, u8, u8)) -> Self {
+        Self::resolve(Output::default(), true, Some(background), None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        })
+    }
 }
 
 #[cfg(test)]

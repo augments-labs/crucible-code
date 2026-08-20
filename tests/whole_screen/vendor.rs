@@ -61,6 +61,17 @@ impl Vendor {
         Self::serving(vec![stream(text)])
     }
 
+    /// Starts one that answers each request with the next of `texts`, and
+    /// every request past the last with that last one again.
+    ///
+    /// Several answers of the same kind, which [`Self::calling`] cannot give: a
+    /// case that takes some turns and then makes room needs the answer that
+    /// makes it to run to a different length from the ones before it, because
+    /// what such a case watches is the screen drawn while that length arrives.
+    pub(crate) fn answering_each(texts: &[&str]) -> Self {
+        Self::serving(texts.iter().map(|text| stream(text)).collect())
+    }
+
     /// Starts one whose first answer asks for `tool` with `input`, and whose
     /// second is `text`.
     ///

@@ -2,7 +2,9 @@
 //!
 //! Two small values in core because [`crate::Event`] carries them: the thread
 //! that draws is told room is being made and then what it came to, and neither
-//! of those may name the loop that did it.
+//! of those may name the loop that did it. A third says which of the three
+//! things asking for room can come back with happened, for the same reason: the
+//! screen has a different line for each.
 
 /// What a recap is marked with where it stands in a transcript.
 ///
@@ -45,4 +47,24 @@ pub struct Compacted {
     pub after: u64,
     /// How many turns were kept word for word.
     pub kept: usize,
+}
+
+/// What asking for room came back with.
+///
+/// Three answers rather than an [`Option`], because the two that made no room
+/// made none for opposite reasons and owe the reader different sentences: one
+/// is a session with nothing behind the turns it keeps whole, and the other is
+/// somebody who pressed a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Room {
+    /// It was made, and this is what it took.
+    Made(Compacted),
+    /// There was nothing worth replacing — a session with no middle. Nothing
+    /// was asked of the model and nothing changed.
+    Nothing,
+    /// Somebody stopped the recap while it was being written, so nothing
+    /// changed. Half a session's memory is not one, and standing it in place of
+    /// the messages it was meant to replace would lose the rest for good: the
+    /// log still holds them, and nothing the model is sent ever would again.
+    Stopped,
 }

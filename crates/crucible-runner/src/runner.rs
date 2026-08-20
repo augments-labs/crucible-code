@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crucible_core::{
     Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
-    Provider, ProviderError, Request, Spend, StopReason, Summary, ToolCall, ToolSchema, Transcript,
-    TurnError, TurnId,
+    Provider, ProviderError, Request, Room, Spend, StopReason, Summary, ToolCall, ToolSchema,
+    Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -73,6 +73,24 @@ const FIRST_PAUSE: Duration = Duration::from_millis(250);
 
 /// How long a pause holds before it looks at the cancel again.
 const CANCEL_SLICE: Duration = Duration::from_millis(25);
+
+/// What making room left the turn able to do.
+///
+/// Three answers because the loop does three different things with them, and
+/// the one that used to be missing is the one a reader asked for: a stop is not
+/// a compaction that got nowhere, it is somebody saying leave the session
+/// alone, and a turn that asked again afterwards would be spending a request
+/// they had just refused to pay for.
+enum After {
+    /// Ask again, against a transcript that is smaller or has another go in it.
+    Carry,
+    /// Two goes in a row freed nothing. Each caller reached here for its own
+    /// reason and says so in its own words.
+    Stuck,
+    /// Somebody stopped the recap. The turn ends the way a stopped request
+    /// ends it, and nothing was replaced.
+    Stopped,
+}
 
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
@@ -255,6 +273,23 @@ impl Runner {
     #[must_use]
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
+    }
+
+    /// What a call is about, in the words of the tool that owns its arguments.
+    ///
+    /// The same answer that rides [`Event::ToolRequested`] while a call is out,
+    /// asked for after the fact — a transcript keeps the call and not what was
+    /// said about it, so a session put back on the screen has to ask again. Both
+    /// go through here, because a call that read one way live and another way on
+    /// the way back in is two calls as far as a reader is concerned.
+    ///
+    /// Empty for a name no tool answers to, which is what a call that was
+    /// refused looks like from here.
+    #[must_use]
+    pub fn about(&self, call: &ToolCall) -> Summary {
+        self.tools
+            .find(&call.name)
+            .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args))
     }
 
     /// What the next request would carry, in tokens.
@@ -562,11 +597,12 @@ impl Runner {
             // of the last pass are already in it. Checked at the top of the
             // loop, so it cannot run while a tool call is out, and the turn
             // carries on afterwards rather than ending.
-            if self.compacting.automatic
-                && counting.load.full(counting.window, reserve)
-                && !self.made_room(Compacting::Full, events, cancel, &mut fruitless)?
-            {
-                return Err(TurnError::NoRoom);
+            if self.compacting.automatic && counting.load.full(counting.window, reserve) {
+                match self.made_room(Compacting::Full, events, cancel, &mut fruitless)? {
+                    After::Carry => {}
+                    After::Stuck => return Err(TurnError::NoRoom),
+                    After::Stopped => return Ok(StopReason::Cancelled),
+                }
             }
 
             // The other half of the reactive rail. One vendor says the request
@@ -576,12 +612,15 @@ impl Runner {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
                     if self.compacting.automatic =>
                 {
-                    if self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
-                        continue;
+                    match self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
+                        After::Carry => continue,
+                        After::Stopped => return Ok(StopReason::Cancelled),
+                        After::Stuck => {
+                            return Err(TurnError::Provider(ProviderError::WindowExceeded {
+                                provider,
+                            }));
+                        }
                     }
-                    return Err(TurnError::Provider(ProviderError::WindowExceeded {
-                        provider,
-                    }));
                 }
                 heard => heard?,
             };
@@ -601,10 +640,11 @@ impl Runner {
                 if !self.compacting.automatic {
                     return Ok(said);
                 }
-                if !self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
-                    return Err(TurnError::NoRoom);
+                match self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
+                    After::Carry => continue,
+                    After::Stuck => return Err(TurnError::NoRoom),
+                    After::Stopped => return Ok(StopReason::Cancelled),
                 }
-                continue;
             }
             bounds.heard(&answer);
             let (text, calls) = answer.finish();
@@ -629,14 +669,9 @@ impl Runner {
             for call in &calls {
                 // A name no tool answers to is a call `Work` refuses a moment
                 // later, and it has nothing to say about itself first.
-                let summary = self
-                    .tools
-                    .find(&call.name)
-                    .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args));
-
                 events.post(Event::ToolRequested {
+                    summary: self.about(call),
                     call: call.clone(),
-                    summary,
                 });
             }
 
@@ -680,13 +715,13 @@ impl Runner {
         }
     }
 
-    /// Makes room, and says whether it got anywhere.
+    /// Makes room, and says what the turn may do next.
     ///
-    /// `false` where two goes in a row freed nothing, which is the one way this
-    /// loop could spin without the transcript growing: everything else it does
-    /// either adds to the transcript or ends the turn. The caller decides what
-    /// to say about it, because the two rails reached here for different
-    /// reasons and owe the reader different sentences.
+    /// [`After::Stuck`] where two goes in a row freed nothing, which is the one
+    /// way this loop could spin without the transcript growing: everything else
+    /// it does either adds to the transcript or ends the turn. The caller
+    /// decides what to say about it, because the rails reached here for
+    /// different reasons and owe the reader different sentences.
     ///
     /// # Errors
     ///
@@ -697,13 +732,20 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
         fruitless: &mut u8,
-    ) -> Result<bool, TurnError> {
+    ) -> Result<After, TurnError> {
         match self.compact(why, events, cancel)? {
-            Some(compacted) if compacted.after < compacted.before => *fruitless = 0,
-            _ => *fruitless += 1,
+            // Not counted against the goes this loop is allowed, because it was
+            // not a go: nothing was replaced and nobody is going to ask again.
+            Room::Stopped => return Ok(After::Stopped),
+            Room::Made(compacted) if compacted.after < compacted.before => *fruitless = 0,
+            Room::Made(_) | Room::Nothing => *fruitless += 1,
         }
 
-        Ok(*fruitless < COMPACTIONS_WITHOUT_PROGRESS)
+        Ok(if *fruitless < COMPACTIONS_WITHOUT_PROGRESS {
+            After::Carry
+        } else {
+            After::Stuck
+        })
     }
 
     /// Whether the turn is over, and why — or `None` to run the calls.
