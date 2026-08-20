@@ -48,8 +48,18 @@ use serde_json::Value;
 const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
     ("anthropic", "claude-fable-5", Some("claude-fable-5"), None),
     ("anthropic", "claude-opus-5", Some("claude-opus-5"), None),
-    ("anthropic", "claude-sonnet-5", Some("claude-sonnet-5"), None),
-    ("anthropic", "claude-haiku-4-5", Some("claude-haiku-4-5"), None),
+    (
+        "anthropic",
+        "claude-sonnet-5",
+        Some("claude-sonnet-5"),
+        None,
+    ),
+    (
+        "anthropic",
+        "claude-haiku-4-5",
+        Some("claude-haiku-4-5"),
+        None,
+    ),
     ("moonshot", "k3", Some("kimi-k3"), None),
     // The same model held to a quarter of its window, which the database does
     // not list separately. The divisor is the vendor's stated figure, checked
