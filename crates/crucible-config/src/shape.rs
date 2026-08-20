@@ -250,6 +250,31 @@ const OUTPUT: &[Field] = &[
     },
 ];
 
+/// Every answer `input.send` accepts.
+///
+/// Two, because they are the two that every terminal can tell apart. Return
+/// arrives everywhere; Alt and Return together arrive everywhere as an escape
+/// and a Return, which is a spelling as old as the terminals that still use it.
+/// Control and Return is not on the list and cannot be: nothing distinguishes
+/// it from Return itself unless the terminal has agreed to a newer keyboard
+/// protocol, so offering it would let a reader choose a key their terminal
+/// will never report and leave them unable to send anything at all.
+pub(crate) const SEND: &[&str] = &["enter", "altEnter"];
+
+/// What the keyboard does, for the one press whose answer is not the same
+/// everywhere.
+///
+/// A block rather than a key at the root because the question it settles —
+/// which press ends a prompt and which one opens a line under it — is the
+/// first of a kind, not the only one.
+const INPUT: &[Field] = &[Field {
+    name: "send",
+    about: "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Enter for itself",
+    shape: Shape::Choice(SEND),
+    examples: &[],
+    widens: false,
+}];
+
 /// Every answer `updates.check` accepts.
 pub(crate) const UPDATE_CHECK: &[&str] = &["auto", "never"];
 
@@ -427,6 +452,13 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "env",
         about: "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
         shape: Shape::Named(&VALUE),
+        examples: &[],
+        widens: false,
+    },
+    Field {
+        name: "input",
+        about: "What the keyboard does",
+        shape: Shape::Fields(INPUT),
         examples: &[],
         widens: false,
     },

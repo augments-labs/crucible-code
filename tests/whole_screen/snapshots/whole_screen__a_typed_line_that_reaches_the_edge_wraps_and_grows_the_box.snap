@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 21,65 scrolled 0
-|╭─ crucible v0.13.2 ───────────────────────────────────────────────────────────╮|
+80x24 cursor 21,65 scrolled 1
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
@@ -12,9 +11,10 @@ expression: window.picture()
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
+|│                                  │ · /            opens the command list     │|
+|│                                  │ · shift+enter  adds a line without sendi… │|
+|│                                  │ · shift+tab    steps the permission mode  │|
+|│                                  │ · ctrl+c       clears the line typed so…  │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
