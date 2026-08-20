@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**Two blank rows no longer open where one belongs.** The row separating an
+answer from what comes next was spent again whenever a paragraph break landed
+on the edge of a delta, which for a model writing a word at a time is most of
+them. What decides the row is now the last row written rather than whether the
+piece of the wire that wrote it carried anything.
+
 ## [0.13.2] - 2026-08-20
 
 ### Added
