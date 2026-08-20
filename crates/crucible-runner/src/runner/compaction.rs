@@ -83,8 +83,7 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<Room, TurnError> {
-        let kept = self.keeping();
-        let Some(replacing) = self.replacing(kept) else {
+        let Some(replacing) = self.replacing() else {
             return Ok(Room::Nothing);
         };
 
@@ -98,7 +97,6 @@ impl Runner {
             return Ok(Room::Nothing);
         }
 
-        let tail = self.transcript.len() - replacing;
         let mut messages = std::mem::take(&mut self.transcript).into_messages();
 
         // Drained rather than collected into a second transcript: this is the
@@ -126,46 +124,95 @@ impl Runner {
             self.load.recorded(message);
         }
 
+        // Turns kept whole rather than messages, because that is the shape a
+        // reader thinks in: the recap stands in for the front, and what is left
+        // standing is the last few things they asked for.
+        let kept = self.transcript.turns();
+
         let compacted = Compacted {
             why,
             replaced: replacing,
             before,
             after: self.load.tokens(),
-            kept: tail,
+            kept,
         };
         events.post(crucible_core::Event::Compacted { compacted });
 
         Ok(Room::Made(compacted))
     }
 
-    /// How many turns are kept word for word after the recap.
-    fn keeping(&self) -> usize {
-        self.compacting.keep.max(1)
-    }
-
     /// How many messages from the front the recap stands in place of, or
     /// `None` where there is not enough behind to be worth replacing.
     ///
-    /// Counted back from the end by user prompts, because a turn begins at one:
-    /// keeping a whole number of turns is what stops a recap landing between a
-    /// call and the result that answers it, which no provider will accept.
-    fn replacing(&self, keep: usize) -> Option<usize> {
-        let starts: Vec<usize> = self
-            .transcript
-            .messages()
+    /// Counted back from the end in **estimated tokens**, not in turns: a turn
+    /// can be enormous, so a fixed number of them can be most of the window,
+    /// and the kept tail is the thing that has to fit beside the recap. The
+    /// current turn is always kept, whatever it has cost so far — cutting into
+    /// it would drop work the model is in the middle of. Each turn before it is
+    /// kept while the running byte estimate stays under the budget, and the cut
+    /// lands on a user prompt, which is the boundary that never parts a call
+    /// from the result answering it. That boundary is a rule, not a
+    /// coincidence: a message kind added later that does not open a turn has to
+    /// be counted into the turn it belongs to here, or the cut would land
+    /// between a call and its answer.
+    ///
+    /// The estimate uses the model's own calibrated bytes-per-token where the
+    /// load has one, and the pessimistic uncalibrated rate before any response
+    /// has been seen — the same figure the load is measured by, so a full
+    /// window is judged by the number that decided it was full.
+    fn replacing(&self) -> Option<usize> {
+        let budget = self.compacting.keep_tokens.max(1);
+        let messages = self.transcript.messages();
+
+        // The newest turn is kept whole. Starting one user prompt back from the
+        // end puts the boundary before whatever the model is doing now, and a
+        // session with a single turn has nothing behind it to replace.
+        let mut marks = messages
             .iter()
             .enumerate()
             .filter(|(_, message)| matches!(message, Message::User(_)))
-            .map(|(at, _)| at)
-            .collect();
+            .map(|(at, _)| at);
+        let mut cut = marks.next_back()?;
 
-        // Nothing to do until there is at least one whole turn behind the ones
-        // being kept. Compacting a session that is all tail would spend a
-        // request to replace nothing.
-        let at = starts.len().checked_sub(keep)?;
-        let front = *starts.get(at)?;
+        // Walk the earlier turns newest-first, spending the budget on each.
+        // `cut` only ever moves to a user prompt, so it is always a boundary.
+        let mut tokens = 0_u64;
+        for (at, message) in messages.iter().enumerate().rev() {
+            if at >= cut {
+                continue;
+            }
+            tokens = tokens.saturating_add(self.estimated(message));
+            if matches!(message, Message::User(_)) {
+                if tokens >= budget {
+                    break;
+                }
+                cut = at;
+            }
+        }
 
-        (front > 0).then_some(front)
+        // Nothing to do where the budget swallowed everything behind the
+        // current turn: compacting would spend a request to replace nothing.
+        (cut > 0).then_some(cut)
+    }
+
+    /// What one message is estimated to cost the window, in tokens.
+    ///
+    /// Measured in bytes and converted at the load's own rate, so the tail is
+    /// bounded in the unit the window is bounded in and at the rate the last
+    /// response proved. Before any response has calibrated the rate, the
+    /// pessimistic figure over-counts — which errs toward keeping less, the
+    /// direction that costs context rather than the turn.
+    fn estimated(&self, message: &Message) -> u64 {
+        let bytes = match message {
+            Message::User(said) => said.len(),
+            Message::Agent { text, .. } => text.len(),
+            Message::ToolResults(results) => results
+                .iter()
+                .map(|result| result.output.text().len())
+                .sum::<usize>(),
+        } as u64;
+
+        self.load.bytes_to_tokens(bytes)
     }
 
     /// Asks the model to write down what is worth keeping.

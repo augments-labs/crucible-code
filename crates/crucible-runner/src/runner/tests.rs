@@ -1184,10 +1184,12 @@ fn carrying(carried: u64, id: &str) -> Vec<Delta> {
     ]
 }
 
-/// Compaction settings that keep one turn, so a two-turn session has a middle.
+/// Compaction settings whose budget keeps only the current turn, so a
+/// two-turn session has a middle. At the uncalibrated three bytes to the token,
+/// a one-token budget keeps nothing before it.
 fn keeping_one() -> Compaction {
     Compaction {
-        keep: 1,
+        keep_tokens: 1,
         ..Compaction::default()
     }
 }
@@ -1430,4 +1432,68 @@ fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() 
     scripted.turn("go").expect("a turn");
 
     assert_eq!(scripted.runner.model.window, Some(200_000));
+}
+
+#[test]
+fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
+    // The failure the token bound answers: a turn that is mostly one enormous
+    // tool result, kept whole because it was one of the last two turns. Bounded
+    // in tokens instead, it is replaced — the kept tail is what has to fit the
+    // window beside the recap, and a count of turns never promised that.
+    let big = "x".repeat(6_000);
+    let script = Script::new(vec![
+        saying("small"),
+        calling("a", "read", "{}"),
+        saying("after the big read"),
+        saying("small again"),
+        // The recap request.
+        saying("notes to self"),
+    ]);
+
+    // A ten-token budget. At the uncalibrated three bytes to the token, the six
+    // thousand bytes of the middle turn are about two thousand tokens — far over
+    // it — while the two small turns on either side are a handful.
+    let budget = Compaction {
+        keep_tokens: 10,
+        ..Compaction::default()
+    };
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("read").answering(&big)]),
+        Verdict::Allow,
+    );
+    scripted.runner.compacting = budget;
+
+    scripted.turn("first").expect("a turn");
+    scripted.turn("read the file").expect("a turn");
+    scripted.turn("third").expect("a turn");
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .expect("a recap");
+
+    let standing = scripted.runner.transcript().messages();
+
+    // The big turn is gone: nothing standing still carries its six thousand
+    // bytes. Under a count of turns it would have been the most recent but one
+    // and kept whole.
+    assert!(
+        !standing.iter().any(|message| matches!(message,
+            Message::ToolResults(results)
+                if results.iter().any(|result| result.output.text().len() >= 6_000))
+        ),
+        "the enormous turn was kept whole for being recent"
+    );
+
+    // And the cut still landed on a user prompt: the recap is followed by a
+    // whole turn, so no call is parted from the result that answers it.
+    let recap = standing
+        .iter()
+        .position(|message| matches!(message, Message::User(said) if said.contains("notes to self")))
+        .expect("the recap is standing");
+    assert!(
+        matches!(standing.get(recap + 1), Some(Message::User(_))),
+        "what follows the recap does not open a turn"
+    );
 }

@@ -136,18 +136,24 @@ What happens when the model's window fills up. See
 | --- | --- |
 | `when` | `full` to make room when there is none left, or `never`. |
 | `reserve` | Tokens kept free for the next answer and the tools it calls. |
-| `keep` | How many recent turns are kept word for word after the rest becomes a recap. |
+| `keep` | How many tokens of recent turns are kept word for word after the rest becomes a recap. |
 | `askOnResume` | How large a session must be, in tokens, before picking it up asks about it. |
 | `spendCeiling` | The most tokens one turn may produce before crucible stops it. |
 
 ```json
-{ "compaction": { "when": "full", "keep": 4 } }
+{ "compaction": { "when": "full", "keep": 40000 } }
 ```
 
 Left alone, crucible makes room when it has to and stops a turn for nothing
 else. `never` does not disable `/compact` — that is you asking rather than
 crucible deciding — it means a turn that runs out of room fails instead of
 recovering.
+
+`keep` is in tokens rather than turns because a turn can be enormous: the kept
+tail has to fit the window beside the recap, and only a figure in the window's
+own unit can promise that. The turn you are in is always kept whole, whatever
+it has cost so far; the budget bounds the turns before it. Left unset, crucible
+keeps the most recent 20,000 tokens.
 
 `reserve` is worked out from the model if you do not set it: enough for one
 answer of the length crucible asks for, plus the tool results a pass carries
