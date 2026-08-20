@@ -154,6 +154,11 @@ next row rather than scrolling sideways — so the box grows downwards as you
 write. It stops at about half the window; past that the line scrolls under the
 top edge and what you are writing stays in view.
 
+Text pasted into the box keeps its shape. A tab arrives as the four columns it
+stood for, so a snippet written with tabs is still indented -- on screen and in
+the prompt that is sent. Anything else a terminal can hide in a paste is left
+out, since drawn it would move a cursor this process had already placed.
+
 The row under the box has two ends. On the left is the permission mode and the
 key that steps it; on the right is which model the next turn goes to, whose it
 is, and how hard it is being asked to think — written the way `--model` takes it

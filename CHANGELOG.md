@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A pasted tab keeps its indentation.** A tab was dropped with the rest of what
+a terminal can hide in a paste, so a snippet written with tabs arrived flat --
+in the box and in the prompt that was sent. It now arrives as the four columns
+it stood for.
+
 **A fenced block indented under an item opens where it should.** The spaces in
 front of the fence used to be written into the answer -- stitched to the front
 of the block's first row, and to the item after it. They now go with the fence

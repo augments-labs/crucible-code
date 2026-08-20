@@ -27,6 +27,15 @@
 
 use crate::width;
 
+/// What a pasted tab arrives as.
+///
+/// A tab cannot be kept as itself: drawn, the terminal moves the cursor to a
+/// stop of its own choosing and every row this process counted after it is
+/// wrong. Dropped, which is what happened before, a snippet written with tabs
+/// arrives with its indentation gone -- out of the box, and out of the prompt
+/// that is sent. Four columns is what one level of it reads as in a box.
+const TAB: &str = "    ";
+
 /// A key, as an editor cares about it.
 ///
 /// A closed set: the reader turns whatever a terminal sent into one of these,
@@ -289,10 +298,11 @@ impl Editor {
     /// character. That makes a bulk insertion into the middle linear in the
     /// line plus the inserted text. Control characters are left out for the
     /// reason `insert` leaves them out — drawn, they would move a cursor the
-    /// renderer had already placed — with one exception: a newline, on an
-    /// editor that is many lines, is kept. That is what a paste of several
-    /// lines comes to, and dropping it was what turned such a paste into one
-    /// long line with the breaks gone.
+    /// renderer had already placed — with two exceptions: a newline, on an
+    /// editor that is many lines, is kept, and a tab arrives as [`TAB`].
+    /// Dropping the first turned a paste of several lines into one long line
+    /// with the breaks gone; dropping the second took the indentation off
+    /// every snippet written with tabs.
     pub fn paste(&mut self, pasted: &str) -> Typed {
         let multiline = self.multiline;
         let keeps = |character: char| !character.is_control() || (multiline && character == '\n');
@@ -301,10 +311,16 @@ impl Editor {
             return self.insert_text(pasted);
         };
 
+        let width = |character: char| match character {
+            '\t' => TAB.len(),
+            character if keeps(character) => character.len_utf8(),
+            _ => 0,
+        };
+
         let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
         let mut kept = 0;
-        for character in pasted.chars().filter(|character| keeps(*character)) {
-            kept += character.len_utf8();
+        for character in pasted.chars() {
+            kept += width(character);
             if kept > remaining {
                 return Typed::Refused;
             }
@@ -312,13 +328,13 @@ impl Editor {
 
         let mut plain = String::with_capacity(kept);
         plain.push_str(pasted.get(..first_control).unwrap_or_default());
-        plain.extend(
-            pasted
-                .get(first_control..)
-                .unwrap_or_default()
-                .chars()
-                .filter(|character| keeps(*character)),
-        );
+        for character in pasted.get(first_control..).unwrap_or_default().chars() {
+            match character {
+                '\t' => plain.push_str(TAB),
+                character if keeps(character) => plain.push(character),
+                _ => {}
+            }
+        }
         self.insert_text(&plain)
     }
 
