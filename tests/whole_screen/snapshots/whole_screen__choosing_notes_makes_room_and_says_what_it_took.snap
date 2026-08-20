@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 14,4 scrolled 49
+80x24 cursor 14,4 scrolled 50
 |                                                                                |
 |› the third thing                                                               |
 |                                                                                |

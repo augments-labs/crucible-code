@@ -118,6 +118,12 @@ pub struct Renderer<T: Terminal> {
     /// blank is owed is the thing that knows what was last written. True to
     /// start with, because the top of a session is already a boundary and a
     /// transcript that opens on an empty row has spent one for nothing.
+    ///
+    /// A committed line and a presented row each say for themselves. Streamed
+    /// output cannot: a delta is a piece of the wire, so whether the answer has
+    /// just ended a paragraph is a question about the rows the tail has written
+    /// and not about the bytes that happened to arrive together. [`Tail::parted`]
+    /// is what answers it.
     parted: bool,
 }
 
@@ -183,16 +189,13 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn stream(&mut self, delta: &str) -> Result<(), TerminalError> {
-        if !delta.trim().is_empty() {
-            self.parted = false;
-        }
-
         // Nowhere to put a slot is nowhere to put a marker either. A redirected
         // run, `NO_COLOR`, `--color never`: the answer arrives as the model
         // wrote it, which is markdown, and a file of markdown is worth more
         // than a file it has been taken out of.
         if !self.palette.writes_color() {
             self.tail.push(delta, &mut self.overflow);
+            self.parted = self.tail.parted();
             return self.draw();
         }
 
@@ -210,6 +213,7 @@ impl<T: Terminal> Renderer<T> {
             tail.push(text, overflow);
         });
 
+        self.parted = self.tail.parted();
         self.draw()
     }
 
