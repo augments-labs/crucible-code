@@ -12,7 +12,7 @@
 //! is allowed to shrug, because the alternative is a transcript row that
 //! reports an error the next row reports properly.
 
-use crucible_core::{Summary, ToolArgs};
+use crucible_core::{Remembered, Summary, ToolArgs};
 
 use crate::args::Args;
 
@@ -27,6 +27,33 @@ pub(crate) fn field(tool: &'static str, args: &ToolArgs, field: &str) -> Summary
         .and_then(|args| args.optional_text(field).ok().flatten().map(str::to_owned));
 
     Summary::new(said.unwrap_or_default())
+}
+
+/// The path a file tool's call names, volunteered for a compaction to track.
+///
+/// Read off the same field [`field`] reads, for the same reason: the tool is the
+/// only code that knows which argument is the path. `modified` is whether the
+/// call changes the file rather than only opens it. A call whose arguments do
+/// not hold up names nothing — it is refused a moment later, and a compaction
+/// that tracked it would be remembering something that never happened.
+pub(crate) fn remembered(
+    tool: &'static str,
+    args: &ToolArgs,
+    modified: bool,
+) -> Option<Remembered> {
+    let path = Args::parse(tool, args)
+        .ok()
+        .and_then(|args| args.optional_text("path").ok().flatten().map(str::to_owned))?;
+
+    if path.is_empty() {
+        return None;
+    }
+
+    Some(if modified {
+        Remembered::modified(path)
+    } else {
+        Remembered::read(path)
+    })
 }
 
 #[cfg(test)]
