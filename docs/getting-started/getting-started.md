@@ -381,6 +381,16 @@ written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
 wrapped plain.
 
+A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
+item opens with the same small mark, and the spaces that nest one list inside
+another are kept exactly as they were written. A line that opens with `>` gets a
+bar down its left and goes quiet for its length, because the words are somebody
+else's. Both marks come out of the same set as every border on screen, so
+`"output": { "glyphs": "ascii" }` changes them along with everything else.
+
+A dash is only a bullet at the start of a line with a space after it. `5 - 3`,
+`--colour never` and `a -> b` are left exactly where they were.
+
 A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was

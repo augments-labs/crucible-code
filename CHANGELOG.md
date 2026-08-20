@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+**A list and a quote are read out of an answer rather than shown as their
+markers.** Every bullet opens with the same mark whichever of `-`, `*` or `+`
+the model wrote, nesting is kept, and a quoted line gets a bar down its left and
+goes quiet. Both marks come out of the set `output.glyphs` names.
+
 **One marker is emphasis and two are weight, rather than both being weight.**
 `*leant on*` is now slanted and `**loud**` stays raised, which is what markdown
 has always meant by them and what a model writes expecting to be read that way.

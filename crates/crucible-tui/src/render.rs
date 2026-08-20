@@ -12,6 +12,7 @@
 //! [`frame`]; this module decides when a frame happens.
 
 use crate::color::Palette;
+use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -99,6 +100,13 @@ pub struct Renderer<T: Terminal> {
     /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
     /// renderer nobody told showing the answer exactly as it arrived.
     palette: Palette,
+    /// Which characters the scan above draws a bullet and a quote bar with.
+    ///
+    /// Held beside the palette and settled the same way: a marker that is read
+    /// out of an answer has to be replaced by something the reader's font
+    /// actually has, and what that is is a fact about the terminal rather than
+    /// about the answer. Unicode until [`Renderer::draws`] says otherwise.
+    glyphs: Glyphs,
     /// How many rows the record has grown by this session.
     ///
     /// Never read for its own sake — what it is for is the difference between
@@ -151,6 +159,7 @@ impl<T: Terminal> Renderer<T> {
             footed: None,
             markdown: Markdown::default(),
             palette: Palette::plain(),
+            glyphs: Glyphs::default(),
             record: 0,
             parted: true,
         }
@@ -165,6 +174,18 @@ impl<T: Terminal> Renderer<T> {
     /// there would take the emphasis away and put nothing in its place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
+    }
+
+    /// Tells this renderer which characters it may draw with.
+    ///
+    /// Said once, at startup, beside [`Renderer::wears`] and for the same
+    /// reason: which set a font has is settled before the first frame and no
+    /// command changes it. It reaches the transcript through the markdown
+    /// reader, which is the one thing here that puts a character of its own in
+    /// place of one the model wrote.
+    pub fn draws(&mut self, glyphs: Glyphs) {
+        self.glyphs = glyphs;
+        self.markdown = Markdown::new(glyphs);
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -408,7 +429,7 @@ impl<T: Terminal> Renderer<T> {
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
-        self.markdown = Markdown::default();
+        self.markdown = Markdown::new(self.glyphs);
 
         if !self.terminal.is_terminal() {
             return self.settle_plain();

@@ -149,10 +149,15 @@ fn one_backtick_inside_a_fence_is_a_backtick() {
 
 #[test]
 fn a_bullet_stays_a_bullet_rather_than_opening_emphasis() {
+    // The star that opens a list and the star that opens a phrase are the same
+    // character; the space after it is the whole of the difference.
     let said = whole("* first\n* second\n");
 
-    assert_eq!(drawn(&said), "* first\n* second\n");
-    assert_eq!(slots(&said), vec![Slot::Plain]);
+    assert_eq!(drawn(&said), "· first\n· second\n");
+    assert_eq!(
+        slots(&said),
+        vec![Slot::Quiet, Slot::Plain, Slot::Quiet, Slot::Plain]
+    );
 }
 
 #[test]
@@ -392,4 +397,127 @@ fn a_link_in_a_fenced_block_is_code() {
     let said = whole("```\n[a](b)\n```\n");
 
     assert_eq!(drawn(&said), "[a](b)\n");
+}
+
+#[test]
+fn every_spelling_of_a_bullet_is_drawn_as_one_mark() {
+    // A model writes all three and means the same thing by each. A reader
+    // meets one list, so one mark.
+    let said = whole("- dash\n* star\n+ plus\n");
+
+    assert_eq!(drawn(&said), "· dash\n· star\n· plus\n");
+}
+
+#[test]
+fn a_bullet_keeps_the_indentation_that_nests_it() {
+    // The spaces before the marker are the whole of what says a list is inside
+    // another one, and they arrive before anything is decided about the line.
+    let said = whole("- one\n  - under it\n    - under that\n");
+
+    assert_eq!(drawn(&said), "· one\n  · under it\n    · under that\n");
+}
+
+#[test]
+fn the_mark_is_quiet_and_the_item_is_not() {
+    // The words are what somebody is reading; the mark is what tells them
+    // where one item stops.
+    let said = whole("- an item\n");
+
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn a_dash_that_is_not_a_bullet_is_left_exactly_where_it_was() {
+    // Only at the start of a line, and only with a space after it. Everything
+    // else is arithmetic, a flag, or a word somebody hyphenated.
+    for prose in ["5 - 3 = 2", "pass --colour never", "-–—", "-no space"] {
+        assert_eq!(drawn(&whole(prose)), prose, "{prose:?}");
+    }
+}
+
+#[test]
+fn a_star_at_the_start_of_a_line_is_still_emphasis_where_it_opens_one() {
+    // The two are told apart by the space: `* item` is a list and `*word*` is
+    // a phrase, wherever on the line either of them starts.
+    let said = whole("*loud* at the start\n");
+
+    assert_eq!(drawn(&said), "loud at the start\n");
+    assert_eq!(slots(&said), vec![Slot::Emphasis, Slot::Plain]);
+}
+
+#[test]
+fn a_quote_is_a_bar_and_the_words_beside_it() {
+    let said = whole("> somebody else said this\n");
+
+    assert_eq!(drawn(&said), "│ somebody else said this\n");
+    // The break itself is written after the line's state is dropped, so that no
+    // row carries a slot into the one below it.
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn a_quote_ends_where_the_line_does() {
+    // Like every other thing this reader opens: a model that quoted one line
+    // has not put the rest of the answer in somebody else's mouth.
+    let said = whole("> quoted\nplain again\n");
+
+    assert_eq!(drawn(&said), "│ quoted\nplain again\n");
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn a_greater_than_sign_in_the_middle_of_a_line_is_a_greater_than_sign() {
+    for prose in ["if a > b", "a -> b", ">no space"] {
+        assert_eq!(drawn(&whole(prose)), prose, "{prose:?}");
+    }
+}
+
+#[test]
+fn a_bullet_split_across_two_deltas_is_still_one_bullet() {
+    // Which is how it arrives: a marker and the space after it land either
+    // side of a delta boundary as often as not.
+    let mut markdown = Markdown::default();
+
+    let opened = read(&mut markdown, "-");
+    let rest = read(&mut markdown, " an item");
+
+    assert_eq!(drawn(&opened), "");
+    assert_eq!(drawn(&rest), "· an item");
+}
+
+#[test]
+fn nothing_inside_a_fence_is_read_as_a_bullet_or_a_quote() {
+    // A block of code is full of both, and neither means anything there.
+    let said = whole("```sh\n- not a bullet\n> not a quote\n```\n");
+
+    assert!(
+        drawn(&said).contains("- not a bullet"),
+        "{:?}",
+        drawn(&said)
+    );
+    assert!(drawn(&said).contains("> not a quote"), "{:?}", drawn(&said));
+}
+
+#[test]
+fn the_marks_come_out_of_the_set_the_terminal_can_draw() {
+    // A font without the box-drawing characters has neither of these, and a
+    // bullet that arrives as a hollow square is worse than the dash it
+    // replaced.
+    let said = read(&mut Markdown::new(Glyphs::Ascii), "- item\n> quoted\n");
+
+    assert_eq!(drawn(&said), "- item\n| quoted\n");
+}
+
+#[test]
+fn a_mark_costs_the_line_the_columns_the_marker_would_have() {
+    // Two columns either way, in both sets. A mark that cost a third would
+    // push every nested list one column right of where the model put it.
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let said = read(&mut Markdown::new(glyphs), "- item");
+        assert_eq!(
+            unicode_width::UnicodeWidthStr::width(drawn(&said).as_str()),
+            "- item".len(),
+            "{glyphs:?}"
+        );
+    }
 }

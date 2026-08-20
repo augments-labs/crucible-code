@@ -739,6 +739,11 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // markers in the model's markdown are read or left where they are.
     renderer.wears(terms.style().palette());
 
+    // And beside it, for the marker the reader above drops rather than reads:
+    // a bullet and a quote bar are drawn out of the same set as every border
+    // and mark on screen, so a font missing one is missing all of them.
+    renderer.draws(terms.style().glyphs());
+
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
     // component says how many rows it can use, and the scan reads names to

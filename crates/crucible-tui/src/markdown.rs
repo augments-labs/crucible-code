@@ -21,6 +21,7 @@
 //! it is on, is handed out as the text it turned out to be.
 
 use crate::color::Slot;
+use crate::glyphs::Glyphs;
 use crate::syntax::Syntax;
 
 /// The longest run of one marker character read as a marker.
@@ -39,6 +40,9 @@ const HASHES: &str = "######";
 const STARS: &str = "******";
 const SCORES: &str = "______";
 const TICKS: &str = "``````";
+const DASHES: &str = "------";
+const PLUSES: &str = "++++++";
+const ANGLES: &str = ">>>>>>";
 
 /// A run of one marker character, waiting for the character that says what it
 /// was.
@@ -46,6 +50,13 @@ const TICKS: &str = "``````";
 struct Held {
     mark: char,
     count: usize,
+    /// Whether the run began before anything else on the line.
+    ///
+    /// Kept on the run rather than read when it settles, because settling is
+    /// what makes the line started: by then every run looks like one in the
+    /// middle of a line. It is what tells `* item` from `a *word*`, and it is
+    /// the whole of what makes a bullet a bullet.
+    opened: bool,
 }
 
 /// What is open on the line being read.
@@ -58,6 +69,9 @@ struct Held {
 struct Line {
     heading: bool,
     code: bool,
+    /// Whether the line opened with a quote mark, so the rest of it is
+    /// somebody else's words.
+    quoted: bool,
     emphasis: Emphasis,
 }
 
@@ -163,6 +177,14 @@ pub struct Markdown {
     /// rest of it follows plain, because a buffer that grows with the answer is
     /// the one thing this crate may not have.
     code: String,
+    /// Which characters a bullet and a quote bar are drawn with.
+    ///
+    /// The one thing here that is a setting rather than a piece of the scan,
+    /// and it is here because a marker that is dropped has to be replaced by
+    /// something a font actually has. Carried across the reset at the end of
+    /// every line, since it is a fact about the terminal rather than about the
+    /// answer.
+    glyphs: Glyphs,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -173,6 +195,15 @@ pub struct Markdown {
 const MOST: usize = 4096;
 
 impl Markdown {
+    /// A reader drawing its bullets and quote bars with `glyphs`.
+    #[must_use]
+    pub fn new(glyphs: Glyphs) -> Self {
+        Self {
+            glyphs,
+            ..Self::default()
+        }
+    }
+
     /// Reads `delta`, handing each run of text to `say` under its slot.
     ///
     /// Runs rather than characters: the text between two markers is one call,
@@ -233,6 +264,7 @@ impl Markdown {
                 self.held = Some(Held {
                     mark: character,
                     count: 1,
+                    opened: !self.started,
                 });
                 run = next;
             } else if matches!(self.inside, Inside::Opening | Inside::Closing) {
@@ -263,7 +295,10 @@ impl Markdown {
             Inside::Opening | Inside::Closing => false,
             Inside::Prose => match character {
                 '*' | '_' | '`' => true,
-                '#' => !self.started,
+                // Only where nothing else has been written on the line. A
+                // hash is a heading there and a comment everywhere else; a
+                // dash is a bullet there and a minus sign everywhere else.
+                '#' | '-' | '+' | '>' => !self.started,
                 _ => false,
             },
         }
@@ -295,6 +330,26 @@ impl Markdown {
             '`' if self.inside == Inside::Prose => {
                 self.line.code = !self.line.code;
                 false
+            }
+            // A bullet, and the space after it, are the marker — so what is
+            // drawn in their place is a mark and a space of this crate's own,
+            // out of the set the rest of the interface is drawn from. The
+            // indentation before it has already gone out, so a nested item
+            // stays nested.
+            '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
+                say(Slot::Quiet, self.glyphs.dot());
+                say(Slot::Quiet, " ");
+                true
+            }
+            // A quote is a bar down the left and the words beside it, which is
+            // what a reader already knows a quote looks like. The whole line
+            // goes quiet: the point of a quote is that the words are somebody
+            // else's.
+            '>' if held.opened && held.count == 1 && next == ' ' => {
+                self.line.quoted = true;
+                say(Slot::Quiet, self.glyphs.vertical());
+                say(Slot::Quiet, " ");
+                true
             }
             // One marker is emphasis and two are weight, which is what markdown
             // has always meant by them and what a model writes expecting to be
@@ -461,9 +516,12 @@ impl Markdown {
 
         *self = Self {
             // The fence is the one thing carried over, and a fence's own line
-            // is where its effect begins or ends.
+            // is where its effect begins or ends. The glyphs are not carried
+            // over so much as never given up: they are what the terminal can
+            // draw, which no line of an answer changes.
             inside,
             syntax,
+            glyphs: self.glyphs,
             ..Self::default()
         };
 
@@ -524,7 +582,7 @@ impl Markdown {
 
     /// The slot everything read right now is written under.
     fn slot(&self) -> Slot {
-        if self.inside != Inside::Prose || self.line.code {
+        if self.inside != Inside::Prose || self.line.code || self.line.quoted {
             Slot::Quiet
         } else if self.line.heading || self.line.emphasis.raised {
             Slot::Strong
@@ -575,6 +633,9 @@ fn written(held: Held) -> &'static str {
         '#' => HASHES,
         '*' => STARS,
         '`' => TICKS,
+        '-' => DASHES,
+        '+' => PLUSES,
+        '>' => ANGLES,
         _ => SCORES,
     };
 
