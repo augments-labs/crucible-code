@@ -388,6 +388,17 @@ impl Session {
         drop(to.send(wire::compacted(replaced, recap).into()));
     }
 
+    /// Records that old tool results were cleared, and which.
+    ///
+    /// The results stay in the file holding what they held — the log is the
+    /// record — and a session continued later reads this line and clears them
+    /// from the transcript again, so what the model is sent matches across the
+    /// continue. Written the way the compaction line is, for the same reason.
+    pub fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
+        let Some(to) = &self.to else { return };
+        drop(to.send(wire::pruned(freed, results).into()));
+    }
+
     /// The first write that failed, if one has.
     ///
     /// A log that has quietly stopped recording is worse than no log, because

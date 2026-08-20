@@ -11,10 +11,13 @@
 //! question the user is still waiting on with a stop. The one turn that does
 //! end here is one somebody stopped, and it ends saying so.
 //!
-//! **The log is not touched.** Compaction rewrites what the model is sent; what
+//! **The log is the record.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
 //! drops. The two stop being the same thing here, and that is the point: one is
-//! a working set and the other is the record.
+//! a working set and the other is the record. Pruning is the same split — an
+//! old tool result is cleared from what the model is sent and kept whole in the
+//! log, with a line written where it happened so a continued session clears it
+//! again.
 //!
 //! **A stop replaces nothing.** The transcript is rebuilt once the notes are
 //! whole, so a recap somebody stopped part way through — or one a failed
@@ -25,11 +28,27 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, StopReason, Transcript,
-    TurnError,
+    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, StopReason, ToolId,
+    ToolOutput, Transcript, TurnError,
 };
 
 use super::Runner;
+
+/// How much recent tool output is never cleared, in bytes.
+///
+/// The newest results are the ones the model is still working from, and a turn
+/// that lost the output it just asked for would be flying blind. Beyond this a
+/// result is old enough that the recap — which says what it found — is the
+/// better thing to keep.
+const PROTECT: u64 = 60_000;
+
+/// The least a pruning has to recover to be worth recording, in bytes.
+///
+/// Under it the placeholders and the log line cost more of the record than the
+/// clearing saved, and a transcript that was mostly prose gains nothing.
+/// Pruning is for the sessions where tool output is the bulk; where it is not,
+/// the recap alone is the answer.
+const MINIMUM: u64 = 30_000;
 
 /// What the model is asked for, in place of the next turn.
 ///
@@ -111,6 +130,13 @@ impl Runner {
         let Some(replacing) = self.replacing() else {
             return Ok(Room::Nothing);
         };
+
+        // The lightest touch first. Old tool results are the bulk of most
+        // sessions, and clearing them is free where the recap is a request — so
+        // it runs before one, and the recap that follows reads a span already
+        // leaner. The originals stay in the log; this is only what the model is
+        // sent, here and on every request after.
+        self.prune();
 
         // The files the replaced span touched, and the files every recap before
         // it already carried. Collected before anything is recorded, while the
@@ -375,6 +401,74 @@ impl Runner {
 
         self.transcript.pop();
         Ok(said?)
+    }
+
+    /// Clears old tool results from what the model is sent, and records it.
+    ///
+    /// Walked newest-first, protecting the most recent [`PROTECT`] bytes of
+    /// output the model is still working from. Each result past that is a
+    /// candidate, and the candidates are cleared together only where they cross
+    /// [`MINIMUM`] — a pruning that recovered less would cost the record more
+    /// than it saved. Cleared together rather than one at a time so the log
+    /// holds one line for the pass, and so the transcript and the log move in
+    /// the same step: the line names the results, and replay clears the same
+    /// ones on a continue.
+    ///
+    /// Nothing is asked of the model and nothing is removed from history. The
+    /// calls stay, the prose stays, and the placeholder keeps the shape of a
+    /// result that answered — only the bulk is gone, and only from what the
+    /// model is sent.
+    fn prune(&mut self) {
+        // The newest output is protected: a result the model just read is not
+        // one to pull out from under it. Counted in bytes, the figure the
+        // results are actually measured in.
+        let mut recent = 0_u64;
+        let mut clearing: Vec<ToolId> = Vec::new();
+        let mut savings = 0_u64;
+
+        for message in self.transcript.messages().iter().rev() {
+            let Message::ToolResults(results) = message else {
+                continue;
+            };
+
+            for result in results.iter().rev() {
+                let bytes = result.output.text().len() as u64;
+
+                // A result small enough that clearing it buys nothing is
+                // skipped whole, and does not spend the protected window: the
+                // window is for output worth keeping, and this is neither.
+                if recent < PROTECT {
+                    recent = recent.saturating_add(bytes);
+                    continue;
+                }
+
+                if bytes >= ToolOutput::MIN_PRUNE_BYTES as u64 {
+                    clearing.push(result.id.clone());
+                    savings = savings.saturating_add(bytes);
+                }
+            }
+        }
+
+        if savings < MINIMUM {
+            return;
+        }
+
+        // The transcript first, because the log line names what was cleared:
+        // writing it before the clearing would let a crash between the two
+        // leave a log claiming results were cleared that the transcript still
+        // holds. The line goes out once the transcript has moved, and replay
+        // reads it to make the same move again.
+        let freed = self.transcript.prune(&clearing);
+        self.session.pruned(freed, &clearing);
+
+        // The load drops by what was freed: the transcript is smaller, and the
+        // next request is the thing that is measured. Recounted rather than
+        // adjusted, because the estimate's rate is the provider's and this is
+        // the moment it is known to be exact.
+        self.load.replaced();
+        for message in self.transcript.messages() {
+            self.load.recorded(message);
+        }
     }
 }
 

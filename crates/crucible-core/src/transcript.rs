@@ -266,6 +266,32 @@ impl Transcript {
             .filter(|message| matches!(message, Message::User(_)))
             .count()
     }
+
+    /// Clears the results named by `ids`, replacing each with a placeholder, and
+    /// returns the bytes that freed.
+    ///
+    /// The mutation behind pruning. The runner decides which results are old
+    /// enough to clear and names them here; the transcript owns the clearing so
+    /// the change goes through one place rather than a hand-edited message. A
+    /// name nothing answers to frees nothing — a result already dropped by a
+    /// compaction, or an id a damaged log line carried, is simply absent. What
+    /// the model is sent changes; the session log, which is the record, keeps
+    /// the originals.
+    pub fn prune(&mut self, ids: &[ToolId]) -> usize {
+        let mut freed = 0;
+
+        for message in &mut self.messages {
+            if let Message::ToolResults(results) = message {
+                for result in results.iter_mut() {
+                    if ids.contains(&result.id) {
+                        freed += result.output.prune();
+                    }
+                }
+            }
+        }
+
+        freed
+    }
 }
 
 #[cfg(test)]

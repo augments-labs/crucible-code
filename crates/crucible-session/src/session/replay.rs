@@ -193,6 +193,17 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
             continue;
         }
 
+        // Old tool results having been cleared. The named results are put back
+        // as placeholders, so a continued session carries what the model was
+        // actually sent rather than text the model stopped seeing. A name that
+        // answers to nothing — cleared first and compacted away since — frees
+        // nothing and is nobody's damage.
+        if let Some(results) = whole.and_then(wire::cleared) {
+            transcript.prune(&results);
+            through += read as u64;
+            continue;
+        }
+
         let Some(message) = whole.and_then(wire::message) else {
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before

@@ -292,6 +292,41 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
 }
 
 #[test]
+fn a_pruned_result_is_cleared_again_when_the_session_is_continued() {
+    // The record and what the model is sent, parting company: the log keeps the
+    // result whole, and a continued session clears it again, so the model is
+    // never re-sent what it stopped seeing. The clearing rides on the result's
+    // own id, which it shares with the call it answered.
+    let sample = Sample::new("session-pruned");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&calling("a", "read", r#"{"path":"big.rs"}"#));
+    session.append(&answered("a", ToolOutput::ok("x".repeat(80_000))));
+    session.append(&said("what did it say"));
+    session.pruned(80_000, &[ToolId::new("a")]);
+    session.append(&said("gone"));
+    drop(session);
+
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let result = transcript
+        .messages()
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResults(results) => results.first(),
+            _ => None,
+        })
+        .expect("the result is still there, holding a placeholder");
+
+    assert!(
+        result.output.text().contains("cleared to make room"),
+        "the continued session re-sent the cleared text: {}",
+        result.output.text()
+    );
+}
+
+#[test]
 fn a_log_that_says_it_forgot_is_continued_from_where_it_says_so() {
     // A shape on somebody's disk rather than one this build can produce:
     // `/clear` forgot in place once, and leaves a session of its own now, so

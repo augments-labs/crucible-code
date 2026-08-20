@@ -1435,6 +1435,96 @@ fn a_request_smaller_than_the_window_says_nothing_about_how_much_larger_it_is() 
 }
 
 #[test]
+fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
+    // The two-phase shape: tool output is the bulkiest thing in a session, and
+    // clearing it costs no request, so it goes before the recap runs. The call
+    // and the answer's prose stay; only the result's bulk is gone, and only
+    // from what the model is sent.
+    //
+    // Three results, newest protected first. The newest two fall inside the
+    // sixty-thousand-byte protected window — each is kept because the running
+    // count is still under it when they are reached — and the oldest is past it
+    // and crosses the savings floor, so it is the one that goes.
+    // Four reads. The first is old enough to be the middle the recap
+    // replaces; the three after it are the kept tail the clearing runs over.
+    let script = Script::new(vec![
+        calling("early", "read", "{}"),
+        saying("read early"),
+        calling("a", "read", "{}"),
+        saying("read a"),
+        calling("b", "read", "{}"),
+        saying("read b"),
+        calling("c", "read", "{}"),
+        saying("read c"),
+        // The recap request.
+        saying("notes to self"),
+    ]);
+
+    // One tool, and every call to it returns a ninety-thousand-byte result —
+    // the four ids above each get one, which is what the clearing then tells
+    // apart by age.
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("read").answering(&"x".repeat(90_000))]),
+        Verdict::Allow,
+    );
+    // Keep the three recent read turns whole — about sixty thousand tokens at
+    // the uncalibrated three bytes to the token — so their results survive the
+    // recap and the clearing is what the test reads. The first turn is the
+    // middle that gets replaced.
+    scripted.runner.compacting = Compaction {
+        keep_tokens: 70_000,
+        ..Compaction::default()
+    };
+
+    scripted.turn("first").expect("a turn");
+    scripted.turn("second").expect("a turn");
+    scripted.turn("third").expect("a turn");
+    scripted.turn("fourth").expect("a turn");
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .expect("a recap");
+
+    let cleared: Vec<usize> = scripted
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => Some(
+                results
+                    .iter()
+                    .map(|result| result.output.text().len())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<Vec<usize>>>()
+        .into_iter()
+        .flatten()
+        .collect();
+
+    // Three results stand in the kept tail, oldest first. The newest sits
+    // inside the sixty-thousand-byte protected window and keeps its ninety
+    // thousand bytes; the two older ones are past it and cross the savings
+    // floor, so they are placeholders of a few words.
+    let [older @ .., newest] = cleared.as_slice() else {
+        panic!("expected three results standing, got {}", cleared.len());
+    };
+    assert_eq!(cleared.len(), 3, "the kept tail: {cleared:?}");
+    assert_eq!(
+        *newest, 90_000,
+        "the newest result was cleared: {cleared:?}"
+    );
+    assert!(
+        older.iter().all(|size| *size < 90_000),
+        "an old result kept its bulk: {cleared:?}"
+    );
+}
+
+#[test]
 fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
     // The failure the token bound answers: a turn that is mostly one enormous
     // tool result, kept whole because it was one of the last two turns. Bounded
