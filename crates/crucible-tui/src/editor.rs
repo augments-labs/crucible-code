@@ -172,17 +172,6 @@ impl Editor {
         self.before().matches('\n').count()
     }
 
-    /// Where the cursor sits, as the box lays it out: which line, and how many
-    /// display columns into it.
-    ///
-    /// The two halves of [`Editor::line`] and [`Editor::column`] together, in one
-    /// call, because the box wants them together and reading the text twice to
-    /// have them is the cost this saves.
-    #[must_use]
-    pub fn caret(&self) -> (usize, usize) {
-        (self.line(), self.column())
-    }
-
     /// Puts the cursor `column` display columns into the line.
     ///
     /// What a click on a one-line box comes to. Past the end of the line is the
