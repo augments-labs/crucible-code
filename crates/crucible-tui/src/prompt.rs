@@ -131,6 +131,22 @@ pub struct Prompt<'a> {
 }
 
 impl Prompt<'_> {
+    /// The narrowest window this box is drawn framed in.
+    ///
+    /// Published because a frame drawn above the box is read against it: one
+    /// that kept a border where this one had given it up would be a border
+    /// around nothing, standing over a caret with no box under it.
+    pub const FRAMED_AT: usize = FRAMED_AT;
+
+    /// What a framed row spends on its border and the space inside it, both
+    /// sides together — so the line itself gets `columns - CHROME`.
+    ///
+    /// Published for the same reason and against the same defect: a frame that
+    /// worked its own chrome out is one that ends a column short of this one
+    /// the first time either changes, and a border that does not line up with
+    /// the border beneath it is the first thing an eye finds.
+    pub const CHROME: usize = FRAMED + CLOSING;
+
     /// How many rows of the line a box may show in a window this tall.
     ///
     /// About half of it. A prompt is written and read at the same time, so a
