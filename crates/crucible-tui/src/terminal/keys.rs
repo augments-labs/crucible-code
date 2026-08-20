@@ -367,6 +367,21 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Char('b') if alt => Pressed::Key(Key::WordLeft),
         KeyCode::Char('f') if alt => Pressed::Key(Key::WordRight),
 
+        // The three edits every shell answers to, and the letters are free
+        // because none of them is bound above. The reasoning beside those
+        // bindings — that nothing here reads a modified letter as editing — was
+        // true of a box that was one line and is not true of one that is many:
+        // a prompt long enough to want a newline is long enough to want the
+        // rest of a line gone without holding Backspace down.
+        //
+        // Ctrl+W and Ctrl+U are the terminal's own, older than readline and
+        // still what the line discipline does when nothing has taken it off.
+        // Somebody who has never learned a binding here has already learned
+        // these two.
+        KeyCode::Char('w') if control => Pressed::Key(Key::RubWord),
+        KeyCode::Char('u') if control => Pressed::Key(Key::RubToStart),
+        KeyCode::Char('k') if control => Pressed::Key(Key::RubToEnd),
+
         // A newline, and the spelling of one that needs nothing asked for and
         // no modifier a terminal has to have room for: Ctrl+J is a byte of its
         // own and always has been. Here rather than beside the other two
@@ -409,7 +424,14 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Down => Pressed::Down,
 
         KeyCode::Char(typed) => Pressed::Key(Key::Char(typed)),
+
+        // Backspace held with either modifier is the word behind the cursor,
+        // which is the other spelling of Ctrl+W and the one a reader who came
+        // from an editor rather than a shell reaches for. Above the bare key,
+        // which is one character.
+        KeyCode::Backspace if control || alt => Pressed::Key(Key::RubWord),
         KeyCode::Backspace => Pressed::Key(Key::Backspace),
+        KeyCode::Delete => Pressed::Key(Key::Delete),
         KeyCode::Left => Pressed::Key(Key::Left),
         KeyCode::Right => Pressed::Key(Key::Right),
         KeyCode::Home => Pressed::Key(Key::Home),
@@ -514,7 +536,7 @@ mod tests {
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is
         // not what was pressed.
-        for letter in ['w', 'r', 'x'] {
+        for letter in ['r', 'x', 'y'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -559,7 +581,37 @@ mod tests {
         // The arm that would otherwise have taken Ctrl+J: a letter held with
         // control that this release has given no meaning to is ignored, and
         // reaching one of these arms is what says the newline is above it.
-        assert_eq!(meaning(control(KeyCode::Char('k'))), Pressed::Ignored);
+        assert_eq!(meaning(control(KeyCode::Char('r'))), Pressed::Ignored);
+    }
+
+    #[test]
+    fn the_edits_a_shell_answers_to_reach_the_editor_here_too() {
+        // The letters are free, and somebody who has never learned a binding in
+        // this program has already learned Ctrl+W and Ctrl+U from their shell.
+        assert_eq!(
+            meaning(control(KeyCode::Char('w'))),
+            Pressed::Key(Key::RubWord)
+        );
+        assert_eq!(
+            meaning(control(KeyCode::Char('u'))),
+            Pressed::Key(Key::RubToStart)
+        );
+        assert_eq!(
+            meaning(control(KeyCode::Char('k'))),
+            Pressed::Key(Key::RubToEnd)
+        );
+
+        // Backspace held is the same word, for the reader who came from an
+        // editor rather than a shell. Bare, it is still one character.
+        for held in [control(KeyCode::Backspace), alt(KeyCode::Backspace)] {
+            let spelling = format!("{held:?}");
+            assert_eq!(meaning(held), Pressed::Key(Key::RubWord), "{spelling}");
+        }
+        assert_eq!(
+            meaning(press(KeyCode::Backspace)),
+            Pressed::Key(Key::Backspace)
+        );
+        assert_eq!(meaning(press(KeyCode::Delete)), Pressed::Key(Key::Delete));
     }
 
     #[test]

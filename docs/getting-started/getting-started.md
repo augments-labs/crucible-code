@@ -403,6 +403,15 @@ a paste begins and ends. A terminal that cannot do that is one where a pasted
 break is indistinguishable from a keypress, and there the paste sends its first
 line.
 
+The edits a shell answers to work in the box as well. <kbd>Ctrl+W</kbd> takes the
+word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
+<kbd>Ctrl+K</kbd> the rest of the line ahead; <kbd>Ctrl+Backspace</kbd> and
+<kbd>Alt+Backspace</kbd> take the word too, for fingers that came from an editor
+rather than a shell. <kbd>Delete</kbd> takes the character in front of the
+cursor, which stays where it is. A word goes on being a word across a break, so
+rubbing one out at the start of a line joins it to the line above — the same as
+<kbd>Backspace</kbd> does.
+
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
 again to leave`, under the mode — and a second press within two seconds takes the

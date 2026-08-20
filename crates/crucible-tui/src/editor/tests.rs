@@ -566,3 +566,66 @@ fn the_swap_still_refuses_to_send_nothing() {
     assert_eq!(editor.press(Key::Enter), Typed::Changed);
     assert_eq!(editor.text(), "\n");
 }
+
+#[test]
+fn the_three_edits_every_shell_answers_to_reach_the_line_here_too() {
+    let mut editor = lines("first line\nsecond word here");
+
+    // The cursor is at the end of the last line. A word back, then another.
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first line\nsecond word ");
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first line\nsecond ");
+
+    // The rest of the line, and only of the line: the one above it stays.
+    assert_eq!(editor.press(Key::RubToStart), Typed::Changed);
+    assert_eq!(editor.text(), "first line\n");
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 0);
+
+    // An edit against an end it is already at is nothing happening, which is
+    // what keeps a held key from redrawing at the speed of the repeat. The line
+    // ahead is empty and the line behind is empty, so two of the three refuse.
+    assert_eq!(editor.press(Key::RubToStart), Typed::Ignored);
+    assert_eq!(editor.press(Key::Delete), Typed::Ignored);
+
+    // The third does not, and that is the point: a word goes on being a word
+    // across a break, the same way Backspace joins the lines rather than
+    // stopping at one. Nothing else here treats a break as a wall.
+    assert_eq!(editor.press(Key::RubWord), Typed::Changed);
+    assert_eq!(editor.text(), "first ");
+    assert_eq!(editor.line(), 0);
+}
+
+#[test]
+fn the_rest_of_a_line_ahead_goes_without_the_line_under_it() {
+    let mut editor = lines("keep this\nand this");
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+
+    assert_eq!(editor.press(Key::RubToEnd), Typed::Changed);
+    assert_eq!(editor.text(), "keep this\n");
+
+    // The break is not on the line ahead, so the line above survives an edit
+    // that took everything the cursor could see.
+    assert_eq!(editor.press(Key::RubToEnd), Typed::Ignored);
+    assert_eq!(editor.line(), 1);
+}
+
+#[test]
+fn delete_takes_what_is_ahead_and_leaves_the_cursor_where_it_was() {
+    let mut editor = Editor::new();
+    editor.paste("abc");
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+
+    assert_eq!(editor.press(Key::Delete), Typed::Changed);
+    assert_eq!(editor.text(), "bc");
+    assert_eq!(editor.column(), 0);
+
+    // A character wider than a byte goes whole, which is what a rub that
+    // counted bytes would get wrong.
+    let mut wide = Editor::new();
+    wide.paste("日本");
+    assert_eq!(wide.press(Key::Home), Typed::Changed);
+    assert_eq!(wide.press(Key::Delete), Typed::Changed);
+    assert_eq!(wide.text(), "本");
+}

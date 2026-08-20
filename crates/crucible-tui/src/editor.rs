@@ -40,6 +40,14 @@ pub enum Key {
     Char(char),
     /// Rub out what is behind the cursor.
     Backspace,
+    /// Rub out what is ahead of it.
+    Delete,
+    /// Rub out the word behind it, back to where that word starts.
+    RubWord,
+    /// Rub out the rest of the line behind it.
+    RubToStart,
+    /// Rub out the rest of the line ahead of it.
+    RubToEnd,
     /// Move one character back.
     Left,
     /// Move one character on.
@@ -312,6 +320,10 @@ impl Editor {
         match key {
             Key::Char(typed) => self.insert(typed),
             Key::Backspace => self.rub(),
+            Key::Delete => self.rub_ahead(),
+            Key::RubWord => self.cut(self.word_back(), self.at),
+            Key::RubToStart => self.cut(self.line_start(), self.at),
+            Key::RubToEnd => self.cut(self.at, self.line_end()),
             Key::Left => self.left(),
             Key::Right => self.right(),
             Key::Up => self.up(),
@@ -538,6 +550,34 @@ impl Editor {
 
         self.at -= back;
         self.said.remove(self.at);
+        self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Removes the character ahead of the cursor, which does not move.
+    fn rub_ahead(&mut self) -> Typed {
+        if self.ahead().is_none() {
+            return Typed::Ignored;
+        }
+
+        self.said.remove(self.at);
+        self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Removes everything between two boundaries the line already has, and
+    /// leaves the cursor at the first of them.
+    ///
+    /// Both come from the same helpers the cursor moves by, so neither can land
+    /// off a character boundary. An empty span is nothing happening, which is
+    /// what keeps a rub against an end it is already at from redrawing.
+    fn cut(&mut self, from: usize, to: usize) -> Typed {
+        if from >= to {
+            return Typed::Ignored;
+        }
+
+        self.said.replace_range(from..to, "");
+        self.at = from;
         self.wanted = None;
         Typed::Changed
     }
