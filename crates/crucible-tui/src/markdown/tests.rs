@@ -993,3 +993,69 @@ fn a_backslash_before_anything_else_keeps_it() {
 fn a_backslash_inside_a_code_span_is_left_where_it_was() {
     assert_eq!(drawn(&ended("the `\\d+` in it")), "the \\d+ in it");
 }
+
+#[test]
+fn a_bare_address_arrives_exactly_as_it_was_written() {
+    for answer in [
+        "see https://example.com/a/_private for more",
+        "see https://docs.rs/crate/*/latest here",
+        "at http://localhost:8080/a~b end",
+        "see https://example.com",
+    ] {
+        assert_eq!(drawn(&ended(answer)), answer, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_bare_address_is_drawn_as_the_link_it_is() {
+    let said = ended("see https://example.com/docs for more");
+
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Link, Slot::Plain]);
+}
+
+#[test]
+fn a_stop_after_an_address_is_not_part_of_it() {
+    let said = ended("see https://example.com/docs.");
+
+    assert_eq!(drawn(&said), "see https://example.com/docs.");
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Link, Slot::Plain]);
+}
+
+#[test]
+fn an_address_split_across_two_deltas_is_still_one_address() {
+    let mut markdown = Markdown::default();
+    let mut said = read(&mut markdown, "see https://exa");
+    said.extend(read(&mut markdown, "mple.com/docs here"));
+
+    assert_eq!(drawn(&said), "see https://example.com/docs here");
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Link, Slot::Plain]);
+}
+
+#[test]
+fn a_word_that_only_starts_like_an_address_is_left_where_it_was() {
+    for answer in [
+        "here is the answer",
+        "the http/2 protocol",
+        "https not a link",
+        "hypertext, https, and http",
+    ] {
+        assert_eq!(drawn(&ended(answer)), answer, "{answer:?}");
+        assert_eq!(slots(&ended(answer)), [Slot::Plain], "{answer:?}");
+    }
+}
+
+#[test]
+fn an_address_inside_a_code_span_is_code_like_the_rest_of_it() {
+    let said = ended("run `curl https://example.com/a_b`");
+
+    assert_eq!(drawn(&said), "run curl https://example.com/a_b");
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Quiet]);
+}
+
+#[test]
+fn an_address_a_link_names_is_still_the_link_it_names() {
+    let said = ended("[the docs](https://example.com)");
+
+    assert_eq!(drawn(&said), "the docs (https://example.com)");
+    assert_eq!(slots(&said), [Slot::Link, Slot::Quiet]);
+}

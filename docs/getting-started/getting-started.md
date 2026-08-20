@@ -391,6 +391,12 @@ quote's bar, a number and its dot -- continues under its own words rather than
 back at the edge, so the mark is the only thing in its column and a list still
 reads as a list at any width.
 
+An address written on its own is a link without being written as one. `https://`
+or `http://` and everything up to the next space is drawn the way a link's words
+are, and arrives exactly as it was written -- the underscores and stars in a
+path are part of it rather than markers. What ends the sentence is not part of
+the address, so a full stop after one stays with the prose.
+
 A backslash in front of a marker says the marker was meant as itself: `\*` is a
 star and `\|` is a pipe, and the backslash is gone. In front of anything else
 it stays exactly where it was, so `C:\Users` and `\d+` arrive whole.

@@ -177,6 +177,34 @@ impl Link {
     }
 }
 
+/// The schemes an address is recognised by.
+///
+/// Two, and both of them the web's: an answer about code is full of words with
+/// a colon in them, and the ones a reader can act on in a terminal are these.
+const SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// How much of a scheme a run of characters has spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spelled {
+    /// Not a scheme and not on the way to one.
+    Nothing,
+    /// A scheme so far, with more of it to come.
+    Partly,
+    /// A scheme, and everything after it belongs to the address.
+    Whole,
+}
+
+/// How much of a scheme `text` has spelled.
+fn spelled(text: &str) -> Spelled {
+    if SCHEMES.iter().any(|scheme| text.starts_with(scheme)) {
+        Spelled::Whole
+    } else if SCHEMES.iter().any(|scheme| scheme.starts_with(text)) {
+        Spelled::Partly
+    } else {
+        Spelled::Nothing
+    }
+}
+
 /// Reads markdown out of a stream of deltas.
 #[derive(Debug, Default)]
 pub struct Markdown {
@@ -188,6 +216,15 @@ pub struct Markdown {
     started: bool,
     /// The character before the run being held, for the one rule that needs it.
     previous: char,
+    /// A bare address being read, from the first letter of its scheme on.
+    ///
+    /// Held for the same reason a link's words are: an address is one word to
+    /// the reader and a run of markers to a scan reading characters. Held from
+    /// the first letter rather than from the scheme, because by the time the
+    /// scheme is spelled out the letters that spelled it have gone -- so a word
+    /// that merely starts like one is held for as long as it could still turn
+    /// into one, which is never more than a few characters.
+    address: Option<String>,
     /// A backslash is standing, waiting to see what it was put in front of.
     ///
     /// Held rather than written, because what it does is decided by the next
@@ -316,6 +353,18 @@ impl Markdown {
 
             // A backslash is standing and this is the character it was put in
             // front of.
+            // Held text, not a run, for the reason a link's words are.
+            if self.address.is_some() {
+                if self.addressed(character, say) {
+                    run = next;
+                    continue;
+                }
+                // Not an address after all, or one that has just ended. What
+                // was held has been drawn or put back, and this character is
+                // ordinary, so it starts the run.
+                run = at;
+            }
+
             if std::mem::take(&mut self.escaped) {
                 if Self::escapes(character) {
                     self.say(delta.get(at..next).unwrap_or_default(), say);
@@ -347,6 +396,10 @@ impl Markdown {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.table = Some(Table::opening());
                 self.tabled(character, room, say);
+                run = next;
+            } else if self.opens_address(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.address = Some(String::from(character));
                 run = next;
             } else if self.escaping(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -712,6 +765,78 @@ impl Markdown {
         true
     }
 
+    /// Whether an address could start here.
+    ///
+    /// At the start of a word only: `shttps://` is not an address, and neither
+    /// is the second half of one a link already named.
+    fn opens_address(&self, character: char) -> bool {
+        SCHEMES.iter().any(|scheme| scheme.starts_with(character))
+            && self.inside == Inside::Prose
+            && !self.line.code
+            && !self.previous.is_alphanumeric()
+    }
+
+    /// Reads one character into the address being held. Answers whether that
+    /// character was part of it.
+    fn addressed(&mut self, character: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+        let Some(mut address) = self.address.take() else {
+            return false;
+        };
+
+        // An address ends where the word does. Bounded like everything else
+        // held here: past the bound it stops being an address and is put back
+        // as the text it is.
+        let carries = !character.is_whitespace() && address.len() < MOST;
+        if carries && spelled(&address) == Spelled::Whole {
+            address.push(character);
+            self.address = Some(address);
+            return true;
+        }
+
+        if carries {
+            address.push(character);
+            if spelled(&address) != Spelled::Nothing {
+                self.address = Some(address);
+                return true;
+            }
+            // A word that started like a scheme and turned out to be a word.
+            // The character that decided it is part of that word, and goes
+            // back with it rather than to the caller.
+            self.say(&address, say);
+            self.started = true;
+            self.previous = character;
+            return true;
+        }
+
+        self.wrote_address(&address, say);
+        false
+    }
+
+    /// Hands on an address the answer wrote bare.
+    ///
+    /// Drawn as the link it is, so what can be acted on in a terminal looks
+    /// like it can. What ends a sentence is not part of it: a full stop after
+    /// an address belongs to the prose, and a reader who copies the row gets
+    /// an address that still resolves.
+    fn wrote_address(&mut self, address: &str, say: &mut dyn FnMut(Slot, &str)) {
+        let ends = address.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"']);
+
+        // A scheme and nothing after it is a word somebody wrote, not somewhere
+        // anybody can go.
+        if spelled(ends) != Spelled::Whole || SCHEMES.contains(&ends) {
+            self.say(address, say);
+            self.started = true;
+            self.previous = address.chars().next_back().unwrap_or('/');
+            return;
+        }
+
+        self.pay(say);
+        say(Slot::Link, ends);
+        self.started = true;
+        self.previous = ends.chars().next_back().unwrap_or('/');
+        self.say(&address[ends.len()..], say);
+    }
+
     /// Hands on a link that arrived whole.
     ///
     /// The words wear the link's own slot and the address follows them in
@@ -763,6 +888,12 @@ impl Markdown {
         // have been there too.
         if let Some(held) = self.held.take() {
             self.settle(held, '\n', room, say);
+        }
+
+        // The word that would have ended the address never arrived, and the end
+        // of the message ends it exactly as a space would have.
+        if let Some(address) = self.address.take() {
+            self.wrote_address(&address, say);
         }
 
         // The character that would have said what it was in front of never

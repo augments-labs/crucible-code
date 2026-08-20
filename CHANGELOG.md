@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**An address written bare is drawn as the link it is.** A `https://` or
+`http://` address in prose now wears the link's own colour, and arrives exactly
+as it was written -- `/_private` and `/*/` used to lose the characters that
+carry their meaning. A full stop after one stays with the sentence.
+
 **A marker the answer escaped is drawn as itself.** `\*literal\*` lost both
 stars and leant the words between them. A backslash in front of a marker now
 draws the marker and goes; in front of anything else -- `C:\Users`, `\d+` -- it
