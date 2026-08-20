@@ -885,3 +885,34 @@ fn dashes_partway_along_a_line_are_left_exactly_where_they_were() {
 
     assert_eq!(drawn(&said), "a --- b\n");
 }
+
+#[test]
+fn a_message_that_ended_on_a_marker_ends_it_the_way_a_line_break_would() {
+    for answer in [
+        "one last thing*",
+        "a path under ~",
+        "**loud and never closed, and never ended**",
+        "a trailing tick`",
+        "## a heading with no break after it",
+        "- an item with no break after it",
+        "---",
+    ] {
+        let ended = narrowed(answer, ROOM);
+        let broken = narrowed(&format!("{answer}\n"), ROOM);
+
+        assert_eq!(
+            drawn(&ended),
+            drawn(&broken).trim_end_matches('\n'),
+            "{answer:?} reads the same whether or not a break followed it"
+        );
+    }
+}
+
+#[test]
+fn a_marker_a_message_ended_on_and_that_meant_nothing_is_put_back() {
+    for answer in ["one last thing*", "a path under ~", "two hashes ##"] {
+        let said = narrowed(answer, ROOM);
+
+        assert_eq!(drawn(&said), answer, "every byte comes back exactly once");
+    }
+}

@@ -691,6 +691,17 @@ impl Markdown {
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+        // A run of markers is held for the character that says what it was,
+        // and the end of a message is that character never arriving. Settled
+        // against a line break, because the end of a message ends everything a
+        // line break ends and one more thing besides -- so a marker that meant
+        // nothing comes back as itself, exactly as it would have one character
+        // later, and one that opened something is consumed exactly as it would
+        // have been there too.
+        if let Some(held) = self.held.take() {
+            self.settle(held, '\n', room, say);
+        }
+
         self.pay(say);
 
         if let Some(link) = self.link.take() {

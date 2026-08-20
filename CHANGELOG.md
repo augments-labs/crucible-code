@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**A marker the message ended on is no longer eaten.** An answer whose last delta
+stopped on a `*` or a `~` lost it: the run was held for the character that says
+what it was, and the message ended before one arrived. It now settles against
+the end of the message exactly as it would against a line break.
+
 **An underscore standing in for a value keeps it.** `Ok(_) | Err(_)` was drawn
 as `Ok() | Err()`, because a bracket either side of an underscore is not
 whitespace and that was all the rule asked for. Emphasis now opens only where a
