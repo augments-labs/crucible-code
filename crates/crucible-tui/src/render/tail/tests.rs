@@ -400,3 +400,80 @@ fn the_slot_in_force_does_not_survive_the_turn() {
 
     assert_eq!(rows(&tail), ["plain again"]);
 }
+
+#[test]
+fn a_row_wraps_at_a_space_rather_than_through_a_word() {
+    let mut tail = Tail::new(12, 5);
+    push(&mut tail, "the quick brown fox");
+
+    assert_eq!(rows(&tail), ["the quick ", "brown fox"]);
+}
+
+#[test]
+fn a_word_no_row_could_hold_is_still_broken_where_the_row_ends() {
+    let mut tail = Tail::new(4, 20);
+    push(&mut tail, "antidisestablishmentarianism");
+
+    assert_eq!(
+        rows(&tail),
+        ["anti", "dise", "stab", "lish", "ment", "aria", "nism"]
+    );
+}
+
+#[test]
+fn a_word_that_will_not_fit_beside_a_long_one_starts_its_own_row() {
+    let mut tail = Tail::new(8, 6);
+    push(&mut tail, "a chrysanthemum here");
+
+    assert_eq!(rows(&tail), ["a ", "chrysant", "hemum ", "here"]);
+}
+
+#[test]
+fn no_row_is_ever_wider_than_the_tail_however_it_was_wrapped() {
+    for width in [1, 2, 3, 7, 40] {
+        let mut tail = Tail::new(width, 200);
+        push(
+            &mut tail,
+            "the quick brown fox jumps over the lazy dog, and \
+             antidisestablishmentarianism follows it  with two spaces",
+        );
+
+        for row in rows(&tail) {
+            assert!(
+                row.width() <= width,
+                "{row:?} is wider than the {width} columns it was wrapped for"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_slot_open_across_a_wrap_is_closed_on_one_row_and_opened_on_the_next() {
+    let palette = colourful();
+    let mut tail = Tail::new(10, 5);
+    tail.wear(Slot::Strong, &palette);
+    push(&mut tail, "the quick brown fox");
+
+    let open = palette.open(Slot::Strong);
+    let close = palette.close();
+    for row in rows(&tail) {
+        assert!(row.starts_with(open.as_str()), "{row:?} opens the slot");
+        assert!(row.ends_with(close), "{row:?} closes it again");
+    }
+}
+
+#[test]
+fn a_slot_that_opens_after_the_last_space_travels_with_the_word_it_covers() {
+    let palette = colourful();
+    let mut tail = Tail::new(10, 5);
+    push(&mut tail, "the quick ");
+    tail.wear(Slot::Strong, &palette);
+    push(&mut tail, "brown fox");
+
+    let open = palette.open(Slot::Strong);
+    assert_eq!(
+        rows(&tail).first().map(|row| row.contains(open.as_str())),
+        Some(false),
+        "the row left behind never opened the slot"
+    );
+}

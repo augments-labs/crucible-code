@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**An answer wraps at a space rather than through a word.** A line longer than
+the terminal used to break wherever the edge fell, leaving words in halves on
+two rows. It now ends at the last space that fits, and only a word no row could
+hold is still broken where the row ends.
+
 **A marker the message ended on is no longer eaten.** An answer whose last delta
 stopped on a `*` or a `~` lost it: the run was held for the character that says
 what it was, and the message ended before one arrived. It now settles against

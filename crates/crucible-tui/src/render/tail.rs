@@ -46,12 +46,41 @@ pub(crate) struct Tail {
     worn: Worn,
     /// What closes [`Self::worn`].
     close: &'static str,
+    /// Where the row being appended to could be cut, if it has to be.
+    ///
+    /// `None` until a space lands on the row, and again as soon as the row
+    /// ends. See [`Broken`] for what a cut has to put back.
+    broken: Option<Broken>,
     /// Whether the row being appended to has [`Self::worn`] open on it.
     ///
     /// The invariant this keeps is that every row is closed once [`Self::push`]
     /// returns. A row read with a sequence still open on it would set that
     /// attribute on everything drawn after it, and the row settled into the
     /// record would carry it into the reader's scrollback for good.
+    open: bool,
+}
+
+/// The last place on a row a wrap could cut it, and what the cut has to mend.
+///
+/// A row is wrapped at the last space on it rather than at the column the text
+/// happened to reach: a word split across two rows is one the reader has to put
+/// back together, and an answer is prose far more often than it is a column of
+/// anything. Where no space landed on the row -- a word wider than the window,
+/// a line of code -- the cut is where the row ends, exactly as it always was.
+///
+/// The slot is here because a cut lands in the middle of one as often as not,
+/// and every row this tail hands out is balanced on its own: see
+/// [`Tail::break_row`] for why that is not negotiable.
+#[derive(Debug, Clone, Copy)]
+struct Broken {
+    /// Where the carried text starts, in bytes into the row.
+    at: usize,
+    /// What the row measured up to there.
+    width: usize,
+    /// The slot open across the cut, and what closes it.
+    worn: Worn,
+    close: &'static str,
+    /// Whether that slot was open at all.
     open: bool,
 }
 
@@ -77,6 +106,7 @@ impl Tail {
             worn: Worn::Chosen(""),
             close: "",
             open: false,
+            broken: None,
         }
     }
 
@@ -212,6 +242,7 @@ impl Tail {
         self.worn = Worn::Chosen("");
         self.close = "";
         self.open = false;
+        self.broken = None;
     }
 
     /// Ends the row being appended to and starts a fresh one, carrying the slot
@@ -225,7 +256,48 @@ impl Tail {
     /// only half of a pair would leave the other half unwritten for good.
     fn break_row(&mut self) {
         self.close_worn();
+        self.broken = None;
         self.rows.push_back(Row::default());
+    }
+
+    /// Ends the row being appended to at the last space on it, carrying what
+    /// followed onto the next.
+    ///
+    /// Falls back to [`Tail::break_row`] where there is nothing to carry: a row
+    /// with no space on it, and one whose space is the last thing on it.
+    fn wrap_row(&mut self) {
+        let Some(broken) = self.broken.take() else {
+            self.break_row();
+            return;
+        };
+
+        let Some(row) = self.rows.back_mut() else {
+            self.break_row();
+            return;
+        };
+
+        if broken.at >= row.text.len() {
+            self.break_row();
+            return;
+        }
+
+        let mut carried = row.text.split_off(broken.at);
+        let width = row.width.saturating_sub(broken.width);
+        row.width = broken.width;
+
+        // The cut fell inside a slot, so the half left behind is closed and the
+        // half carried over opens the same one again. Whatever was opened or
+        // closed after the cut travelled with the text it covers, so `open` is
+        // still what it was: this mends the seam and nothing else.
+        if broken.open {
+            row.text.push_str(broken.close);
+            carried.insert_str(0, broken.worn.as_str());
+        }
+
+        self.rows.push_back(Row {
+            text: carried,
+            width,
+        });
     }
 
     /// Opens the worn slot on the current row, if it is not open already.
@@ -269,13 +341,31 @@ impl Tail {
         }
 
         if self.column() + advance > self.width {
-            self.break_row();
+            self.wrap_row();
+
+            // What a wrap carried over can be nearly a whole row wide, and a
+            // row counted short is a row the terminal wraps itself.
+            if self.column() + advance > self.width {
+                self.break_row();
+            }
         }
 
         self.open_worn();
         if let Some(row) = self.rows.back_mut() {
             row.text.push(character);
             row.width += advance;
+
+            // Recorded after the space rather than before it, so the space
+            // stays on the row it ended and the carried half opens on a word.
+            if character == ' ' {
+                self.broken = Some(Broken {
+                    at: row.text.len(),
+                    width: row.width,
+                    worn: self.worn,
+                    close: self.close,
+                    open: self.open,
+                });
+            }
         }
     }
 

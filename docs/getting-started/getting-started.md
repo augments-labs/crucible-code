@@ -381,6 +381,11 @@ written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
 wrapped plain.
 
+An answer wider than the terminal wraps at the last space before the edge, so a
+word arrives whole on one row rather than in halves on two. A word too long for
+any row -- a path, a hash, a line of code with no spaces in it -- is still broken
+where the row ends, since there is nowhere else to break it.
+
 A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
 item opens with the same small mark, and the spaces that nest one list inside
 another are kept exactly as they were written. A line that opens with `>` gets a
