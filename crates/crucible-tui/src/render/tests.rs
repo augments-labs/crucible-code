@@ -857,6 +857,27 @@ fn a_row_is_never_parted_into_a_line_that_is_still_arriving() {
 }
 
 #[test]
+fn a_paragraph_break_the_wire_split_costs_one_row_and_not_two() {
+    // A model streams a word at a time, so the blank line between two
+    // paragraphs is regularly the end of one delta and the start of the next.
+    // What decides whether a row is owed is the row the tail last wrote, not
+    // whether the piece of wire that wrote it happened to carry anything.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    render.commit("\u{203a} what is 2+2").unwrap();
+    for delta in ["Two plus two ", "is four.\n\n", "Anything else?"] {
+        render.apart().unwrap();
+        render.stream(delta).unwrap();
+    }
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "\u{203a} what is 2+2\n\nTwo plus two is four.\n\nAnything else?\n"
+    );
+}
+
+#[test]
 fn rows_this_program_composed_settle_the_question_too() {
     // `present` is the other way into the record, and a component that ends on
     // a blank row -- which several do, to keep what follows off them -- has
@@ -970,4 +991,25 @@ fn the_region_is_read_from_the_same_place_the_record_is() {
 
     assert_eq!(render.within(3, 4), None, "above the region");
     assert_eq!(render.within(6, 4), None, "below the last row of it");
+}
+
+#[test]
+fn a_row_is_never_put_down_inside_an_answer_still_arriving() {
+    // Every delta asks, because the first one is the only one worth asking on
+    // and nothing upstream can tell which that was. A row completed by one
+    // delta has gone to scrollback by the time the next arrives, so the tail is
+    // holding nothing at that moment -- and a tail holding nothing is exactly
+    // what a boundary between two blocks looks like from here.
+    let mut render = Renderer::new(Recording::new(80, 24));
+    for delta in ["- one\n", "- two\n"] {
+        render.apart().unwrap();
+        render.stream(delta).unwrap();
+    }
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written().matches("\r\n").count(),
+        2,
+        "one row for each item, and nothing between them"
+    );
 }

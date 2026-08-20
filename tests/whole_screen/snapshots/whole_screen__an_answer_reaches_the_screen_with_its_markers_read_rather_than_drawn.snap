@@ -2,19 +2,20 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x32 cursor 26,4 scrolled 6
+80x32 cursor 26,4 scrolled 5
+|│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
+|│                                  │ · /            opens the command list     │|
+|│                                  │ · shift+enter  adds a line without sendi… │|
+|│                                  │ · shift+tab    steps the permission mode  │|
+|│                                  │ · ctrl+c       clears the line typed so…  │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
 |                                                                                |
 |› say something in markdown                                                     |
-|                                                                                |
 |                                                                                |
 |What I found                                                                    |
 |                                                                                |
@@ -24,7 +25,6 @@ expression: window.picture()
 |· two                                                                           |
 |                                                                                |
 |│ and a line somebody else said                                                 |
-|                                                                                |
 |                                                                                |
 |fn main() {}                                                                    |
 |                                                                                |

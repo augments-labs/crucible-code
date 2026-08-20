@@ -154,6 +154,11 @@ next row rather than scrolling sideways — so the box grows downwards as you
 write. It stops at about half the window; past that the line scrolls under the
 top edge and what you are writing stays in view.
 
+Text pasted into the box keeps its shape. A tab arrives as the four columns it
+stood for, so a snippet written with tabs is still indented -- on screen and in
+the prompt that is sent. Anything else a terminal can hide in a paste is left
+out, since drawn it would move a cursor this process had already placed.
+
 The row under the box has two ends. On the left is the permission mode and the
 key that steps it; on the right is which model the next turn goes to, whose it
 is, and how hard it is being asked to think — written the way `--model` takes it
@@ -381,6 +386,44 @@ written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
 wrapped plain.
 
+A phrase the model leant on or raised may run over more than one line, and it
+is read that way: a run opened on one line and closed on the next carries across
+the break. It carries no further than the paragraph it was written in -- a blank
+line, a heading, an item or a quote ends it -- so a marker the model opened and
+never closed costs that paragraph and nothing after it.
+
+An answer wider than the terminal wraps at the last space before the edge, so a
+word arrives whole on one row rather than in halves on two. A word too long for
+any row -- a path, a hash, a line of code with no spaces in it -- is still broken
+where the row ends, since there is nowhere else to break it.
+
+A line that wraps and opens with a mark -- an item's bullet, a task's box, a
+quote's bar, a number and its dot -- continues under its own words rather than
+back at the edge, so the mark is the only thing in its column and a list still
+reads as a list at any width.
+
+An address written on its own is a link without being written as one. `https://`
+or `http://` and everything up to the next space is drawn the way a link's words
+are, and arrives exactly as it was written -- the underscores and stars in a
+path are part of it rather than markers. What ends the sentence is not part of
+the address, so a full stop after one stays with the prose.
+
+A backslash in front of a marker says the marker was meant as itself: `\*` is a
+star and `\|` is a pipe, and the backslash is gone. In front of anything else
+it stays exactly where it was, so `C:\Users` and `\d+` arrive whole.
+
+Between two backticks nothing else is a marker. `*ptr`, `_private` and
+`**kwargs` arrive on screen as they were written, because the words in a span
+are code and code is full of characters that mean something else in prose.
+
+A block is fenced with three backticks or three tildes, and is closed by the
+marker that opened it -- so a block written with tildes can have backticks
+inside it, which is what a model reaches for tildes to do.
+
+A block indented under an item is the item's: the spaces in front of its fence
+go with the fence, so the code inside it opens at the item's own column rather
+than at one stitched to the front of its first row.
+
 A list is read too. Whichever of `-`, `*` or `+` the model reached for, every
 item opens with the same small mark, and the spaces that nest one list inside
 another are kept exactly as they were written. A line that opens with `>` gets a
@@ -391,6 +434,35 @@ else's. Both marks come out of the same set as every border on screen, so
 A dash is only a bullet at the start of a line with a space after it. `5 - 3`,
 `--colour never` and `a -> b` are left exactly where they were.
 
+A line that is nothing but three or more `-`, `*` or `_` is a rule between the
+blocks either side of it, and is drawn as one across the window rather than as
+the three characters it was written with. Two are not enough, and `a --- b` is
+left where it was.
+
+An item that opens with `[ ]` or `[x]` is a task, and its box takes the bullet's
+place rather than following it: an unfinished one gets a hollow mark, a finished
+one gets a tick and its words go behind you, subdued and struck through. The
+brackets have to open the item — `- see [TODO] in the grammar` is a bracket
+somebody wrote, and it stays one.
+
+A phrase between two `~~` is one the answer wrote and then took back, and it is
+drawn with a line through it and nothing else — struck rather than dimmed,
+because a retraction is still being read. Exactly two: `~/Projects` is a path,
+`~40` is an approximation, and both are left where they were.
+
+A table is drawn as a table. The bars a model wrote are replaced by one rule
+between the columns and one under the header, every column is as wide as the
+widest thing drawn in it, and `:--`, `--:` or `:-:` in the row of dashes says
+which side a column is drawn against. Where the window cannot hold it, the table
+gives up columns from whichever is widest until it fits, and a cell that no
+longer fits ends in an ellipsis — so every row is exactly the width of the
+window and the columns stay under each other. A window too narrow for even one
+column apiece gets the table as the model wrote it.
+
+A bar is only a table at the start of a line, and only where the line under it
+is the row of dashes that makes one. `a | b` in a shell, `Ok(_) | Err(_)` in a
+match and a line of bars with nothing under it are all left where they were.
+
 A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was
@@ -400,6 +472,33 @@ Where there is no colour to read it into, the markers are left where the model
 put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
+
+A prompt can be more than one line. <kbd>Shift+Enter</kbd> adds a line without
+sending, and the box grows a row for it. Some terminals cannot send that key —
+the encoding they use has no room for the modifier, so they send the same bytes
+for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks each terminal
+for the newer encoding on the way in. Where it declines, <kbd>Alt+Enter</kbd> and
+<kbd>Ctrl+J</kbd> do the same thing and need nothing asked for.
+
+If your terminal keeps all three for itself, swap the two presses over:
+`"input": { "send": "altEnter" }` in your
+[configuration](../configuration/configuration.md) makes <kbd>Enter</kbd> add a
+line and <kbd>Alt+Enter</kbd> send.
+
+Pasting several lines pastes several lines. The breaks arrive as breaks rather
+than as a send at the first one, because crucible asks the terminal to mark where
+a paste begins and ends. A terminal that cannot do that is one where a pasted
+break is indistinguishable from a keypress, and there the paste sends its first
+line.
+
+The edits a shell answers to work in the box as well. <kbd>Ctrl+W</kbd> takes the
+word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
+<kbd>Ctrl+K</kbd> the rest of the line ahead; <kbd>Ctrl+Backspace</kbd> and
+<kbd>Alt+Backspace</kbd> take the word too, for fingers that came from an editor
+rather than a shell. <kbd>Delete</kbd> takes the character in front of the
+cursor, which stays where it is. A word goes on being a word across a break, so
+rubbing one out at the start of a line joins it to the line above — the same as
+<kbd>Backspace</kbd> does.
 
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave — `press ctrl+c

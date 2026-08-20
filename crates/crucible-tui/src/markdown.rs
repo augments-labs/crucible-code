@@ -22,7 +22,11 @@
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
+
+mod table;
+
 use crate::syntax::Syntax;
+use table::Table;
 
 /// The longest run of one marker character read as a marker.
 ///
@@ -43,6 +47,7 @@ const TICKS: &str = "``````";
 const DASHES: &str = "------";
 const PLUSES: &str = "++++++";
 const ANGLES: &str = ">>>>>>";
+const TILDES: &str = "~~~~~~";
 
 /// A run of one marker character, waiting for the character that says what it
 /// was.
@@ -59,16 +64,48 @@ struct Held {
     opened: bool,
 }
 
+/// A bulleted item's mark, through the life of the item it belongs to.
+///
+/// A mark is not drawn where its bullet settles, because what the mark *is*
+/// depends on what comes after it: `- [ ] a thing` is a task and a task's mark
+/// is a box. A scan reading one character at a time cannot know that yet, so
+/// the mark is owed until the first thing that is not a box arrives, and paid
+/// immediately before it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Marked {
+    /// Nothing on this line is a bulleted item.
+    #[default]
+    Nothing,
+    /// A bullet whose mark is owed.
+    Owed,
+    /// A mark already drawn: a plain bullet, or a task nobody has finished.
+    Drawn,
+    /// A task somebody has finished.
+    ///
+    /// Its words wear [`Slot::Done`] whatever else is written into them: a
+    /// finished task is behind you, and the emphasis inside one is something
+    /// leant on while it was still ahead.
+    Done,
+}
+
 /// What is open on the line being read.
 ///
-/// All of it ends where the line does. Markdown lets emphasis cross a line
-/// break and this does not: an unclosed marker then costs one line rather than
-/// the rest of the answer, and a model that opened one by accident is the case
-/// that actually happens.
+/// Most of it ends where the line does. Emphasis is the exception, because a
+/// model writes a bold phrase and lets it wrap, and a run closed on the line
+/// after the one that opened it is the case that actually happens -- read
+/// per-line, the opening marker is eaten and the closing one is printed into
+/// the prose, which is worse than either answer.
+///
+/// So emphasis crosses a line break and nothing else does, and it crosses only
+/// where the paragraph does: a blank line ends it, a block mark opening the
+/// next line ends it, and a fence ends it. An unclosed marker then costs the
+/// paragraph it was written in rather than the rest of the answer.
 #[derive(Debug, Default, Clone, Copy)]
 struct Line {
     heading: bool,
     code: bool,
+    /// What the line's bullet is marked with, where it has one.
+    marked: Marked,
     /// Whether the line opened with a quote mark, so the rest of it is
     /// somebody else's words.
     quoted: bool,
@@ -86,6 +123,8 @@ struct Emphasis {
     leant: bool,
     /// Two or more.
     raised: bool,
+    /// Two tildes around it: written, and then taken back.
+    struck: bool,
 }
 
 /// What the scan is in the middle of, across lines.
@@ -144,6 +183,34 @@ impl Link {
     }
 }
 
+/// The schemes an address is recognised by.
+///
+/// Two, and both of them the web's: an answer about code is full of words with
+/// a colon in them, and the ones a reader can act on in a terminal are these.
+const SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// How much of a scheme a run of characters has spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spelled {
+    /// Not a scheme and not on the way to one.
+    Nothing,
+    /// A scheme so far, with more of it to come.
+    Partly,
+    /// A scheme, and everything after it belongs to the address.
+    Whole,
+}
+
+/// How much of a scheme `text` has spelled.
+fn spelled(text: &str) -> Spelled {
+    if SCHEMES.iter().any(|scheme| text.starts_with(scheme)) {
+        Spelled::Whole
+    } else if SCHEMES.iter().any(|scheme| scheme.starts_with(text)) {
+        Spelled::Partly
+    } else {
+        Spelled::Nothing
+    }
+}
+
 /// Reads markdown out of a stream of deltas.
 #[derive(Debug, Default)]
 pub struct Markdown {
@@ -155,8 +222,39 @@ pub struct Markdown {
     started: bool,
     /// The character before the run being held, for the one rule that needs it.
     previous: char,
+    /// A bare address being read, from the first letter of its scheme on.
+    ///
+    /// Held for the same reason a link's words are: an address is one word to
+    /// the reader and a run of markers to a scan reading characters. Held from
+    /// the first letter rather than from the scheme, because by the time the
+    /// scheme is spelled out the letters that spelled it have gone -- so a word
+    /// that merely starts like one is held for as long as it could still turn
+    /// into one, which is never more than a few characters.
+    address: Option<String>,
+    /// A backslash is standing, waiting to see what it was put in front of.
+    ///
+    /// Held rather than written, because what it does is decided by the next
+    /// character: a marker after it is drawn as itself and the backslash is
+    /// gone, and anything else gives the backslash back. It outlives a delta
+    /// for the reason everything here does -- a delta is a piece of the wire,
+    /// and the pair arrives split as often as not.
+    escaped: bool,
+    /// The spaces this line opened with, held for whatever follows them.
+    ///
+    /// Whether they were indentation at all is the first marker's to say: the
+    /// ones in front of a fence are part of the fence and go with its line,
+    /// and every other marker keeps them, which is what nests one list inside
+    /// another. Counted rather than kept, since a space is a space.
+    indent: usize,
     line: Line,
     inside: Inside,
+    /// The marker the open block was fenced with.
+    ///
+    /// A block is closed by the marker that opened it and by no other, so a
+    /// row of backticks inside a block fenced with tildes is a row of
+    /// backticks. Read only while a block is open, which is the only time it
+    /// has been written.
+    fenced: char,
     /// What the opening fence said the block is written in, while that fence's
     /// own line is still being read.
     language: String,
@@ -168,6 +266,13 @@ pub struct Markdown {
     syntax: Option<Syntax>,
     /// A link whose shape is still arriving, and the text held back for it.
     link: Option<Link>,
+    /// The block of bars being gathered, where one is.
+    ///
+    /// The only thing here that outlives a line without being an [`Inside`]:
+    /// what a table is waiting for is not a character that ends it but a line
+    /// that is not one of its own, which is a question asked at the start of
+    /// every line rather than settled once.
+    table: Option<Table>,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
     ///
@@ -194,6 +299,10 @@ pub struct Markdown {
 /// rather than dropped or held.
 const MOST: usize = 4096;
 
+/// The spaces a held indentation is handed on from, taken as a slice rather
+/// than built: an indent is a handful of columns and this is the render path.
+const SPACES: &str = "                                ";
+
 impl Markdown {
     /// A reader drawing its bullets and quote bars with `glyphs`.
     #[must_use]
@@ -209,12 +318,28 @@ impl Markdown {
     /// Runs rather than characters: the text between two markers is one call,
     /// so a delta with no markers in it is one call for the whole delta.
     /// Markers themselves are never handed on.
-    pub fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
+    ///
+    /// `room` is how many columns the caller has to draw into. An argument
+    /// rather than something this holds, because it is the one fact here that
+    /// changes without a delta arriving: a window resized between two of them
+    /// would leave a field stale, and the caller knows the size at every call
+    /// anyway.
+    pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
+
+            // A block of bars takes every character in it, so nothing below
+            // runs while one is open and the run stays empty until it closes.
+            if self.table.is_some() {
+                if self.tabled(character, room, say) {
+                    run = next;
+                    continue;
+                }
+                run = at;
+            }
 
             match self.held {
                 // More of the run being held. Not text, and not decided yet.
@@ -228,7 +353,7 @@ impl Markdown {
                 }
                 // The run is over, and this character says what it was.
                 Some(held) => {
-                    if self.settle(held, character, say) {
+                    if self.settle(held, character, room, say) {
                         run = next;
                         continue;
                     }
@@ -250,17 +375,69 @@ impl Markdown {
                 run = at;
             }
 
+            // A backslash is standing and this is the character it was put in
+            // front of.
+            // Held text, not a run, for the reason a link's words are.
+            if self.address.is_some() {
+                if self.addressed(character, say) {
+                    run = next;
+                    continue;
+                }
+                // Not an address after all, or one that has just ended. What
+                // was held has been drawn or put back, and this character is
+                // ordinary, so it starts the run.
+                run = at;
+            }
+
+            if std::mem::take(&mut self.escaped) {
+                if Self::escapes(character) {
+                    self.say(delta.get(at..next).unwrap_or_default(), say);
+                    self.started = true;
+                    self.previous = character;
+                    run = next;
+                    continue;
+                }
+
+                // In front of nothing this scan would have acted on, so it was
+                // a character of the answer rather than a word about the next
+                // one. The run starts at this character, which is where the
+                // backslash left it.
+                self.say("\\", say);
+                self.started = true;
+                self.previous = '\\';
+            }
+
             if character == '\n' {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.end_line(say);
+                self.end_line(room, say);
                 run = next;
             } else if self.opens_link(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.link = Some(Link::default());
                 self.started = true;
                 run = next;
-            } else if self.marks(character) {
+            } else if self.opens_table(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.table = Some(Table::opening());
+                self.tabled(character, room, say);
+                run = next;
+            } else if self.opens_address(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.address = Some(String::from(character));
+                run = next;
+            } else if self.escaping(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.escaped = true;
+                run = next;
+            } else if self.marks(character) {
+                // Nothing has been written on the line yet, so what stands in
+                // front of this marker is the whitespace that indented it, and
+                // it is held rather than said until the marker says what it was.
+                if self.started {
+                    self.say(delta.get(run..at).unwrap_or_default(), say);
+                } else {
+                    self.indent += delta.get(run..at).map_or(0, str::len);
+                }
                 self.held = Some(Held {
                     mark: character,
                     count: 1,
@@ -290,11 +467,19 @@ impl Markdown {
         match self.inside {
             // Inside a fence the only marker left is the fence that closes it,
             // and only at the start of a line. Code is full of the others.
-            Inside::Fence => character == '`' && !self.started,
+            Inside::Fence => character == self.fenced && !self.started,
             // A fence's own line is dropped whole; nothing on it marks anything.
             Inside::Opening | Inside::Closing => false,
             Inside::Prose => match character {
-                '*' | '_' | '`' => true,
+                '`' => true,
+                // Inside a span the backtick above is the only marker left,
+                // for the reason a fence is: the words in there are code, and
+                // code is full of the others. `*ptr` is a pointer, `_private`
+                // is a name, and `**kwargs` is how one language spells an
+                // argument -- every one of them a thing a coding agent writes
+                // far more often than it writes emphasis inside a span.
+                _ if self.line.code => false,
+                '*' | '_' | '~' => true,
                 // Only where nothing else has been written on the line. A
                 // hash is a heading there and a comment everywhere else; a
                 // dash is a bullet there and a minus sign everywhere else.
@@ -304,25 +489,79 @@ impl Markdown {
         }
     }
 
+    /// Whether `character` is a backslash standing in front of something.
+    ///
+    /// Prose only. In code a backslash is a character like any other, and a
+    /// span is where a pattern goes to be written down exactly.
+    fn escaping(&self, character: char) -> bool {
+        character == '\\' && self.inside == Inside::Prose && !self.line.code
+    }
+
+    /// Whether a standing backslash was put in front of this to say it means
+    /// nothing.
+    ///
+    /// Only what this scan would otherwise have acted on, rather than every
+    /// piece of punctuation a stricter reading escapes: `\d` and `\.` are a
+    /// pattern far more often than they are prose that meant a `d` or a stop,
+    /// and dropping the backslash there would change what somebody copies off
+    /// the screen into something that no longer matches.
+    fn escapes(character: char) -> bool {
+        matches!(
+            character,
+            '\\' | '*' | '_' | '`' | '~' | '#' | '-' | '+' | '>' | '|' | '['
+        )
+    }
+
     /// Decides what a finished run of markers was, given the character that
     /// ended it. Answers whether that character was part of the marker.
-    fn settle(&mut self, held: Held, next: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+    fn settle(
+        &mut self,
+        held: Held,
+        next: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str),
+    ) -> bool {
         self.held = None;
         self.started = true;
 
         match held.mark {
+            // Three or more of one marker with nothing else on the line: a
+            // rule between the blocks either side of it. Drawn across the room
+            // the caller has rather than as the three characters it was
+            // written with, because what the model meant by them is a
+            // separator and a separator that stops after three columns reads
+            // as a stray. This stands above every arm below it: a line that is
+            // nothing but markers cannot also be emphasis, a bullet, or the
+            // start of anything.
+            '-' | '*' | '_' if held.opened && held.count >= 3 && next == '\n' => {
+                self.indent = 0;
+                for _ in 0..room {
+                    say(Slot::Quiet, self.glyphs.horizontal());
+                }
+                false
+            }
             // The hashes and the one space after them are the marker, and what
             // is left of the line is the heading itself.
             '#' if next == ' ' => {
+                self.opens_block();
                 self.line.heading = true;
                 true
             }
             // Three or more open a block that outlives the line it is on, or
             // close the one already open.
-            '`' if held.count >= 3 => {
+            // Either marker, because a model reaches for tildes exactly when
+            // the block is full of backticks -- and a block read as prose is
+            // code with its markers taken out of it, which is the worst thing
+            // this reader can do to an answer.
+            '`' | '~' if held.count >= 3 && self.fences(held.mark) => {
+                // A fence's own line goes whole, and the spaces in front of it
+                // are part of that line: an item's block would otherwise open
+                // with the item's indentation stitched to its first row.
+                self.indent = 0;
                 self.inside = if self.inside == Inside::Fence {
                     Inside::Closing
                 } else {
+                    self.fenced = held.mark;
                     Inside::Opening
                 };
                 false
@@ -335,10 +574,10 @@ impl Markdown {
             // drawn in their place is a mark and a space of this crate's own,
             // out of the set the rest of the interface is drawn from. The
             // indentation before it has already gone out, so a nested item
-            // stays nested.
+            // stays nested. Owed rather than drawn here: see [`Line::owed`].
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
-                say(Slot::Quiet, self.glyphs.dot());
-                say(Slot::Quiet, " ");
+                self.opens_block();
+                self.line.marked = Marked::Owed;
                 true
             }
             // A quote is a bar down the left and the words beside it, which is
@@ -346,10 +585,20 @@ impl Markdown {
             // goes quiet: the point of a quote is that the words are somebody
             // else's.
             '>' if held.opened && held.count == 1 && next == ' ' => {
+                self.opens_block();
                 self.line.quoted = true;
+                self.spend(say);
                 say(Slot::Quiet, self.glyphs.vertical());
                 say(Slot::Quiet, " ");
                 true
+            }
+            // Exactly two, because that is the only run markdown has ever
+            // meant a retraction by -- which is also what keeps `~/Projects` a
+            // path: one tilde falls through and is written back as itself,
+            // and three are the fence handled above.
+            '~' if held.count == 2 && self.strikes(next) => {
+                self.line.emphasis.struck = !self.line.emphasis.struck;
+                false
             }
             // One marker is emphasis and two are weight, which is what markdown
             // has always meant by them and what a model writes expecting to be
@@ -372,6 +621,32 @@ impl Markdown {
         }
     }
 
+    /// Drops the emphasis carried out of the line before this one.
+    ///
+    /// A block mark opens something of its own, and what it opens is not the
+    /// paragraph an unclosed marker was left open in. See [`Line`].
+    fn opens_block(&mut self) {
+        self.line.emphasis = Emphasis::default();
+    }
+
+    /// Whether a run of three or more `mark` is this line's fence.
+    ///
+    /// One opens a block wherever a block is not already open, and closes only
+    /// the block its own marker opened. See [`Markdown::fenced`].
+    fn fences(&self, mark: char) -> bool {
+        self.inside != Inside::Fence || self.fenced == mark
+    }
+
+    /// Whether a run of two tildes followed by `next` turns a retraction on or
+    /// off.
+    ///
+    /// The same rule the stars are held to, for the same reason: something has
+    /// to follow on the same line for a run to open, so a pair left dangling at
+    /// the end of one strikes nothing.
+    fn strikes(&self, next: char) -> bool {
+        self.line.emphasis.struck || !next.is_whitespace()
+    }
+
     /// Whether a run of markers followed by `next` turns emphasis on or off.
     fn emphasises(&self, held: Held, next: char) -> bool {
         // Whichever of the two this run would close, since what a marker may do
@@ -388,10 +663,15 @@ impl Markdown {
                 // `_borrowed_ from` closes and `_borrowed_from` does not.
                 !next.is_alphanumeric()
             } else {
-                // Opens only where a word is not already under way:
-                // `read_to_string` is a function far more often than it is a
-                // sentence with emphasis in the middle of it.
-                !self.previous.is_alphanumeric() && !next.is_whitespace()
+                // Opens only between two words rather than beside one: a
+                // word must not already be under way, and one has to start
+                // here. `read_to_string` is a function far more often than it
+                // is a sentence with emphasis in the middle of it -- and
+                // `Ok(_)` is a pattern far more often than it is the start of
+                // one, which the whitespace this used to ask about could not
+                // tell apart, since the bracket that closes it is not
+                // whitespace either.
+                !self.previous.is_alphanumeric() && next.is_alphanumeric()
             };
         }
 
@@ -399,6 +679,97 @@ impl Markdown {
         // what leaves `* item` a bullet instead of turning the rest of the
         // paragraph bold.
         open || !next.is_whitespace()
+    }
+
+    /// Whether `character` opens a block of bars where the scan stands.
+    ///
+    /// Only where nothing else has been written on the line, and not inside a
+    /// span of code: a bar in the middle of a line is `a | b` in a shell and
+    /// `Ok(_) | Err(_)` in a match, and neither is a table.
+    fn opens_table(&self, character: char) -> bool {
+        character == '|' && self.inside == Inside::Prose && !self.started && !self.line.code
+    }
+
+    /// Reads `character` into the block of bars being held. Answers whether it
+    /// belonged to the block.
+    ///
+    /// `false` says the block is over: what it turned out to be has already
+    /// gone out, and `character` is the caller's again — the first character of
+    /// a line that is not part of any table, which is why the line state goes
+    /// back to what it is at the start of one.
+    fn tabled(&mut self, character: char, room: usize, say: &mut dyn FnMut(Slot, &str)) -> bool {
+        let Some(mut table) = self.table.take() else {
+            return false;
+        };
+
+        // A line that does not open with a bar is not the table's, and the
+        // table ended above it.
+        if table.fresh() && character != '|' {
+            table.laid(self.glyphs, room, say);
+            self.line = Line::default();
+            self.started = false;
+            return false;
+        }
+
+        // Held longer than a table is worth waiting for. Out it goes as the
+        // model wrote it, and the rest of the block is read as the prose it
+        // now is.
+        if !table.takes(character) {
+            table.spilt(say);
+            return true;
+        }
+
+        // The delimiter row is the second line or there is no table here.
+        if !table.possible() {
+            table.spilt(say);
+            return true;
+        }
+
+        self.table = Some(table);
+        true
+    }
+
+    /// Draws the bullet's own mark, where one is owed.
+    ///
+    /// Called immediately before the first thing on the item reaches the
+    /// terminal, whichever path that is — a run of prose, a link that arrived
+    /// whole, a bracket that turned out not to be one, or the break of an item
+    /// with nothing after its marker at all.
+    fn pay(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        if self.line.marked != Marked::Owed {
+            return;
+        }
+
+        self.line.marked = Marked::Drawn;
+        say(Slot::Quiet, self.glyphs.dot());
+        say(Slot::Quiet, " ");
+    }
+
+    /// Whether what a bullet is holding is a task's box rather than a link.
+    ///
+    /// Only where the mark is still owed, so `- [ ] a thing` is a task and
+    /// `- see [ ] in the grammar` is a bracket somebody wrote. `character` is
+    /// the space that follows the box, which is part of the marker and goes
+    /// with it.
+    fn boxed(&self, link: &Link, character: char) -> bool {
+        self.line.marked == Marked::Owed
+            && link.part == Part::Between
+            && character == ' '
+            && matches!(link.label.as_str(), "" | " " | "x" | "X")
+    }
+
+    /// Draws a task's box in place of the bullet's mark, and says whether the
+    /// task is one somebody has finished.
+    fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str)) {
+        if matches!(label, "x" | "X") {
+            self.line.marked = Marked::Done;
+            say(Slot::DoneMark, self.glyphs.done());
+        } else {
+            self.line.marked = Marked::Drawn;
+            say(Slot::Quiet, self.glyphs.open());
+        }
+
+        say(Slot::Quiet, " ");
     }
 
     /// Whether `character` opens a link where the scan stands.
@@ -436,8 +807,16 @@ impl Markdown {
             }
             (Part::Label, held) if carries => link.label.push(held),
             (Part::Target, held) if carries => link.target.push(held),
+            // A box takes the bullet's mark rather than following it, which is
+            // why this stands above the arm that puts a bracket back: the
+            // space after `]` is the marker's own and goes with it.
+            _ if self.boxed(&link, character) => {
+                self.tick(&link.label, say);
+                return true;
+            }
             // `[TODO] fix this`, and every other bracket somebody meant.
             _ => {
+                self.pay(say);
                 spill(&link, say);
                 return false;
             }
@@ -445,6 +824,78 @@ impl Markdown {
 
         self.link = Some(link);
         true
+    }
+
+    /// Whether an address could start here.
+    ///
+    /// At the start of a word only: `shttps://` is not an address, and neither
+    /// is the second half of one a link already named.
+    fn opens_address(&self, character: char) -> bool {
+        SCHEMES.iter().any(|scheme| scheme.starts_with(character))
+            && self.inside == Inside::Prose
+            && !self.line.code
+            && !self.previous.is_alphanumeric()
+    }
+
+    /// Reads one character into the address being held. Answers whether that
+    /// character was part of it.
+    fn addressed(&mut self, character: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+        let Some(mut address) = self.address.take() else {
+            return false;
+        };
+
+        // An address ends where the word does. Bounded like everything else
+        // held here: past the bound it stops being an address and is put back
+        // as the text it is.
+        let carries = !character.is_whitespace() && address.len() < MOST;
+        if carries && spelled(&address) == Spelled::Whole {
+            address.push(character);
+            self.address = Some(address);
+            return true;
+        }
+
+        if carries {
+            address.push(character);
+            if spelled(&address) != Spelled::Nothing {
+                self.address = Some(address);
+                return true;
+            }
+            // A word that started like a scheme and turned out to be a word.
+            // The character that decided it is part of that word, and goes
+            // back with it rather than to the caller.
+            self.say(&address, say);
+            self.started = true;
+            self.previous = character;
+            return true;
+        }
+
+        self.wrote_address(&address, say);
+        false
+    }
+
+    /// Hands on an address the answer wrote bare.
+    ///
+    /// Drawn as the link it is, so what can be acted on in a terminal looks
+    /// like it can. What ends a sentence is not part of it: a full stop after
+    /// an address belongs to the prose, and a reader who copies the row gets
+    /// an address that still resolves.
+    fn wrote_address(&mut self, address: &str, say: &mut dyn FnMut(Slot, &str)) {
+        let ends = address.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"']);
+
+        // A scheme and nothing after it is a word somebody wrote, not somewhere
+        // anybody can go.
+        if spelled(ends) != Spelled::Whole || SCHEMES.contains(&ends) {
+            self.say(address, say);
+            self.started = true;
+            self.previous = address.chars().next_back().unwrap_or('/');
+            return;
+        }
+
+        self.pay(say);
+        say(Slot::Link, ends);
+        self.started = true;
+        self.previous = ends.chars().next_back().unwrap_or('/');
+        self.say(&address[ends.len()..], say);
     }
 
     /// Hands on a link that arrived whole.
@@ -457,6 +908,8 @@ impl Markdown {
     /// is bytes a model chose, and the rule this file opens with is that none
     /// of them leaves as an instruction.
     fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str)) {
+        self.pay(say);
+
         let target = target(&link.target);
         let words = if link.label.is_empty() {
             target
@@ -478,23 +931,57 @@ impl Markdown {
         }
     }
 
-    /// Puts back whatever a link was holding, where the message ended in the
-    /// middle of one.
+    /// Lets go of whatever was still being held when the message ended.
+    ///
+    /// A link goes back as the characters it was written with; a table is drawn
+    /// as the table it turned out to be. `room` is what it is drawn against, and
+    /// is the caller's for the reason it is on [`Markdown::read`].
     ///
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
-    pub fn finish(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
+        // A run of markers is held for the character that says what it was,
+        // and the end of a message is that character never arriving. Settled
+        // against a line break, because the end of a message ends everything a
+        // line break ends and one more thing besides -- so a marker that meant
+        // nothing comes back as itself, exactly as it would have one character
+        // later, and one that opened something is consumed exactly as it would
+        // have been there too.
+        if let Some(held) = self.held.take() {
+            self.settle(held, '\n', room, say);
+        }
+
+        // The word that would have ended the address never arrived, and the end
+        // of the message ends it exactly as a space would have.
+        if let Some(address) = self.address.take() {
+            self.wrote_address(&address, say);
+        }
+
+        // The character that would have said what it was in front of never
+        // arrived, so it was in front of nothing.
+        if std::mem::take(&mut self.escaped) {
+            self.say("\\", say);
+        }
+
+        // After the settle above, so a fence at the very end of a message has
+        // had its chance to take the spaces in front of it with it.
+        self.spend(say);
+        self.pay(say);
+
         if let Some(link) = self.link.take() {
             spill(&link, say);
+        }
+        if let Some(table) = self.table.take() {
+            table.laid(self.glyphs, room, say);
         }
     }
 
     /// Ends the line, and with it everything markdown ends at one.
-    fn end_line(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         let ended = self.inside;
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
-        self.finish(say);
+        self.finish(room, say);
 
         // The line of code is complete, so this is the moment it can be read.
         self.read_code(say);
@@ -508,6 +995,15 @@ impl Markdown {
         // A block is read in whatever its opening fence named, and the reader
         // is made here because this is where that name is finished. A block
         // that closes drops its reader with it: the next one names its own.
+        // Carried only out of a line of prose that had something on it: a
+        // blank line is the end of the paragraph, and a fence has no emphasis
+        // to speak of. Put back below rather than here -- see the line break.
+        let emphasis = if ended == Inside::Prose && self.started {
+            self.line.emphasis
+        } else {
+            Emphasis::default()
+        };
+
         let syntax = match ended {
             Inside::Opening => Syntax::of(&self.language),
             Inside::Closing => None,
@@ -520,6 +1016,7 @@ impl Markdown {
             // over so much as never given up: they are what the terminal can
             // draw, which no line of an answer changes.
             inside,
+            fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
             ..Self::default()
@@ -532,6 +1029,10 @@ impl Markdown {
         if !matches!(ended, Inside::Opening | Inside::Closing) {
             say(self.slot(), "\n");
         }
+
+        // After the break, so the slot the row ends under is the one it would
+        // have worn before emphasis learnt to cross a line at all.
+        self.line.emphasis = emphasis;
     }
 
     /// Hands on a run of text, if there is any.
@@ -544,6 +1045,30 @@ impl Markdown {
             return;
         }
 
+        // The line's own order: what indented it, then the mark it owes, then
+        // the words themselves.
+        self.spend(say);
+        self.pay(say);
+        self.wears(text, say);
+    }
+
+    /// Hands on the indentation the line opened with, where it kept any.
+    ///
+    /// Called wherever the first thing on a line reaches the terminal, which
+    /// is the moment the marker that could have claimed those spaces has
+    /// either claimed them or gone. See [`Markdown::indent`].
+    fn spend(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+        let mut indent = std::mem::take(&mut self.indent);
+        while indent > 0 {
+            let spaces = indent.min(SPACES.len());
+            self.wears(&SPACES[..spaces], say);
+            indent -= spaces;
+        }
+    }
+
+    /// Hands on a run under the slot the line is wearing, or into the block
+    /// being read where one is open.
+    fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str)) {
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
             return;
@@ -584,6 +1109,14 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose || self.line.code || self.line.quoted {
             Slot::Quiet
+        } else if self.line.marked == Marked::Done {
+            Slot::Done
+        } else if self.line.emphasis.struck {
+            // Above weight and emphasis both. A slot says one thing, and of the
+            // things a phrase can be at once, the one a reader most needs is
+            // that it was taken back -- bold words the answer has retracted are
+            // worse than plain ones it has not.
+            Slot::Struck
         } else if self.line.heading || self.line.emphasis.raised {
             Slot::Strong
         } else if self.line.emphasis.leant {
@@ -636,6 +1169,7 @@ fn written(held: Held) -> &'static str {
         '-' => DASHES,
         '+' => PLUSES,
         '>' => ANGLES,
+        '~' => TILDES,
         _ => SCORES,
     };
 

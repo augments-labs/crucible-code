@@ -107,6 +107,34 @@ fn a_typed_line_that_reaches_the_edge_wraps_and_grows_the_box() {
 }
 
 #[test]
+fn a_paste_of_several_lines_is_one_prompt_and_not_the_first_line_of_one() {
+    // Bracketed, so the terminal says where the paste starts and ends and the
+    // breaks inside it are structure. Unbracketed the same bytes are keystrokes,
+    // and the first break is a Return: the prompt would be sent one line in with
+    // the rest typed into whatever came up next.
+    //
+    // The breaks are carriage returns because that is what a terminal puts
+    // inside the brackets — Return's own byte, not a newline.
+    let mut window = Watched::open("pasted", 80, 24);
+
+    window.types("\x1b[200~first line\rsecond line\rthird line\x1b[201~");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing() {
+    // Shift+Return in the encoding that has room for the modifier, then
+    // Alt+Return, then Ctrl+J — which is a byte of its own and needs no
+    // encoding asked for. Three rows added to the box and no turn taken.
+    let mut window = Watched::open("newlines", 80, 24);
+
+    window.types("one\x1b[13;2utwo\x1b\rthree\nfour");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_line_past_what_the_box_has_room_for_scrolls_inside_it() {
     // Past the ceiling the box stops growing and the line scrolls under its top
     // edge. A short window, because the ceiling is worked out from the height:
