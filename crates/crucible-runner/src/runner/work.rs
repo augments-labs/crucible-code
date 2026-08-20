@@ -273,6 +273,7 @@ mod tests {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => {}
@@ -489,6 +490,7 @@ mod tests {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,

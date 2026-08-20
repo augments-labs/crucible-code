@@ -158,6 +158,24 @@ pub(crate) fn event<T: Terminal>(
         // be in scrollback. It commits through [`returned`].
         Event::ToolRequested { .. } => renderer.settle(),
 
+        // A line steered into the running turn, committed as the reader's own
+        // words. The stream is settled first so the line lands after whatever
+        // was arriving rather than in the middle of it — the same row a prompt
+        // is owed, for the same reason.
+        Event::Steered { line } => {
+            renderer.settle()?;
+            renderer.apart()?;
+            renderer.present(
+                &crucible_tui::Prompt::committed(
+                    line.as_str(),
+                    columns,
+                    style.glyphs(),
+                    style.palette().bands(),
+                ),
+                style.palette(),
+            )
+        }
+
         // One block: the row that says what came back, and under it the lines a
         // call that changed a file moved. No row parts them, because a reader
         // asking what the call did is asking both halves of the same question.

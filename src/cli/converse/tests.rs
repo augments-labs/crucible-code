@@ -36,6 +36,7 @@ pub(super) fn plain() -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        steer: crucible_core::Steer::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
@@ -238,6 +239,36 @@ fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
     assert_eq!(waiting.pop().as_deref(), Some("run the tests"));
     assert_eq!(waiting.pop().as_deref(), Some("now fix what failed"));
     assert!(waiting.pop().is_none());
+}
+
+#[test]
+fn the_whole_queue_is_named_and_a_line_taken_back_leaves_the_rest_in_order() {
+    // The panel names them all, so the queue has to hand them all over, oldest
+    // first. And a line taken back from the middle is the reader's until its
+    // turn, without disturbing the ones still waiting on either side of it.
+    let mut waiting = Prompts::default();
+    for line in ["first", "second", "third"] {
+        let mut editor = typed(line);
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    assert_eq!(
+        waiting.waiting_all().collect::<Vec<_>>(),
+        vec!["first", "second", "third"]
+    );
+    assert_eq!(waiting.waiting_count(), 3);
+
+    // The middle one, taken back: what is left is the two around it, still in
+    // the order they were typed.
+    assert_eq!(waiting.drop(1).as_deref(), Some("second"));
+    assert_eq!(
+        waiting.waiting_all().collect::<Vec<_>>(),
+        vec!["first", "third"]
+    );
+    assert_eq!(waiting.waiting_count(), 2);
+
+    // Past the end is nothing, and costs nothing.
+    assert!(waiting.drop(9).is_none());
 }
 
 #[test]

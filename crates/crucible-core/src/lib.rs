@@ -26,6 +26,7 @@ mod permission;
 mod provider;
 mod revealed;
 mod source;
+mod steer;
 mod tool;
 mod transcript;
 mod workspace;
@@ -49,6 +50,7 @@ pub use provider::{
 };
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
+pub use steer::Steer;
 pub use tool::{
     Account, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched,
     Watch, Wrote,

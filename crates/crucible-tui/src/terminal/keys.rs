@@ -86,6 +86,12 @@ pub enum Pressed {
     /// screen, and the difference between them is that one is about the plan
     /// standing above the box and the other about a result down the transcript.
     Plan,
+    /// Ctrl+Q: show every prompt waiting behind the turn, and take one back.
+    ///
+    /// The panel above the box names as many as fit and counts the rest; this
+    /// is the list the count is about, and the only place a queued line can be
+    /// dropped before its turn sends it.
+    Queue,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -337,6 +343,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // letter is free and it is the letter the two things it moves between are
         // both spelled with.
         KeyCode::Char('b') if control => Pressed::Background,
+
+        // And last of these. Ctrl+Q is readline's quoted-insert, which is how a
+        // control character reaches a line — this editor takes one as paste and
+        // has no use for the key, so the letter is free and it is the one the
+        // panel of waiting prompts is spelled with.
+        KeyCode::Char('q') if control => Pressed::Queue,
 
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on

@@ -2,9 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 19,4 scrolled 22
-|two answer                                                                      |
-|                                                                                |
+80x24 cursor 19,4 scrolled 24
 |› the third thing                                                               |
 |                                                                                |
 |three answer                                                                    |
@@ -16,6 +14,8 @@ expression: window.picture()
 | compacted · you asked                                                          |
 | 4 messages became a recap · 19 → 481 carried · 2 turns kept whole              |
 |────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|› what next                                                                     |
 |                                                                                |
 |› what next                                                                     |
 |                                                                                |

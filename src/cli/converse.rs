@@ -120,6 +120,11 @@ pub(crate) struct Terms {
     pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// What a line typed while a turn runs is pushed into, and the turn draws
+    /// from between one pass and the next. Held for the session the way the
+    /// cancel is: it is made once beside it, and the turn's thread and the loop
+    /// that reads the keyboard each hold an end.
+    pub(crate) steer: crucible_core::Steer,
     /// Which files this session has read, which is what `write` asks before it
     /// replaces one.
     ///
@@ -576,9 +581,9 @@ fn take<T: Terminal>(
     // A turn can start with prompts already behind it: the loop above took one
     // of them and left the rest. Read before the first frame, so the row naming
     // what is coming is right on the frame it first appears in.
-    turning.queueing(held.queued.waiting(), renderer.columns(), terms.style());
+    turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
-    let working = sent(runner, work, asking, relay, running)?;
+    let working = sent(runner, work, asking, relay, running, terms.steer.clone())?;
 
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
@@ -686,6 +691,7 @@ fn take<T: Terminal>(
                     says: &says,
                     style: terms.style(),
                     cancel: &terms.cancel,
+                    steer: &terms.steer,
                     leaving: &mut leaving,
                 },
             ) {
@@ -723,12 +729,17 @@ fn take<T: Terminal>(
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
 /// which is what keeps the box under the turn live while it runs.
+// The cancel and the steer are both read off the worker the turn runs on, and
+// bundling them would drag the two through every signature the cancel crosses.
+// The lint counts to five; the worker needs six.
+#[allow(clippy::too_many_arguments)]
 fn sent(
     mut runner: Runner,
     work: Work,
     mut asking: Asking,
     relay: Relay,
     running: Cancel,
+    steer: crucible_core::Steer,
 ) -> Result<thread::JoinHandle<(Runner, Did)>, Fatal> {
     thread::Builder::new()
         .name("turn".to_owned())
@@ -738,7 +749,8 @@ fn sent(
             // visible.
             let did = match work {
                 Work::Turn(prompt) => {
-                    if let Err(problem) = runner.turn(prompt.trim(), &mut asking, &relay, &running)
+                    if let Err(problem) =
+                        runner.turn(prompt.trim(), &mut asking, &relay, &running, &steer)
                     {
                         relay.post(Event::Failed { error: problem });
                     }
@@ -865,8 +877,34 @@ impl Prompts {
     /// what is coming after it. A line that went into the box and vanished is
     /// the thing this exists to stop: the queue is the only place it is, and
     /// until it is named there is nothing on screen to say it was kept.
+    #[cfg(test)]
     fn waiting(&self) -> Option<&str> {
         self.lines.front().map(String::as_str)
+    }
+
+    /// Every prompt waiting, oldest first.
+    ///
+    /// The panel above the box is drawn from these: the second and third are as
+    /// much queued as the first, and a list that named only the front one said
+    /// the rest were not there.
+    fn waiting_all(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().map(String::as_str)
+    }
+
+    /// How many prompts are waiting.
+    fn waiting_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// Drops the prompt `at` places back, releasing its byte reservation.
+    ///
+    /// What the queue's full view removes one with: a line typed and not yet
+    /// sent is the reader's to take back until the turn takes it. `None` where
+    /// there is no such place.
+    fn drop(&mut self, at: usize) -> Option<String> {
+        let prompt = self.lines.remove(at)?;
+        self.bytes = self.bytes.saturating_sub(prompt.len());
+        Some(prompt)
     }
 
     /// Takes the oldest waiting prompt and releases its byte reservation.
@@ -874,6 +912,126 @@ impl Prompts {
         let prompt = self.lines.pop_front()?;
         self.bytes = self.bytes.saturating_sub(prompt.len());
         Some(prompt)
+    }
+
+    /// Stands the whole queue where the box was, and answers whether it changed.
+    ///
+    /// The panel names what fits and counts the rest; this is the list the count
+    /// is about. Up and down walk it, `x` takes the marked line back into the
+    /// box to be edited or sent sooner, and `esc` — or the key that opened it —
+    /// closes it. `true` where a line was dropped, since that is a frame owed.
+    ///
+    /// # Errors
+    ///
+    /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+    fn viewing<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        editor: &mut Editor,
+        style: Style,
+    ) -> Result<bool, Fatal> {
+        use region::Moved;
+
+        /// What the view is looking at and may change, held together so the two
+        /// closures `region::stand` drives can each borrow the whole of it.
+        struct Reading<'a> {
+            /// Which line a key acts on.
+            at: usize,
+            /// Whether a line was taken back, which is the frame the box is owed.
+            dropped: bool,
+            /// The queue being read.
+            queue: &'a mut Prompts,
+            /// The box a taken-back line returns to.
+            editor: &'a mut Editor,
+        }
+
+        let mut reading = Reading {
+            at: 0,
+            dropped: false,
+            queue: self,
+            editor,
+        };
+
+        let ended = region::stand(
+            renderer,
+            |_| style,
+            &mut reading,
+            |reading, columns, rows| reading.queue.laid(reading.at, columns, rows, style),
+            |arrived, reading| {
+                let at = reading.at;
+                match arrived {
+                    Pressed::Up => region::step(&mut reading.at, at.checked_sub(1)),
+                    Pressed::Down => region::step(
+                        &mut reading.at,
+                        (at + 1 < reading.queue.waiting_count()).then(|| at + 1),
+                    ),
+                    // The one key that changes the queue: the marked line is taken
+                    // back into the box, where it can be edited or sent ahead of
+                    // the rest. With one line it is also the way out, since the
+                    // list it was read from is then empty.
+                    Pressed::Key(Key::Char('x')) => match reading.queue.drop(at) {
+                        Some(line) => {
+                            reading.editor.paste(&line);
+                            reading.dropped = true;
+                            reading.at = at.min(reading.queue.waiting_count().saturating_sub(1));
+                            if reading.queue.waiting_count() == 0 {
+                                Moved::Left
+                            } else {
+                                Moved::Redraw
+                            }
+                        }
+                        None => Moved::Still,
+                    },
+                    Pressed::Escape | Pressed::Queue => Moved::Left,
+                    _ => Moved::Still,
+                }
+            },
+        )?;
+
+        let _ = ended;
+        Ok(reading.dropped)
+    }
+
+    /// Lays the queue out as a titled list, with the marked line standing out.
+    ///
+    /// Read by [`Prompts::viewing`] a frame at a time. Each line is led by the
+    /// mark a line is typed after, and the one the mark is on is drawn in the
+    /// accent so a key's target is never a guess.
+    fn laid(
+        &self,
+        at: usize,
+        columns: usize,
+        rows: usize,
+        style: Style,
+    ) -> (Vec<crucible_tui::Row>, Option<crucible_tui::Caret>) {
+        use crucible_tui::{Row, Slot};
+        let glyphs = style.glyphs();
+        let mark = glyphs.caret();
+
+        let caption = format!(
+            "{} queued — x to take back, esc to close",
+            self.waiting_count()
+        );
+        let title = Row::new().then(Slot::Strong, draw::clipped(&caption, columns, glyphs));
+
+        let mut laid = vec![title, Row::new()];
+
+        for (place, said) in self.waiting_all().enumerate().take(rows.saturating_sub(3)) {
+            let tone = if place == at {
+                Slot::Accent
+            } else {
+                Slot::Plain
+            };
+            laid.push(
+                Row::new()
+                    .then(Slot::Accent, mark)
+                    .then(Slot::Plain, " ")
+                    .then(tone, draw::clipped(said, columns.saturating_sub(2), glyphs)),
+            );
+        }
+
+        laid.push(Row::new());
+        (laid, None)
     }
 }
 
@@ -1078,6 +1236,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Plan
         | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
+        | Pressed::Queue
         | Pressed::Ignored => Heard::Ignored,
     }
 }

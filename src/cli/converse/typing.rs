@@ -398,8 +398,12 @@ pub(crate) fn ask<T: Terminal>(
 
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
-            // and has just been taken back.
-            Pressed::Escape | Pressed::Explain | Pressed::Ignored => offered.is_some(),
+            // and has just been taken back. Ctrl+Q among them: between turns
+            // nothing is queued, so the queue view has nothing to show — the key
+            // is the panel's while a turn runs, and the panel is the turn's.
+            Pressed::Escape | Pressed::Explain | Pressed::Queue | Pressed::Ignored => {
+                offered.is_some()
+            }
 
             // Two things a click can land on and one round trip to tell them
             // apart. On the line it is the move the arrows make one place at a
@@ -662,6 +666,7 @@ pub(super) fn during<T: Terminal>(
         background,
         style,
         cancel,
+        steer,
         leaving,
     } = during;
     let mut moved = false;
@@ -716,7 +721,21 @@ pub(super) fn during<T: Terminal>(
 
             Meant::Queue => {
                 if !editor.is_empty() {
+                    // Steered first, so the running turn works the line in at its
+                    // next pass; then queued, so it is answered as its own turn
+                    // after. The queue takes the editor empty, so the text is read
+                    // off it before `queue` clears it.
+                    steer.say(editor.text().to_owned());
                     notice = queue(editor, queued, turning, renderer.columns(), style);
+                    moved = true;
+                }
+            }
+
+            // The queue itself, opened whole: the panel names what fits and
+            // counts the rest, and this is the list the count is about. A line
+            // taken back returns to the box to be edited or sent sooner.
+            Meant::QueueView => {
+                if queued.viewing(renderer, editor, style)? {
                     moved = true;
                 }
             }
@@ -852,7 +871,7 @@ fn queue(
 ) -> Option<&'static str> {
     let retained = queued.accept(editor);
 
-    turning.queueing(queued.waiting(), columns, style);
+    turning.queueing(queued.waiting_all(), columns, style);
     matches!(retained, Retained::Refused).then_some(QUEUED_LIMITED)
 }
 
@@ -892,6 +911,9 @@ enum Meant {
     Interrupt,
     /// Return: the finished line joins the queue the next turn is read from.
     Queue,
+    /// Ctrl+Q: the queue itself, stood whole so it can be read and a waiting
+    /// line taken back. Distinct from [`Meant::Queue`], which adds to it.
+    QueueView,
     /// A run of characters beginning here, taken into the line in one edit.
     Typing(char),
     /// A bracketed paste, taken into the line whole: its newlines are characters
@@ -949,6 +971,11 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Plan => Meant::Plan,
         Pressed::Background => Meant::Background,
 
+        // The panel of what is waiting behind the turn, opened whole. Its own
+        // meaning rather than the queue's: Return adds to the queue, and this
+        // is the list that reads it and takes a line back.
+        Pressed::Queue => Meant::QueueView,
+
         // The column is dropped rather than carried: what a click means up in
         // the transcript is which row it landed on, and a row that offered to
         // expand offers it along the whole of its width.
@@ -997,6 +1024,14 @@ pub(super) struct During<'a> {
     pub(super) background: &'a Background,
     pub(super) style: Style,
     pub(super) cancel: &'a Cancel,
+    /// Where a line typed now is pushed so the running turn works it in, between
+    /// one pass of asking and running tools and the next.
+    ///
+    /// The queue above still keeps the line, and its own turn answers it after:
+    /// steering is the agent adjusting course at once, not a reason the question
+    /// stops being one. The two are what a mid-turn Enter means, and this is the
+    /// half the turn in front of it reads.
+    pub(super) steer: &'a crucible_core::Steer,
     /// When Ctrl-C was last pressed against an empty line, if it is still the
     /// last key pressed.
     ///
@@ -1019,7 +1054,7 @@ fn rewrap<T: Terminal>(
     style: Style,
 ) -> Result<(), Fatal> {
     renderer.resized()?;
-    turning.queueing(queued.waiting(), renderer.columns(), style);
+    turning.queueing(queued.waiting_all(), renderer.columns(), style);
     Ok(())
 }
 

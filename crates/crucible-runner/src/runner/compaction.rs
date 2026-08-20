@@ -131,6 +131,15 @@ impl Runner {
             return Ok(Room::Nothing);
         };
 
+        // Measured before anything moves, because this is what the compaction
+        // is judged against: the pruning below frees real room, and a `before`
+        // taken after it would already count that room as freed — so a prune
+        // that worked, followed by a recap whose replacement came out
+        // near-neutral, would read as a compaction that freed nothing. That is
+        // the loop the caller is watching for, and a turn stopped for it is a
+        // turn that had room all along.
+        let before = self.load.tokens();
+
         // The lightest touch first. Old tool results are the bulk of most
         // sessions, and clearing them is free where the recap is a request — so
         // it runs before one, and the recap that follows reads a span already
@@ -144,8 +153,6 @@ impl Runner {
         // this list forward, so a second compaction extends it rather than
         // losing what the first one kept.
         let touched = self.tracked(replacing);
-
-        let before = self.load.tokens();
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
         let Some(recap) = self.recap(why, &touched, events, cancel)? else {

@@ -23,6 +23,7 @@ struct Scripted {
     sent: Sent,
     says: Says,
     cancel: Cancel,
+    steer: Steer,
     events: Sender<Event>,
     seen: Receiver<Event>,
 }
@@ -52,6 +53,7 @@ impl Scripted {
             sent,
             says: Says::new(verdict),
             cancel: Cancel::new(),
+            steer: Steer::new(),
             events,
             seen,
         }
@@ -70,8 +72,13 @@ impl Scripted {
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
-        self.runner
-            .turn(prompt, &mut self.says, &self.events, &self.cancel)
+        self.runner.turn(
+            prompt,
+            &mut self.says,
+            &self.events,
+            &self.cancel,
+            &self.steer,
+        )
     }
 
     fn said(&self) -> String {
@@ -87,6 +94,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -108,6 +116,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -130,6 +139,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
@@ -151,6 +161,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
             })
@@ -192,6 +203,132 @@ fn tools(tools: impl IntoIterator<Item = Fixed>) -> Tools {
         offered.add(Box::new(tool));
     }
     offered
+}
+
+/// A scripted turn over a `Steer`, for pushing a line mid-turn.
+struct Steering {
+    runner: Runner,
+    sent: Sent,
+    says: Says,
+    steer: Steer,
+    events: Sender<Event>,
+    seen: Receiver<Event>,
+}
+
+impl Steering {
+    fn new(script: Script, tools: Tools) -> Self {
+        let (events, seen) = channel();
+        let sent = script.sent();
+        Self {
+            runner: Runner::new(
+                Box::new(script),
+                tools,
+                Model {
+                    name: "claude-test".into(),
+                    max_tokens: 1024,
+                    window: None,
+                    system: None,
+                    effort: None,
+                },
+                Session::nowhere(),
+            ),
+            sent,
+            says: Says::new(Verdict::Allow),
+            steer: Steer::new(),
+            events,
+            seen,
+        }
+    }
+
+    fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
+        self.runner.turn(
+            prompt,
+            &mut self.says,
+            &self.events,
+            &Cancel::new(),
+            &self.steer,
+        )
+    }
+
+    fn said(&self) -> String {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Delta { text } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn asked(&self) -> Vec<usize> {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.transcript_len)
+            .collect()
+    }
+}
+
+#[test]
+fn a_line_typed_while_a_turn_runs_is_worked_into_it_at_the_next_pass() {
+    // The steer is pushed after the first response is out (so the turn is
+    // running, mid-exchange) and read at the top of the pass that follows: the
+    // next request has to carry it, and the agent adjust course rather than
+    // finishing a plan the reader moved past.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering.steer.say("actually do this".into());
+
+    steering.turn("first").expect("a turn");
+
+    // Two requests were made; the second (the pass after the tool) carried the
+    // steered line, so it is longer than the first.
+    let asked = steering.asked();
+    let [first, second] = asked.as_slice() else {
+        panic!("two passes: {asked:?}");
+    };
+    assert!(
+        second > first,
+        "the next request carries the steered line: {asked:?}"
+    );
+}
+
+#[test]
+fn a_steered_line_lands_before_a_tool_call_that_is_still_out() {
+    // The steer is read at the top of the exchange loop, never while a tool
+    // call is out. Pushed while the turn is waiting on a tool, it has to be on
+    // the request that follows the tool's result — not interrupt the call.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering.steer.say("wait".into());
+
+    let stop = steering.turn("first").expect("a turn");
+
+    assert_eq!(stop, StopReason::Yielded);
+    assert_eq!(steering.said(), "done");
+}
+
+#[test]
+fn steered_lines_typed_in_a_pass_arrive_together() {
+    // Two lines pushed between passes both land on the next request, as a
+    // burst rather than one per pass.
+    let script = Script::new(vec![calling("a", "read", "{}"), saying("done")]);
+    let mut steering = Steering::new(script, tools([Fixed::new("read")]));
+    steering.steer.say("one".into());
+    steering.steer.say("two".into());
+
+    steering.turn("first").expect("a turn");
+
+    let asked = steering.asked();
+    let [first, second] = asked.as_slice() else {
+        panic!("two passes: {asked:?}");
+    };
+    // The second request carried both steered lines.
+    assert!(
+        second > first,
+        "the next request carries both lines: {asked:?}"
+    );
 }
 
 fn calling(id: &str, name: &str, args: &str) -> Vec<Delta> {
@@ -481,7 +618,13 @@ fn tool_results_share_one_retained_boundary_across_a_turn() {
 
     let problem = scripted
         .runner
-        .exchange_with_tool_output_limit(&mut scripted.says, &scripted.events, &scripted.cancel, 8)
+        .exchange_with_tool_output_limit(
+            &mut scripted.says,
+            &scripted.events,
+            &scripted.cancel,
+            &scripted.steer,
+            8,
+        )
         .unwrap_err();
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));
@@ -994,6 +1137,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,
@@ -1147,6 +1291,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,
@@ -1482,10 +1627,24 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
     scripted.turn("third").expect("a turn");
     scripted.turn("fourth").expect("a turn");
 
-    scripted
+    let room = scripted
         .runner
         .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
         .expect("a recap");
+
+    // The clearing freed real room, so the compaction has to say so: `before`
+    // is measured before the pruning, and a `before` taken after it would read
+    // a working prune as a compaction that freed nothing — which is the loop
+    // the caller stops a turn for, and the false NoRoom this guards against.
+    let Room::Made(compacted) = room else {
+        panic!("a compaction that pruned old results made room");
+    };
+    assert!(
+        compacted.after < compacted.before,
+        "freeing room reads as progress: {} not below {}",
+        compacted.after,
+        compacted.before
+    );
 
     let cleared: Vec<usize> = scripted
         .runner

@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crucible_core::{
     Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
-    Provider, ProviderError, Request, Room, Spend, StopReason, Summary, ToolCall, ToolSchema,
-    Transcript, TurnError, TurnId,
+    Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary, ToolCall,
+    ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -481,12 +481,17 @@ impl Runner {
     /// [`TurnError`] when the provider failed or the user refused a tool. A
     /// tool that ran and did not like what it found is not an error — that
     /// goes back to the model as a result it can work around.
+    // The cancel and the steer are both read off the thread the turn runs on,
+    // and bundling them would drag the two through every signature the cancel
+    // already crosses. The lint counts to five; the turn needs six.
+    #[allow(clippy::too_many_arguments)]
     pub fn turn(
         &mut self,
         prompt: &str,
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
+        steer: &Steer,
     ) -> Result<StopReason, TurnError> {
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -510,7 +515,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let stop = self.exchange(ask, events, cancel)?;
+        let stop = self.exchange(ask, events, cancel, steer)?;
         events.post(Event::TurnFinished {
             turn: self.turn,
             stop,
@@ -551,16 +556,28 @@ impl Runner {
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
+        steer: &Steer,
     ) -> Result<StopReason, TurnError> {
-        self.exchange_with_tool_output_limit(ask, events, cancel, MAX_TOOL_OUTPUT_BYTES_PER_TURN)
+        self.exchange_with_tool_output_limit(
+            ask,
+            events,
+            cancel,
+            steer,
+            MAX_TOOL_OUTPUT_BYTES_PER_TURN,
+        )
     }
 
     /// Completes a turn under an explicit tool-result byte ceiling.
+    // The cancel and the steer are both read off the thread the turn runs on,
+    // and bundling them would drag the two through every signature the cancel
+    // already crosses. The lint counts to five; the turn needs six.
+    #[allow(clippy::too_many_arguments)]
     fn exchange_with_tool_output_limit(
         &mut self,
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
+        steer: &Steer,
         tool_output_maximum: usize,
     ) -> Result<StopReason, TurnError> {
         let mut bounds = TurnBounds::default();
@@ -577,6 +594,17 @@ impl Runner {
         let mut fruitless = 0;
 
         loop {
+            // A line typed while the turn ran is worked in here, between one
+            // pass and the next: recorded as a prompt the same way the turn's
+            // own first one was, so the request below carries it and the agent
+            // adjusts course rather than finishing a plan the reader moved past.
+            // Checked at the top so a burst typed in a pass arrives together,
+            // and so it cannot land while a tool call is out.
+            for line in steer.take() {
+                events.post(Event::Steered { line: line.clone() });
+                self.record(Message::User(line.into()));
+            }
+
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
             // is what makes the check below see the results of the last one.
