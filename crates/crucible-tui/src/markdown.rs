@@ -284,7 +284,7 @@ impl Markdown {
                 }
                 // The run is over, and this character says what it was.
                 Some(held) => {
-                    if self.settle(held, character, say) {
+                    if self.settle(held, character, room, say) {
                         run = next;
                         continue;
                     }
@@ -367,11 +367,31 @@ impl Markdown {
 
     /// Decides what a finished run of markers was, given the character that
     /// ended it. Answers whether that character was part of the marker.
-    fn settle(&mut self, held: Held, next: char, say: &mut dyn FnMut(Slot, &str)) -> bool {
+    fn settle(
+        &mut self,
+        held: Held,
+        next: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str),
+    ) -> bool {
         self.held = None;
         self.started = true;
 
         match held.mark {
+            // Three or more of one marker with nothing else on the line: a
+            // rule between the blocks either side of it. Drawn across the room
+            // the caller has rather than as the three characters it was
+            // written with, because what the model meant by them is a
+            // separator and a separator that stops after three columns reads
+            // as a stray. This stands above every arm below it: a line that is
+            // nothing but markers cannot also be emphasis, a bullet, or the
+            // start of anything.
+            '-' | '*' | '_' if held.opened && held.count >= 3 && next == '\n' => {
+                for _ in 0..room {
+                    say(Slot::Quiet, self.glyphs.horizontal());
+                }
+                false
+            }
             // The hashes and the one space after them are the marker, and what
             // is left of the line is the heading itself.
             '#' if next == ' ' => {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::width;
 
 /// A window wide enough that nothing here is laid out against its edge.
 const ROOM: usize = 80;
@@ -823,4 +824,64 @@ fn a_task_split_across_two_deltas_is_still_a_task() {
     said.extend(read(&mut markdown, "] one that is\n"));
 
     assert_eq!(drawn(&said), "✓ one that is\n");
+}
+
+#[test]
+fn a_line_of_dashes_alone_is_a_rule_between_the_blocks_either_side_of_it() {
+    let said = narrowed("Here.\n\n---\n\nNext.\n", 20);
+
+    assert_eq!(
+        drawn(&said),
+        format!("Here.\n\n{}\n\nNext.\n", "─".repeat(20))
+    );
+}
+
+#[test]
+fn a_rule_is_as_wide_as_the_window_it_is_drawn_in() {
+    for room in [1, 12, 80] {
+        let said = narrowed("---\n", room);
+
+        assert_eq!(
+            width::columns(&drawn(&said).replace('\n', "")),
+            room,
+            "a rule fills the room it was given and no more"
+        );
+    }
+}
+
+#[test]
+fn a_rule_can_be_written_with_any_of_the_three_markers_that_mean_one() {
+    for written in ["---\n", "***\n", "___\n"] {
+        let said = narrowed(written, 8);
+
+        assert_eq!(drawn(&said), "────────\n", "{written:?} is a rule");
+    }
+}
+
+#[test]
+fn a_rule_is_quiet_and_the_break_after_it_is_not() {
+    let said = narrowed("---\n", 4);
+
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+}
+
+#[test]
+fn two_markers_alone_on_a_line_are_the_characters_somebody_wrote() {
+    let said = narrowed("--\n", 20);
+
+    assert_eq!(drawn(&said), "--\n");
+}
+
+#[test]
+fn a_line_of_dashes_inside_a_fence_is_code_rather_than_a_rule() {
+    let said = narrowed("```\n---\n```\n", 20);
+
+    assert_eq!(drawn(&said), "---\n");
+}
+
+#[test]
+fn dashes_partway_along_a_line_are_left_exactly_where_they_were() {
+    let said = narrowed("a --- b\n", 20);
+
+    assert_eq!(drawn(&said), "a --- b\n");
 }

@@ -391,6 +391,11 @@ else's. Both marks come out of the same set as every border on screen, so
 A dash is only a bullet at the start of a line with a space after it. `5 - 3`,
 `--colour never` and `a -> b` are left exactly where they were.
 
+A line that is nothing but three or more `-`, `*` or `_` is a rule between the
+blocks either side of it, and is drawn as one across the window rather than as
+the three characters it was written with. Two are not enough, and `a --- b` is
+left where it was.
+
 An item that opens with `[ ]` or `[x]` is a task, and its box takes the bullet's
 place rather than following it: an unfinished one gets a hollow mark, a finished
 one gets a tick and its words go behind you, subdued and struck through. The

@@ -15,6 +15,10 @@ word starts after it.
 
 ### Added
 
+**A line of dashes in an answer is a rule across the window.** Three or more
+`-`, `*` or `_` alone on a line become one line drawn edge to edge, which is
+what a model means by them. Two are not enough, and `a --- b` is left alone.
+
 **A task in an answer is drawn as a task.** `- [ ] a thing` and `- [x] a done
 one` get a box in place of the bullet, and a finished one goes subdued and
 struck through — the same marks a plan is drawn with, because it is the same
