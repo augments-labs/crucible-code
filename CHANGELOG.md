@@ -6,6 +6,17 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**A multi-line prompt and a multi-line paste, which 0.13.2 announced and neither
+of which reached a terminal.** Both were built and neither was asked for: a
+terminal spells Shift+Enter no differently from Enter and marks no paste unless
+told to, so the editor's answers to them were never reached — and a paste's
+breaks are carriage returns, which it dropped. Alt+Enter and Ctrl+J now say the
+same thing where a terminal declines, and the wheel walks a list rather than
+meaning nothing while the pointer is held.
+
+
 ## [0.13.2] - 2026-08-20
 
 ### Added

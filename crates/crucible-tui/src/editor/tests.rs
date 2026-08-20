@@ -337,6 +337,32 @@ fn a_multi_line_paste_keeps_its_newlines_and_drops_the_rest() {
 }
 
 #[test]
+fn a_break_is_stored_one_way_whichever_of_the_three_a_paste_arrives_in() {
+    // The spelling that matters most is the one this editor does *not* store: a
+    // terminal spells the break inside a paste the way Return spells it, so a
+    // carriage return is what a real paste is made of and reading only newlines
+    // is the same bug as reading none.
+    for pasted in ["first\rsecond\rthird", "first\r\nsecond\r\nthird"] {
+        let mut editor = Editor::new().multiline();
+
+        assert_eq!(editor.paste(pasted), Typed::Changed, "{pasted:?}");
+        assert_eq!(editor.text(), "first\nsecond\nthird", "{pasted:?}");
+        assert_eq!(editor.line(), 2, "{pasted:?}");
+    }
+
+    // The pair is one break and not two, so a clipboard filled on another
+    // platform does not arrive double-spaced.
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste("one\r\ntwo"), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+
+    // And a one-line editor loses all three, the same as it loses a newline.
+    let mut single = Editor::new();
+    assert_eq!(single.paste("first\rsecond\r\nthird"), Typed::Changed);
+    assert_eq!(single.text(), "firstsecondthird");
+}
+
+#[test]
 fn up_and_down_cross_lines_and_remember_the_column() {
     let mut editor = lines("long line here\nshort\nlong again");
     // Start at the end of the last line, column 10.

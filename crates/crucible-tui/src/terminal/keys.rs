@@ -7,11 +7,12 @@
 //!
 //! Above this line there is [`Key`], which is closed and small. A key nothing
 //! here maps is [`Pressed::Ignored`] rather than a variant, so an emulator
-//! sending something exotic costs no frame. Paste reporting stays disabled:
-//! crossterm otherwise retains the entire block before this boundary can cap it.
-//! Immediately ready character events are instead gathered by [`characters`]
-//! into one bounded run. The first structural event ends the run and is handed
-//! back, so batching changes neither its order nor its meaning.
+//! sending something exotic costs no frame. A paste arrives as one event where
+//! the terminal was asked to bracket it, which is what keeps its newlines from
+//! being read as submissions; [`crate::Pasting`] is what asks. Ordinary typing
+//! is gathered by [`characters`] into one bounded run instead. The first
+//! structural event ends the run and is handed back, so batching changes
+//! neither its order nor its meaning.
 //!
 //! Crossterm still assumes a syntactically unfinished terminal control sequence
 //! is finite. That input comes only from the local terminal under the user's
@@ -256,26 +257,32 @@ fn meaning(event: Event) -> Pressed {
 ///
 /// A button going down and nothing else. Reporting is only ever on while a
 /// prompt is up, and what a prompt has for the pointer to do is put the cursor
-/// somewhere — a release, a drag and a wheel have no answer here, and acting on
-/// the release as well would answer one click twice.
+/// somewhere — a release and a drag have no answer here, and acting on the
+/// release as well would answer one click twice.
 ///
 /// Either button, because either is the one somebody reaches for: the left is
 /// what every editor places a caret with, and the right is what a terminal user
 /// who has never had a caret to place reaches for first. Neither has a second
 /// meaning in this box for the other to collide with. The middle is left alone —
 /// it is paste on this platform, and answering it would take that away and put
-/// a cursor move in its place.
+/// a cursor move in its place. Bracketed, that paste arrives as a paste.
+///
+/// The wheel is the exception to *no answer here*, and the reason is what
+/// holding the pointer costs. A terminal forwarding buttons is not scrolling
+/// with them, so the wheel stops moving the terminal's own scrollback for as
+/// long as reporting is held — and a wheel that then means nothing here is the
+/// one outcome nobody chose: the reader gave up their scrollback and got
+/// nothing back. It answers as the arrows do, so whatever the arrows walk the
+/// wheel walks.
 fn clicked(mouse: MouseEvent) -> Pressed {
-    if !matches!(
-        mouse.kind,
-        MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
-    ) {
-        return Pressed::Ignored;
-    }
-
-    Pressed::Clicked {
-        row: mouse.row as usize,
-        column: mouse.column as usize,
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => Pressed::Clicked {
+            row: mouse.row as usize,
+            column: mouse.column as usize,
+        },
+        MouseEventKind::ScrollUp => Pressed::Up,
+        MouseEventKind::ScrollDown => Pressed::Down,
+        _ => Pressed::Ignored,
     }
 }
 
@@ -360,6 +367,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::Char('b') if alt => Pressed::Key(Key::WordLeft),
         KeyCode::Char('f') if alt => Pressed::Key(Key::WordRight),
 
+        // A newline, and the spelling of one that needs nothing asked for and
+        // no modifier a terminal has to have room for: Ctrl+J is a byte of its
+        // own and always has been. Here rather than beside the other two
+        // because the arm below would otherwise swallow it.
+        KeyCode::Char('j') if control => Pressed::Key(Key::Newline),
+
         // Anything else held with either modifier is a binding this release has
         // not given a meaning to. Typed as a bare character it would be the
         // letter without the modifier, which is not what was pressed.
@@ -372,13 +385,18 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         KeyCode::BackTab => Pressed::Cycle,
         KeyCode::Esc => Pressed::Escape,
 
-        // A newline, spelled the two ways a terminal here spells it. The prompt
-        // is many lines, so one of these inserts a break and the bare key is
-        // left meaning *finished*: a Return that both broke the line and sent
-        // it is a prompt nobody could write a second line into deliberately.
-        // Which of the two a terminal delivers is its own — some send neither —
-        // so the editor answers both, and where neither arrives a newline is
-        // still a paste away.
+        // A newline, and the two spellings of one that are Return with
+        // something held. The prompt is many lines, so these insert a break and
+        // the bare key is left meaning *finished*: a Return that both broke the
+        // line and sent it is a prompt nobody could write a second line into
+        // deliberately.
+        //
+        // The first is the one the fingers reach for, and a terminal cannot
+        // send it unless it was asked to spell a modified key distinctly —
+        // the older encoding has no room for the modifier, so Shift+Return
+        // arrives as Return and this arm is never reached. `Spelling` is what
+        // asks. Alt+Return and the Ctrl+J above need nothing asked for, and are
+        // why the prompt still has a newline on a terminal that declined.
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => Pressed::Key(Key::Newline),
         KeyCode::Enter if alt => Pressed::Key(Key::Newline),
         KeyCode::Enter => Pressed::Key(Key::Enter),
@@ -412,6 +430,16 @@ mod tests {
     /// The same, held with control.
     fn control(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL))
+    }
+
+    /// What the terminal sends for the pointer, at a fixed spot.
+    fn pointer(kind: MouseEventKind) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 7,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        })
     }
 
     /// The same, held with alt.
@@ -513,13 +541,56 @@ mod tests {
     }
 
     #[test]
-    fn a_newline_is_spelled_the_two_ways_a_terminal_spells_it() {
-        // Shift+Enter and Alt+Enter both insert a break; the bare key is left
-        // meaning *finished*. A terminal that sends neither still has the paste.
+    fn a_newline_is_spelled_the_three_ways_a_terminal_spells_it() {
+        // All three insert a break; the bare key is left meaning *finished*.
+        // Shift+Enter is the one the fingers reach for and the one that only
+        // arrives on a terminal asked to spell a modified key distinctly, so
+        // the other two are what a terminal that declined is left with — and
+        // Ctrl+J is a byte of its own, which is why it needs nothing asked.
         let shifted = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         assert_eq!(meaning(shifted), Pressed::Key(Key::Newline));
         assert_eq!(meaning(alt(KeyCode::Enter)), Pressed::Key(Key::Newline));
+        assert_eq!(
+            meaning(control(KeyCode::Char('j'))),
+            Pressed::Key(Key::Newline)
+        );
         assert_eq!(meaning(press(KeyCode::Enter)), Pressed::Key(Key::Enter));
+
+        // The arm that would otherwise have taken Ctrl+J: a letter held with
+        // control that this release has given no meaning to is ignored, and
+        // reaching one of these arms is what says the newline is above it.
+        assert_eq!(meaning(control(KeyCode::Char('k'))), Pressed::Ignored);
+    }
+
+    #[test]
+    fn the_wheel_walks_whatever_the_arrows_walk() {
+        // Holding the pointer takes the wheel away from the terminal's own
+        // scrollback. A wheel that then meant nothing here would be the one
+        // outcome nobody chose.
+        assert_eq!(meaning(pointer(MouseEventKind::ScrollUp)), Pressed::Up);
+        assert_eq!(meaning(pointer(MouseEventKind::ScrollDown)), Pressed::Down);
+    }
+
+    #[test]
+    fn a_button_going_down_is_where_it_went_down_and_nothing_else_is() {
+        // Either button places the caret; the release would answer the same
+        // click twice, and the middle one is the platform's paste.
+        for button in [MouseButton::Left, MouseButton::Right] {
+            assert_eq!(
+                meaning(pointer(MouseEventKind::Down(button))),
+                Pressed::Clicked { row: 3, column: 7 },
+                "{button:?}"
+            );
+        }
+
+        for ignored in [
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+        ] {
+            assert_eq!(meaning(pointer(ignored)), Pressed::Ignored, "{ignored:?}");
+        }
     }
 
     #[test]

@@ -385,6 +385,19 @@ put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taki
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
+A prompt can be more than one line. <kbd>Shift+Enter</kbd> adds a line without
+sending, and the box grows a row for it. Some terminals cannot send that key —
+the encoding they use has no room for the modifier, so they send the same bytes
+for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks each terminal
+for the newer encoding on the way in. Where it declines, <kbd>Alt+Enter</kbd> and
+<kbd>Ctrl+J</kbd> do the same thing and need nothing asked for.
+
+Pasting several lines pastes several lines. The breaks arrive as breaks rather
+than as a send at the first one, because crucible asks the terminal to mark where
+a paste begins and ends. A terminal that cannot do that is one where a pasted
+break is indistinguishable from a keypress, and there the paste sends its first
+line.
+
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
 again to leave`, under the mode — and a second press within two seconds takes the
