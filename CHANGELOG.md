@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+**A table in an answer is drawn as a table.** The bars become one rule between
+the columns and one under the header, each column is as wide as the widest thing
+in it, and the row of dashes decides which side a column is drawn against. A
+table wider than the window gives up its widest column until it fits.
+
 **A phrase an answer took back is drawn with a line through it.** `~~this~~`
 is struck rather than shown with its tildes, and struck rather than dimmed,
 because a retraction is still being read. Exactly two tildes: `~/Projects` and

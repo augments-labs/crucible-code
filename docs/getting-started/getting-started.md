@@ -396,6 +396,19 @@ drawn with a line through it and nothing else — struck rather than dimmed,
 because a retraction is still being read. Exactly two: `~/Projects` is a path,
 `~40` is an approximation, and both are left where they were.
 
+A table is drawn as a table. The bars a model wrote are replaced by one rule
+between the columns and one under the header, every column is as wide as the
+widest thing drawn in it, and `:--`, `--:` or `:-:` in the row of dashes says
+which side a column is drawn against. Where the window cannot hold it, the table
+gives up columns from whichever is widest until it fits, and a cell that no
+longer fits ends in an ellipsis — so every row is exactly the width of the
+window and the columns stay under each other. A window too narrow for even one
+column apiece gets the table as the model wrote it.
+
+A bar is only a table at the start of a line, and only where the line under it
+is the row of dashes that makes one. `a | b` in a shell, `Ok(_) | Err(_)` in a
+match and a line of bars with nothing under it are all left where they were.
+
 A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was

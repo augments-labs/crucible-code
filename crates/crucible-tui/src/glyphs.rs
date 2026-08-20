@@ -101,6 +101,20 @@ impl Glyphs {
         }
     }
 
+    /// Where a rule that runs across meets an edge that runs down.
+    ///
+    /// One column in both sets, as [`Glyphs::horizontal`] and
+    /// [`Glyphs::vertical`] are: a table's rule is laid out against the same
+    /// column widths as the rows above and below it, so a crossing that cost
+    /// two would put every column after it a place out.
+    #[must_use]
+    pub fn crossing(self) -> &'static str {
+        match self {
+            Self::Unicode => "┼",
+            Self::Ascii => "+",
+        }
+    }
+
     /// The mark a line is typed after, and that its record keeps afterwards.
     ///
     /// One column either way. The prompt reserves exactly that much room for

@@ -1,9 +1,14 @@
 use super::*;
 
+/// A window wide enough that nothing here is laid out against its edge.
+const ROOM: usize = 80;
+
 /// Reads one delta and returns every run with the slot it was said under.
 fn read(markdown: &mut Markdown, delta: &str) -> Vec<(Slot, String)> {
     let mut said = Vec::new();
-    markdown.read(delta, &mut |slot, text| said.push((slot, text.to_owned())));
+    markdown.read(delta, ROOM, &mut |slot, text| {
+        said.push((slot, text.to_owned()));
+    });
     said
 }
 
@@ -286,9 +291,13 @@ fn a_block_read_a_character_at_a_time_says_the_same_thing() {
     let mut apart = Vec::new();
     for character in streamed.chars() {
         let mut piece = [0u8; 4];
-        markdown.read(character.encode_utf8(&mut piece), &mut |slot, text| {
-            apart.push((slot, text.to_owned()));
-        });
+        markdown.read(
+            character.encode_utf8(&mut piece),
+            ROOM,
+            &mut |slot, text| {
+                apart.push((slot, text.to_owned()));
+            },
+        );
     }
 
     let joined = |runs: &[(Slot, String)]| -> Vec<(Slot, String)> {
@@ -373,7 +382,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
         let mut markdown = Markdown::default();
         let mut said = read(&mut markdown, &whole_link[..at]);
         said.extend(read(&mut markdown, &whole_link[at..]));
-        markdown.finish(&mut |slot, text| said.push((slot, text.to_owned())));
+        markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
 
         assert_eq!(
             drawn(&said),
@@ -387,7 +396,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
 fn a_message_that_ended_inside_a_link_keeps_what_it_wrote() {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, "see [the guide");
-    markdown.finish(&mut |slot, text| said.push((slot, text.to_owned())));
+    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
 
     assert_eq!(drawn(&said), "see [the guide");
 }
@@ -584,4 +593,163 @@ fn nothing_inside_a_fence_is_read_as_a_retraction() {
     let said = whole("```python\nx = ~~y\n```\n");
 
     assert!(drawn(&said).contains("x = ~~y"), "{}", drawn(&said));
+}
+
+/// One whole answer, read as one delta, laid out against `room` columns.
+fn narrowed(answer: &str, room: usize) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+    markdown.read(answer, room, &mut |slot, text| {
+        said.push((slot, text.to_owned()));
+    });
+    markdown.finish(room, &mut |slot, text| said.push((slot, text.to_owned())));
+    said
+}
+
+#[test]
+fn a_table_is_drawn_as_one_rather_than_as_the_bars_it_was_written_with() {
+    let said = whole("| file | lines |\n| --- | --- |\n| main.rs | 42 |\n\n");
+
+    assert_eq!(
+        drawn(&said),
+        "file    │ lines\n\
+         ────────┼──────\n\
+         main.rs │ 42   \n\n"
+    );
+}
+
+#[test]
+fn a_column_is_as_wide_as_what_is_drawn_in_it() {
+    // The markers inside a cell are read like any others, so the column is
+    // measured against what reaches the screen. Counting what the model wrote
+    // would leave every column after this one a place out.
+    let said = whole("| file |\n| --- |\n| `main.rs` |\n\n");
+
+    assert_eq!(drawn(&said), "file   \n───────\nmain.rs\n\n");
+}
+
+#[test]
+fn a_delimiter_row_says_which_side_a_column_is_drawn_against() {
+    let said = whole("| a | b | c |\n| :-- | --: | :-: |\n| x | x | x |\n\n");
+
+    assert_eq!(
+        drawn(&said),
+        "a │ b │ c\n\
+         ──┼───┼──\n\
+         x │ x │ x\n\n"
+    );
+}
+
+#[test]
+fn bars_with_no_delimiter_row_under_them_are_left_exactly_where_they_were() {
+    let written = "| not | a table |\n| still | not one |\n\n";
+
+    assert_eq!(drawn(&whole(written)), written);
+}
+
+#[test]
+fn a_table_split_across_deltas_is_still_one_table() {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+
+    for piece in ["| file |\n| -", "-- |\n| main", ".rs |\n\n"] {
+        markdown.read(piece, ROOM, &mut |slot, text| {
+            said.push((slot, text.to_owned()));
+        });
+    }
+
+    assert_eq!(drawn(&said), "file   \n───────\nmain.rs\n\n");
+}
+
+#[test]
+fn a_table_the_window_cannot_hold_gives_up_its_widest_column_first() {
+    let said = narrowed(
+        "| a | a very long cell indeed |\n| --- | --- |\n| b | c |\n\n",
+        16,
+    );
+
+    assert_eq!(
+        drawn(&said),
+        "a │ a very long…\n\
+         ──┼─────────────\n\
+         b │ c           \n\n"
+    );
+
+    // The point of giving a column up: every row is exactly the window, so the
+    // terminal never wraps one and the columns stay under each other.
+    for row in drawn(&said).lines().filter(|row| !row.is_empty()) {
+        assert_eq!(crate::width::columns(row), 16, "{row:?}");
+    }
+}
+
+#[test]
+fn a_window_too_narrow_for_a_table_at_all_gets_it_as_it_was_written() {
+    let written = "| a | b | c | d |\n| --- | --- | --- | --- |\n| w | x | y | z |\n\n";
+
+    assert_eq!(drawn(&narrowed(written, 6)), written);
+}
+
+#[test]
+fn a_table_the_answer_ended_in_the_middle_of_is_still_drawn() {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+
+    markdown.read("| file |\n| --- |\n| main.rs |", ROOM, &mut |slot, text| {
+        said.push((slot, text.to_owned()));
+    });
+    markdown.finish(ROOM, &mut |slot, text| said.push((slot, text.to_owned())));
+
+    assert_eq!(drawn(&said), "file   \n───────\nmain.rs\n");
+}
+
+#[test]
+fn nothing_inside_a_fence_is_read_as_a_table() {
+    // The fence's own lines go the way every fence's do; the bars between them
+    // are code and stay exactly as they were written.
+    let said = whole("```\n| a | b |\n| --- | --- |\n```\n");
+
+    assert_eq!(drawn(&said), "| a | b |\n| --- | --- |\n");
+}
+
+#[test]
+fn the_header_is_raised_and_the_bars_are_quiet() {
+    // Reading across: the header's two cells raised with the bar between them
+    // quiet, the break, the rule, the break, then a body row whose cells are
+    // the prose they were written as with the bar and the padding quiet.
+    let said = whole("| file | lines |\n| --- | --- |\n| main.rs | 42 |\n\n");
+
+    assert_eq!(
+        slots(&said),
+        vec![
+            Slot::Strong,
+            Slot::Quiet,
+            Slot::Strong,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain,
+        ]
+    );
+}
+
+#[test]
+fn a_block_of_bars_that_never_ends_is_written_out_rather_than_held() {
+    // A table is drawn only once the last of it has arrived, so a block held is
+    // a block not on screen. Past the cap it goes out as the model wrote it,
+    // which is what it would have done had the reader never gathered it.
+    let row = "| a | b |\n";
+    let written = format!("| a | b |\n| --- | --- |\n{}", row.repeat(2000));
+
+    let drawn = drawn(&whole(&written));
+
+    assert!(drawn.contains(row), "the rows reach the screen");
+    assert!(
+        drawn.len() >= written.len() / 2,
+        "held {} of {} written",
+        drawn.len(),
+        written.len()
+    );
 }

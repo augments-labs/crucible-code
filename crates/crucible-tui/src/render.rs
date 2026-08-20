@@ -217,6 +217,7 @@ impl<T: Terminal> Renderer<T> {
             return self.draw();
         }
 
+        let columns = self.size.columns;
         let Self {
             markdown,
             tail,
@@ -226,7 +227,7 @@ impl<T: Terminal> Renderer<T> {
         } = self;
         let palette = *palette;
 
-        markdown.read(delta, &mut |slot, text| {
+        markdown.read(delta, columns, &mut |slot, text| {
             tail.wear(slot, &palette);
             tail.push(text, overflow);
         });
@@ -404,6 +405,7 @@ impl<T: Terminal> Renderer<T> {
         // Text held back for a shape that never arrived is text, and this is
         // the last moment it can be written: the reader below is about to be
         // dropped, and with it anything it was still holding.
+        let columns = self.size.columns;
         let Self {
             markdown,
             tail,
@@ -413,7 +415,7 @@ impl<T: Terminal> Renderer<T> {
         } = self;
         let palette = *palette;
         let mut spilled = false;
-        markdown.finish(&mut |slot, text| {
+        markdown.finish(columns, &mut |slot, text| {
             spilled = true;
             tail.wear(slot, &palette);
             tail.push(text, overflow);

@@ -155,14 +155,22 @@ fn specimen(standing: &Standing, columns: usize, _glyphs: Glyphs) -> Vec<Row> {
 
 /// One line of code, read the way a fenced block in the transcript is read.
 fn read_as_code(line: &str) -> Vec<(Slot, String)> {
+    /// The width a reading is laid out against. A fenced line is drawn where it
+    /// stands whatever the window is, so this specimen is never measured.
+    const ROOM: usize = 80;
+
     let mut runs = Vec::new();
     let mut markdown = crucible_tui::Markdown::default();
 
-    markdown.read(&format!("```rust\n{line}\n```\n"), &mut |slot, text| {
-        if text != "\n" {
-            runs.push((slot, text.to_owned()));
-        }
-    });
+    markdown.read(
+        &format!("```rust\n{line}\n```\n"),
+        ROOM,
+        &mut |slot, text| {
+            if text != "\n" {
+                runs.push((slot, text.to_owned()));
+            }
+        },
+    );
     runs
 }
 

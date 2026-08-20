@@ -22,7 +22,11 @@
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
+
+mod table;
+
 use crate::syntax::Syntax;
+use table::Table;
 
 /// The longest run of one marker character read as a marker.
 ///
@@ -171,6 +175,13 @@ pub struct Markdown {
     syntax: Option<Syntax>,
     /// A link whose shape is still arriving, and the text held back for it.
     link: Option<Link>,
+    /// The block of bars being gathered, where one is.
+    ///
+    /// The only thing here that outlives a line without being an [`Inside`]:
+    /// what a table is waiting for is not a character that ends it but a line
+    /// that is not one of its own, which is a question asked at the start of
+    /// every line rather than settled once.
+    table: Option<Table>,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
     ///
@@ -212,12 +223,28 @@ impl Markdown {
     /// Runs rather than characters: the text between two markers is one call,
     /// so a delta with no markers in it is one call for the whole delta.
     /// Markers themselves are never handed on.
-    pub fn read(&mut self, delta: &str, say: &mut dyn FnMut(Slot, &str)) {
+    ///
+    /// `room` is how many columns the caller has to draw into. An argument
+    /// rather than something this holds, because it is the one fact here that
+    /// changes without a delta arriving: a window resized between two of them
+    /// would leave a field stale, and the caller knows the size at every call
+    /// anyway.
+    pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
+
+            // A block of bars takes every character in it, so nothing below
+            // runs while one is open and the run stays empty until it closes.
+            if self.table.is_some() {
+                if self.tabled(character, room, say) {
+                    run = next;
+                    continue;
+                }
+                run = at;
+            }
 
             match self.held {
                 // More of the run being held. Not text, and not decided yet.
@@ -255,12 +282,17 @@ impl Markdown {
 
             if character == '\n' {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.end_line(say);
+                self.end_line(room, say);
                 run = next;
             } else if self.opens_link(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.link = Some(Link::default());
                 self.started = true;
+                run = next;
+            } else if self.opens_table(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.table = Some(Table::opening());
+                self.tabled(character, room, say);
                 run = next;
             } else if self.marks(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -422,6 +454,54 @@ impl Markdown {
         open || !next.is_whitespace()
     }
 
+    /// Whether `character` opens a block of bars where the scan stands.
+    ///
+    /// Only where nothing else has been written on the line, and not inside a
+    /// span of code: a bar in the middle of a line is `a | b` in a shell and
+    /// `Ok(_) | Err(_)` in a match, and neither is a table.
+    fn opens_table(&self, character: char) -> bool {
+        character == '|' && self.inside == Inside::Prose && !self.started && !self.line.code
+    }
+
+    /// Reads `character` into the block of bars being held. Answers whether it
+    /// belonged to the block.
+    ///
+    /// `false` says the block is over: what it turned out to be has already
+    /// gone out, and `character` is the caller's again — the first character of
+    /// a line that is not part of any table, which is why the line state goes
+    /// back to what it is at the start of one.
+    fn tabled(&mut self, character: char, room: usize, say: &mut dyn FnMut(Slot, &str)) -> bool {
+        let Some(mut table) = self.table.take() else {
+            return false;
+        };
+
+        // A line that does not open with a bar is not the table's, and the
+        // table ended above it.
+        if table.fresh() && character != '|' {
+            table.laid(self.glyphs, room, say);
+            self.line = Line::default();
+            self.started = false;
+            return false;
+        }
+
+        // Held longer than a table is worth waiting for. Out it goes as the
+        // model wrote it, and the rest of the block is read as the prose it
+        // now is.
+        if !table.takes(character) {
+            table.spilt(say);
+            return true;
+        }
+
+        // The delimiter row is the second line or there is no table here.
+        if !table.possible() {
+            table.spilt(say);
+            return true;
+        }
+
+        self.table = Some(table);
+        true
+    }
+
     /// Whether `character` opens a link where the scan stands.
     ///
     /// Prose only, and not inside a span of code: a bracket in `` `arr[0]` ``
@@ -499,23 +579,29 @@ impl Markdown {
         }
     }
 
-    /// Puts back whatever a link was holding, where the message ended in the
-    /// middle of one.
+    /// Lets go of whatever was still being held when the message ended.
+    ///
+    /// A link goes back as the characters it was written with; a table is drawn
+    /// as the table it turned out to be. `room` is what it is drawn against, and
+    /// is the caller's for the reason it is on [`Markdown::read`].
     ///
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
-    pub fn finish(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         if let Some(link) = self.link.take() {
             spill(&link, say);
+        }
+        if let Some(table) = self.table.take() {
+            table.laid(self.glyphs, room, say);
         }
     }
 
     /// Ends the line, and with it everything markdown ends at one.
-    fn end_line(&mut self, say: &mut dyn FnMut(Slot, &str)) {
+    fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str)) {
         let ended = self.inside;
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
-        self.finish(say);
+        self.finish(room, say);
 
         // The line of code is complete, so this is the moment it can be read.
         self.read_code(say);
