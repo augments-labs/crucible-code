@@ -160,7 +160,8 @@ impl Load {
         // `bytes * carried / sent` — the bytes at the rate the last request's
         // true token count implies, multiplied before dividing so a short
         // message does not round to nothing.
-        bytes.saturating_mul(self.carried)
+        bytes
+            .saturating_mul(self.carried)
             .checked_div(self.sent)
             .unwrap_or(0)
     }

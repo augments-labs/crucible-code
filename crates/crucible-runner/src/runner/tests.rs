@@ -1481,8 +1481,7 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
     assert!(
         !standing.iter().any(|message| matches!(message,
             Message::ToolResults(results)
-                if results.iter().any(|result| result.output.text().len() >= 6_000))
-        ),
+                if results.iter().any(|result| result.output.text().len() >= 6_000))),
         "the enormous turn was kept whole for being recent"
     );
 
@@ -1490,7 +1489,9 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
     // whole turn, so no call is parted from the result that answers it.
     let recap = standing
         .iter()
-        .position(|message| matches!(message, Message::User(said) if said.contains("notes to self")))
+        .position(
+            |message| matches!(message, Message::User(said) if said.contains("notes to self")),
+        )
         .expect("the recap is standing");
     assert!(
         matches!(standing.get(recap + 1), Some(Message::User(_))),
