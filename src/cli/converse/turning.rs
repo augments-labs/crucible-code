@@ -1007,7 +1007,11 @@ mod tests {
         // The bar starts in the column the word above it starts in: the mark
         // and the space after it, so it reads as a second line of that row.
         let gutter = Working::gutter(glyphs);
-        assert_eq!(under.chars().take(gutter).filter(|c| *c == ' ').count(), gutter, "{under:?}");
+        assert_eq!(
+            under.chars().take(gutter).filter(|c| *c == ' ').count(),
+            gutter,
+            "{under:?}"
+        );
     }
 
     #[test]
