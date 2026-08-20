@@ -66,6 +66,22 @@ copy it or click it in a terminal that finds its own links. A bracket that was
 never a link — an index, a `[TODO]`, one the line ended before it closed — is
 left exactly as it was written.
 
+### Fixed
+
+**Two blank rows no longer open where one belongs.** The row separating an
+answer from what comes next was spent again whenever a paragraph break landed
+on the edge of a delta, which for a model writing a word at a time is most of
+them. What decides the row is now the last row written rather than whether the
+piece of the wire that wrote it carried anything.
+
+**A multi-line prompt and a multi-line paste, which 0.13.2 announced and neither
+of which reached a terminal.** Both were built and neither was asked for: a
+terminal spells Shift+Enter no differently from Enter and marks no paste unless
+told to, so the editor's answers to them were never reached — and a paste's
+breaks are carriage returns, which it dropped. Alt+Enter and Ctrl+J now say the
+same thing where a terminal declines, and the wheel walks a list rather than
+meaning nothing while the pointer is held.
+
 ## [0.13.2] - 2026-08-20
 
 ### Added
