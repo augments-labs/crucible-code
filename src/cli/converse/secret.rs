@@ -187,6 +187,9 @@ fn insert_run(held: &mut String, text: &str, refused: bool) -> Typing {
 ///
 /// Everything that is not one of these does nothing at all. The arrows and the
 /// word keys are in that set on purpose: see the prose above.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn typing(arrived: Pressed, held: &mut String) -> Typing {
     match arrived {
         Pressed::Key(Key::Char(typed)) => {

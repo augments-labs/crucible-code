@@ -335,6 +335,9 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
 }
 
 /// Up and down the list, left and right between the two, taken on enter.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn walking(arrived: Pressed, standing: &mut Standing) -> Moved {
     let count = standing.count();
 

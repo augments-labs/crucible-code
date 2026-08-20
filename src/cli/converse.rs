@@ -1041,6 +1041,9 @@ enum Heard {
 /// arrives while a permission question is on screen is either an answer or
 /// something this has decided to ignore, and a new one added to `Pressed` must
 /// be decided about here rather than silently join the second group.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn heard(arrived: Pressed) -> Heard {
     match arrived {
         Pressed::Key(Key::Char(letter)) => Heard::Said(letter.to_string()),
@@ -1264,6 +1267,9 @@ enum Numbered {
 }
 
 /// Reads one key as one of `question`'s numbered answers.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn numbered(arrived: Pressed, question: &Question) -> Numbered {
     if arrived == Pressed::Resized {
         return Numbered::Resized;

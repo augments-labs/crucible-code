@@ -141,6 +141,31 @@ pub(crate) enum Asked {
     Untyped,
 }
 
+/// Moves the cursor within a many-rowed line, where there is a row to reach.
+///
+/// Whether the editor moved is the answer a caller keys a frame on, and whether
+/// the key was the line's at all: a one-line line has no row above or below, so
+/// the arrows stay with whatever is open above the box instead.
+fn vertical(editor: &mut Editor, key: Key) -> bool {
+    editor.moves(key) && editor.press(key) == Typed::Changed
+}
+
+/// Pastes a bracketed block into the line, and says what the row owes for it.
+///
+/// One place for the two loops that read a prompt, because a paste means the
+/// same thing in both: its newlines are characters rather than submissions, and
+/// a block over the line's bound is refused whole. `true` is a frame owed.
+fn pasted(editor: &mut Editor, text: &str, says: &mut Says) -> bool {
+    match editor.paste(text) {
+        Typed::Changed => true,
+        Typed::Refused => {
+            says.asking = Some(LIMITED);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// What inserting one immediately ready character run changed.
 struct Inserted {
     /// Whether the line changed and therefore its filtered list is stale.
@@ -393,13 +418,12 @@ pub(crate) fn ask<T: Terminal>(
             }
 
             // Through whatever the line has open above the box. With nothing
-            // open, or at the end it is already on, the key costs no frame.
-            // The reader no longer turns the bare arrows into list steps: they
-            // arrive as the line's own keys, and the arms above decide which
-            // thing they move. What is left here is a press this loop cannot
-            // get, named so a new one has to be decided about.
-            Pressed::Up => open.up() || offered.is_some(),
-            Pressed::Down => open.down() || offered.is_some(),
+            // The arrows walk whatever is open above the box — unless the line
+            // being typed is many rows, in which case they move within it. The
+            // editor answers whether there is a row to reach, and a one-line
+            // line has none, so the list keeps the key it has always had.
+            Pressed::Up => vertical(editor, Key::Up) || open.up() || offered.is_some(),
+            Pressed::Down => vertical(editor, Key::Down) || open.down() || offered.is_some(),
 
             // Stepping the mode on. Every step takes effect on the press: the
             // row under the box says which mode that landed in, and the same
@@ -427,30 +451,12 @@ pub(crate) fn ask<T: Terminal>(
             // A bracketed paste, inserted whole. Its newlines are characters in
             // the line rather than submissions, which is the difference between
             // this and a run of typed characters — and the reason it is not one.
-            Pressed::Pasted(text) => match editor.paste(&text) {
-                Typed::Changed => {
+            Pressed::Pasted(text) => {
+                let moved = pasted(editor, &text, &mut says);
+                if moved {
                     open = Opened::filtered(editor.text(), glyphs);
-                    true
                 }
-                Typed::Refused => {
-                    says.asking = Some(LIMITED);
-                    true
-                }
-                _ => offered.is_some(),
-            },
-
-            // Up and down are the line's while it has a row to move to, and
-            // the list's the rest of the time: a one-line line has no second
-            // row, and a list open above the box is what the key has always
-            // walked. The editor says whether there is a row, which is also the
-            // answer to whether the cursor moved.
-            Pressed::Up if editor.moves(Key::Up) => {
-                editor.press(Key::Up);
-                true
-            }
-            Pressed::Down if editor.moves(Key::Down) => {
-                editor.press(Key::Down);
-                true
+                moved || offered.is_some()
             }
 
             Pressed::Key(key) => match editor.press(key) {
@@ -727,13 +733,13 @@ pub(super) fn during<T: Terminal>(
             }
 
             Meant::Pasting(text) => match editor.paste(&text) {
-                Typed::Changed => {
-                    moved = true;
-                    notice = None;
-                }
                 Typed::Refused => {
                     moved = true;
                     notice = Some(LIMITED);
+                }
+                Typed::Changed => {
+                    moved = true;
+                    notice = None;
                 }
                 _ => {}
             },

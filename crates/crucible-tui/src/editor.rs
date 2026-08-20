@@ -350,9 +350,7 @@ impl Editor {
 
     /// Where the cursor's line begins, as a byte offset into the text.
     fn line_start(&self) -> usize {
-        self.before()
-            .rfind('\n')
-            .map_or(0, |newline| newline + 1)
+        self.before().rfind('\n').map_or(0, |newline| newline + 1)
     }
 
     /// Where the cursor's line ends.

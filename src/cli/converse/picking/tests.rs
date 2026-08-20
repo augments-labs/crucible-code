@@ -55,7 +55,11 @@ fn escape_leaves_and_so_do_the_keys_that_end_a_session() {
         Pressed::Key(Key::Eof),
     ] {
         let mut at = 1;
-        assert_eq!(moving(arrived.clone(), &mut at, 3), Moved::Left, "{arrived:?}");
+        assert_eq!(
+            moving(arrived.clone(), &mut at, 3),
+            Moved::Left,
+            "{arrived:?}"
+        );
     }
 }
 
@@ -70,7 +74,11 @@ fn a_key_the_panel_has_no_meaning_for_costs_no_frame() {
         Pressed::Clicked { row: 4, column: 2 },
     ] {
         let mut at = 1;
-        assert_eq!(moving(arrived.clone(), &mut at, 3), Moved::Still, "{arrived:?}");
+        assert_eq!(
+            moving(arrived.clone(), &mut at, 3),
+            Moved::Still,
+            "{arrived:?}"
+        );
         assert_eq!(at, 1);
     }
 }

@@ -318,6 +318,9 @@ fn showing(whole: &Whole) -> Shown<'_> {
 /// standing is either something it does or something it has decided to ignore,
 /// and a new [`Pressed`] must be decided about here rather than quietly join the
 /// second group.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn moving(arrived: Pressed, view: &mut View) -> Moved {
     match arrived {
         Pressed::Up => {

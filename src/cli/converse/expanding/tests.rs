@@ -332,7 +332,11 @@ fn nothing_else_moves_it() {
 
     for arrived in ignored {
         let mut open = standing(3, 20);
-        assert_eq!(moving(arrived.clone(), &mut open), Moved::Still, "{arrived:?}");
+        assert_eq!(
+            moving(arrived.clone(), &mut open),
+            Moved::Still,
+            "{arrived:?}"
+        );
         assert_eq!(open, standing(3, 20));
     }
 }

@@ -130,6 +130,9 @@ impl Leaving {
     /// other standing component names its own: a key arriving at something on
     /// screen is either something it does or something it has decided to ignore,
     /// and a key added later should have to be told which.
+    // An event token is handed over, not lent: the handler takes the one thing
+    // the reader produced, and a reference would say the caller kept a say in it.
+    #[allow(clippy::needless_pass_by_value)]
     fn against(&mut self, arrived: Pressed, left: &Background) -> Moved {
         // The output of one command is standing. Its keys are that view's.
         if self.shown.is_some() {

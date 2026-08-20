@@ -421,6 +421,9 @@ impl LoginView {
         Ok(waiting(Duration::ZERO)?.then(pressed).transpose()?)
     }
 
+    // An event token is handed over, not lent: the handler takes the one thing
+    // the reader produced, and a reference would say the caller kept a say in it.
+    #[allow(clippy::needless_pass_by_value)]
     fn press(&mut self, pressed: Pressed, attempt: &LoginAttempt) -> Result<bool, Fatal> {
         match pressed {
             Pressed::Key(Key::Char(first)) if self.accepts_manual => {

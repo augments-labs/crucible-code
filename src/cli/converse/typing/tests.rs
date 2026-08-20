@@ -670,7 +670,7 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
 
     for arrived in [Pressed::Up, Pressed::Down, Pressed::Cycle, Pressed::Ignored] {
-        assert_eq!( meant(arrived.clone()), Meant::Ignored, "{arrived:?}");
+        assert_eq!(meant(arrived.clone()), Meant::Ignored, "{arrived:?}");
     }
 }
 

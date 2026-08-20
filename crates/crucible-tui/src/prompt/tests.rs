@@ -827,7 +827,10 @@ fn a_click_on_the_line_says_how_far_into_it_the_pointer_was() {
     let prompt = typed(said);
 
     assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED), Some((0, 0)));
-    assert_eq!(prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5), Some((0, 5)));
+    assert_eq!(
+        prompt.clicked(FRAMED_AT, FRAMED_ROW, FRAMED + 5),
+        Some((0, 5))
+    );
 
     // The second row of the same line carries on where the first left off.
     assert_eq!(

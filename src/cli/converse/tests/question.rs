@@ -65,7 +65,10 @@ fn a_key_that_answers_nothing_is_not_read_as_an_answer() {
         Pressed::Clicked { row: 4, column: 2 },
         Pressed::Ignored,
     ] {
-        assert!(matches!(heard(arrived.clone()), Heard::Ignored), "{arrived:?}");
+        assert!(
+            matches!(heard(arrived.clone()), Heard::Ignored),
+            "{arrived:?}"
+        );
     }
 }
 

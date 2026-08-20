@@ -367,9 +367,7 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // Which of the two a terminal delivers is its own — some send neither —
         // so the editor answers both, and where neither arrives a newline is
         // still a paste away.
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            Pressed::Key(Key::Newline)
-        }
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => Pressed::Key(Key::Newline),
         KeyCode::Enter if alt => Pressed::Key(Key::Newline),
         KeyCode::Enter => Pressed::Key(Key::Enter),
 
@@ -508,10 +506,7 @@ mod tests {
         // meaning *finished*. A terminal that sends neither still has the paste.
         let shifted = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         assert_eq!(meaning(shifted), Pressed::Key(Key::Newline));
-        assert_eq!(
-            meaning(alt(KeyCode::Enter)),
-            Pressed::Key(Key::Newline)
-        );
+        assert_eq!(meaning(alt(KeyCode::Enter)), Pressed::Key(Key::Newline));
         assert_eq!(meaning(press(KeyCode::Enter)), Pressed::Key(Key::Enter));
     }
 

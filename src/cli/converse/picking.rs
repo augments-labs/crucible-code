@@ -168,6 +168,9 @@ pub(super) fn adjust<T: Terminal>(
 /// Every key that is not one of the five is a key that moved nothing. A panel
 /// is not a line, so a letter is not a character being typed, and a frame for
 /// each of them would be a frame per keystroke for somebody typing at a list.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     match arrived {
         Pressed::Up => step(at, at.checked_sub(1)),
@@ -186,6 +189,9 @@ fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
 /// left alone rather than aliased onto the across pair, because a key that moves
 /// the mark in a direction the picture does not have is how somebody learns not
 /// to trust the picture.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
 fn sliding(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     match arrived {
         Pressed::Key(Key::Left) => step(at, at.checked_sub(1)),
