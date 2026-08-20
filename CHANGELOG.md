@@ -6,6 +6,10 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-20
+
+### Changed
+
 **A turn is bounded by the model's window, not by counting what it does.** The
 four per-turn caps are gone, and with them the failure that ended a turn on a
 count and named a vendor for a bound that was crucible's own. When there is no
@@ -14,6 +18,8 @@ model's own notes on it and the turn carries on; `/compact` does the same when
 you would rather choose the moment. Nothing freezes while the notes are being
 written — the box takes your next line and sends it once there is room, and
 escape stops them and leaves the session exactly as it was.
+
+### Added
 
 **Picking up a large session asks first.** `--continue` and `/resume` on one
 past `compaction.askOnResume` offer notes, all of it, or an answer that stops
@@ -2132,7 +2138,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/augments-labs/crucible-code/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/augments-labs/crucible-code/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/augments-labs/crucible-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/augments-labs/crucible-code/compare/v0.10.0...v0.11.0
