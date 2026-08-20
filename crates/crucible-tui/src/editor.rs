@@ -48,8 +48,10 @@ pub enum Key {
     Up,
     /// Move to the line below, the same way.
     Down,
-    /// A newline, inserted where the cursor is. Distinct from the key that
-    /// submits, which is what a bare Return stays.
+    /// A Return that arrived with a modifier — Shift, Alt, or the Ctrl-J a
+    /// terminal has always spelled a line feed with. Kept apart from the bare
+    /// one because which of the two sends is the reader's to say; see
+    /// [`Sending`].
     Newline,
     /// Move back over the word behind the cursor, to where it starts.
     WordLeft,
@@ -59,13 +61,40 @@ pub enum Key {
     Home,
     /// Move to the end of it.
     End,
-    /// Submit what is there.
+    /// A Return with nothing held down.
     Enter,
     /// Ctrl-C. In raw mode the terminal sends the key rather than a signal, so
     /// what it means is decided here.
     Interrupt,
     /// Ctrl-D, which a terminal means as the end of input.
     Eof,
+}
+
+/// Which press ends the text, and which one opens a line under it.
+///
+/// A reader's answer rather than something read off the terminal. Every
+/// terminal reports a bare Return; not every terminal *forwards* a modified
+/// one, and one that keeps Shift and Return for itself leaves the arrangement
+/// almost everybody wants with no way to write a second line. So the two are
+/// swappable, and both arrangements rest on presses that arrive everywhere.
+///
+/// What is not offered is Ctrl and Return. A terminal that has not agreed to a
+/// newer keyboard protocol sends the same bytes for it as for Return alone, so
+/// a reader who chose it on such a terminal could not send anything at all.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Sending {
+    /// Return sends; a modified Return opens a line.
+    #[default]
+    Enter,
+    /// A modified Return sends; Return opens a line.
+    AltEnter,
+}
+
+impl Sending {
+    /// Whether the press that sends is a modified Return rather than a bare one.
+    const fn modified(self) -> bool {
+        matches!(self, Self::AltEnter)
+    }
 }
 
 /// What a key did.
@@ -115,6 +144,10 @@ pub struct Editor {
     /// than drifting left over a run of short lines. `None` while the cursor
     /// has only ever moved sideways.
     wanted: Option<usize>,
+    /// Which press sends, and which opens a line. Only the prompt sets it: an
+    /// editor of one line has nowhere to put a second, so a Return there is a
+    /// Return whatever a document says.
+    sending: Sending,
 }
 
 impl Editor {
@@ -135,6 +168,17 @@ impl Editor {
     #[must_use]
     pub fn multiline(mut self) -> Self {
         self.multiline = true;
+        self
+    }
+
+    /// Says which press sends the text, and which opens a line under it.
+    ///
+    /// The prompt is the one caller, for the reason [`Editor::multiline`] is
+    /// the one caller of that: an editor with one row has no second press to
+    /// give away.
+    #[must_use]
+    pub fn sends(mut self, sending: Sending) -> Self {
+        self.sending = sending;
         self
     }
 
@@ -276,8 +320,8 @@ impl Editor {
             Key::WordRight => self.jump(self.word_ahead()),
             Key::Home => self.jump(self.line_start()),
             Key::End => self.jump(self.line_end()),
-            Key::Newline => self.newline(),
-            Key::Enter => self.submit(),
+            Key::Newline => self.returned(true),
+            Key::Enter => self.returned(false),
             Key::Interrupt => self.interrupt(),
             Key::Eof => self.eof(),
         }
@@ -570,6 +614,19 @@ impl Editor {
     /// Return on an empty prompt is somebody looking at the screen, not
     /// somebody asking for nothing. Submitting it would cost a turn and answer
     /// a question nobody asked.
+    /// Does what a Return does, told apart by whether a modifier came with it.
+    ///
+    /// One of the two sends and the other opens a line, and which is which is
+    /// [`Sending`]. Written as one function rather than two arms so that the
+    /// swap is stated once: two arms would be two places to get it backwards.
+    fn returned(&mut self, modified: bool) -> Typed {
+        if modified == self.sending.modified() {
+            self.submit()
+        } else {
+            self.newline()
+        }
+    }
+
     fn submit(&self) -> Typed {
         if self.said.is_empty() {
             Typed::Ignored

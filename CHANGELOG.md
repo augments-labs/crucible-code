@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**`input.send` says which press finishes a prompt.** Left alone, Return sends
+and a modified Return opens a line under it; `altEnter` swaps the two, for a
+terminal that keeps every modified Return for itself and would otherwise leave
+no way to write a second line.
+
 ### Fixed
 
 **A multi-line prompt and a multi-line paste, which 0.13.2 announced and neither

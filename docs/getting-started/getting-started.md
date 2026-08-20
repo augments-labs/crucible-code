@@ -392,6 +392,11 @@ for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks each termi
 for the newer encoding on the way in. Where it declines, <kbd>Alt+Enter</kbd> and
 <kbd>Ctrl+J</kbd> do the same thing and need nothing asked for.
 
+If your terminal keeps all three for itself, swap the two presses over:
+`"input": { "send": "altEnter" }` in your
+[configuration](../configuration/configuration.md) makes <kbd>Enter</kbd> add a
+line and <kbd>Alt+Enter</kbd> send.
+
 Pasting several lines pastes several lines. The breaks arrive as breaks rather
 than as a send at the first one, because crucible asks the terminal to mark where
 a paste begins and ends. A terminal that cannot do that is one where a pasted
