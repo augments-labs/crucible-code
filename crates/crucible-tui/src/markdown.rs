@@ -43,6 +43,7 @@ const TICKS: &str = "``````";
 const DASHES: &str = "------";
 const PLUSES: &str = "++++++";
 const ANGLES: &str = ">>>>>>";
+const TILDES: &str = "~~~~~~";
 
 /// A run of one marker character, waiting for the character that says what it
 /// was.
@@ -86,6 +87,8 @@ struct Emphasis {
     leant: bool,
     /// Two or more.
     raised: bool,
+    /// Two tildes around it: written, and then taken back.
+    struck: bool,
 }
 
 /// What the scan is in the middle of, across lines.
@@ -294,7 +297,7 @@ impl Markdown {
             // A fence's own line is dropped whole; nothing on it marks anything.
             Inside::Opening | Inside::Closing => false,
             Inside::Prose => match character {
-                '*' | '_' | '`' => true,
+                '*' | '_' | '`' | '~' => true,
                 // Only where nothing else has been written on the line. A
                 // hash is a heading there and a comment everywhere else; a
                 // dash is a bullet there and a minus sign everywhere else.
@@ -351,6 +354,14 @@ impl Markdown {
                 say(Slot::Quiet, " ");
                 true
             }
+            // Exactly two, because that is the only run markdown has ever
+            // meant a retraction by -- which is also what keeps `~/Projects` a
+            // path and `~~~` the fence somebody wrote: one tilde and three
+            // both fall through and are written back as themselves.
+            '~' if held.count == 2 && self.strikes(next) => {
+                self.line.emphasis.struck = !self.line.emphasis.struck;
+                false
+            }
             // One marker is emphasis and two are weight, which is what markdown
             // has always meant by them and what a model writes expecting to be
             // read that way. Three or more are both, and the louder of the two
@@ -370,6 +381,16 @@ impl Markdown {
                 false
             }
         }
+    }
+
+    /// Whether a run of two tildes followed by `next` turns a retraction on or
+    /// off.
+    ///
+    /// The same rule the stars are held to, for the same reason: something has
+    /// to follow on the same line for a run to open, so a pair left dangling at
+    /// the end of one strikes nothing.
+    fn strikes(&self, next: char) -> bool {
+        self.line.emphasis.struck || !next.is_whitespace()
     }
 
     /// Whether a run of markers followed by `next` turns emphasis on or off.
@@ -584,6 +605,12 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose || self.line.code || self.line.quoted {
             Slot::Quiet
+        } else if self.line.emphasis.struck {
+            // Above weight and emphasis both. A slot says one thing, and of the
+            // things a phrase can be at once, the one a reader most needs is
+            // that it was taken back -- bold words the answer has retracted are
+            // worse than plain ones it has not.
+            Slot::Struck
         } else if self.line.heading || self.line.emphasis.raised {
             Slot::Strong
         } else if self.line.emphasis.leant {
@@ -636,6 +663,7 @@ fn written(held: Held) -> &'static str {
         '-' => DASHES,
         '+' => PLUSES,
         '>' => ANGLES,
+        '~' => TILDES,
         _ => SCORES,
     };
 

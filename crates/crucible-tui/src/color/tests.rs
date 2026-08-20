@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 24] {
+fn all() -> [Slot; 25] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -69,24 +69,25 @@ fn all() -> [Slot; 24] {
             Slot::Quiet => 3,
             Slot::Link => 4,
             Slot::Emphasis => 5,
-            Slot::AllowEdits => 6,
-            Slot::FullAccess => 7,
-            Slot::Doing => 8,
-            Slot::DoingMark => 9,
-            Slot::Done => 10,
-            Slot::DoneMark => 11,
-            Slot::Removed => 12,
-            Slot::RemovedNumber => 13,
-            Slot::Added => 14,
-            Slot::AddedNumber => 15,
-            Slot::Prompt => 16,
-            Slot::PromptMark => 17,
-            Slot::Comment => 18,
-            Slot::Keyword => 19,
-            Slot::Str => 20,
-            Slot::Number => 21,
-            Slot::Name => 22,
-            Slot::Operator => 23,
+            Slot::Struck => 6,
+            Slot::AllowEdits => 7,
+            Slot::FullAccess => 8,
+            Slot::Doing => 9,
+            Slot::DoingMark => 10,
+            Slot::Done => 11,
+            Slot::DoneMark => 12,
+            Slot::Removed => 13,
+            Slot::RemovedNumber => 14,
+            Slot::Added => 15,
+            Slot::AddedNumber => 16,
+            Slot::Prompt => 17,
+            Slot::PromptMark => 18,
+            Slot::Comment => 19,
+            Slot::Keyword => 20,
+            Slot::Str => 21,
+            Slot::Number => 22,
+            Slot::Name => 23,
+            Slot::Operator => 24,
         }
     }
 
@@ -97,6 +98,7 @@ fn all() -> [Slot; 24] {
         Slot::Quiet,
         Slot::Link,
         Slot::Emphasis,
+        Slot::Struck,
         Slot::AllowEdits,
         Slot::FullAccess,
         Slot::Doing,
@@ -429,6 +431,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Quiet,
             Slot::Link,
             Slot::Emphasis,
+            Slot::Struck,
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,

@@ -521,3 +521,67 @@ fn a_mark_costs_the_line_the_columns_the_marker_would_have() {
         );
     }
 }
+
+#[test]
+fn two_tildes_take_a_phrase_back() {
+    let said = whole("the ~~first~~ second answer");
+
+    assert_eq!(drawn(&said), "the first second answer");
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Struck, Slot::Plain]);
+}
+
+#[test]
+fn a_retraction_outranks_the_weight_it_was_written_in() {
+    // Both are true of the phrase and a slot says one thing. What a reader
+    // needs first is that it was taken back.
+    assert_eq!(
+        slots(&whole("**~~loud and wrong~~** and quiet and right")),
+        vec![Slot::Struck, Slot::Plain]
+    );
+}
+
+#[test]
+fn a_tilde_that_is_not_a_pair_is_left_exactly_where_it_was() {
+    // A home directory, a fence somebody wrote with tildes, and an
+    // approximation. None of them is a retraction and all of them are text.
+    assert_eq!(drawn(&whole("look in ~/Projects")), "look in ~/Projects");
+    assert_eq!(drawn(&whole("~~~\ncode\n~~~\n")), "~~~\ncode\n~~~\n");
+    assert_eq!(drawn(&whole("about ~40 lines")), "about ~40 lines");
+}
+
+#[test]
+fn a_pair_left_dangling_at_the_end_of_a_line_strikes_nothing() {
+    assert_eq!(
+        drawn(&whole("nothing to strike ~~\n")),
+        "nothing to strike ~~\n"
+    );
+    assert_eq!(slots(&whole("nothing to strike ~~\n")), vec![Slot::Plain]);
+}
+
+#[test]
+fn a_retraction_ends_where_the_line_does() {
+    // Emphasis of every kind is a line's, not a message's: a model that opens
+    // one and never closes it costs the reader that line and no more.
+    let said = whole("~~opened here\nand plain here\n");
+
+    assert_eq!(slots(&said), vec![Slot::Struck, Slot::Plain]);
+}
+
+#[test]
+fn a_retraction_split_across_two_deltas_is_still_one_retraction() {
+    let mut markdown = Markdown::default();
+
+    let first = read(&mut markdown, "the ~");
+    let second = read(&mut markdown, "~first~~ answer");
+
+    assert_eq!(drawn(&first), "the ");
+    assert_eq!(drawn(&second), "first answer");
+    assert_eq!(slots(&second), vec![Slot::Struck, Slot::Plain]);
+}
+
+#[test]
+fn nothing_inside_a_fence_is_read_as_a_retraction() {
+    let said = whole("```python\nx = ~~y\n```\n");
+
+    assert!(drawn(&said).contains("x = ~~y"), "{}", drawn(&said));
+}

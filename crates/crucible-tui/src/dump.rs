@@ -78,6 +78,7 @@ fn marked(slot: Slot) -> Option<&'static str> {
         Slot::Quiet => Some("Quiet"),
         Slot::Link => Some("Link"),
         Slot::Emphasis => Some("Emphasis"),
+        Slot::Struck => Some("Struck"),
         Slot::AllowEdits => Some("AllowEdits"),
         Slot::FullAccess => Some("FullAccess"),
         Slot::Doing => Some("Doing"),

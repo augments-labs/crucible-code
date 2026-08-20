@@ -391,6 +391,11 @@ else's. Both marks come out of the same set as every border on screen, so
 A dash is only a bullet at the start of a line with a space after it. `5 - 3`,
 `--colour never` and `a -> b` are left exactly where they were.
 
+A phrase between two `~~` is one the answer wrote and then took back, and it is
+drawn with a line through it and nothing else — struck rather than dimmed,
+because a retraction is still being read. Exactly two: `~/Projects` is a path,
+`~40` is an approximation, and both are left where they were.
+
 A link is read the same way, and keeps both halves of itself: the words are
 underlined and the address follows them in brackets, quietly, so it can be
 copied — or clicked, in a terminal that finds its own links. A bracket that was

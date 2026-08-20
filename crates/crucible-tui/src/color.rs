@@ -80,6 +80,8 @@ pub enum Slot {
     Link,
     /// A phrase the answer leant on rather than raised its voice for.
     Emphasis,
+    /// A phrase the answer wrote and then took back.
+    Struck,
     /// The mode that lets a file be written without asking.
     AllowEdits,
     /// The mode that asks about nothing at all.
@@ -529,6 +531,17 @@ impl Slot {
                 exact: "\x1b[4m",
                 indexed: "\x1b[4m",
                 basic: "\x1b[4m",
+            },
+            // A line through the words and nothing else. What a struck phrase
+            // means is that the answer changed its mind in front of the reader,
+            // so the words have to stay legible -- which is the whole reason
+            // this is an attribute rather than the grey `Done` wears beside it:
+            // a finished task is behind you and a retraction is still being
+            // read.
+            Self::Struck => Ink {
+                exact: "\x1b[9m",
+                indexed: "\x1b[9m",
+                basic: "\x1b[9m",
             },
             Self::AllowEdits | Self::DoneMark => tones.green,
             Self::FullAccess | Self::DoingMark => tones.amber,

@@ -8,6 +8,11 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+**A phrase an answer took back is drawn with a line through it.** `~~this~~`
+is struck rather than shown with its tildes, and struck rather than dimmed,
+because a retraction is still being read. Exactly two tildes: `~/Projects` and
+`~40` are left where they were.
+
 **A list and a quote are read out of an answer rather than shown as their
 markers.** Every bullet opens with the same mark whichever of `-`, `*` or `+`
 the model wrote, nesting is kept, and a quoted line gets a bar down its left and
