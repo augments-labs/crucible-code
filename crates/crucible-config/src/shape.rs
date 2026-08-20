@@ -297,7 +297,7 @@ const COMPACTION: &[Field] = &[
     },
     Field {
         name: "keep",
-        about: "How many recent turns are kept word for word after the rest becomes a recap",
+        about: "How many tokens of recent turns are kept word for word after the rest becomes a recap",
         shape: Shape::Count,
         examples: &[],
         widens: false,

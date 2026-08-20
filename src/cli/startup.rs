@@ -796,9 +796,9 @@ fn model(
 ///
 /// Resolved here, whole, so the loop is handed an answer rather than learning
 /// that any of this has a spelling in a file. `keep` is the one figure with a
-/// default of crucible's own: a session carried on from needs the turn it is in
-/// the middle of and the one before it, which is what "carry on from here"
-/// means, and nothing about a document makes that number.
+/// default of crucible's own: a session carried on from needs enough of the
+/// recent turns to say what it is doing and how it got there, which is what
+/// "carry on from here" means, and nothing about a document makes that number.
 fn compacting(settings: &Settings) -> Compaction {
     let said = settings.compaction();
     let asked = Compaction::default();
@@ -806,10 +806,7 @@ fn compacting(settings: &Settings) -> Compaction {
     Compaction {
         automatic: said.when.automatic(),
         reserve: said.reserve,
-        keep: said
-            .keep
-            .and_then(|keep| usize::try_from(keep).ok())
-            .unwrap_or(asked.keep),
+        keep_tokens: said.keep.unwrap_or(asked.keep_tokens),
         spend_ceiling: said.spend_ceiling,
         ask_on_resume: said.ask_on_resume,
     }

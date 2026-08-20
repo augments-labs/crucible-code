@@ -186,6 +186,21 @@ impl Watched {
         Self::configured(case, columns, rows, &document, true)
     }
 
+    /// A provider that answers, with the compaction tail held to one token.
+    ///
+    /// The default keeps twenty thousand, which every turn here fits inside —
+    /// a recap would stand in place of nothing. One token keeps only the turn
+    /// being taken, so a session of three short turns still has a middle to
+    /// replace, which is the thing these cases are about.
+    pub(crate) fn compacting(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \"compaction\": {{\"keep\": 1, \"askOnResume\": 1}},\n  \"providers\": {{\n    \"anthropic\": {{\n      \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+
+        Self::configured(case, columns, rows, &document, true)
+    }
+
     /// A provider, model and effort remembered after their credential left.
     pub(crate) fn unavailable(case: &str, columns: u16, rows: u16) -> Self {
         let document = concat!(
