@@ -2,9 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 21,4 scrolled 0
-|╭─ crucible v0.13.2 ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
+80x24 cursor 21,14 scrolled 2
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -24,6 +22,8 @@ expression: window.picture()
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
-|│ ›                                                                            │|
+|│ › first line                                                                 │|
+|│   second line                                                                │|
+|│   third line                                                                 │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |

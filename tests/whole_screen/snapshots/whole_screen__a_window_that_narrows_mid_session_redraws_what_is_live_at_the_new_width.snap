@@ -2,15 +2,16 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-52x20 cursor 16,47 scrolled 4
+52x20 cursor 17,47 scrolled 4
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
 |│                                  │ ───────────────|
 |│  /…/workspace                    │                |
 |│                                  │ Tips           |
 |│                                  │                |
-|│                                  │ · /          op|
-|│                                  │ · shift+tab  st|
-|│                                  │ · ctrl+c     cl|
+|│                                  │ · /            |
+|│                                  │ · shift+enter  |
+|│                                  │ · shift+tab    |
+|│                                  │ · ctrl+c       |
 |╰───────────────────────────────────────────────────|
 |                                                    |
 |                                                    |
@@ -22,4 +23,3 @@ expression: window.picture()
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                    |
-|                                                    |
