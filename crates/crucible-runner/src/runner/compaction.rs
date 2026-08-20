@@ -439,12 +439,10 @@ mod tests {
 
     #[test]
     fn the_files_a_recap_kept_are_read_back_the_way_they_were_written() {
-        let recap = "## State\nnext: ship it\n\nFiles so far:\nsrc/main.rs (modified)\nREADME.md (read)\n";
+        let recap =
+            "## State\nnext: ship it\n\nFiles so far:\nsrc/main.rs (modified)\nREADME.md (read)\n";
 
-        assert_eq!(
-            listed(recap),
-            [("src/main.rs", true), ("README.md", false)]
-        );
+        assert_eq!(listed(recap), [("src/main.rs", true), ("README.md", false)]);
     }
 
     #[test]
@@ -469,14 +467,20 @@ mod tests {
         // Read first, then changed: it moves, because the read is no longer the
         // truest thing to say about it.
         files.note("src/main.rs", true);
-        assert!(files.read.is_empty(), "a changed file is still listed as read");
+        assert!(
+            files.read.is_empty(),
+            "a changed file is still listed as read"
+        );
         assert_eq!(files.modified, ["src/main.rs".to_owned()]);
 
         // And changed first, then read: it stays changed, however many reads
         // follow.
         files.note("src/lib.rs", true);
         files.note("src/lib.rs", false);
-        assert_eq!(files.modified, ["src/main.rs".to_owned(), "src/lib.rs".to_owned()]);
+        assert_eq!(
+            files.modified,
+            ["src/main.rs".to_owned(), "src/lib.rs".to_owned()]
+        );
         assert!(!files.read.iter().any(|kept| kept == "src/lib.rs"));
     }
 }
