@@ -273,11 +273,11 @@ pub(crate) fn converse<T: Terminal>(
     // list is up would be a wheel that works in the one place a reader is least
     // likely to reach for it.
     //
-    // What it costs is a drag that no longer selects, because a terminal
-    // forwarding buttons is not using them itself. Terminals all keep Shift as
-    // the way to reach their own pointer past a program holding it, which is
-    // what the documentation points at until this program has a selection of
-    // its own.
+    // The drag is answered here too, for the same reason: a terminal
+    // forwarding buttons is not using them itself, so a selection has to be
+    // this program's or nobody's. Shift is still the way past a program
+    // holding the pointer, and stays the answer for a reader who wanted their
+    // emulator's own selection instead of this one.
     let _pointer = Reporting::on()?;
 
     // Everything the session keeps between turns and hands to each of them:
