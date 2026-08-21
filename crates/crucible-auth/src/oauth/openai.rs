@@ -228,7 +228,7 @@ impl Flow {
     #[cfg(test)]
     pub(super) fn testing(base: &str) -> Self {
         let config = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(2)))
+            .timeout_global(Some(crate::oauth::PATIENCE))
             .max_redirects(0)
             .http_status_as_error(false)
             .build();
@@ -239,7 +239,7 @@ impl Flow {
             device_token: format!("{base}/api/accounts/deviceauth/token").into(),
             token: format!("{base}/oauth/token").into(),
             minimum_interval: Duration::from_millis(1),
-            login_lifetime: Duration::from_secs(2),
+            login_lifetime: crate::oauth::PATIENCE,
         }
     }
 

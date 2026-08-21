@@ -1,4 +1,5 @@
 use super::*;
+use crate::oauth::PATIENCE;
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -129,7 +130,7 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
     let oauth = KimiOAuth::testing(Flow::testing(&base));
 
     let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
-    let authorize = attempt.wait(Duration::from_secs(2)).unwrap().unwrap();
+    let authorize = attempt.wait(PATIENCE).unwrap().unwrap();
     assert_eq!(
         authorize,
         LoginUpdate::Authorize {
@@ -139,13 +140,10 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
             manual: false,
         }
     );
-    assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
-        Some(LoginUpdate::Complete)
-    );
+    assert_eq!(attempt.wait(PATIENCE).unwrap(), Some(LoginUpdate::Complete));
 
     let sent: Vec<_> = (0..2)
-        .map(|_| requests.recv_timeout(Duration::from_secs(2)).unwrap())
+        .map(|_| requests.recv_timeout(PATIENCE).unwrap())
         .collect();
     server.join().unwrap();
     assert_eq!(
@@ -203,18 +201,12 @@ fn production_browser_addresses_are_separate_from_the_token_service() {
             .to_string(),
         )]
     });
-    let flow = Flow::at(
-        &base,
-        VERIFY,
-        Duration::from_secs(2),
-        Duration::from_secs(2),
-        Duration::from_millis(1),
-    );
+    let flow = Flow::at(&base, VERIFY, PATIENCE, PATIENCE, Duration::from_millis(1));
     let identity = Identity::new("01234567-89ab-4cde-8fab-0123456789ab".to_owned()).unwrap();
 
     let device = flow.request_device(&identity).unwrap();
 
-    let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    let request = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
     assert_eq!(request.target, "/api/oauth/device_authorization");
     assert_eq!(
@@ -268,7 +260,7 @@ fn renewal_keeps_the_installation_identity() {
     let mut outgoing = Outgoing::new();
     credential.authorize(&mut outgoing).unwrap();
 
-    let sent = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
     assert!(sent.body.contains("refresh-old"));
     assert_eq!(sent.headers.get("x-msh-device-id").unwrap(), STABLE);

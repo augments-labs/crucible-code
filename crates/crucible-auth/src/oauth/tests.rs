@@ -248,7 +248,7 @@ fn device_login_follows_the_protocol_and_persists_before_completion() {
     let store = Store::in_home(scratch.path());
 
     let attempt = oauth.start(OpenAiOAuth::DEVICE, store.clone()).unwrap();
-    let first = attempt.wait(Duration::from_secs(2)).unwrap().unwrap();
+    let first = attempt.wait(PATIENCE).unwrap().unwrap();
     assert_eq!(
         first,
         LoginUpdate::Authorize {
@@ -259,18 +259,15 @@ fn device_login_follows_the_protocol_and_persists_before_completion() {
         }
     );
     assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
+        attempt.wait(PATIENCE).unwrap(),
         Some(LoginUpdate::Progress {
             message: "finishing device authorization…",
         })
     );
-    assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
-        Some(LoginUpdate::Complete)
-    );
+    assert_eq!(attempt.wait(PATIENCE).unwrap(), Some(LoginUpdate::Complete));
 
     let sent: Vec<_> = (0..3)
-        .map(|_| requests.recv_timeout(Duration::from_secs(2)).unwrap())
+        .map(|_| requests.recv_timeout(PATIENCE).unwrap())
         .collect();
     server.join().unwrap();
     assert_eq!(
@@ -324,7 +321,7 @@ fn browser_login_binds_state_pkce_and_the_loopback_redirect() {
     let store = Store::in_home(scratch.path());
     let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
 
-    let (authorization, launch) = match attempt.wait(Duration::from_secs(2)).unwrap().unwrap() {
+    let (authorization, launch) = match attempt.wait(PATIENCE).unwrap().unwrap() {
         LoginUpdate::Authorize {
             browser_uri,
             shown_uri,
@@ -357,17 +354,14 @@ fn browser_login_binds_state_pkce_and_the_loopback_redirect() {
     );
     assert!(response.starts_with("HTTP/1.1 200"));
     assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
+        attempt.wait(PATIENCE).unwrap(),
         Some(LoginUpdate::Progress {
             message: "finishing browser authorization…",
         })
     );
-    assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
-        Some(LoginUpdate::Complete)
-    );
+    assert_eq!(attempt.wait(PATIENCE).unwrap(), Some(LoginUpdate::Complete));
 
-    let sent = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
     assert_eq!(sent.target, "/oauth/token");
     assert!(sent.body.contains("code=browser-code"));
@@ -393,22 +387,19 @@ fn browser_login_can_finish_with_a_code_pasted_into_the_terminal() {
     let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
 
     assert!(matches!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
+        attempt.wait(PATIENCE).unwrap(),
         Some(LoginUpdate::Authorize { manual: true, .. })
     ));
     attempt.submit("manual-code").unwrap();
     assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
+        attempt.wait(PATIENCE).unwrap(),
         Some(LoginUpdate::Progress {
             message: "finishing browser authorization…",
         })
     );
-    assert_eq!(
-        attempt.wait(Duration::from_secs(2)).unwrap(),
-        Some(LoginUpdate::Complete)
-    );
+    assert_eq!(attempt.wait(PATIENCE).unwrap(), Some(LoginUpdate::Complete));
 
-    let sent = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
     assert!(sent.body.contains("code=manual-code"));
     assert!(store.read().has("openai"));
@@ -444,7 +435,7 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
     let mut outgoing = Outgoing::new();
     credential.authorize(&mut outgoing).unwrap();
 
-    let sent = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
     assert_eq!(sent.target, "/oauth/token");
     assert!(sent.body.contains("refresh-old"));
