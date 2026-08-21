@@ -114,6 +114,12 @@ nothing behind them, and still opens on
 lines are read back out of the log rather than out of the run that produced
 them.
 
+How much of the window is left comes back with it. A log records what each
+request carried, so a session picked up says so straight away rather than
+waiting for its next answer to measure it — unless it is picked up under
+different instructions or a different set of tools, where the reading is about
+a request this run would not send and the row waits, as it always did.
+
 One thing does not: a call that changed a file replays as the result it
 returned rather than as the lines it moved, because a diff is never written to
 a log.

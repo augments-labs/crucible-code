@@ -406,6 +406,33 @@ impl Spend {
     }
 }
 
+/// What one response reported about itself, kept for a session picked up later.
+///
+/// A log holds messages, and messages alone say what a session *is* without
+/// saying what any of it cost — so a session continued has always had to
+/// estimate its own load until the first response of the new run reported one.
+/// This is the fact that closes that gap: the four numbers a provider's report
+/// and the request behind it come to, together, and covering exactly the
+/// transcript that stood when it was written.
+///
+/// It is a fact about a request rather than about a session. Nothing here says
+/// which model produced it or which transcript it covered — what makes it
+/// usable again is the position it was written at, and that belongs to whoever
+/// keeps it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Calibration {
+    /// What that request carried.
+    pub carried: Carried,
+    /// What the response to it produced.
+    pub spent: Spend,
+    /// The request's content in bytes, which is what `carried` was counted
+    /// over. The two together are this model's own bytes per token on this
+    /// session's own text.
+    pub sent: u64,
+    /// The fixed part of those bytes: system instructions and tool schemas.
+    pub overhead: u64,
+}
+
 /// What one request carried to the model, counted in tokens.
 ///
 /// The other half of what a usage reading holds, and the half [`Spend`] is not:
