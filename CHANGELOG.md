@@ -27,6 +27,12 @@ its place.
   live — the rows were drawn through the live builder and never held, so none of
   them was offering anything.
 
+- **A session picked up says how much window is left straight away.** A log now
+  records what each request carried, so the row states it the moment the session
+  comes back instead of after its next answer. Picked up under other
+  instructions or another set of tools, the reading is about a request this run
+  would not send and the row waits as before.
+
 - **The session picked up replaces the screen rather than following it.** The
   transcript is emptied first, so scrolling back walks one conversation instead
   of leaving one and entering another at a point nothing marks.

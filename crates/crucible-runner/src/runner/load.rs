@@ -12,6 +12,13 @@
 //! whatever was appended since — the answer, and the tool results under it —
 //! and only that part is estimated.
 //!
+//! **A session picked up starts where it stopped.** The measurement above is
+//! this process's, and a transcript read off a disk arrives with none of it —
+//! so what a session was last told about itself is written down beside the
+//! answer it described, and read back with it. A log that never got that far,
+//! or one whose reading no longer covers the request this run would send, is a
+//! session that estimates until its next answer reports.
+//!
 //! **The estimate calibrates itself.** A response reports a true token count for
 //! a transcript whose exact byte length this loop knows, so the two together are
 //! this model's own bytes-per-token on this session's own text. Nothing here
@@ -21,7 +28,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crucible_core::{Carried, Message, Spend, ToolSchema};
+use crucible_core::{Calibration, Carried, Message, Spend, ToolSchema};
 
 /// Bytes per token before any response has been seen.
 ///
@@ -166,6 +173,57 @@ impl Load {
         self.sent_overhead = self.overhead;
         self.sent_overhead_signature = self.overhead_signature;
         self.appended = 0;
+    }
+
+    /// What a session picked up was last told about itself.
+    ///
+    /// The recount that precedes this estimated the whole transcript, because a
+    /// log holds messages and nothing beside them says what any of it cost.
+    /// This is the one line that does, and it covers exactly the transcript
+    /// just walked — so what was estimated becomes measured, and the row says
+    /// how much window is left the moment a session comes back rather than one
+    /// answer later.
+    ///
+    /// The fixed content of a request is compared by its **length** here, and
+    /// not by the signature the rest of this file compares. That signature is a
+    /// hash this build computes, and another build computing it differently
+    /// would make every log written by the first one read as covering something
+    /// else — so it is never written down, and length is what a log can carry.
+    /// What length cannot tell apart is two same-sized sets of instructions,
+    /// which moves the reading by the difference between two texts of one size
+    /// and only until the next response reports for itself. Every ordinary way
+    /// the fixed content changes — another model, another tool, another mode —
+    /// changes its size, and is refused here and estimated as before.
+    pub(super) fn measured(&mut self, calibration: Calibration) {
+        if self.overhead != calibration.overhead {
+            return;
+        }
+
+        self.carried = calibration.carried.tokens();
+        self.spent = calibration.spent.tokens();
+        self.current_spent = self.spent;
+        self.sent = calibration.sent;
+        self.sent_overhead = calibration.overhead;
+        self.sent_overhead_signature = self.overhead_signature;
+        self.input_reported = true;
+        self.output_reported = true;
+        self.appended = 0;
+    }
+
+    /// What this load would have a session remember, where it knows exactly.
+    ///
+    /// `None` wherever anything has happened that the last report does not
+    /// cover, which is the same test the percentage is drawn under: a log
+    /// remembering a number that covers a different transcript is worse than
+    /// one remembering nothing, because nothing is a session that measures
+    /// itself again and a wrong number is a session that never does.
+    pub(super) fn calibrated(&self) -> Option<Calibration> {
+        self.exact().then(|| Calibration {
+            carried: Carried::new(self.carried),
+            spent: Spend::new(self.spent),
+            sent: self.sent,
+            overhead: self.sent_overhead,
+        })
     }
 
     /// What that response produced.

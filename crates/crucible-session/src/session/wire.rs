@@ -12,7 +12,10 @@
 
 use std::path::Path;
 
-use crucible_core::{Message, SessionId, StopReason, ToolCall, ToolId, ToolOutput, ToolResult};
+use crucible_core::{
+    Calibration, Carried, Message, SessionId, Spend, StopReason, ToolCall, ToolId, ToolOutput,
+    ToolResult,
+};
 use serde_json::{Value, json};
 
 /// What wrote the file.
@@ -21,22 +24,24 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 4;
+pub(crate) const FORMAT: u32 = 5;
 
 /// The formats this build reads, newest first.
 ///
 /// A log is refused rather than half-understood, and that is what this list is
 /// careful about: a format is on it only where every line an older build could
-/// have written still means here exactly what it meant there. Format 3 is,
-/// because 4 only *added* — a word for a stop reason that build never produced,
-/// and a line kind it never wrote. Nothing was renamed and nothing changed
-/// meaning, so a log from it replays whole.
+/// have written still means here exactly what it meant there. Formats 3 and 4
+/// are, because each newer one only *added* — a word for a stop reason that
+/// build never produced, and line kinds it never wrote. Nothing was renamed and
+/// nothing changed meaning, so a log from either replays whole; what it is
+/// missing is a line saying what its last request carried, and a session with
+/// no such line is a session that measures itself again on its next answer.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[4, 3];
+pub(crate) const READS: &[u32] = &[5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -115,6 +120,42 @@ pub(crate) fn cleared(line: &str) -> Option<Vec<ToolId>> {
         .iter()
         .map(|one| Some(ToolId::new(one.as_str()?)))
         .collect()
+}
+
+/// A line saying what the request that produced the answer above it carried.
+///
+/// Written after the message it belongs to, and read the same way, because
+/// order is the only thing that says which transcript it covers: everything
+/// above it was sent, and anything below it was not. That is why a reader takes
+/// it only where it is the last thing in the file — see [`super::replay`].
+///
+/// It records lengths and token counts and nothing else. Not the model's name,
+/// not the instructions, not a hash of them: the fixed content of a request is
+/// compared by its size, and a number this build computed from its own hasher
+/// would be a number another build is free to compute differently.
+pub(crate) fn measured(calibration: &Calibration) -> String {
+    json!({
+        "carried": {
+            "tokens": calibration.carried.tokens(),
+            "spent": calibration.spent.tokens(),
+            "bytes": calibration.sent,
+            "overhead": calibration.overhead,
+        }
+    })
+    .to_string()
+}
+
+/// What a carried line says, or `None` if this is not one.
+pub(crate) fn measure(line: &str) -> Option<Calibration> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let measured = value.get("carried")?;
+
+    Some(Calibration {
+        carried: Carried::new(measured.get("tokens")?.as_u64()?),
+        spent: Spend::new(measured.get("spent")?.as_u64()?),
+        sent: measured.get("bytes")?.as_u64()?,
+        overhead: measured.get("overhead")?.as_u64()?,
+    })
 }
 
 /// The first line, which says what the file is and what it belongs to.

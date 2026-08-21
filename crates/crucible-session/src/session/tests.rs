@@ -7,7 +7,8 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Message, SessionId, StopReason, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult,
+    Calibration, Carried, Message, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
+    ToolOutput, ToolResult,
 };
 use serde_json::Value;
 
@@ -28,6 +29,14 @@ fn calling(id: &str, name: &str, args: &str) -> Message {
             args: ToolArgs::new(args),
         }],
         stop: Some(StopReason::WantsTools),
+    }
+}
+
+fn answering(text: &str) -> Message {
+    Message::Agent {
+        text: text.into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
     }
 }
 
@@ -229,10 +238,9 @@ fn a_session_comes_back_exactly_as_it_was_recorded() {
 #[test]
 fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
     // The refusal exists so a log is never half-understood. This format only
-    // added — a word for a stop reason the older build never produced, and a
-    // line kind it never wrote — so a log from it means here exactly what it
-    // meant there, and refusing it would cost somebody their history to protect
-    // them from nothing.
+    // added — a line kind the older build never wrote — so a log from it means
+    // here exactly what it meant there, and refusing it would cost somebody
+    // their history to protect them from nothing.
     let sample = Sample::new("session-older-format");
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
     let path = session.path().to_owned();
@@ -524,3 +532,96 @@ fn a_session_that_records_nothing_is_still_a_session() {
 /// What a name something else already holds costs. Its own file because no
 /// ordinary run reaches any of it, and what it guards is somebody else's log.
 mod colliding;
+
+/// A reading a session might have been told about itself.
+fn reading(tokens: u64, spent: u64) -> Calibration {
+    Calibration {
+        carried: Carried::new(tokens),
+        spent: Spend::new(spent),
+        sent: 4_000,
+        overhead: 900,
+    }
+}
+
+#[test]
+fn a_session_picked_up_is_told_again_what_its_last_request_carried() {
+    let sample = Sample::new("session-carried");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let told = reading(12_345, 678);
+
+    session.append(&said("what came before"));
+    session.append(&answering("all done"));
+    session.measured(&told);
+    drop(session);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages().len(), 2, "the messages come back too");
+    assert_eq!(session.calibrated(), Some(told));
+}
+
+#[test]
+fn a_reading_with_a_turn_written_after_it_is_not_about_this_transcript() {
+    // The reading covered what stood when it was written. A message recorded
+    // after it is a message it never saw, so what it says is about a shorter
+    // transcript than the one being handed back — and a load told that number
+    // would under-state itself, which is the direction that costs a turn.
+    let sample = Sample::new("session-carried-stale");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&answering("all done"));
+    session.measured(&reading(12_345, 678));
+    session.append(&said("one more thing"));
+    drop(session);
+
+    let (session, _transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(session.calibrated(), None);
+}
+
+#[test]
+fn a_reading_covering_an_answer_nothing_answered_goes_with_it() {
+    // A process that died between asking for a tool and recording its result
+    // has its last message cut off, so a reading written over that message
+    // describes more transcript than comes back.
+    let sample = Sample::new("session-carried-cut");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    session.append(&said("fix the parser"));
+    session.append(&calling("call-1", "read", r#"{"path":"src/main.rs"}"#));
+    session.measured(&reading(12_345, 678));
+    drop(session);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages().len(), 1, "the call was cut off");
+    assert_eq!(session.calibrated(), None);
+}
+
+#[test]
+fn a_session_started_here_was_never_told_anything() {
+    let sample = Sample::new("session-carried-fresh");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+
+    assert_eq!(session.calibrated(), None);
+}
+
+#[test]
+fn a_log_that_never_recorded_a_reading_is_still_a_session_to_continue() {
+    // Every log written before this format has one. The session comes back
+    // whole and measures itself again on its next answer, which is what it did
+    // on every continue before there was a line to record.
+    let sample = Sample::new("session-carried-absent");
+    let messages = [said("what came before"), answering("all done")];
+
+    record(&sample, &messages);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages(), messages.as_slice());
+    assert_eq!(session.calibrated(), None);
+}

@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use crucible_core::{Message, SessionId, Transcript, Workspace};
+use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
 
 mod claim;
 mod index;
@@ -36,7 +36,7 @@ mod wire;
 use claim::{Claim, Claimed, claim};
 use log::{Trouble, make, open, shorten};
 pub use recent::{Recorded, recent};
-use replay::{belongs, newest, replay};
+use replay::{Replayed, belongs, newest, replay};
 
 /// How many lines may be waiting to be written.
 ///
@@ -161,6 +161,10 @@ pub struct Session {
     /// Released after the queue has drained: [`Drop`] runs before a struct's
     /// fields do, and joining the writer is the first thing it does.
     claim: Option<Claim>,
+    /// What the log said its last request carried, where it was picked up and
+    /// where the log still says. `None` in a session that was started rather
+    /// than continued, and in one whose log stopped before it could say.
+    calibration: Option<Calibration>,
     trouble: Trouble,
 }
 
@@ -324,7 +328,11 @@ impl Session {
             Claimed::Lockless => None,
         };
 
-        let (transcript, settled_at) = replay(path)?;
+        let Replayed {
+            transcript,
+            settled_at,
+            calibration,
+        } = replay(path)?;
 
         // Before a single byte is appended, and before the handle that will
         // append them exists: whatever `replay` stopped at would otherwise have
@@ -333,6 +341,7 @@ impl Session {
 
         let mut session = Self::writing(path.to_owned(), open(path)?);
         session.claim = held;
+        session.calibration = calibration;
 
         Ok((session, transcript))
     }
@@ -346,6 +355,7 @@ impl Session {
             to: None,
             writer: None,
             claim: None,
+            calibration: None,
             trouble: Trouble::default(),
         }
     }
@@ -397,6 +407,30 @@ impl Session {
     pub fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
         let Some(to) = &self.to else { return };
         drop(to.send(wire::pruned(freed, results).into()));
+    }
+
+    /// Records what the request behind the answer just written carried.
+    ///
+    /// Written after that message and never beside it, because order is what
+    /// says which transcript the reading covers: a log is read forwards, and
+    /// everything above this line is what was sent to get the answer above it.
+    ///
+    /// One line per answer, and only where the numbers are exact. A response
+    /// that reported half of itself, or a model changed since, writes nothing —
+    /// a session that comes back estimating is the behaviour this replaces, and
+    /// it is a great deal better than one that comes back sure and wrong.
+    pub fn measured(&self, calibration: &Calibration) {
+        let Some(to) = &self.to else { return };
+        drop(to.send(wire::measured(calibration).into()));
+    }
+
+    /// What the log this session was picked up from last said it carried.
+    ///
+    /// `None` for a session that was started here, and for one whose log ends
+    /// with anything other than that line — see [`replay`].
+    #[must_use]
+    pub const fn calibrated(&self) -> Option<Calibration> {
+        self.calibration
     }
 
     /// The first write that failed, if one has.
@@ -467,6 +501,7 @@ impl Session {
             to: Some(to),
             writer: Some(writer),
             claim: None,
+            calibration: None,
             trouble,
         }
     }
