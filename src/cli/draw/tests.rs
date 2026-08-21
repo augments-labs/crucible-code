@@ -275,6 +275,44 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
 }
 
 #[test]
+fn the_key_a_cut_result_names_is_the_one_thing_on_the_row_that_is_lit() {
+    // The affordance. A click on this row opens what the key opens, and a row
+    // written entirely in the quiet slot said neither — so a reader looking for
+    // what they could reach found a result that had been cut looking exactly
+    // like a line that had not. Lit the way the only other door on screen is:
+    // the count of what is still running, under the box.
+    let output = ToolOutput::ok("one\ntwo\nthree");
+    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+
+    // The slots in the order the row asked for them, which is what says *which*
+    // run is lit: the indent, the corner, the line that came back, the count,
+    // the key, and the bracket that shuts it.
+    assert_eq!(
+        row.kinds().collect::<Vec<_>>(),
+        [
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Quiet,
+            Slot::Quiet,
+            Slot::Accent,
+            Slot::Quiet
+        ]
+    );
+    assert_eq!(row.text(), "  └ one (+2 lines · ctrl+o to expand)");
+}
+
+#[test]
+fn a_row_with_nothing_cut_lights_nothing() {
+    // Nothing was cut, so there is no door, so there is nothing to light. A row
+    // that lit one anyway would be an offer to open a result that is already
+    // whole on the screen above it.
+    let output = ToolOutput::ok("done");
+    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+
+    assert!(!row.kinds().any(|slot| slot == Slot::Accent), "{row:?}");
+}
+
+#[test]
 fn a_single_line_of_output_gets_no_count() {
     // And so no offer either. The key opens what was cut, and nothing was: a
     // row that named it here would send the reader to a view their result is
@@ -1092,5 +1130,72 @@ fn a_question_is_wrapped_rather_than_cut_however_narrow_the_window() {
         );
         assert!(joined.contains("Rust"), "at {columns}: {written}");
         assert!(joined.contains("Python"), "at {columns}: {written}");
+    }
+}
+
+/// The line a background command that ended on its own leaves behind, on a
+/// window `columns` wide.
+fn ended_on(called: &str, columns: usize) -> String {
+    let mut renderer = Renderer::new(Recording::new(columns, 24));
+
+    gone(
+        &mut renderer,
+        &crucible_tools::Ended {
+            tool: "bash",
+            number: 1,
+            called: called.into(),
+            code: Some(0),
+            lines: 120,
+        },
+        Style::plain(),
+    )
+    .expect("the ending to draw");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
+    // The failure this is written against: the sentence was clipped whole, so a
+    // command somebody typed at length took every column and what the row exists
+    // to report — how it ended, how much it printed — was the part cut off. The
+    // count under the box had gone down and nothing on screen said why.
+    let said = ended_on(
+        "for i in $(seq 1 120); do printf 'tick %d/120\\n' \"$i\"; sleep 1; done; echo complete",
+        80,
+    );
+
+    assert!(said.contains("finished"), "{said}");
+    assert!(said.contains("120 lines"), "{said}");
+    assert!(said.contains("Bash(for i in"), "{said}");
+    assert!(said.contains(unicode().ellipsis()), "{said}");
+}
+
+#[test]
+fn a_command_the_row_has_room_for_is_written_out_whole() {
+    let said = ended_on("npm run dev", 80);
+
+    assert!(
+        said.contains("Bash(npm run dev) ended on its own"),
+        "{said}"
+    );
+    assert!(!said.contains(unicode().ellipsis()), "{said}");
+}
+
+#[test]
+fn a_window_with_no_room_for_the_words_either_still_fits_the_window() {
+    // The tail is kept ahead of the command, and a window narrower than the
+    // tail alone has room for neither. What may not happen is a row wider than
+    // the window: the terminal would wrap it, and the row under it would be a
+    // row further down than every live tail counted on.
+    for columns in 1..40 {
+        let said = ended_on("npm run dev", columns);
+        let widest = said
+            .lines()
+            .map(crucible_tui::columns)
+            .max()
+            .unwrap_or_default();
+
+        assert!(widest <= columns, "{columns}: {said}");
     }
 }
