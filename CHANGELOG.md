@@ -13,6 +13,12 @@ directory at the left, and the provider, model and rung at the right, standing
 for as long as the session does. The row under the box is now only about the
 next key — the mode, the key that steps it, and what is still running.
 
+**The schema says what a key falls back to.** `output.color`, `theme`,
+`syntaxTheme`, `glyphs`, `toolDetail`, `input.send`, `permissions.mode`,
+`compaction.when` and `updates.check` now arrive in an editor with the answer
+crucible uses when nothing set them. A key crucible has no answer for — a
+context window, an effort, a reserve — still carries none.
+
 **The schema names the variables crucible reads for itself.** `env` still takes
 any name, but `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now arrives with the `6` it
 falls back to and the range it accepts, so an editor completes it and marks one

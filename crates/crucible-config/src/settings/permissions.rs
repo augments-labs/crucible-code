@@ -224,4 +224,12 @@ mod tests {
             assert!(read(name).is_some(), "mode: {name}");
         }
     }
+
+    #[test]
+    fn the_default_the_schema_states_for_mode_is_the_one_it_falls_back_to() {
+        assert_eq!(
+            read(shape::usual(&["permissions", "mode"])),
+            Some(Mode::default())
+        );
+    }
 }

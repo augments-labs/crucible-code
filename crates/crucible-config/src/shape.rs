@@ -302,7 +302,7 @@ const OUTPUT: &[Field] = &[
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.
         examples: &[],
-        usual: None,
+        usual: Some("auto"),
         widens: false,
     },
     Field {
@@ -310,7 +310,7 @@ const OUTPUT: &[Field] = &[
         about: "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
         shape: Shape::Choice(THEME),
         examples: &[],
-        usual: None,
+        usual: Some("auto"),
         widens: false,
     },
     Field {
@@ -318,7 +318,7 @@ const OUTPUT: &[Field] = &[
         about: "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
         shape: Shape::Text,
         examples: &["Monokai Extended", "GitHub"],
-        usual: None,
+        usual: Some("Monokai Extended"),
         widens: false,
     },
     Field {
@@ -326,7 +326,7 @@ const OUTPUT: &[Field] = &[
         about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
         shape: Shape::Choice(GLYPHS),
         examples: &[],
-        usual: None,
+        usual: Some("unicode"),
         widens: false,
     },
     Field {
@@ -334,7 +334,7 @@ const OUTPUT: &[Field] = &[
         about: "How much of a tool call and its result one line shows",
         shape: Shape::Choice(TOOL_DETAIL),
         examples: &[],
-        usual: None,
+        usual: Some("compact"),
         widens: false,
     },
 ];
@@ -361,7 +361,7 @@ const INPUT: &[Field] = &[Field {
     about: "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Enter for itself",
     shape: Shape::Choice(SEND),
     examples: &[],
-    usual: None,
+    usual: Some("enter"),
     widens: false,
 }];
 
@@ -378,7 +378,7 @@ const UPDATES: &[Field] = &[Field {
     about: "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
     shape: Shape::Choice(UPDATE_CHECK),
     examples: &[],
-    usual: None,
+    usual: Some("auto"),
     widens: false,
 }];
 
@@ -402,7 +402,7 @@ const COMPACTION: &[Field] = &[
         about: "Whether a full window is answered by compacting the session, or by letting the turn fail",
         shape: Shape::Choice(COMPACTION_WHEN),
         examples: &[],
-        usual: None,
+        usual: Some("full"),
         widens: false,
     },
     Field {
@@ -468,7 +468,7 @@ const PERMISSIONS: &[Field] = &[
         about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Read only from the configuration file in your home directory",
         shape: Shape::Choice(MODE),
         examples: &[],
-        usual: None,
+        usual: Some("ask"),
         widens: true,
     },
     Field {
@@ -682,4 +682,33 @@ impl Shape {
             Self::List(_) => "a list",
         }
     }
+}
+
+/// What the schema says a key falls back to, by the path a document writes it
+/// at.
+///
+/// For the tests beside each settings module. What each of them is for: the
+/// declaration here and the value the module returns when nothing was written
+/// are two answers to one question, and a schema that goes on offering a
+/// default the program stopped having is worse than one offering none — an
+/// editor writes it into the file.
+///
+/// # Panics
+///
+/// If the path names no key, or names one with no default declared. Both are
+/// the test's own mistake rather than a document's.
+#[cfg(test)]
+pub(crate) fn usual(path: &[&str]) -> &'static str {
+    let mut shape = &DOCUMENT;
+    let (last, above) = path.split_last().expect("a path names at least one key");
+
+    for name in above {
+        shape = shape.field(name).expect("every key above the last exists");
+    }
+
+    shape
+        .declared(last)
+        .expect("the last key exists")
+        .usual
+        .expect("the key states what it falls back to")
 }

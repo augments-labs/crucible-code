@@ -61,7 +61,7 @@ pub(crate) fn writes_colour(
     terminal: bool,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
-    match wanted.unwrap_or(Color::Auto) {
+    match wanted.unwrap_or_default() {
         Color::Always => true,
         Color::Never => false,
         Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
@@ -110,7 +110,7 @@ impl Style {
             syntax,
         } = output;
 
-        let color = match wanted.unwrap_or(Color::Auto) {
+        let color = match wanted.unwrap_or_default() {
             // Both overrides mean it: `always` is how a run whose output is
             // being captured on purpose — a recording, a pty in CI — asks for
             // the colour it would have had, and it would be no override at all
@@ -164,11 +164,11 @@ impl Style {
                 None => Palette::resolve(color, theme, exact, from),
             },
             ground,
-            glyphs: match glyphs.unwrap_or(Wanted::Unicode) {
+            glyphs: match glyphs.unwrap_or_default() {
                 Wanted::Unicode => Glyphs::Unicode,
                 Wanted::Ascii => Glyphs::Ascii,
             },
-            detail: detail.unwrap_or(ToolDetail::Compact),
+            detail: detail.unwrap_or_default(),
         }
     }
 
@@ -603,6 +603,28 @@ mod tests {
 
         assert_eq!(style.args(200), 200);
         assert_eq!(style.output(200), 200);
+    }
+
+    #[test]
+    fn the_theme_the_schema_states_for_fenced_code_is_the_one_this_falls_back_to() {
+        // The one default whose two halves are in two crates: the schema is
+        // generated in crucible-config and the theme is named in crucible-tui,
+        // and this file is where they meet. Which is the whole reason the test
+        // is here rather than beside either of them.
+        let schema: serde_json::Value =
+            serde_json::from_str(&crucible_config::schema()).expect("the schema is JSON");
+        let stated = [
+            "properties",
+            "output",
+            "properties",
+            "syntaxTheme",
+            "default",
+        ]
+        .iter()
+        .try_fold(&schema, |node, step| node.get(step))
+        .and_then(serde_json::Value::as_str);
+
+        assert_eq!(stated, Some(crucible_tui::syntax::THEME_UNLESS_SAID));
     }
 
     #[test]

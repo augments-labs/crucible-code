@@ -105,4 +105,12 @@ mod tests {
             assert!(Sending::read(name).is_some(), "send: {name}");
         }
     }
+
+    #[test]
+    fn the_default_the_schema_states_for_send_is_the_one_it_falls_back_to() {
+        assert_eq!(
+            Sending::read(shape::usual(&["input", "send"])),
+            Some(Sending::default())
+        );
+    }
 }

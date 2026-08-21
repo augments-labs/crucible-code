@@ -28,7 +28,7 @@ impl Settings {
                 .and_then(|block| block.get("when"))
                 .and_then(serde_json::Value::as_str)
                 .and_then(When::read)
-                .unwrap_or(When::Full),
+                .unwrap_or_default(),
             reserve: count("reserve"),
             keep: count("keep"),
             ask_on_resume: count("askOnResume"),
@@ -96,9 +96,10 @@ pub struct Compaction {
 }
 
 /// When crucible compacts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum When {
     /// Once the window has no room for another exchange.
+    #[default]
     Full,
     /// Never on its own. `/compact` still compacts, because that is somebody
     /// asking rather than crucible deciding, and a turn that reaches the bound
@@ -126,6 +127,7 @@ impl When {
 #[cfg(test)]
 mod tests {
     use crate::document::{Document, Origin};
+    use crate::shape;
 
     use super::*;
 
@@ -225,5 +227,14 @@ mod tests {
 
         assert_eq!(settings.compaction().when, When::Never);
         assert_eq!(settings.compaction().reserve, Some(9_000));
+    }
+
+    #[test]
+    fn the_default_the_schema_states_for_when_is_the_one_it_falls_back_to() {
+        assert_eq!(Settings::resolve(vec![]).compaction().when, When::default());
+        assert_eq!(
+            When::read(shape::usual(&["compaction", "when"])),
+            Some(When::default())
+        );
     }
 }
