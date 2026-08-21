@@ -151,6 +151,11 @@ pub struct Renderer<T: Terminal> {
     /// of the record rather than a band, and [`Self::opens`] says how.
     heading: Option<Heading>,
     crowned: Option<Row>,
+    /// Whether the pointer is over the transcript-map door in the fixed head.
+    ///
+    /// One bit rather than its column, because every motion on the same side of
+    /// either edge should cost no layout and no frame.
+    map_pointed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
     /// Held rather than asked for per frame: a read costs a syscall, and
@@ -236,6 +241,7 @@ impl<T: Terminal> Renderer<T> {
             standing: Standing::default(),
             heading: None,
             crowned: None,
+            map_pointed: false,
             size,
             painted: Painted::new(),
             free: String::new(),
@@ -313,6 +319,17 @@ impl<T: Terminal> Renderer<T> {
 
         let bands = self.bands();
         let on_head = |row| bands.head.contains(&row);
+        if let Pressed::Hovered { row, column } = arrived {
+            let over = !self.map.open()
+                && on_head(row)
+                && Head::transcript(self.size.columns).is_some_and(|door| door.contains(&column));
+            if over != self.map_pointed {
+                self.map_pointed = over;
+                self.crown();
+                self.draw()?;
+            }
+            return Ok(None);
+        }
         if self.map.open() {
             match arrived {
                 Pressed::Clicked { row, column }
@@ -484,9 +501,12 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the restored row could not be drawn.
     pub fn identifies(&mut self) -> Result<bool, TerminalError> {
-        if !self.map.close() {
+        let changed = self.map.close() || self.map_pointed;
+        if !changed {
             return Ok(false);
         }
+        self.map_pointed = false;
+        self.crown();
         self.draw()?;
         Ok(true)
     }
@@ -541,7 +561,7 @@ impl<T: Terminal> Renderer<T> {
             Head {
                 root: &heading.root,
             }
-            .row(columns, glyphs)
+            .pointed(columns, glyphs, self.map_pointed)
         });
     }
 
@@ -912,6 +932,7 @@ impl<T: Terminal> Renderer<T> {
         self.standing.clear();
         self.unselects();
         self.map.close();
+        self.map_pointed = false;
         self.crown();
 
         // Every row of the window is now showing something drawn for a size it
@@ -1142,6 +1163,8 @@ impl<T: Terminal> Renderer<T> {
         };
         let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
         self.unselects();
+        self.map_pointed = false;
+        self.crown();
         self.map.show(span, row, Instant::now());
         self.draw()?;
         Ok(true)

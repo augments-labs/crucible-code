@@ -198,8 +198,8 @@ fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     let mut window = Watched::answering("transcript-map", 80, 16, &vendor);
     window.types("say something long\r");
 
-    // `transcript` begins at column 70; the map's track begins at column 6.
-    window.clicks(0, 70);
+    // `transcript map` begins at column 64; the map track begins at 6.
+    window.clicks(0, 64);
     window.drags((0, 69), (0, 6));
 
     insta::assert_snapshot!(window.picture());

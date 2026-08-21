@@ -16,9 +16,10 @@ reached it at the top of a turn nobody was going to type. Everything that ended
 arrives in one turn, and the line half-written in the box is untouched.
 
 **A temporary map crosses a long transcript in one gesture.** The fixed bottom
-row offers a transcript-map control; click, then drag from the first retained
-row to now or land on a prompt mark. The wheel adjusts both transcript and map
-together, the control returns after three idle seconds, and the map takes no key.
+row offers `transcript map →` and highlights it under the pointer; click, then
+drag from the first retained row to now or land on a prompt mark. The wheel
+adjusts both transcript and map together, the control returns after three idle
+seconds, and the map takes no key.
 
 ### Changed
 

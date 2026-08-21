@@ -1007,7 +1007,55 @@ fn mapped() -> Drawn {
 }
 
 #[test]
-fn clicking_the_transcript_word_opens_an_absolute_map_in_the_head_row() {
+fn pointing_at_the_transcript_map_accents_its_door_and_nothing_else() {
+    let mut drawn = mapped();
+    drawn.wears(colourful());
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    let door = Head::transcript(drawn.columns()).expect("the transcript-map door");
+    let before = drawn.crowned.as_ref().expect("a head row");
+    assert_eq!(before.kinds().last(), Some(Slot::Quiet));
+    drawn.take();
+
+    assert_eq!(
+        drawn
+            .took(Pressed::Hovered {
+                row: 0,
+                column: door.start,
+            })
+            .unwrap(),
+        None
+    );
+    let pointed = drawn.crowned.as_ref().expect("the pointed head row");
+    assert_eq!(pointed.kinds().last(), Some(Slot::Accent));
+    assert!(!drawn.take().is_empty(), "the hover drew no frame");
+
+    // All-motion reporting sends one event per cell. A second cell inside the
+    // same door is the same one-bit state and must cost no frame.
+    drawn
+        .took(Pressed::Hovered {
+            row: 0,
+            column: door.start + 1,
+        })
+        .unwrap();
+    assert_eq!(drawn.take(), "");
+
+    drawn
+        .took(Pressed::Hovered {
+            row: 1,
+            column: door.start + 1,
+        })
+        .unwrap();
+    let left = drawn.crowned.as_ref().expect("the restored head row");
+    assert_eq!(left.kinds().last(), Some(Slot::Quiet));
+    assert!(!drawn.take().is_empty(), "leaving the door drew no frame");
+}
+
+#[test]
+fn clicking_the_transcript_map_label_opens_it_in_the_head_row() {
     let mut drawn = mapped();
     let door = Head::transcript(drawn.columns()).expect("the transcript door");
 
@@ -1173,5 +1221,5 @@ fn a_map_put_to_rest_restores_the_identity_row() {
     assert!(drawn.repose().unwrap());
     let head = drawn.screen().row(0).to_owned();
     assert!(head.starts_with("/work/crucible"), "{head:?}");
-    assert!(head.ends_with("transcript"), "{head:?}");
+    assert!(head.ends_with("transcript map →"), "{head:?}");
 }

@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 52x20 cursor 17,47 scrolled 0
-|…/workspace                               transcript|
+|…/workspace                         transcript map →|
 |│                                                  │|
 |│ Tips                                             │|
 |│                                                  │|

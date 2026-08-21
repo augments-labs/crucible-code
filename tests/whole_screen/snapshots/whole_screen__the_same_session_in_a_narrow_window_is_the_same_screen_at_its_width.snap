@@ -4,7 +4,7 @@ assertion_line: 94
 expression: window.picture()
 ---
 40x24 cursor 21,4 scrolled 0
-|…/workspace                   transcript|
+|…/workspace             transcript map →|
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |

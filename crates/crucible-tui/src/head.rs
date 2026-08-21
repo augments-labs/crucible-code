@@ -16,8 +16,9 @@
 //! The path is shortened rather than dropped, because a path is the one thing
 //! on this screen that has a useful end — the leaf is what tells two checkouts
 //! apart, and the columns before it are the same for every project somebody
-//! keeps in one place. At the far end stands `transcript`, the door into the
-//! absolute map over what the session has said. It gives way only where the row
+//! keeps in one place. At the far end stands `transcript map` with an opening
+//! arrow, the door into the absolute map over what the session has said. It
+//! gives way only where the row
 //! is too narrow to carry a useful piece of the path beside it.
 //!
 //! Like [`crate::Welcome`] this returns a [`Row`] and draws nothing, so every
@@ -31,10 +32,17 @@ use crate::row::Row;
 use crate::width;
 
 /// The door into absolute transcript travel.
-const TRANSCRIPT: &str = "transcript";
+///
+/// Names the picture it opens and ends in the same mark a list uses to say a
+/// row opens, so it is a control before a pointer has arrived to colour it.
+const TRANSCRIPT: &str = "transcript map";
 
 /// Room between the path and the door, so neither reads as part of the other.
 const APART: usize = 2;
+
+/// Enough of a path to keep a useful ending beside the door. Below this the
+/// path gets the whole row and no control is offered half-drawn.
+const PATH: usize = 20;
 
 /// What the head row says.
 ///
@@ -56,6 +64,16 @@ impl Head<'_> {
     /// The row, drawn for a terminal `columns` wide.
     #[must_use]
     pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
+        self.pointed(columns, glyphs, false)
+    }
+
+    /// The same row while the pointer is or is not over its transcript door.
+    ///
+    /// Only the door changes job: the working directory remains quiet, and the
+    /// palette decides which hue `Accent` means for the configured theme.
+    #[must_use]
+    pub(crate) fn pointed(&self, columns: usize, glyphs: Glyphs, over: bool) -> Row {
+        let label = format!("{TRANSCRIPT} {}", glyphs.stepping().1);
         let Some(control) = Self::transcript(columns) else {
             let said = tail(self.root, columns, glyphs)
                 .unwrap_or_else(|| width::clip(self.root, columns).to_owned());
@@ -67,16 +85,18 @@ impl Head<'_> {
             .unwrap_or_else(|| width::clip(self.root, room).to_owned());
         let mut row = Row::new().then(Slot::Quiet, said);
         row.pad(control.start);
-        row.push(Slot::Quiet, TRANSCRIPT);
+        row.push(if over { Slot::Accent } else { Slot::Quiet }, label);
         row
     }
 
     /// The columns the transcript door occupies, where this width has room for
     /// both it and something meaningful of the path.
     pub(crate) fn transcript(columns: usize) -> Option<Range<usize>> {
-        let wide = width::columns(TRANSCRIPT);
+        // The mark at the end is one column in both glyph sets, so this
+        // range is the same whichever spelling the row draws.
+        let wide = width::columns(TRANSCRIPT) + 2;
         let start = columns.checked_sub(wide)?;
-        (start > APART).then_some(start..columns)
+        (start >= PATH + APART).then_some(start..columns)
     }
 }
 

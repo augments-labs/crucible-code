@@ -36,10 +36,11 @@ everything it drew is already in your own scrollback.
 
 ## Moving through the transcript
 
-The wheel moves the transcript a few rows at a time. For a long jump, click
-`transcript` at the right of the top row. That row becomes a map from `first` to
-`now`; hollow marks are prompts, and the filled mark is the place currently on
-screen.
+The wheel moves the transcript a few rows at a time. For a long jump, use
+`transcript map →` at the right of the top row. The arrow says it opens, and the
+label takes the theme's accent when you point at it. Click it and that row becomes
+a map from `first` to `now`; hollow marks are prompts, and the filled mark is the
+place currently on screen.
 
 Drag anywhere along the map for an absolute jump, or click a hollow
 prompt mark to land on that prompt. The prompt box and everything standing over
