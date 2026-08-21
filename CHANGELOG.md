@@ -6,18 +6,7 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
-### Fixed
-
-**The welcome card is drawn again when the window changes size.** It used to
-keep the shape it was folded into at launch, so a window taken wider left it in
-a column down the left and a narrower one cut it in half. Everything else a
-component laid out is still clipped rather than refolded.
-
-**A background command that ends on its own still says how it ended.** The line
-used to be clipped whole, so a long command took every column and the words
-after it — whether it finished, and how much it had printed — were the part cut
-off. The command gives up the room now, and the row keeps what nobody can go
-back and ask for.
+## [0.17.0] - 2026-08-21
 
 ### Added
 
@@ -57,6 +46,19 @@ out of range as you type.
 row is drawn in the accent now, the way the count of what is still running is
 under the box, so a result with more behind it looks different from a line with
 nothing behind it. Clicking that row opens the same view the key does.
+
+### Fixed
+
+**The welcome card is drawn again when the window changes size.** It used to
+keep the shape it was folded into at launch, so a window taken wider left it in
+a column down the left and a narrower one cut it in half. Everything else a
+component laid out is still clipped rather than refolded.
+
+**A background command that ends on its own still says how it ended.** The line
+used to be clipped whole, so a long command took every column and the words
+after it — whether it finished, and how much it had printed — were the part cut
+off. The command gives up the room now, and the row keeps what nobody can go
+back and ask for.
 
 ## [0.16.0] - 2026-08-21
 
@@ -2491,7 +2493,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/augments-labs/crucible-code/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/augments-labs/crucible-code/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/augments-labs/crucible-code/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/augments-labs/crucible-code/compare/v0.13.2...v0.14.0
