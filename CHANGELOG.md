@@ -4,6 +4,15 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**A row along the top of the window says where the session is.** The working
+directory at the left, and the provider, model and rung at the right, standing
+for as long as the session does. The row under the box is now only about the
+next key — the mode, the key that steps it, and what is still running.
+
 ## [0.16.0] - 2026-08-21
 
 ### Changed

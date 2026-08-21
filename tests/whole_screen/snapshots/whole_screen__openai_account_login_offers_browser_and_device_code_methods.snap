@@ -4,7 +4,7 @@ assertion_line: 349
 expression: window.picture()
 ---
 80x24 cursor 23,0 scrolled 0
-|│                                  │ · \ enter    adds a line without sending  │|
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|

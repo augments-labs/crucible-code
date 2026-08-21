@@ -32,6 +32,7 @@ use crate::clipboard;
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
+use crate::head::Head;
 use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
@@ -114,6 +115,24 @@ impl Standing {
     }
 }
 
+/// What the row at the top of the window says, in its own words.
+///
+/// Held rather than the row it becomes, because the row is laid out against a
+/// window that changes size and these four facts do not. Owned rather than
+/// borrowed for the same reason: it outlives every call that sets it, and what
+/// it names belongs to the session rather than to a frame.
+#[derive(Debug)]
+struct Heading {
+    /// The vendor the model is asked of.
+    provider: String,
+    /// Which model the next turn goes to.
+    model: String,
+    /// How hard it is being asked to think, where a rung is in force.
+    effort: Option<String>,
+    /// The directory the session is bound to.
+    root: String,
+}
+
 /// Draws the session onto a screen this process owns.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
@@ -122,6 +141,15 @@ pub struct Renderer<T: Terminal> {
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
+    /// What the row at the top says, and that row laid out for this window.
+    ///
+    /// Both, because the second is what a frame puts down and the first is what
+    /// a resize lays out again. This is the one component this crate lays out
+    /// itself: everything else standing is handed over as rows and dropped when
+    /// the window changes under it, and a row that is meant to be there the
+    /// whole session cannot be a row the caller has to remember to put back.
+    heading: Option<Heading>,
+    crowned: Option<Row>,
     /// The size the record is folded for and the bands are shared out over.
     ///
     /// Held rather than asked for per frame: a read costs a syscall, and
@@ -187,6 +215,8 @@ impl<T: Terminal> Renderer<T> {
             record: Record::new(size.columns),
             terminal,
             standing: Standing::default(),
+            heading: None,
+            crowned: None,
             size,
             painted: Painted::new(),
             free: String::new(),
@@ -222,6 +252,7 @@ impl<T: Terminal> Renderer<T> {
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown = Markdown::new(glyphs);
+        self.crown();
     }
 
     /// Tells this renderer how far one notch of the wheel moves the transcript.
@@ -231,6 +262,59 @@ impl<T: Terminal> Renderer<T> {
     /// their answer lands.
     pub fn rolls(&mut self, rows: i32) {
         self.notch = rows;
+    }
+
+    /// Puts the row at the top of the window and keeps it there.
+    ///
+    /// The one thing on screen that is neither the transcript nor something
+    /// standing over the box: it says which model the next turn goes to and
+    /// which directory the session is bound to, and it is held against the top
+    /// of the window while everything under it moves.
+    ///
+    /// Said when one of those facts changes rather than per frame — `/model`,
+    /// `/effort` and `/login` are the whole of what changes them, and all three
+    /// are lines typed between turns. A window that resizes under it is not one
+    /// of those: what it says has not changed, so it is laid out again here
+    /// rather than being dropped for the caller to put back.
+    ///
+    /// Nothing at all happens where output is redirected, for the reason
+    /// [`Renderer::live`] draws nothing there.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn heads(&mut self, head: Head<'_>) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        self.heading = Some(Heading {
+            provider: head.provider.to_owned(),
+            model: head.model.to_owned(),
+            effort: head.effort.map(str::to_owned),
+            root: head.root.to_owned(),
+        });
+        self.crown();
+        self.draw()
+    }
+
+    /// Lays the head row out for the window as it is now.
+    ///
+    /// Called wherever what it is drawn against moves: the size, and the set of
+    /// characters it may draw with.
+    fn crown(&mut self) {
+        let glyphs = self.glyphs;
+        let columns = self.size.columns;
+
+        self.crowned = self.heading.as_ref().map(|heading| {
+            Head {
+                provider: &heading.provider,
+                model: &heading.model,
+                effort: heading.effort.as_deref(),
+                root: &heading.root,
+            }
+            .row(columns, glyphs)
+        });
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -547,6 +631,7 @@ impl<T: Terminal> Renderer<T> {
         self.size = size;
         self.record.resized(size.columns);
         self.standing.clear();
+        self.crown();
 
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
@@ -742,7 +827,7 @@ impl<T: Terminal> Renderer<T> {
         Bands::share(
             self.size.rows,
             Wants {
-                head: 0,
+                head: self.crowned.as_ref().map_or(0, |_| Head::ROWS),
                 turn: self.standing.turn.len(),
                 prompt: self.standing.prompt.len(),
                 foot: 0,
@@ -780,6 +865,12 @@ impl<T: Terminal> Renderer<T> {
 
         let bands = self.bands();
         self.painted.open(self.size.rows);
+
+        if let Some(crowned) = &self.crowned {
+            for at in bands.head.start..bands.head.end {
+                self.painted.paint(at, crowned, &self.palette);
+            }
+        }
 
         let showing = self.record.view(bands.transcript.len());
         for at in bands.transcript.start..bands.transcript.end {

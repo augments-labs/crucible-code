@@ -559,13 +559,13 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         session,
     );
 
-    // Two writes are the opening, written down once the first prompt has been
-    // read, and the prompt mark, colour and all. Both come before the turn,
-    // which leaves its first frame as what finds the terminal gone -- after the
-    // worker has been handed the runner.
+    // Three writes come before the turn: the row at the top of the window, the
+    // opening written down once the first prompt has been read, and the prompt
+    // mark, colour and all. That leaves the turn's first frame as what finds
+    // the terminal gone -- after the worker has been handed the runner.
     let mut renderer = Renderer::new(BreakingWhenStarted {
         inner: Recording::new(80, 24),
-        left: 2,
+        left: 3,
         started: Arc::clone(&started),
     });
     let mut input = Cursor::new(b"go\n".to_vec());
@@ -602,7 +602,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let cancellation = terms.cancel.clone();
     let mut renderer = Renderer::new(Breaking {
         inner: Recording::new(80, 24),
-        left: 2,
+        left: 3,
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 

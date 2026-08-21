@@ -4,7 +4,7 @@ assertion_line: 106
 expression: window.picture()
 ---
 80x24 cursor 21,65 scrolled 0
-|│                                  │ Recent sessions                           │|
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
