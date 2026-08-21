@@ -25,7 +25,15 @@
 //! Twice, and the two must be close, for the reason the other probe gives: the
 //! way this gets slow is not a constant factor but a redraw whose cost grows with
 //! what is above it, and that is fast in the first second and hopeless in the
-//! hundredth.
+//! hundredth. How each of those two rates is arrived at is `burst`'s, beside
+//! this file, and is shared with the probe that gives the reason.
+
+// A binary may not reach into another's tree, so the driver the two burst probes
+// share is a module beside them. Where the bounded pipe below is unavailable this
+// probe reports itself unsupported before it draws a frame, and the driver it
+// would have run has no caller — it is still compiled, and still tested.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod burst;
 
 use std::fmt::Write as _;
 #[cfg(target_os = "linux")]
@@ -37,8 +45,9 @@ use std::process::ExitCode;
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use burst::{Burst, SUSTAINED_FRACTION};
 use crucible_tui::TerminalError;
 #[cfg(target_os = "linux")]
 use crucible_tui::{Glyphs, Palette, Renderer, Row, Size, Slot, Terminal, Theme, Working};
@@ -47,23 +56,6 @@ use rustix::pipe::{PipeFlags, pipe_with};
 
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
-
-/// Frames to measure. The same figure the other probe uses, for the same reason:
-/// large enough that a scheduler hiccup does not decide the answer.
-#[cfg(target_os = "linux")]
-const FRAMES: usize = 20_000;
-
-/// Frames in each of the two timed windows, at the start and the end.
-#[cfg(target_os = "linux")]
-const WINDOW: usize = FRAMES / 10;
-
-/// How far the sustained rate may fall behind the opening rate.
-const SUSTAINED_FRACTION: f64 = 0.5;
-
-/// Frames to run and throw away, so the measurement is not paying for the first
-/// allocation of every reused buffer.
-#[cfg(target_os = "linux")]
-const WARMUP: usize = 2_000;
 
 /// A terminal-sized window, so the region is the height a real one is bounded to.
 #[cfg(target_os = "linux")]
@@ -238,21 +230,6 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
     rows
 }
 
-/// What one burst measured.
-#[derive(Debug, Clone, Copy)]
-struct Burst {
-    /// Frames per second over the first window.
-    opening: f64,
-    /// Frames per second over the last window.
-    sustained: f64,
-}
-
-impl Burst {
-    fn ratio(self) -> f64 {
-        self.sustained / self.opening
-    }
-}
-
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {
     let lines = printed();
@@ -260,48 +237,20 @@ fn measure() -> Result<Burst, ProbeError> {
     let mut render = Renderer::new(sink);
     let palette = Palette::resolve(true, Theme::Dark, None, &|_| None);
 
-    let frame = |render: &mut Renderer<PipeSink>, index: usize| -> Result<(), ProbeError> {
+    let measured = burst::measure(|index| -> Result<(), ProbeError> {
         // Laid out inside the frame, because a real one is. The clock moves with
         // the index so the row saying a turn is running changes as it does on
         // screen.
         let rows = footing(&lines, index, Duration::from_millis(index as u64 * 16));
         render.under(&rows, None, palette)?;
         Ok(())
-    };
-
-    for index in 0..WARMUP {
-        frame(&mut render, index)?;
-    }
-
-    let start = Instant::now();
-    for index in 0..WINDOW {
-        frame(&mut render, index)?;
-    }
-    let opening = start.elapsed();
-
-    for index in WINDOW..FRAMES - WINDOW {
-        frame(&mut render, index)?;
-    }
-
-    let late = Instant::now();
-    for index in FRAMES - WINDOW..FRAMES {
-        frame(&mut render, index)?;
-    }
-    let closing = late.elapsed();
+    })?;
 
     render.settle()?;
     drop(render);
     drain.finish()?;
 
-    // A window this size takes milliseconds, so the precision lost converting
-    // the count is far below the noise in the measurement.
-    #[allow(clippy::cast_precision_loss)]
-    let frames = WINDOW as f64;
-
-    Ok(Burst {
-        opening: frames / opening.as_secs_f64(),
-        sustained: frames / closing.as_secs_f64(),
-    })
+    Ok(measured)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -328,8 +277,8 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
 }
 
 fn main() -> ExitCode {
-    let burst = match measure() {
-        Ok(burst) => burst,
+    let measured = match measure() {
+        Ok(measured) => measured,
         Err(problem) => {
             let mut said = problem.to_string();
             said.push('\n');
@@ -339,11 +288,11 @@ fn main() -> ExitCode {
         }
     };
 
-    if report(burst).is_err() {
+    if report(measured).is_err() {
         return ExitCode::FAILURE;
     }
 
-    if burst.sustained < LIMIT || burst.ratio() < SUSTAINED_FRACTION {
+    if measured.sustained < LIMIT || measured.ratio() < SUSTAINED_FRACTION {
         return ExitCode::FAILURE;
     }
 
