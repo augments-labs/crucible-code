@@ -186,6 +186,51 @@ pub(crate) fn readings(measure: Measure) -> Result<Readings, StartupError> {
     Ok(Readings::new(taken))
 }
 
+/// How many batches of [`RUNS`] a reading over budget is taken from.
+const AT_LIBERTY: usize = 3;
+
+/// The quickest of up to [`AT_LIBERTY`] batches, by the figure the budget is
+/// against.
+///
+/// The windows inside a batch answer a machine that stalled for a stretch, and
+/// the test below says why they are entitled to fail a run that stalled through
+/// most of them: slow in most windows is slow all session. What they cannot
+/// answer is a batch stalled from end to end — a runner handing this process a
+/// core for a fraction of the wall clock it asked for, which no window is long
+/// enough to sit outside. So a batch that went over is taken again, and the
+/// quickest of them is the reading, because sharing a host can only ever make a
+/// batch worse.
+///
+/// It is not a way to pass. Nothing is thrown away that a second batch does not
+/// beat, and a startup that actually got slower is over budget in all three —
+/// which is the same claim the windows make, one layer up. What makes that hold
+/// is that `again` launches the binary afresh every call, from a scratch home it
+/// builds itself: a batch reading state a previous one left would open already
+/// slow, and the guarantee would invert.
+pub(crate) fn best(
+    budget: Duration,
+    mut again: impl FnMut() -> Result<Readings, StartupError>,
+) -> Result<Readings, StartupError> {
+    let mut best = again()?;
+    let mut mark = best.p95()?;
+
+    for _ in 1..AT_LIBERTY {
+        if mark <= budget {
+            break;
+        }
+
+        let next = again()?;
+        let then = next.p95()?;
+
+        if then < mark {
+            best = next;
+            mark = then;
+        }
+    }
+
+    Ok(best)
+}
+
 /// Every reading one probe took, in the order it took them.
 pub(crate) struct Readings(Vec<Duration>);
 
@@ -569,9 +614,10 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::time::Duration;
 
-    use super::{PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS};
+    use super::{AT_LIBERTY, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best};
 
     /// A full set of readings, stalled from end to end of the first `windows`
     /// windows and clean through the rest.
@@ -650,6 +696,61 @@ mod tests {
     #[test]
     fn a_spread_of_nothing_says_so_rather_than_naming_a_reading() {
         assert_eq!(Readings::new(Vec::new()).spread(), "no runs");
+    }
+
+    /// A full set of readings, every launch of it costing the same.
+    fn level(ms: u64) -> Readings {
+        Readings::new(vec![Duration::from_millis(ms); RUNS])
+    }
+
+    /// The reading [`best`] settles on over `batches`, and how many it took.
+    fn best_of(batches: &[u64], budget: Duration) -> (Duration, usize) {
+        let at = Cell::new(0);
+
+        let reading = best(budget, || {
+            let now = at.get();
+            at.set(now + 1);
+
+            Ok(level(batches.get(now).copied().unwrap_or_default()))
+        })
+        .expect("a reading");
+
+        (reading.p95().expect("a reading"), at.get())
+    }
+
+    #[test]
+    fn a_batch_the_host_stalled_through_is_taken_again() {
+        // What the windows cannot answer: a runner that handed this process a
+        // core for a fraction of the wall clock it asked for stalls every
+        // window at once, and no order statistic inside one batch sits outside
+        // that. A second batch does.
+        let (reading, batches) = best_of(&[90, 10, 10], Duration::from_millis(50));
+
+        assert_eq!(batches, 2);
+        assert_eq!(reading, Duration::from_millis(10));
+    }
+
+    #[test]
+    fn a_startup_that_got_slower_is_over_budget_in_every_batch() {
+        // The other half of it, and the reason this is not a way to pass: a
+        // program that got slower is slow however many times it is launched,
+        // so the quickest of three is still over.
+        let budget = Duration::from_millis(50);
+        let (reading, batches) = best_of(&[90, 70, 80], budget);
+
+        assert_eq!(batches, AT_LIBERTY);
+        assert_eq!(reading, Duration::from_millis(70));
+        assert!(reading > budget);
+    }
+
+    #[test]
+    fn a_batch_inside_its_budget_is_the_only_one_taken() {
+        // A batch costs a couple of hundred launches, so nothing pays for one
+        // that had nothing to answer.
+        let (reading, batches) = best_of(&[10, 90, 90], Duration::from_millis(50));
+
+        assert_eq!(batches, 1);
+        assert_eq!(reading, Duration::from_millis(10));
     }
 
     #[test]
