@@ -261,10 +261,12 @@ prompt row under the list in whatever your mark is standing on, because a theme
 is a list of colours and nobody can picture one from its name.
 
 One thing is not in any table: the row your own prompt is left on takes a
-background blended off *your* terminal's, a fixed step lighter on a dark one and
-darker on a light one. It is never a colour crucible chose, so it cannot fight a
-terminal theme crucible has not seen — and where your terminal will not say what
-its background is, the row simply does not take one.
+background blended off your terminal's, a fixed step lighter on a dark one and
+darker on a light one, so it cannot fight a terminal theme crucible has not
+seen. Most terminals will not say what their background is — the question is not
+widely implemented — and there the step is taken off the background the table in
+force is drawn for instead, which is the same assumption every other colour on
+screen is already making.
 
 `syntaxTheme` is a separate answer because it is a separate question. The theme
 above decides the interface — borders, marks, the mode in force, the ground a

@@ -35,18 +35,18 @@ use std::time::Duration;
 ///
 /// A patience long enough to cover a link like that would be most of a startup
 /// budget spent on one hue. So the trade is made the other way round: where an
-/// answer would be slow, it is not asked for, and the row a prompt is left on
-/// simply takes no ground — the state everything downstream is already correct
-/// in.
+/// answer would be slow, it is not asked for, and the palette blends its band
+/// off the ground its table was drawn for instead.
 const RELAYED: [&str; 4] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX"];
 
 /// What the terminal says its background is, in exact channels.
 ///
-/// `None` for every way this can decline, and they are all ordinary: output is
+/// `None` for every way this can decline, and they are all ordinary — output is
 /// redirected, the terminal does not implement the question, it answered
-/// something unrecognised, or it did not answer inside `patience`. The caller
-/// has a correct thing to do with `None` — the row a prompt is left on simply
-/// takes no ground — so nothing here is an error worth propagating.
+/// something unrecognised, or it did not answer inside `patience`. Not
+/// answering is the common case rather than the odd one: the question is not
+/// widely implemented. The caller has a correct thing to do with `None`, so
+/// nothing here is an error worth propagating.
 #[must_use]
 pub fn asked(patience: Duration, from: &dyn Fn(&str) -> Option<String>) -> Option<(u8, u8, u8)> {
     if relayed(from) {

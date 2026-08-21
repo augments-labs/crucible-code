@@ -45,17 +45,24 @@
 //! ground has none of the reader's left behind it to clear.
 //!
 //! The row the reader's own prompt is on is the other, and it is the exception
-//! to the exception: its ground is not chosen here at all. It is *their* ground,
+//! to the exception: its ground is *their* ground where they have one to give,
 //! blended a fixed step — lighter on a dark terminal, darker on a light one —
-//! so it is never a colour this file picked and can never fight a terminal
-//! theme nobody here has seen. That is also why the words on it stay the
-//! reader's own foreground: a step that small leaves a foreground they already
-//! chose for that ground exactly as legible as it was. Only the mark takes an
-//! ink, and it takes the accent, on the same ground, in one sequence.
+//! so where the terminal answers, the band is never a colour this file picked
+//! and can never fight a terminal theme nobody here has seen. That is also why
+//! the words on it stay the reader's own foreground: a step that small leaves a
+//! foreground they already chose for that ground exactly as legible as it was.
+//! Only the mark takes an ink, and it takes the accent, on the same ground, in
+//! one sequence.
+//!
+//! Most terminals do not answer. The question is not widely implemented, and it
+//! is not asked at all where a reply would arrive late enough to become a
+//! keystroke — so a band that waited to be told was a band nobody saw. It is
+//! blended off the ground the table in force was drawn for instead, which is an
+//! assumption the table itself already made and the band was alone in refusing.
 //!
 //! It follows that this one value cannot be a constant. It is worked out once,
-//! when the palette is settled, from a colour the terminal only reveals at
-//! runtime — so it is held in the palette rather than in the table, inline and
+//! when the palette is settled, from whichever of the two grounds is standing —
+//! so it is held in the palette rather than in the table, inline and
 //! fixed-width, because a palette is `Copy` and is passed by value into every
 //! row that gets painted.
 
@@ -889,12 +896,34 @@ impl Palette {
             Theme::Ansi if depth != Depth::Off => Depth::Basic,
             _ => depth,
         };
-        let band = ground.map(Self::band);
+        let band = Self::band(ground.unwrap_or(Self::nominal(theme)));
 
         (
-            band.and_then(|band| painted(band, None, rung)),
-            band.and_then(|band| painted(band, Some(theme.tones().accent), rung)),
+            painted(band, None, rung),
+            painted(band, Some(theme.tones().accent), rung),
         )
+    }
+
+    /// The ground a table was drawn for, where nothing has said what the real
+    /// one is.
+    ///
+    /// Every other colour here already assumes this. A table clears 4.5:1
+    /// against one ground and is chosen by `auto` from whichever answer
+    /// arrived — so by the time a band is being blended, a ground has been
+    /// assumed once already and the band was the only thing still refusing to.
+    /// Refusing cost the band on every terminal that does not implement the
+    /// question, which is most of them, and the two the row is drawn for are
+    /// the two it was blended off anyway: black under a table for a dark
+    /// terminal, white under one for a light terminal.
+    ///
+    /// `ansi` takes the dark end for the same reason its rung is the basic
+    /// sixteen — the band is spelled as the terminal's own bright black there,
+    /// which is a grey the reader chose, on whichever ground they chose it for.
+    const fn nominal(theme: Theme) -> (u8, u8, u8) {
+        match theme {
+            Theme::Light | Theme::ColourblindLight => (255, 255, 255),
+            Theme::Dark | Theme::ColourblindDark | Theme::Ansi => (0, 0, 0),
+        }
     }
 
     /// The reader's own ground, moved one step.
@@ -915,9 +944,10 @@ impl Palette {
 
     /// Whether the row a prompt is left on takes a ground here.
     ///
-    /// False where the terminal never said what its background is, and where
-    /// there is no colour at all — the two states in which the band resolves to
-    /// nothing and a row padded out to the width would be spaces and no more.
+    /// False only where there is no colour at all — the one state in which the
+    /// band resolves to nothing and a row padded out to the width would be
+    /// spaces and no more. A terminal that never said what its background is
+    /// still gets a band, blended off the ground its table was drawn for.
     #[must_use]
     pub fn bands(&self) -> bool {
         self.band.is_some()

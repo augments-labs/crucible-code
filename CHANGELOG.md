@@ -23,6 +23,14 @@ anybody who has used a shell.
 
 ### Fixed
 
+**The prompt row takes its background on every terminal, not just the few that
+answer.** The band was blended off the colour the terminal reports when asked,
+and most terminals never answer — the question is not widely implemented — so
+most readers saw no band at all. Where nothing answers, the step is now taken
+off the background the theme in force is drawn for, which is the assumption
+every other colour on screen already makes; a terminal that does answer still
+wins.
+
 **The card names the backslash rather than a key some terminals swallow.** Its
 tips row said `shift+enter`, which is the one entry there that could be untrue
 on the terminal reading it. It now names the two keystrokes every terminal
