@@ -475,7 +475,10 @@ pub(crate) fn converse<T: Terminal>(
         }
 
         let prompt = match asked {
-            Asked::Said(said) => said,
+            // Through the same door as a typed one, on purpose: a woken turn
+            // still needs a model to be asked of, and the guards below are
+            // where that is answered.
+            Asked::Said(said) | Asked::Woke(said) => said,
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.

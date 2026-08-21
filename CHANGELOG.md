@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**A command that ends on its own starts the turn it needs.** A model that left a
+build running and yielded was waiting on the machine, and the ending only ever
+reached it at the top of a turn nobody was going to type. Everything that ended
+arrives in one turn, and the line half-written in the box is untouched.
+
 ### Changed
 
 **Every result the transcript cut short is lit, and none of them wears a

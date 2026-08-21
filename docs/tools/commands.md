@@ -143,9 +143,17 @@ believing a server is up:
 ✗ Bash(npm run dev) ended on its own · exit status 1 · 96 lines
 ```
 
-The line is written the moment it happens, even between turns. The model is told at
-the top of its next turn instead, because a turn already in flight has nowhere to
-put a new fact.
+The line is written the moment it happens, even between turns.
+
+The model is told at the top of a turn, because a turn already in flight has
+nowhere to put a new fact. Where there is no next turn — the model left a build
+running and yielded, and the box is sitting there waiting — the ending starts
+one. A model waiting on your machine should not also be waiting on your
+keyboard. Everything that ended since the last turn arrives in that one turn,
+and whatever you had half-written in the box is still there afterwards.
+
+Nothing starts a turn where you have already begun one: a prompt you typed or
+queued takes the ending with it instead, so it is said once either way.
 
 ## What ends them
 

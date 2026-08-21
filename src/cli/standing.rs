@@ -94,7 +94,13 @@ pub(crate) fn under(
 ///
 /// `None` where nothing did, which is almost every turn: a note about nothing is
 /// a sentence the model has to read past to find the ones that mean something.
-fn said(ended: &[Ended]) -> Option<String> {
+///
+/// One wording for two ways of arriving. Where a turn is already being started
+/// it goes under that turn, and where none is, it *is* the turn — see
+/// [`super::converse::typing`]. A model that read one sentence about a build
+/// that fell over and a different one about the same build depending on who
+/// happened to type first would be reading about two builds.
+pub(crate) fn said(ended: &[Ended]) -> Option<String> {
     if ended.is_empty() {
         return None;
     }
