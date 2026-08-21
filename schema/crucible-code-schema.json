@@ -58,13 +58,10 @@
       "type": "object"
     },
     "env": {
-      "additionalProperties": false,
-      "description": "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
-      "patternProperties": {
-        "^[^$]": {
-          "type": "string"
-        }
+      "additionalProperties": {
+        "type": "string"
       },
+      "description": "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
       "properties": {
         "$comment": {
           "type": "string"
@@ -78,6 +75,19 @@
           "pattern": "^\\+?0*(?:1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30)$",
           "type": "string"
         }
+      },
+      "propertyNames": {
+        "anyOf": [
+          {
+            "pattern": "^[^$]"
+          },
+          {
+            "enum": [
+              "$schema",
+              "$comment"
+            ]
+          }
+        ]
       },
       "type": "object"
     },
@@ -242,72 +252,79 @@
       "type": "string"
     },
     "providers": {
-      "additionalProperties": false,
-      "description": "Per-provider defaults, keyed by provider name",
-      "patternProperties": {
-        "^[^$]": {
-          "additionalProperties": false,
-          "properties": {
-            "$comment": {
-              "type": "string"
-            },
-            "$schema": {
-              "type": "string"
-            },
-            "apiKeyEnv": {
-              "description": "Name of the environment variable holding this provider's API key — the name, never the key",
-              "type": "string"
-            },
-            "baseUrl": {
-              "description": "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
-              "examples": [
-                "https://gateway.example/v1/messages"
-              ],
-              "type": "string"
-            },
-            "contextWindow": {
-              "additionalProperties": false,
-              "description": "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
-              "patternProperties": {
-                "^[^$]": {
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "properties": {
-                "$comment": {
-                  "type": "string"
-                },
-                "$schema": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            "defaultContextWindow": {
-              "description": "How many tokens to assume any model of this provider accepts, where it is not named above",
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "$comment": {
+            "type": "string"
+          },
+          "$schema": {
+            "type": "string"
+          },
+          "apiKeyEnv": {
+            "description": "Name of the environment variable holding this provider's API key — the name, never the key",
+            "type": "string"
+          },
+          "baseUrl": {
+            "description": "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
+            "examples": [
+              "https://gateway.example/v1/messages"
+            ],
+            "type": "string"
+          },
+          "contextWindow": {
+            "additionalProperties": {
               "minimum": 0,
               "type": "integer"
             },
-            "effort": {
-              "description": "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
-              "enum": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ],
-              "type": "string"
+            "description": "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
+            "properties": {
+              "$comment": {
+                "type": "string"
+              },
+              "$schema": {
+                "type": "string"
+              }
             },
-            "model": {
-              "description": "The model to ask when --model does not name one",
-              "type": "string"
-            }
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "pattern": "^[^$]"
+                },
+                {
+                  "enum": [
+                    "$schema",
+                    "$comment"
+                  ]
+                }
+              ]
+            },
+            "type": "object"
           },
-          "type": "object"
-        }
+          "defaultContextWindow": {
+            "description": "How many tokens to assume any model of this provider accepts, where it is not named above",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effort": {
+            "description": "How hard to think before answering, when --effort does not say. Left off, the vendor's own default for whichever model is being asked",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "The model to ask when --model does not name one",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
+      "description": "Per-provider defaults, keyed by provider name",
       "properties": {
         "$comment": {
           "type": "string"
@@ -315,6 +332,19 @@
         "$schema": {
           "type": "string"
         }
+      },
+      "propertyNames": {
+        "anyOf": [
+          {
+            "pattern": "^[^$]"
+          },
+          {
+            "enum": [
+              "$schema",
+              "$comment"
+            ]
+          }
+        ]
       },
       "type": "object"
     },

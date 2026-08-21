@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The schema a strict validator will compile.** The blocks a user keys said
+  what an unknown name has to be with a pattern, and that pattern also matched
+  the names crucible declares beside it — legal, and refused by the registry
+  that serves the file. `additionalProperties` says it instead, and
+  `propertyNames` keeps the `$` prefix for the standard.
+
 ## [0.17.0] - 2026-08-21
 
 ### Added
