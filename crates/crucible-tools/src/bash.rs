@@ -55,7 +55,7 @@ const SECONDS: usize = 120;
 const CEILING: usize = 600;
 
 /// How long a command asked to be left running is watched for before the call
-/// answers.
+/// answers, unless [`Bash::watching`] was told otherwise.
 ///
 /// Long enough for `npm: command not found` to be a failure the model is told
 /// about now, and short enough that starting a dev server does not read as a
@@ -127,6 +127,9 @@ pub struct Bash {
     /// The whole of what a command is started with: the names [`environment`]
     /// inherits, with the `env` block laid over them by [`Bash::exporting`].
     env: Vec<(Box<str>, OsString)>,
+    /// How long a command asked to be left running is watched before the call
+    /// answers. [`FIRST`] unless [`Bash::watching`] says otherwise.
+    first: Duration,
 }
 
 impl std::fmt::Debug for Bash {
@@ -143,6 +146,7 @@ impl std::fmt::Debug for Bash {
             .field("leaving", &self.leaving)
             .field("shell", &self.shell)
             .field("env", &Exported(&self.env))
+            .field("first", &self.first)
             .finish()
     }
 }
@@ -188,6 +192,7 @@ impl Bash {
             leaving: None,
             shell: shell::find(&lookup),
             env: environment::inherited(lookup),
+            first: FIRST,
         }
     }
 
@@ -199,6 +204,26 @@ impl Bash {
     #[must_use]
     pub fn leaving(mut self, left: Background) -> Self {
         self.leaving = Some(left);
+        self
+    }
+
+    /// How long a command asked to be left running is watched before the call
+    /// answers, in place of [`FIRST`].
+    ///
+    /// The default is the one a reader waits through, and it is a judgement
+    /// about them rather than about any machine: long enough for a command that
+    /// cannot start to say so now, short enough that a dev server does not read
+    /// as a pause. What that judgement cannot do is decide when a shell this
+    /// process spawned actually gets to run — a host busy with other work can
+    /// take longer to start `sh` than the whole window allows, and then a
+    /// command already over reads as one still going.
+    ///
+    /// So the window is an argument for anything that has to say which of those
+    /// two happened. Nothing shipped calls this; the wiring takes the default,
+    /// and the number stays where the reasoning for it is.
+    #[must_use]
+    pub fn watching(mut self, first: Duration) -> Self {
+        self.first = first;
         self
     }
 
@@ -291,7 +316,7 @@ impl Tool for Bash {
             // the model gets its failure now rather than in a panel.
             (true, Some(left)) => Some(output::Leaving {
                 left,
-                after: Some(FIRST),
+                after: Some(self.first),
             }),
             // Nothing asked for, and the key can still ask.
             (false, Some(left)) => Some(output::Leaving { left, after: None }),
