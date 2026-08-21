@@ -13,6 +13,12 @@ keep the shape it was folded into at launch, so a window taken wider left it in
 a column down the left and a narrower one cut it in half. Everything else a
 component laid out is still clipped rather than refolded.
 
+**A background command that ends on its own still says how it ended.** The line
+used to be clipped whole, so a long command took every column and the words
+after it — whether it finished, and how much it had printed — were the part cut
+off. The command gives up the room now, and the row keeps what nobody can go
+back and ask for.
+
 ### Added
 
 **A row along the top of the window says where the session is.** The working
@@ -31,13 +37,10 @@ any name, but `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now arrives with the `6` it
 falls back to and the range it accepts, so an editor completes it and marks one
 out of range as you type.
 
-### Fixed
-
-**A background command that ends on its own still says how it ended.** The line
-used to be clipped whole, so a long command took every column and the words
-after it — whether it finished, and how much it had printed — were the part cut
-off. The command gives up the room now, and the row keeps what nobody can go
-back and ask for.
+**A result that was cut lights the way back into it.** The key at the end of the
+row is drawn in the accent now, the way the count of what is still running is
+under the box, so a result with more behind it looks different from a line with
+nothing behind it. Clicking that row opens the same view the key does.
 
 ## [0.16.0] - 2026-08-21
 

@@ -400,7 +400,10 @@ the one thing on the row left in your terminal's own foreground, so it is where
 the eye goes.
 
 A result the row had no room for says how much it left over and names the key
-that gives it back: `(+128 lines · ctrl+o to expand)`. <kbd>Ctrl+O</kbd> stands
+that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
+accent and the rest of the row is not, so a result with more behind it is
+picked out from a line with nothing behind it — and clicking that row opens the
+same view the key does, for the one result it belongs to. <kbd>Ctrl+O</kbd> stands
 every result that was cut this way where the box was, newest first, each under
 the line of the call it answers. The arrow keys walk it where there is more of
 it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes

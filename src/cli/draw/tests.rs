@@ -275,6 +275,44 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
 }
 
 #[test]
+fn the_key_a_cut_result_names_is_the_one_thing_on_the_row_that_is_lit() {
+    // The affordance. A click on this row opens what the key opens, and a row
+    // written entirely in the quiet slot said neither — so a reader looking for
+    // what they could reach found a result that had been cut looking exactly
+    // like a line that had not. Lit the way the only other door on screen is:
+    // the count of what is still running, under the box.
+    let output = ToolOutput::ok("one\ntwo\nthree");
+    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+
+    // The slots in the order the row asked for them, which is what says *which*
+    // run is lit: the indent, the corner, the line that came back, the count,
+    // the key, and the bracket that shuts it.
+    assert_eq!(
+        row.kinds().collect::<Vec<_>>(),
+        [
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Quiet,
+            Slot::Quiet,
+            Slot::Accent,
+            Slot::Quiet
+        ]
+    );
+    assert_eq!(row.text(), "  └ one (+2 lines · ctrl+o to expand)");
+}
+
+#[test]
+fn a_row_with_nothing_cut_lights_nothing() {
+    // Nothing was cut, so there is no door, so there is nothing to light. A row
+    // that lit one anyway would be an offer to open a result that is already
+    // whole on the screen above it.
+    let output = ToolOutput::ok("done");
+    let row = finished(&output, beyond(&output), WIDE, Style::plain());
+
+    assert!(!row.kinds().any(|slot| slot == Slot::Accent), "{row:?}");
+}
+
+#[test]
 fn a_single_line_of_output_gets_no_count() {
     // And so no offer either. The key opens what was cut, and nothing was: a
     // row that named it here would send the reader to a view their result is
