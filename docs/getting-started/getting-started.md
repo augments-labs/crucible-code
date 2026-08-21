@@ -195,10 +195,10 @@ not take you away from it.
 A click puts the cursor where you point in the box, marks a row of a list, or
 opens a result the transcript cut short.
 
-Resting the pointer on one of those results lights every one of them on screen
-at the same moment, in your own foreground rather than the quiet the rest of the
-transcript is in — the question a pointer asks is what here can be opened, and
-that is about the screen rather than the row you happen to be over.
+Resting the pointer on one of those results lights it, in your own foreground
+rather than the quiet the rest of the transcript is in — every row of that one
+result where it took more than one, and no row of any other. What lights is what
+a click there opens, so the two always name the same result.
 
 A drag selects, and crucible is what answers it: the rows you cover light up as
 you go, and letting go puts them on your clipboard. It runs over the whole
@@ -410,11 +410,10 @@ the eye goes.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
-accent, and what the result said is drawn in your own foreground rather than the
-quiet one a whole result gets — so every row with more behind it stands out from
-every row with nothing behind it, all of them at once, without a pointer
-anywhere near. Clicking one opens the same view the key does, for the one result
-it belongs to. <kbd>Ctrl+O</kbd> stands
+accent, and what the result said reads as the quiet the rest of the transcript
+is in until you point at it. Clicking it opens the same view the key does, for
+the one result it belongs to. The key reaches further than the pointer does:
+<kbd>Ctrl+O</kbd> stands
 every result that was cut this way where the box was, newest first, each under
 the line of the call it answers. The arrow keys walk it where there is more of
 it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes

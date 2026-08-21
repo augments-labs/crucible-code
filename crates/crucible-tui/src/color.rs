@@ -1099,12 +1099,13 @@ impl Palette {
         }
     }
 
-    /// The same palette, with every cut result in the reader's own foreground.
+    /// The same palette, with a cut result in the reader's own foreground.
     ///
-    /// What a frame says when the pointer is on one of them. Taken by value and
-    /// handed back for the reason the two builders above are: this is what one
-    /// frame is painted from rather than a mode the renderer enters, so there is
-    /// no state to put back when the pointer moves off.
+    /// What the rows under the pointer are painted from, while the rest of the
+    /// frame is painted from the palette this was made out of. Taken by value
+    /// and handed back for the reason the two builders above are: it is what
+    /// some rows of one frame are painted from rather than a mode the renderer
+    /// enters, so there is no state to put back when the pointer moves off.
     #[must_use]
     pub fn pointing(self, at: bool) -> Self {
         Self {
@@ -1132,9 +1133,9 @@ impl Palette {
     pub fn open(&self, slot: Slot) -> Worn {
         // The one slot that is a question about the pointer rather than a
         // colour, answered before any table is asked. Answered here because
-        // here is where every row's colour passes, which is what makes one
-        // pointer light every cut result on the screen and not just the row
-        // it is over.
+        // here is where a row's colour passes, so what decides it is which
+        // palette that row was handed rather than anything the row itself
+        // had to be told.
         let slot = match slot {
             Slot::Cut if self.pointed => Slot::Plain,
             Slot::Cut => Slot::Quiet,

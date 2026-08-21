@@ -685,11 +685,11 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
 ///
 /// The words in front of both are in the cut slot rather than the quiet one the
 /// rest of this row is in. At rest the two look the same, which is right: a row
-/// of the transcript is a row of the transcript. With the pointer anywhere on a
-/// cut result the slot turns to the reader's own foreground on every one of
-/// them at once — the question a pointer asks is what here has more behind it,
-/// and the answer is the whole screen rather than the row under it. No ground
-/// on any of them, because a ground would answer which row instead.
+/// of the transcript is a row of the transcript. With the pointer on this result
+/// the slot turns to the reader's own foreground, on every row of this result
+/// and on no row of another — what lights and what a click opens have to be the
+/// same result, or the reader is shown one and given the other. No ground,
+/// because a ground would answer which row rather than which result.
 fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) {
     (
         format!(" (+{beyond} lines {} ", glyphs.dot()),

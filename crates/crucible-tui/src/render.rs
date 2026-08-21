@@ -41,6 +41,7 @@ use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::transcript_map::{self, TranscriptMap};
 
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 mod frame;
@@ -401,26 +402,60 @@ impl<T: Terminal> Renderer<T> {
         }
     }
 
-    /// Whether the pointer is resting on a result the transcript cut short.
+    /// The rows showing the result the transcript cut short that the pointer is
+    /// resting on. Empty where it is resting on nothing of the kind.
+    ///
+    /// Every row of that one result and no row of any other, because what a
+    /// pointer asks is what *this* opens: the light and the click have to name
+    /// the same result, or the reader is told one thing and given another.
     ///
     /// Read per frame rather than remembered, which is what keeps it true while
     /// the picture moves under a pointer that has not: an answer arriving
     /// scrolls a cut result out from under it, and the next frame says so
     /// without anything having to notice.
-    fn pointed(&self) -> bool {
+    fn pointed(&self) -> Range<usize> {
+        let bands = self.bands();
+        let nothing = bands.transcript.start..bands.transcript.start;
+
         let Some(row) = self.pointing else {
-            return false;
+            return nothing;
         };
 
-        let bands = self.bands();
-
         if !bands.transcript.contains(&row) {
-            return false;
+            return nothing;
         }
 
-        self.record
-            .at(row - bands.transcript.start, bands.transcript.len())
-            .is_some_and(|line| self.record.wears(line, Slot::Cut))
+        let rows = bands.transcript.len();
+        let Some(line) = self.record.at(row - bands.transcript.start, rows) else {
+            return nothing;
+        };
+
+        if !self.record.wears(line, Slot::Cut) {
+            return nothing;
+        }
+
+        // One result is however many lines of it are in a row, because a result
+        // is written down in one go and nothing else is written down in the
+        // middle of it. The lines around it are the call it answers and the
+        // answer that follows, and neither is a result the transcript cut --
+        // so the run ends where the result does.
+        // Stopped at the head of the band on the way up, because a run that
+        // started above it starts at the top row as far as this frame is
+        // concerned. Downwards needs no such stop: a line past the foot is
+        // covered by no row, which is the answer already.
+        let top = self.record.at(0, rows).unwrap_or(line);
+        let mut first = line;
+        while first > top && self.record.wears(first - 1, Slot::Cut) {
+            first -= 1;
+        }
+        let mut last = line;
+        while self.record.wears(last + 1, Slot::Cut) {
+            last += 1;
+        }
+
+        let head = self.record.covering(first, rows);
+        let foot = self.record.covering(last, rows);
+        (bands.transcript.start + head.start)..(bands.transcript.start + foot.end)
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -1236,10 +1271,12 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
-        // Settled once for the whole frame: what a cut result is worth is a
-        // fact about the pointer rather than about the row, so every row on
-        // screen is painted from the same answer to it.
-        let palette = self.palette.pointing(self.pointed());
+        // Worked out once for the whole frame, and it names rows rather than
+        // setting a mode: the result under the pointer is painted from the lit
+        // palette and everything else on screen from the plain one.
+        let lit = self.pointed();
+        let palette = self.palette;
+        let pointed = self.palette.pointing(true);
         self.painted.selects(self.taken);
         self.painted.open(self.size.rows, self.size.columns);
 
@@ -1252,6 +1289,7 @@ impl<T: Terminal> Renderer<T> {
         let showing = self.record.view(bands.transcript.len());
         for at in bands.transcript.start..bands.transcript.end {
             match showing.get(at - bands.transcript.start) {
+                Some(row) if lit.contains(&at) => self.painted.paint(at, row, &pointed),
                 Some(row) => self.painted.paint(at, row, &palette),
                 // Below what there is to show. A session that has just started
                 // reads from the top of the window down, as a terminal's own

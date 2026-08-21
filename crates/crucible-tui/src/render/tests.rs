@@ -900,10 +900,10 @@ fn quietly(said: &str) -> String {
 }
 
 #[test]
-fn a_pointer_on_one_cut_result_lights_every_one_of_them() {
-    // The question a pointer asks is about the screen rather than about the row
-    // it happens to be over: what here has more behind it. So the answer is
-    // every cut result at once, including the ones the pointer is nowhere near.
+fn a_pointer_lights_the_cut_result_it_is_on_and_leaves_the_others_alone() {
+    // What a pointer asks is what *this* opens, so the one it is over is the
+    // one that lights. A click on that row opens that result, and a reader who
+    // saw two light would have been shown one thing and given another.
     let mut drawn = Drawn::new(40, 10);
     drawn.wears(colourful());
     drawn.present(&[cut("first")]).unwrap();
@@ -917,15 +917,64 @@ fn a_pointer_on_one_cut_result_lights_every_one_of_them() {
 
     drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
 
+    // A frame writes only what changed, so the one left alone is not in it at
+    // all -- which is the strongest thing the wire can say about a row that did
+    // not move: it is still wearing what it was.
     let frame = drawn.take();
     assert!(frame.contains("first"), "{frame:?}");
-    assert!(frame.contains("second"), "{frame:?}");
     assert!(!frame.contains(&quietly("first")), "{frame:?}");
+    assert!(!frame.contains("second"), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_moved_from_one_cut_result_to_another_lights_the_one_it_arrived_at() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.wears(colourful());
+    drawn.present(&[cut("first")]).unwrap();
+    drawn.commit("the call the next result answers").unwrap();
+    drawn.present(&[cut("second")]).unwrap();
+    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: 2, column: 0 }).unwrap();
+
+    let frame = drawn.take();
+    assert!(frame.contains(&quietly("first")), "{frame:?}");
+    assert!(frame.contains("second"), "{frame:?}");
     assert!(!frame.contains(&quietly("second")), "{frame:?}");
 }
 
 #[test]
-fn a_pointer_that_moved_off_puts_every_cut_result_back_in_the_quiet() {
+fn a_result_written_down_over_several_rows_lights_on_all_of_them() {
+    // A result is written down in one go and nothing is written in the middle
+    // of it, so the rows of one are next to each other. Pointing at any of them
+    // lights the whole result -- which is what a reader needs to know before
+    // clicking, since what opens is the result rather than the row.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.wears(colourful());
+    drawn.commit("the call it answers").unwrap();
+    drawn
+        .present(&[cut("head of it"), cut("more of it"), cut("foot of it")])
+        .unwrap();
+    drawn.commit("what the model said next").unwrap();
+    drawn.take();
+
+    // The middle row, so the light has to reach in both directions.
+    drawn.took(Pressed::Hovered { row: 2, column: 0 }).unwrap();
+
+    let frame = drawn.take();
+    for said in ["head of it", "more of it", "foot of it"] {
+        assert!(frame.contains(said), "{said}: {frame:?}");
+        assert!(!frame.contains(&quietly(said)), "{said}: {frame:?}");
+    }
+
+    // And nothing either side of the result went anywhere.
+    assert!(!frame.contains("the call it answers"), "{frame:?}");
+    assert!(!frame.contains("what the model said next"), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_that_moved_off_puts_the_cut_result_back_in_the_quiet() {
     let mut drawn = Drawn::new(40, 10);
     drawn.wears(colourful());
     drawn.present(&[cut("first")]).unwrap();
@@ -938,26 +987,7 @@ fn a_pointer_that_moved_off_puts_every_cut_result_back_in_the_quiet() {
 
     let frame = drawn.take();
     assert!(frame.contains(&quietly("first")), "{frame:?}");
-    assert!(frame.contains(&quietly("second")), "{frame:?}");
-}
-
-#[test]
-fn a_pointer_that_stayed_on_the_row_it_was_on_costs_nothing() {
-    // A terminal reporting all motion sends one of these per cell crossed, and
-    // what the frame is drawn from is the row. Answering each of them with a
-    // frame would be a redraw per cell for a picture that cannot have changed.
-    let mut drawn = Drawn::new(40, 10);
-    drawn.wears(colourful());
-    drawn.present(&[cut("first")]).unwrap();
-    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
-    drawn.take();
-
-    assert_eq!(
-        drawn.took(Pressed::Hovered { row: 0, column: 9 }).unwrap(),
-        None
-    );
-
-    assert_eq!(drawn.take(), "");
+    assert!(!frame.contains("second"), "{frame:?}");
 }
 
 #[test]
