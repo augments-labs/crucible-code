@@ -1,6 +1,6 @@
 [package]
 name = "crucible-tui"
-description = "Inline terminal rendering: prompt, streaming transcript, permission prompts."
+description = "Full-screen terminal rendering: prompt, streaming transcript, permission prompts."
 publish = false
 version.workspace = true
 edition.workspace = true

@@ -6,10 +6,11 @@
 //! rather than a later rewrite: a theme replaces what a slot resolves to and
 //! never who asks for it.
 //!
-//! **The ground behind a row belongs to the reader.** An inline renderer draws
-//! into the terminal's own buffer, so the ground behind every row is the one
-//! the reader chose. Almost nothing here emits a background attribute at all,
-//! and the two things that do are covered below.
+//! **The ground behind a row belongs to the reader.** This process takes the
+//! whole screen and every cell on it, so the ground is a thing it could paint
+//! and deliberately does not: a cell nothing gave a background attribute to is
+//! left in the one the reader chose. Almost nothing here emits one at all, and
+//! the two things that do are covered below.
 //!
 //! **A theme is a table of hues, and it is tuned to one ground.** There used to
 //! be one palette for every terminal, and every colour in it cleared 3:1

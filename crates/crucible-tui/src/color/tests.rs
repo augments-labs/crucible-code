@@ -449,8 +449,8 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
 
 #[test]
 fn a_diff_takes_the_ground_only_where_it_writes_the_ink_for_it() {
-    // The inline design in one assertion: the ground behind a row belongs to
-    // the terminal, and a background attribute is how a process takes it. A
+    // The rule about ground in one assertion: it belongs to the reader, and a
+    // background attribute is how a process takes it from them. A
     // diff takes it, and may, because it writes the ink for that ground in the
     // same sequence. Half of the pair is the failure, at any rung -- a ground
     // over the reader's own foreground is a contrast nobody chose.
