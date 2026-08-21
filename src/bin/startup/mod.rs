@@ -40,9 +40,16 @@ use rustix::pty::{self, OpenptFlags};
 #[cfg(target_os = "linux")]
 use rustix::termios::{self, OptionalActions, Winsize};
 
-/// Runs per reading. Enough that the 95th percentile means something, few
-/// enough that the probe stays well under a second.
-const RUNS: usize = 20;
+/// Runs per reading.
+///
+/// The percentile below is nearest-rank, so the sample size decides how far
+/// into the tail it stands: over twenty readings the 95th is the second worst,
+/// which is one slow launch away from deciding a budget. Two hundred puts it at
+/// the eleventh worst, far enough in that a machine stalling underneath the
+/// probe stops reading as this program having got slower. A launch costs a
+/// couple of milliseconds, so the whole probe still finishes well inside a
+/// second.
+const RUNS: usize = 200;
 
 /// A stuck launch is a failed measurement rather than a benchmark that hangs.
 #[cfg(target_os = "linux")]
@@ -145,23 +152,68 @@ pub(crate) enum StartupError {
     Nothing,
 }
 
-/// Takes [`RUNS`] readings and returns the 95th percentile.
-///
-/// Nearest-rank percentile: with twenty readings that is the second worst, so
-/// one scheduler hiccup does not decide the answer and two do.
-pub(crate) fn percentile(measure: Measure) -> Result<Duration, StartupError> {
+/// Takes [`RUNS`] readings of the same thing.
+pub(crate) fn readings(measure: Measure) -> Result<Readings, StartupError> {
     let binary = beside("crucible")?;
     let home = Scratch::new(measure.label())?;
 
-    let mut readings = Vec::with_capacity(RUNS);
+    let mut taken = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         home.restore_fixture()?;
-        readings.push(once(&binary, home.path(), measure)?);
+        taken.push(once(&binary, home.path(), measure)?);
     }
-    readings.sort_unstable();
 
-    let rank = readings.len().saturating_mul(95).div_ceil(100).max(1) - 1;
-    readings.get(rank).copied().ok_or(StartupError::Nothing)
+    Ok(Readings::new(taken))
+}
+
+/// Every reading one probe took, sorted.
+pub(crate) struct Readings(Vec<Duration>);
+
+impl Readings {
+    /// Sorts on the way in, because every question asked below is about an
+    /// order statistic and none of them is about the order they arrived in.
+    fn new(mut taken: Vec<Duration>) -> Self {
+        taken.sort_unstable();
+        Self(taken)
+    }
+
+    /// The 95th percentile, by nearest rank.
+    pub(crate) fn p95(&self) -> Result<Duration, StartupError> {
+        let rank = self.0.len().saturating_mul(95).div_ceil(100).max(1) - 1;
+        self.0.get(rank).copied().ok_or(StartupError::Nothing)
+    }
+
+    /// What the readings looked like, for a probe saying why it went over.
+    ///
+    /// A percentile on its own cannot tell a program that got slower from a
+    /// machine that stalled under one: both read as a large number. The middle
+    /// sitting far below the tail says which happened, and is the first thing
+    /// worth looking at, so a probe that fails prints this beside its reading
+    /// rather than leaving the next reader to guess it.
+    pub(crate) fn spread(&self) -> String {
+        let Some(best) = self.0.first().copied() else {
+            return String::from("no runs");
+        };
+        // All three are present: the slice is not empty, and `p95` can only
+        // fail on one that is.
+        let worst = self.0.last().copied().unwrap_or(best);
+        let median = self.0.get(self.0.len() / 2).copied().unwrap_or(best);
+        let p95 = self.p95().unwrap_or(worst);
+
+        format!(
+            "{} runs: best {}, median {}, p95 {}, worst {}",
+            self.0.len(),
+            ms(best),
+            ms(median),
+            ms(p95),
+            ms(worst),
+        )
+    }
+}
+
+/// One reading, in the milliseconds every budget here is written in.
+fn ms(taken: Duration) -> String {
+    format!("{:.1} ms", taken.as_secs_f64() * 1000.0)
 }
 
 /// One run: start against a controlling terminal and wait for its proof.
@@ -461,7 +513,53 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
-    use super::{Scratch, TITLE, USABLE};
+    use std::time::Duration;
+
+    use super::{RUNS, Readings, Scratch, TITLE, USABLE};
+
+    /// A full set of readings where `slow` of them stalled and the rest did not.
+    fn taken(slow: usize) -> Readings {
+        let mut all = vec![Duration::from_millis(1); RUNS - slow];
+        all.extend(vec![Duration::from_millis(100); slow]);
+        Readings::new(all)
+    }
+
+    #[test]
+    fn a_few_stalled_launches_do_not_decide_the_percentile() {
+        // The reason the sample is the size it is. A machine that stalls under
+        // the probe now has to do it ten times before the budget hears about
+        // it; at twenty readings once was enough, and once is what a shared
+        // machine does without anything here having changed.
+        assert_eq!(
+            taken(10).p95().expect("a reading"),
+            Duration::from_millis(1)
+        );
+    }
+
+    #[test]
+    fn enough_of_them_still_do() {
+        // The other half of it: this is a percentile, not a best-of. A machine
+        // slow often enough is one the budget is entitled to notice.
+        assert_eq!(
+            taken(11).p95().expect("a reading"),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[test]
+    fn the_spread_shows_a_middle_sitting_far_below_the_tail() {
+        // What tells a program that got slower from a machine that stalled.
+        let said = taken(10).spread();
+
+        assert!(said.contains(&format!("{RUNS} runs")), "{said}");
+        assert!(said.contains("median 1.0 ms"), "{said}");
+        assert!(said.contains("worst 100.0 ms"), "{said}");
+    }
+
+    #[test]
+    fn a_spread_of_nothing_says_so_rather_than_naming_a_reading() {
+        assert_eq!(Readings::new(Vec::new()).spread(), "no runs");
+    }
 
     #[test]
     fn the_fixture_exercises_four_current_format_titles() {
