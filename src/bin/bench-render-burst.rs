@@ -18,12 +18,26 @@
 //! Thirty a second is a floor with a great deal of headroom, which on its own
 //! would make this a benchmark that cannot fail. So the rate is measured twice:
 //! once at the start of the burst and once at the end, and the two must be
-//! close. That is the check that actually bites, because the way this gets slow
+//! close. What each of those two readings is made of is `burst`'s, beside this
+//! file, and is shared with the probe that measures whole-region redraws. That is the check that actually bites, because the way this gets slow
 //! is not a constant factor -- it is a redraw that grows with the transcript,
 //! and a redraw like that is fast in the first second and hopeless in the
 //! hundredth. The reported number is the *sustained* rate, since a session is
 //! long and the opening frames are not the ones a user is waiting on.
 
+// A binary may not reach into another's tree, so the driver the two burst probes
+// share is a module beside them. Where the bounded pipe below is unavailable this
+// probe reports itself unsupported before it draws a frame, and the driver it
+// would have run has no caller — it is still compiled, and still tested.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod burst;
+
+use burst::{Burst, SUSTAINED_FRACTION};
+use crucible_tui::TerminalError;
+#[cfg(target_os = "linux")]
+use crucible_tui::{Renderer, Size, Terminal};
+#[cfg(target_os = "linux")]
+use rustix::pipe::{PipeFlags, pipe_with};
 use std::fmt::Write as _;
 #[cfg(target_os = "linux")]
 use std::fs::File;
@@ -33,40 +47,9 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
-#[cfg(target_os = "linux")]
-use std::time::Instant;
-
-use crucible_tui::TerminalError;
-#[cfg(target_os = "linux")]
-use crucible_tui::{Renderer, Size, Terminal};
-#[cfg(target_os = "linux")]
-use rustix::pipe::{PipeFlags, pipe_with};
 
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
-
-/// Frames to measure. Large enough that a scheduler hiccup does not decide the
-/// answer, small enough that the probe stays under a second on a slow machine.
-#[cfg(target_os = "linux")]
-const FRAMES: usize = 20_000;
-
-/// Frames in each of the two timed windows, at the start and the end.
-#[cfg(target_os = "linux")]
-const WINDOW: usize = FRAMES / 10;
-
-/// How far the sustained rate may fall behind the opening rate.
-///
-/// A renderer whose cost is bounded holds roughly level, so anything is slack.
-/// A renderer whose cost grows with the transcript has already lost an order of
-/// magnitude by the end of a burst this size, and far more by the end of a real
-/// session -- which is the failure this number exists to catch while the margin
-/// is still recoverable.
-const SUSTAINED_FRACTION: f64 = 0.5;
-
-/// Frames to run and throw away, so the measurement is not paying for the first
-/// allocation of every reused buffer.
-#[cfg(target_os = "linux")]
-const WARMUP: usize = 2_000;
 
 /// A terminal-sized window, so wrapping and the bounded tail both engage.
 #[cfg(target_os = "linux")]
@@ -180,7 +163,7 @@ impl Terminal for PipeSink {
 /// time, mostly mid-word, with a line ending every so often. Built once, so the
 /// measured loop is not timing a formatter.
 #[cfg(target_os = "linux")]
-fn burst() -> Vec<String> {
+fn streamed() -> Vec<String> {
     // A fenced block, opened once and never closed, so that most of what this
     // streams is code being read rather than prose being scanned. Reading is
     // the more expensive of the two by a wide margin — a parser and a theme
@@ -223,24 +206,9 @@ fn burst() -> Vec<String> {
     deltas
 }
 
-/// What one burst measured.
-#[derive(Debug, Clone, Copy)]
-struct Burst {
-    /// Frames per second over the first window, with the tail still short.
-    opening: f64,
-    /// Frames per second over the last window, deep into the transcript.
-    sustained: f64,
-}
-
-impl Burst {
-    fn ratio(self) -> f64 {
-        self.sustained / self.opening
-    }
-}
-
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {
-    let deltas = burst();
+    let deltas = streamed();
     let (sink, drain) = PipeSink::open()?;
     let mut render = Renderer::new(sink);
 
@@ -256,31 +224,11 @@ fn measure() -> Result<Burst, ProbeError> {
         &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
     ));
 
-    let stream = |render: &mut Renderer<PipeSink>, index: usize| -> Result<(), ProbeError> {
+    let measured = burst::measure(|index| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);
         render.stream(delta)?;
         Ok(())
-    };
-
-    for index in 0..WARMUP {
-        stream(&mut render, index)?;
-    }
-
-    let start = Instant::now();
-    for index in 0..WINDOW {
-        stream(&mut render, index)?;
-    }
-    let opening = start.elapsed();
-
-    for index in WINDOW..FRAMES - WINDOW {
-        stream(&mut render, index)?;
-    }
-
-    let late = Instant::now();
-    for index in FRAMES - WINDOW..FRAMES {
-        stream(&mut render, index)?;
-    }
-    let closing = late.elapsed();
+    })?;
 
     render.settle()?;
     // Closing the writer is what tells the fixed-size consumer it has seen the
@@ -288,15 +236,7 @@ fn measure() -> Result<Burst, ProbeError> {
     drop(render);
     drain.finish()?;
 
-    // A window this size takes milliseconds, not nanoseconds, so the precision
-    // lost converting the count is far below the noise in the measurement.
-    #[allow(clippy::cast_precision_loss)]
-    let frames = WINDOW as f64;
-
-    Ok(Burst {
-        opening: frames / opening.as_secs_f64(),
-        sustained: frames / closing.as_secs_f64(),
-    })
+    Ok(measured)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -370,27 +310,27 @@ fn evidence(burst: Burst) -> Result<(), ProbeError> {
 }
 
 fn main() -> ExitCode {
-    let burst = match measure() {
-        Ok(burst) => burst,
+    let measured = match measure() {
+        Ok(measured) => measured,
         Err(problem) => {
             let _ = explain(&problem);
             return ExitCode::FAILURE;
         }
     };
 
-    if report(burst).is_err() {
+    if report(measured).is_err() {
         return ExitCode::FAILURE;
     }
-    if evidence(burst).is_err() {
-        return ExitCode::FAILURE;
-    }
-
-    if burst.sustained < LIMIT {
+    if evidence(measured).is_err() {
         return ExitCode::FAILURE;
     }
 
-    if burst.sustained < burst.opening * SUSTAINED_FRACTION {
-        let _ = slowing(burst);
+    if measured.sustained < LIMIT {
+        return ExitCode::FAILURE;
+    }
+
+    if measured.sustained < measured.opening * SUSTAINED_FRACTION {
+        let _ = slowing(measured);
         return ExitCode::FAILURE;
     }
 
