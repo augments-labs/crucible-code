@@ -777,7 +777,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         .then(|| release::newer(home.path(), env!("CARGO_PKG_VERSION")))
         .flatten();
 
-    draw::opening(
+    let opening = draw::opening(
         &mut renderer,
         &Opening {
             credential: launch.credential.as_ref(),
@@ -817,7 +817,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         stored: &keys,
         subscriptions: &subscriptions,
     })?;
-    let outcome = converse::converse(runner, &mut renderer, &terms, &mut io::stdin().lock());
+    let outcome = converse::converse(
+        runner,
+        &mut renderer,
+        &terms,
+        opening,
+        &mut io::stdin().lock(),
+    );
 
     drop(held);
     outcome

@@ -98,8 +98,12 @@ fn memory_does_not_grow_with_the_length_of_the_session() {
         render.terminal.take();
     }
 
-    assert!(render.drawn <= 4, "drew {} rows", render.drawn);
-    assert!(render.tail.len() <= 4, "held {} rows", render.tail.len());
+    assert!(render.drawn() <= 4, "drew {} rows", render.drawn());
+    assert!(
+        render.tail.rows().len() <= 4,
+        "held {} rows",
+        render.tail.rows().len()
+    );
     assert!(render.overflow.is_empty(), "overflow was not drained");
 }
 
@@ -225,6 +229,26 @@ fn a_resize_rewraps_instead_of_redrawing_wrongly() {
 }
 
 #[test]
+fn a_narrower_window_takes_back_the_rows_it_re_wrapped() {
+    // A terminal re-wraps what is on screen when the window narrows, so each
+    // of these four rows is two by the time the rewind is written. Counted in
+    // rows drawn it reaches back four, and the four it never reaches stay on
+    // the screen for the rest of the session -- one more trail of them per
+    // step of the drag that resized the window.
+    let mut render = Renderer::new(Recording::new(40, 24));
+    let wide = "x".repeat(40);
+    let rows: Vec<Row> = (0..4).map(|_| Row::plain(wide.clone())).collect();
+    let caret = Caret { row: 3, column: 0 };
+    render.live(&rows, caret, Palette::plain()).unwrap();
+    render.terminal.take();
+
+    render.terminal.resize(20, 24);
+    render.resized().unwrap();
+
+    assert_eq!(render.terminal.written(), shown(8, ""));
+}
+
+#[test]
 fn a_resize_that_changes_nothing_writes_nothing() {
     let mut render = Renderer::new(Recording::new(80, 24));
     render.stream("hello").unwrap();
@@ -288,8 +312,12 @@ fn a_window_that_only_got_shorter_is_still_a_resize() {
         render.stream(&format!("line {row}\n")).unwrap();
     }
 
-    assert!(render.tail.len() <= 10, "held {} rows", render.tail.len());
-    assert!(render.drawn <= 10, "drew {} rows", render.drawn);
+    assert!(
+        render.tail.rows().len() <= 10,
+        "held {} rows",
+        render.tail.rows().len()
+    );
+    assert!(render.drawn() <= 10, "drew {} rows", render.drawn());
 
     let written = render.terminal.written();
     for up in 10..50 {
@@ -355,7 +383,7 @@ fn settling_blank_rows_does_not_leave_them_in_the_tail() {
     render.stream("next").unwrap();
 
     assert_eq!(render.terminal.written(), shown(0, "next"));
-    assert_eq!(render.drawn, 1);
+    assert_eq!(render.drawn(), 1);
 }
 
 #[test]
@@ -372,7 +400,7 @@ fn a_prompt_is_written_verbatim_after_the_live_region_ends() {
         render.terminal.written(),
         format!("{}> ", shown(1, "answer\r\n"))
     );
-    assert_eq!(render.drawn, 0);
+    assert_eq!(render.drawn(), 0);
 }
 
 #[test]
@@ -451,7 +479,7 @@ fn ending_a_live_region_takes_every_row_of_it_off_the_screen() {
     render.settle().unwrap();
 
     assert_eq!(render.terminal.written(), shown(1, ""));
-    assert_eq!(render.drawn, 0);
+    assert_eq!(render.drawn(), 0);
     assert_eq!(render.parked, 0);
 }
 
@@ -508,9 +536,9 @@ fn the_region_never_grows_past_the_screen_however_long_the_answer_is() {
         render.stream(&format!("line {delta}\n")).unwrap();
 
         assert!(
-            render.tail.len() + render.footing.len() <= rows,
+            render.tail.rows().len() + render.footing.len() <= rows,
             "after {delta} deltas the region was {} rows on a screen {rows} tall",
-            render.tail.len() + render.footing.len()
+            render.tail.rows().len() + render.footing.len()
         );
     }
 }
@@ -525,7 +553,7 @@ fn the_tail_is_one_row_whatever_stands_under_it() {
     for delta in 0..20 {
         render.stream(&format!("line {delta}\n")).unwrap();
     }
-    let alone = render.tail.len();
+    let alone = render.tail.rows().len();
 
     render.under(&boxed(), None, Palette::plain()).unwrap();
 
@@ -533,7 +561,11 @@ fn the_tail_is_one_row_whatever_stands_under_it() {
         alone, 1,
         "the tail holds the row still being written and no more"
     );
-    assert_eq!(render.tail.len(), 1, "and standing rows do not shrink it");
+    assert_eq!(
+        render.tail.rows().len(),
+        1,
+        "and standing rows do not shrink it"
+    );
 }
 
 #[test]
@@ -591,7 +623,7 @@ fn a_standing_row_never_reaches_the_record() {
     render.settle().unwrap();
 
     assert_eq!(render.terminal.written(), shown(1, "one two\r\n"));
-    assert_eq!(render.drawn, 0);
+    assert_eq!(render.drawn(), 0);
     assert_eq!(render.parked, 0);
 }
 
@@ -623,7 +655,7 @@ fn taking_a_standing_row_back_leaves_the_tail_where_it_was() {
     render.under(&[], None, Palette::plain()).unwrap();
 
     assert_eq!(render.terminal.written(), shown(1, "the answer"));
-    assert_eq!(render.drawn, 1);
+    assert_eq!(render.drawn(), 1);
     assert_eq!(render.parked, 0);
 }
 
@@ -671,7 +703,7 @@ fn a_presented_row_lands_above_a_standing_row_and_leaves_it_on_the_screen() {
             shown(0, "\r\nask mode on\x1b[1A\x1b[1G")
         )
     );
-    assert_eq!(render.drawn, 2);
+    assert_eq!(render.drawn(), 2);
     assert_eq!(render.parked, 1);
 }
 
@@ -692,7 +724,7 @@ fn a_presented_row_with_nothing_standing_under_it_is_one_frame_and_no_more() {
         render.terminal.written(),
         format!("{}Bash(cargo build)\r\n", shown(1, "the answer\r\n"))
     );
-    assert_eq!(render.drawn, 0);
+    assert_eq!(render.drawn(), 0);
 }
 
 #[test]
@@ -759,7 +791,7 @@ fn a_slot_costs_the_answer_the_columns_it_would_have_taken_plain() {
     plain.stream("the loud word\n").unwrap();
     coloured.stream("the **loud** word\n").unwrap();
 
-    assert_eq!(plain.drawn, coloured.drawn);
+    assert_eq!(plain.drawn(), coloured.drawn());
 }
 
 #[test]
