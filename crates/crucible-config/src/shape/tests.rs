@@ -23,9 +23,7 @@ fn offering(
         Shape::Fields(fields) => {
             for field in *fields {
                 path.push(field.name);
-                if !field.examples.is_empty() {
-                    found.push((path.clone(), field));
-                }
+                found.push((path.clone(), field));
                 offering(&field.shape, path, found);
                 path.pop();
             }
@@ -39,9 +37,7 @@ fn offering(
         Shape::Named { declared, others } => {
             for field in *declared {
                 path.push(field.name);
-                if !field.examples.is_empty() {
-                    found.push((path.clone(), field));
-                }
+                found.push((path.clone(), field));
                 offering(&field.shape, path, found);
                 path.pop();
             }
@@ -81,12 +77,16 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
 fn every_example_the_schema_offers_is_one_crucible_accepts() {
     let mut found = Vec::new();
     offering(&DOCUMENT, &mut Vec::new(), &mut found);
+    let offered: Vec<_> = found
+        .into_iter()
+        .filter(|(_, field)| !field.examples.is_empty())
+        .collect();
 
     // A walk that reached nothing would pass for ever. The examples are the
     // subject here, so their absence is the failure rather than the baseline.
-    assert!(!found.is_empty(), "no field offers an example");
+    assert!(!offered.is_empty(), "no field offers an example");
 
-    for (path, field) in found {
+    for (path, field) in offered {
         // The one field whose examples are absolute paths, which is a thing
         // spelled differently per platform. It offers a spelling each and only
         // this platform's can be read back here — the other is a valid example
@@ -122,6 +122,34 @@ fn every_example_the_schema_offers_is_one_crucible_accepts() {
             accepted > 0,
             "{}: no example this platform accepts",
             path.join(".")
+        );
+    }
+}
+
+#[test]
+fn every_default_the_schema_states_is_a_value_crucible_would_accept() {
+    // The other half of what the tests beside each settings module do. Those
+    // bind one declared default to the value that module falls back to; this
+    // one puts every default through the walk a document goes through, which is
+    // what catches a word spelled for the schema and for nothing else.
+    let mut found = Vec::new();
+    offering(&DOCUMENT, &mut Vec::new(), &mut found);
+    let stated: Vec<_> = found
+        .into_iter()
+        .filter_map(|(path, field)| field.usual.map(|usual| (path, field, usual)))
+        .collect();
+
+    assert!(!stated.is_empty(), "no field states a default");
+
+    for (path, field, usual) in stated {
+        let text = written(&path, &field.shape, usual);
+        let read = Document::parse(&text, "~/.crucible/config.json", Origin::User);
+
+        assert!(
+            read.is_ok(),
+            "{}: {usual} — {:?}",
+            path.join("."),
+            read.err()
         );
     }
 }

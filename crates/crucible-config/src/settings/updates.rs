@@ -19,9 +19,10 @@ impl Settings {
 ///
 /// `Auto` is not the absence of an answer — it is the answer "ask", which a
 /// layer may state to override a nearer one that said not to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Updates {
     /// Ask, at most once a day, on a thread of its own.
+    #[default]
     Auto,
     /// Never reach the network for this.
     Never,
@@ -79,5 +80,13 @@ mod tests {
     fn asking_is_what_auto_means_and_the_only_thing_that_does() {
         assert!(Updates::Auto.wanted());
         assert!(!Updates::Never.wanted());
+    }
+
+    #[test]
+    fn the_default_the_schema_states_for_check_is_the_one_it_falls_back_to() {
+        assert_eq!(
+            Updates::read(shape::usual(&["updates", "check"])),
+            Some(Updates::default())
+        );
     }
 }

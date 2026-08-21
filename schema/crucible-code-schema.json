@@ -41,6 +41,7 @@
           "type": "integer"
         },
         "when": {
+          "default": "full",
           "description": "Whether a full window is answered by compacting the session, or by letting the turn fail",
           "enum": [
             "full",
@@ -86,6 +87,7 @@
           "type": "string"
         },
         "send": {
+          "default": "enter",
           "description": "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Enter for itself",
           "enum": [
             "enter",
@@ -107,6 +109,7 @@
           "type": "string"
         },
         "color": {
+          "default": "auto",
           "description": "Whether to write colour: auto follows the terminal and NO_COLOR, always and never override it",
           "enum": [
             "auto",
@@ -116,6 +119,7 @@
           "type": "string"
         },
         "glyphs": {
+          "default": "unicode",
           "description": "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
           "enum": [
             "unicode",
@@ -124,6 +128,7 @@
           "type": "string"
         },
         "syntaxTheme": {
+          "default": "Monokai Extended",
           "description": "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
           "examples": [
             "Monokai Extended",
@@ -132,6 +137,7 @@
           "type": "string"
         },
         "theme": {
+          "default": "auto",
           "description": "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
           "enum": [
             "auto",
@@ -144,6 +150,7 @@
           "type": "string"
         },
         "toolDetail": {
+          "default": "compact",
           "description": "How much of a tool call and its result one line shows",
           "enum": [
             "compact",
@@ -213,6 +220,7 @@
           "uniqueItems": true
         },
         "mode": {
+          "default": "ask",
           "description": "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Read only from the configuration file in your home directory",
           "enum": [
             "ask",
@@ -316,6 +324,7 @@
           "type": "string"
         },
         "check": {
+          "default": "auto",
           "description": "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
           "enum": [
             "auto",

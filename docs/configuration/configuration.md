@@ -529,9 +529,14 @@ in this repository is the copy a build gate keeps honest.
 never heard of and any string will do. The variables crucible reads for itself
 are the exception: they are named in the schema beside that, with the number
 each one falls back to and the range it takes, so an editor completes the value
-and marks one out of range as you type. It offers the fallback because that is
-the value the program uses — a default the schema invented would be a sentence
-about behaviour that nothing runs.
+and marks one out of range as you type.
+
+A key that crucible answers for itself when no layer set it says so too, and an
+editor fills that answer in. Every such key is one this page already documents
+with the same word, because the two come from one declaration. A key with no
+default carries none — a window worked out from the model, an effort the vendor
+decides, a reserve derived from the window — since a default invented for the
+schema would be a sentence about behaviour that nothing runs.
 
 The schema is not fixed. Keys may be added, renamed or removed in any 0.x
 release, and the URL above serves one copy — the newest release, not the version

@@ -36,7 +36,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
-use crucible_config::{ConfigError, Home, Settings, Updates};
+use crucible_config::{ConfigError, Home, Settings};
 use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Revealed, Workspace};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
@@ -776,7 +776,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // nobody waits for, and what it finds is what the next run says. Nothing
     // said is asking: a release check is the sort of thing somebody turns off,
     // and one that has to be turned *on* is one nobody has.
-    let asking = settings.updates().is_none_or(Updates::wanted);
+    let asking = settings.updates().unwrap_or_default().wanted();
     let update = asking
         .then(|| release::newer(home.path(), env!("CARGO_PKG_VERSION")))
         .flatten();

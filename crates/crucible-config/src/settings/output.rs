@@ -52,9 +52,10 @@ impl Settings {
 ///
 /// `Auto` is not the absence of an answer — it is the answer "decide from the
 /// terminal", which a layer may state to override a nearer one that did not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Color {
     /// Follow the terminal and `NO_COLOR`.
+    #[default]
     Auto,
     /// Colour even when the output is not a terminal.
     Always,
@@ -84,9 +85,10 @@ impl Color {
 /// `Auto` is a question about the terminal rather than a table, and it stops
 /// existing one layer up: the wiring answers it from the ground the terminal
 /// reported, and what reaches the renderer is always one of the others.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeChoice {
     /// Follow the terminal's own background.
+    #[default]
     Auto,
     /// For a dark ground.
     Dark,
@@ -120,9 +122,10 @@ impl ThemeChoice {
 }
 
 /// How much of a tool call and its result one line shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolDetail {
     /// Truncated to fit a line.
+    #[default]
     Compact,
     /// Whatever the terminal is wide enough for.
     Full,
@@ -145,9 +148,10 @@ impl ToolDetail {
 /// terminal whose font has no glyph for it is drawn as a hollow square, and
 /// nothing about that reaches this process: the bytes were accepted, the
 /// encoding was right, and the failure is in a font this program cannot see.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Glyphs {
     /// Box drawing, bullets and an ellipsis.
+    #[default]
     Unicode,
     /// Characters every font has had since before there were fonts to choose.
     Ascii,
@@ -263,5 +267,25 @@ mod tests {
             }
         }
         assert_eq!(read.len(), shape::THEME.len());
+    }
+
+    #[test]
+    fn the_defaults_the_schema_states_for_output_are_the_ones_it_falls_back_to() {
+        assert_eq!(
+            Color::read(shape::usual(&["output", "color"])),
+            Some(Color::default())
+        );
+        assert_eq!(
+            ThemeChoice::read(shape::usual(&["output", "theme"])),
+            Some(ThemeChoice::default())
+        );
+        assert_eq!(
+            Glyphs::read(shape::usual(&["output", "glyphs"])),
+            Some(Glyphs::default())
+        );
+        assert_eq!(
+            ToolDetail::read(shape::usual(&["output", "toolDetail"])),
+            Some(ToolDetail::default())
+        );
     }
 }
