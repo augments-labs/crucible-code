@@ -75,6 +75,25 @@ pub(crate) fn tab_stop(column: usize) -> usize {
     (column / TAB_STOP + 1) * TAB_STOP
 }
 
+/// How far `character` moves the cursor along from `column`, after `base`.
+///
+/// The three answers a bare [`advance`] gets wrong, in the one place every walk
+/// over a string asks for them: a tab lands on the next stop rather than moving
+/// one column, a selector takes the column it widened its base by although it
+/// asks for none itself, and anything a terminal does not draw moves nothing.
+///
+/// `None` is that last case, and it is not zero: a character that is dropped is
+/// a character the caller neither counts nor keeps, and one that costs no
+/// columns and is still drawn — a combining mark — is a `Some(0)` that has to
+/// stay with the character it marks.
+pub(crate) fn along(column: usize, character: char, base: Option<char>) -> Option<usize> {
+    match character {
+        '\t' => Some(tab_stop(column).saturating_sub(column)),
+        EMOJI_PRESENTATION if widens(base) => Some(1),
+        _ => advance(character),
+    }
+}
+
 /// Where to cut `text` so that what is kept is one row of at most `columns`
 /// display columns, counted the way the live tail counts them.
 ///
@@ -219,15 +238,13 @@ fn walk(text: &str, ceiling: usize) -> (usize, Option<usize>) {
             continue;
         }
 
+        if character == '\n' {
+            return (column, Some(offset));
+        }
+
         let base = last.map(|(_, character)| character);
-        let step = match character {
-            '\n' => return (column, Some(offset)),
-            '\t' => tab_stop(column).saturating_sub(column),
-            EMOJI_PRESENTATION if widens(base) => 1,
-            _ => match advance(character) {
-                Some(step) => step,
-                None => continue,
-            },
+        let Some(step) = along(column, character, base) else {
+            continue;
         };
 
         if column + step > ceiling {

@@ -366,6 +366,8 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Pasted(_)
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::Dragged { .. }
+        | Pressed::Released { .. }
         | Pressed::Ignored => Moved::Still,
     }
 }

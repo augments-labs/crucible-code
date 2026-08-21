@@ -1301,6 +1301,8 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Clicked { .. }
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::Dragged { .. }
+        | Pressed::Released { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
 }
@@ -1457,7 +1459,11 @@ fn took<T: Terminal>(
     question: &Question,
 ) -> Result<Option<Chosen>, Fatal> {
     loop {
-        match numbered(pressed()?, question) {
+        let Some(arrived) = renderer.took(pressed()?)? else {
+            continue;
+        };
+
+        match numbered(arrived, question) {
             Numbered::Chose(answer) => return Ok(Some(answer)),
             Numbered::Left => return Ok(None),
 

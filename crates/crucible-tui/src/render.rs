@@ -36,6 +36,8 @@ use crate::head::Head;
 use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
+use crate::select::Taken;
+use crate::terminal::keys::Pressed;
 use crate::terminal::{Size, Terminal, TerminalError};
 
 mod frame;
@@ -198,6 +200,13 @@ pub struct Renderer<T: Terminal> {
     /// otherwise, which is a notch that moves something for a reader nobody
     /// configured.
     notch: i32,
+    /// What the reader has dragged over, if anything.
+    ///
+    /// Screen rows and columns, and therefore only ever true of the frame it
+    /// was made against. Dropped by anything that moves the picture out from
+    /// under it — a scroll, a resize — because a selection that stayed put
+    /// while its words moved is a highlight over the wrong text.
+    taken: Option<Taken>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -227,7 +236,67 @@ impl<T: Terminal> Renderer<T> {
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
             notch: NOTCH,
+            taken: None,
         }
+    }
+
+    /// What a press means once the selection has had it.
+    ///
+    /// The one seam every input loop wraps its reads in, so that a drag works
+    /// the same wherever the reader started it: the loop hands over what
+    /// arrived and gets back what is left for it to answer. `None` where the
+    /// press belonged to the selection and nothing else is owed — the pointer
+    /// moving under a held button, and the button coming up again.
+    ///
+    /// A click is handed back rather than swallowed. It anchors a drag that may
+    /// never happen, and until it does it still means whatever it meant to the
+    /// loop underneath — a caret placed in the box, a cut result opened.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn took(&mut self, arrived: Pressed) -> Result<Option<Pressed>, TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(Some(arrived));
+        }
+
+        match arrived {
+            // A new press drops whatever the last one selected, which is how a
+            // reader puts a selection away: click, anywhere.
+            Pressed::Clicked { row, column } => {
+                let had = self.taken.is_some_and(|taken| !taken.empty());
+                self.taken = Some(Taken::opened(row, column));
+                if had {
+                    self.draw()?;
+                }
+                Ok(Some(arrived))
+            }
+            Pressed::Dragged { row, column } => {
+                if let Some(taken) = &mut self.taken {
+                    taken.reaches(row, column);
+                    self.draw()?;
+                }
+                Ok(None)
+            }
+            // Copied where the drag covered something, and quietly dropped
+            // where it did not: a button coming up after a plain click is not
+            // an empty clipboard, it is nothing at all.
+            Pressed::Released { .. } => {
+                if self.taken.is_some_and(|taken| !taken.empty()) {
+                    let said = self.painted.read();
+                    self.copied(&said)?;
+                }
+                Ok(None)
+            }
+            _ => Ok(Some(arrived)),
+        }
+    }
+
+    /// Drops whatever is selected, because the picture under it is about to
+    /// move.
+    fn unselects(&mut self) {
+        self.taken = None;
+        self.painted.selects(None);
     }
 
     /// Tells this renderer which palette the run resolved.
@@ -658,6 +727,7 @@ impl<T: Terminal> Renderer<T> {
         self.size = size;
         self.record.resized(size.columns);
         self.standing.clear();
+        self.unselects();
         self.crown();
 
         // Every row of the window is now showing something drawn for a size it
@@ -747,6 +817,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
 
+        self.unselects();
         self.draw()?;
         Ok(true)
     }
@@ -891,7 +962,8 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
-        self.painted.open(self.size.rows);
+        self.painted.selects(self.taken);
+        self.painted.open(self.size.rows, self.size.columns);
 
         if let Some(crowned) = &self.crowned {
             for at in bands.head.start..bands.head.end {

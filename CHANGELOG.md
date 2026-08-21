@@ -32,6 +32,11 @@ next key — the mode, the key that steps it, and what is still running.
 crucible uses when nothing set them. A key crucible has no answer for — a
 context window, an effort, a reserve — still carries none.
 
+**A drag over the window selects what it covers.** The rows light as the
+pointer crosses them and letting go puts them on the clipboard, over the
+transcript, the row above the box and the box itself alike. Scrolling or
+resizing lets the selection go, since both move the words out from under it.
+
 **The schema names the variables crucible reads for itself.** `env` still takes
 any name, but `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now arrives with the `6` it
 falls back to and the range it accepts, so an editor completes it and marks one

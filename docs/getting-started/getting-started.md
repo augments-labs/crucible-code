@@ -196,16 +196,21 @@ not take you away from it.
 A click puts the cursor where you point in the box, marks a row of a list, or
 opens a result the transcript cut short.
 
-The price of all that is a drag that no longer selects, because a terminal
-forwarding buttons to a program is not using them itself. Hold <kbd>Shift</kbd>
-while you drag and the selection is your terminal's again.
+A drag selects, and crucible is what answers it: the rows you cover light up as
+you go, and letting go puts them on your clipboard. It runs over the whole
+window rather than over the transcript alone — an answer, the row above the box
+and the box itself are one drag if that is what you covered — and the first and
+last rows are taken from where you pressed and to where you let go, the way a
+selection in any other window behaves. Scrolling or resizing lets go of it,
+because both move the words out from under the two ends. Holding
+<kbd>Shift</kbd> while you drag still hands the pointer back to your terminal,
+if its own selection is the one you wanted.
 
-Selecting the box itself is the one thing that drag does badly, and no terminal
-can be asked to do it better: what it takes is the picture — a border down each
-side, and blank ground out to the last column of every row. So <kbd>Ctrl+Y</kbd>
-puts the line itself on your clipboard, exactly as you typed it and with nothing
-around it, and the row under the box says it went. It works while a turn is
-running too, since the line is yours either way.
+What a drag over the box takes is the picture — a border down each side, and
+blank ground out to the last column. So <kbd>Ctrl+Y</kbd> is still there for the
+line itself, exactly as you typed it and with nothing around it, and the row
+under the box says it went. It works while a turn is running too, since the line
+is yours either way.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
