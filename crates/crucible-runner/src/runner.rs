@@ -261,6 +261,12 @@ impl Runner {
     /// turn takes: what it costs is proportional to the transcript, and the one
     /// moment that is affordable is the one where the transcript was just read
     /// off a disk.
+    ///
+    /// The walk estimates, because a transcript is messages and messages do not
+    /// say what they cost. Where the session picked up brought a reading back
+    /// with it, that estimate is superseded by it and the session comes back
+    /// knowing how much of the window it has left — which is the whole of why
+    /// a log records one.
     fn recount(&mut self) {
         self.load.replaced();
         for message in self.transcript.messages() {
@@ -268,6 +274,13 @@ impl Runner {
         }
         self.load
             .requesting(self.model.system.as_deref(), &self.tools.advertised());
+
+        // After the fixed content of this run's request is known, and never
+        // before: what the log remembers is taken only where it still covers
+        // the request this run would send.
+        if let Some(calibration) = self.session.calibrated() {
+            self.load.measured(calibration);
+        }
     }
 
     /// Puts this runner on a different session, and hands back the one it was
@@ -289,9 +302,13 @@ impl Runner {
         self.permission.forget();
         self.turn = Self::counting(&transcript);
         self.transcript = transcript;
+
+        // Before the recount rather than after it: what the session picked up
+        // remembers about its own load is part of what is being recounted.
+        let left = std::mem::replace(&mut self.session, session);
         self.recount();
 
-        std::mem::replace(&mut self.session, session)
+        left
     }
 
     /// The transcript so far.
@@ -510,6 +527,13 @@ impl Runner {
         self.session.append(&message);
         self.load.recorded(&message);
         self.transcript.push(message);
+
+        // After the message and not beside it: what this says covers the
+        // transcript including what was just appended, and a reader that found
+        // it in the other order would have it covering one message less.
+        if let Some(calibration) = self.load.calibrated() {
+            self.session.measured(&calibration);
+        }
     }
 
     /// Takes one turn: the prompt, and the exchange until the model yields.

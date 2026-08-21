@@ -12,7 +12,7 @@ use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
-use crucible_core::{Message, SessionId, Transcript, Workspace};
+use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
 
 use super::{SUFFIX, SessionError, wire};
 
@@ -108,8 +108,8 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
     }
 }
 
-/// Everything a log holds, as the transcript it recorded and the offset the
-/// next write has to start at.
+/// Everything a log holds, as the transcript it recorded, the offset the next
+/// write has to start at, and what its last request carried.
 ///
 /// Reading stops at the first line that is not a whole message. A session that
 /// ended when the process did leaves a half-written last line, and a prefix of
@@ -130,12 +130,18 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
 /// session. Cutting touches nothing that was replayed, so what is on disk
 /// afterwards reads back as exactly the transcript returned here.
 ///
+/// What the last request carried comes back only where the line saying so is
+/// the last thing in the file. Anything written after it — another message, a
+/// compaction, a forgetting — happened to the transcript the reading covered,
+/// so the reading is about a session that no longer exists and is dropped
+/// rather than adjusted. There is nothing here to adjust it with.
+///
 /// How each answer ended comes back with it, unchanged and unjudged. Nothing
 /// here decides what a turn that was cut off means — that is the provider's, on
 /// the next request, and it is the whole reason the reason is on the line: a
 /// transcript replayed without it hands the model a half-sentence as an answer
 /// it chose to end.
-pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
+pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
         source,
@@ -151,6 +157,9 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
     let mut before = through;
 
     let mut transcript = Transcript::new();
+    // Taken only where nothing follows it, which is why it is cleared by every
+    // other line rather than kept until something replaces it. See [`Replayed`].
+    let mut calibration = None;
 
     loop {
         raw.clear();
@@ -177,6 +186,7 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
         // to be told it again.
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
+            calibration = None;
             before = through;
             through += read as u64;
             continue;
@@ -189,6 +199,7 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
         if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
             transcript.behind(replaced);
             transcript.push(Message::User(recap.into()));
+            calibration = None;
             through += read as u64;
             continue;
         }
@@ -200,6 +211,16 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
         // nothing and is nobody's damage.
         if let Some(results) = whole.and_then(wire::cleared) {
             transcript.prune(&results);
+            calibration = None;
+            through += read as u64;
+            continue;
+        }
+
+        // What the request behind the answer above carried. Kept for now and
+        // dropped by the next line of any other kind, since what makes it
+        // usable is being the last thing written.
+        if let Some(measured) = whole.and_then(wire::measure) {
+            calibration = Some(measured);
             through += read as u64;
             continue;
         }
@@ -221,15 +242,40 @@ pub(super) fn replay(path: &Path) -> Result<(Transcript, u64), SessionError> {
         };
 
         transcript.push(message);
+        calibration = None;
         before = through;
         through += read as u64;
     }
 
     if outstanding(&transcript) {
-        return Ok((without_last(&transcript), before));
+        // The message being cut off is the one the reading covered, so what is
+        // left is a shorter transcript than the number describes.
+        return Ok(Replayed {
+            transcript: without_last(&transcript),
+            settled_at: before,
+            calibration: None,
+        });
     }
 
-    Ok((transcript, through))
+    Ok(Replayed {
+        transcript,
+        settled_at: through,
+        calibration,
+    })
+}
+
+/// What a log read back comes to.
+///
+/// The transcript, where the file settles after it, and what the last request
+/// carried where the log still says — which it does only when that line is the
+/// last thing in it. A reading with messages written after it covered a
+/// transcript shorter than the one being handed back, and a load told a number
+/// that covers less than it is about to send is a load that under-states
+/// itself: the one direction that costs a turn rather than some context.
+pub(super) struct Replayed {
+    pub(super) transcript: Transcript,
+    pub(super) settled_at: u64,
+    pub(super) calibration: Option<Calibration>,
 }
 
 /// Whether the last message is still waiting on tools.

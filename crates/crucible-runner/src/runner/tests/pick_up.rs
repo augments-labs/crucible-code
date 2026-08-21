@@ -14,12 +14,7 @@ use super::*;
 /// A session recorded and closed, holding one turn, and the name it has.
 fn earlier(sample: &Sample) -> SessionId {
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
-    let id = session
-        .path()
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .and_then(|stem| SessionId::from_str(stem).ok())
-        .expect("the log is named by its session");
+    let id = named(&session);
 
     session.append(&Message::User("what came before".into()));
     session.append(&Message::Agent {
@@ -31,6 +26,16 @@ fn earlier(sample: &Sample) -> SessionId {
     // Dropping is what waits for the queue, so the log is complete after it.
     drop(session);
     id
+}
+
+/// Which session a log belongs to, read back from what it is called.
+fn named(session: &Session) -> SessionId {
+    session
+        .path()
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| SessionId::from_str(stem).ok())
+        .expect("the log is named by its session")
 }
 
 /// The one this run is on, and what it was recording to before.
@@ -168,5 +173,75 @@ fn what_the_last_session_allowed_is_asked_about_again() {
     assert_eq!(
         scripted.says.asked, 2,
         "the user answers the same way; what moved is the session it was for"
+    );
+}
+
+/// One answer that reports both halves of what it cost.
+fn measured() -> Script {
+    Script::new(vec![vec![
+        Delta::Carried(Carried::new(40_000)),
+        Delta::Text("done".into()),
+        Delta::Spent(Spend::new(10_000)),
+        Delta::Stopped(StopReason::Yielded),
+    ]])
+}
+
+#[test]
+fn a_session_picked_up_says_how_much_window_is_left_before_it_answers_again() {
+    // Everything the load measured belongs to this process, and a transcript
+    // read off a disk arrives with none of it — so a session picked up used to
+    // come back estimating, with the row saying nothing until the next answer
+    // reported. The log records what the last request carried for exactly this.
+    let sample = Sample::new("runner-picked-up-carrying");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let id = named(&session);
+    let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
+    scripted.runner.model.window = Some(200_000);
+
+    scripted.turn("go").expect("a measured turn");
+    assert_eq!(scripted.runner.left(), Some(75));
+
+    // Started, so it brings nothing back with it, and closing the recorded one
+    // is what finishes writing its log.
+    let fresh = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    drop(scripted.runner.pick_up(fresh, Transcript::new()));
+    assert_eq!(
+        scripted.runner.left(),
+        None,
+        "nothing has been measured yet"
+    );
+
+    drop(picking(&mut scripted, &sample, &id));
+
+    assert_eq!(
+        scripted.runner.left(),
+        Some(75),
+        "the session came back knowing what it had been told"
+    );
+}
+
+#[test]
+fn a_reading_taken_against_other_instructions_is_not_this_run_s_to_use() {
+    // What a request carries includes its fixed content, and the reading covers
+    // the two together. Sent under different instructions it describes neither,
+    // so the estimate stands and the next answer measures this run for itself.
+    let sample = Sample::new("runner-picked-up-elsewhere");
+    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let id = named(&session);
+    let mut scripted = Scripted::recording(measured(), Tools::new(), Verdict::Allow, session);
+    scripted.runner.model.window = Some(200_000);
+
+    scripted.turn("go").expect("a measured turn");
+
+    let fresh = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    drop(scripted.runner.pick_up(fresh, Transcript::new()));
+    scripted.runner.model.system = Some("answer only in French".into());
+
+    drop(picking(&mut scripted, &sample, &id));
+
+    assert_eq!(scripted.runner.left(), None);
+    assert!(
+        scripted.runner.load.tokens() < 1_000,
+        "nothing of the reading was taken: what came back is a few bytes of          transcript, counted at the rate a session with no report of its own uses"
     );
 }
