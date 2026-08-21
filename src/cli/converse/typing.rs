@@ -472,7 +472,6 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
-            | Pressed::Hovered { .. }
             | Pressed::Ignored => offered.is_some(),
 
             // Two things a click can land on and one round trip to tell them
@@ -1177,7 +1176,6 @@ fn meant(arrived: Pressed) -> Meant {
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
-        | Pressed::Hovered { .. }
         | Pressed::Ignored => Meant::Ignored,
     }
 }

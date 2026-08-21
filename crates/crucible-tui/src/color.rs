@@ -37,8 +37,8 @@
 //! is still legible bolder. A terminal that draws neither loses the emphasis
 //! and keeps the words, which is why nothing is ever said by weight alone.
 //!
-//! A diff is one of three kinds of thing that take the ground, and it takes it the only
-//! way that is safe: a slot painting a ground paints its ink in the same
+//! A diff is one of three kinds of thing that take the ground, and it takes it
+//! the only way that is safe: a slot painting a ground paints its ink in the same
 //! sequence, so the pair is a pair this palette chose whole and the reader's
 //! theme is never the other half of a contrast nobody checked. Which is what
 //! the bottom of the file checks about them instead — against the ground they

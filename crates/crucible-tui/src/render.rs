@@ -323,8 +323,14 @@ impl<T: Terminal> Renderer<T> {
                 && on_map(row)
                 && transcript_map::door(self.size.columns)
                     .is_some_and(|door| door.contains(&column));
-            if over != self.map_pointed {
-                self.map_pointed = over;
+            let moved = self.pointing != Some(row);
+            let crossed = over != self.map_pointed;
+            self.pointing = Some(row);
+            self.map_pointed = over;
+            if moved || crossed {
+                // One frame for both answers: main's cut-result offer is a fact
+                // about the row, while the map chip is a fact about crossing
+                // either horizontal edge inside its row.
                 self.draw()?;
             }
             return Ok(None);
@@ -388,18 +394,6 @@ impl<T: Terminal> Renderer<T> {
                 if self.taken.is_some_and(|taken| !taken.empty()) {
                     let said = self.painted.read();
                     self.copied(&said)?;
-                }
-                Ok(None)
-            }
-            // Nothing is being held, so nothing here is the selection's. What
-            // it can change is the picture — a cut result lights while the
-            // pointer is over one — and that is worked out inside the frame, so
-            // all this owes is a frame. One per row crossed rather than one per
-            // cell, and a frame that changed no row writes nothing.
-            Pressed::Hovered { row, .. } => {
-                if self.pointing != Some(row) {
-                    self.pointing = Some(row);
-                    self.draw()?;
                 }
                 Ok(None)
             }

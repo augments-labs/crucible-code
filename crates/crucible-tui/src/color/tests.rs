@@ -68,7 +68,7 @@ fn all() -> [Slot; 27] {
             Slot::Strong => 2,
             Slot::Pointed => 3,
             Slot::Quiet => 4,
-            Slot::Cut => 6,
+            Slot::Cut => 5,
             Slot::Link => 6,
             Slot::Emphasis => 7,
             Slot::Struck => 8,

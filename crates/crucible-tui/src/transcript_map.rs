@@ -3,9 +3,9 @@
 //! It owns the fixed row at the bottom of the window, below the prompt's status.
 //! At rest the row directly under the prompt status offers `transcript map` at
 //! its right edge; under the pointer the exact accent becomes the compact
-//! rectangle behind contrasting text. Clicked, the whole row becomes a
-//! track from the oldest retained line to the live edge. A drag
-//! along the track moves the transcript directly to the corresponding place, so
+//! rectangle behind contrasting text. Clicked, the whole row becomes a track
+//! from the oldest retained line to the live edge. A drag along the track moves
+//! the transcript directly to the corresponding place, so
 //! distance costs one gesture rather than enough wheel notches to cross it. The
 //! wheel remains the precise control and moves the mark with the transcript.
 //!

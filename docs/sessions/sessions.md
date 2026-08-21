@@ -40,8 +40,8 @@ The wheel moves the transcript a few rows at a time. For a long jump, use
 `transcript map →` at the bottom right, directly below the permission mode,
 model and effort. The arrow says it opens. Pointing turns the theme's exact
 accent into a compact background rectangle and switches the text to contrasting
-black or white.
-Click it and the whole bottom row becomes a map from `first` to `now`; hollow
+black or white. Click it and the whole bottom row becomes a map from `first` to
+`now`; hollow
 marks are prompts, and the filled mark is the place currently on screen.
 
 Drag anywhere along the map for an absolute jump, or click a hollow prompt mark

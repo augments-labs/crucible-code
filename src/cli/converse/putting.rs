@@ -547,7 +547,6 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
-        | Pressed::Hovered { .. }
         | Pressed::Ignored => Moved::Still,
     }
 }
