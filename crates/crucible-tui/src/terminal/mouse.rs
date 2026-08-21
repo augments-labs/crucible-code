@@ -17,10 +17,11 @@
 //!
 //! It is not any more. The transcript is crucible's, and the wheel is the way
 //! anybody reaches the part of it that is off screen, so the pointer is held for
-//! as long as a session is drawn. What the reader loses in exchange is a
-//! selection they can still make: every terminal keeps Shift as the way past a
-//! program holding the pointer, and that is the answer until this one has a
-//! selection of its own.
+//! as long as a session is drawn. The selection comes back the same way the
+//! scrolling did — crucible owns the screen, so crucible answers the drag, which
+//! is what the third sequence here asks to hear about. Shift is still the way
+//! past a program holding the pointer, and stays the answer for a reader who
+//! wants their emulator's own selection instead of this one.
 //!
 //! Holders nest, so they are counted. A session holds one for its whole length
 //! and something standing inside it may hold another, and the end of the inner
@@ -37,12 +38,16 @@ use std::io::{self, IsTerminal, Write as _};
 
 use super::raw::RawError;
 
-/// Report a button going down and coming up, and report it in the form that
-/// carries a column past 223.
-const REPORTING: &str = "\x1b[?1000h\x1b[?1006h";
+/// Report a button going down and coming up, report the pointer moving while
+/// one is held, and report all of it in the form that carries a column past 223.
+///
+/// The middle one is what a selection is made of: without it a drag arrives as
+/// a press and a release with the whole of the reader's gesture missing from
+/// between them.
+const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 
-/// The same two, off, innermost first.
-const QUIET: &str = "\x1b[?1006l\x1b[?1000l";
+/// The same three, off, innermost first.
+const QUIET: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 
 thread_local! {
     /// How many holders are alive, so that the inner one of two does not hand
@@ -212,8 +217,13 @@ mod tests {
     fn the_sequences_turn_the_same_two_modes_on_and_off() {
         // Off in the reverse order they went on, and neither list longer than
         // the other: a mode left on outlives this process.
-        assert!(REPORTING.contains("?1000h") && REPORTING.contains("?1006h"));
-        assert!(QUIET.contains("?1000l") && QUIET.contains("?1006l"));
+        for mode in ["?1000", "?1002", "?1006"] {
+            assert!(
+                REPORTING.contains(&format!("{mode}h")),
+                "{mode} never went on"
+            );
+            assert!(QUIET.contains(&format!("{mode}l")), "{mode} was left on");
+        }
     }
 
     #[test]

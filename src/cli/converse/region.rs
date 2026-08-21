@@ -107,7 +107,13 @@ pub(super) fn stand<T: Terminal, S>(
             }
         }
 
-        let arrived = pressed()?;
+        // Offered to the selection first, wherever a key is read in this
+        // session. A drag is answered there and comes back as nothing,
+        // which is what lets a reader select across a component that has
+        // never heard of one.
+        let Some(arrived) = renderer.took(pressed()?)? else {
+            continue;
+        };
 
         // The rows on screen were laid out for a window that is no longer this
         // one. Taking them back is the renderer's; saying the picture no longer

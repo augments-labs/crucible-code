@@ -47,6 +47,7 @@ mod record;
 mod render;
 mod row;
 mod running;
+mod select;
 pub mod syntax;
 mod terminal;
 mod title;

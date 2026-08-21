@@ -73,6 +73,9 @@ pub(super) fn ask<T: Terminal>(
             standing(renderer, style, asking, held.chars().count(), limited)?;
         }
 
+        // The one read in this session that is not offered to the selection
+        // first, and deliberately: what is on screen here is a secret being
+        // typed, and a drag over it would put it on a clipboard.
         let arrived = match following.take() {
             Some(arrived) => arrived,
             None => pressed()?,

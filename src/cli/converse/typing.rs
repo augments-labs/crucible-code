@@ -292,12 +292,14 @@ fn arriving<T: Terminal>(
     style: Style,
 ) -> Result<Option<Pressed>, Fatal> {
     loop {
+        // Offered to the selection first, the same as every other read in this
+        // session: a drag comes back as nothing, having already drawn itself.
         if left.count() == 0 && says.running == 0 {
-            return Ok(Some(pressed()?));
+            return Ok(renderer.took(pressed()?)?);
         }
 
         if waiting(BEAT)? {
-            return Ok(Some(pressed()?));
+            return Ok(renderer.took(pressed()?)?);
         }
 
         let ended = left.reap();
@@ -417,9 +419,17 @@ pub(crate) fn ask<T: Terminal>(
             // and has just been taken back. Ctrl+Q among them: between turns
             // nothing is queued, so the queue view has nothing to show — the key
             // is the panel's while a turn runs, and the panel is the turn's.
-            Pressed::Escape | Pressed::Explain | Pressed::Queue | Pressed::Ignored => {
-                offered.is_some()
-            }
+            // The pointer moving under a held button and the button coming up
+            // again among them: both belong to the selection, which was
+            // offered every press before this one saw it, so neither reaches
+            // here. Named all the same — a variant nothing decides about is
+            // one that will arrive undecided the day something changes.
+            Pressed::Escape
+            | Pressed::Explain
+            | Pressed::Queue
+            | Pressed::Dragged { .. }
+            | Pressed::Released { .. }
+            | Pressed::Ignored => offered.is_some(),
 
             // Two things a click can land on and one round trip to tell them
             // apart. On the line it is the move the arrows make one place at a
@@ -712,7 +722,11 @@ pub(super) fn during<T: Terminal>(
     while following.is_some() || waiting(Duration::ZERO)? {
         let arrived = match following.take() {
             Some(arrived) => arrived,
-            None => pressed()?,
+            None => match renderer.took(pressed()?)? {
+                Some(arrived) => arrived,
+                // The selection answered it, and drew whatever changed.
+                None => continue,
+            },
         };
 
         // Whatever arrived, the offer to leave was made to the key after the
@@ -1105,9 +1119,15 @@ fn meant(arrived: Pressed) -> Meant {
         // The arrows for a plainer reason — they walk a view that is not
         // standing, and a key that means nothing until Ctrl+O has been pressed
         // means nothing before it.
-        Pressed::Cycle | Pressed::Explain | Pressed::Up | Pressed::Down | Pressed::Ignored => {
-            Meant::Ignored
-        }
+        // The two halves of a drag among them, for the reason the box gives:
+        // the selection was offered every press first, so neither arrives.
+        Pressed::Cycle
+        | Pressed::Explain
+        | Pressed::Up
+        | Pressed::Down
+        | Pressed::Dragged { .. }
+        | Pressed::Released { .. }
+        | Pressed::Ignored => Meant::Ignored,
     }
 }
 

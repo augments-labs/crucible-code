@@ -134,6 +134,29 @@ pub enum Pressed {
         /// How many columns across it.
         column: usize,
     },
+    /// The pointer moved to somewhere on the screen with a button still down.
+    ///
+    /// Where a drag is reported from, and so where a selection grows. Its own
+    /// variant rather than a second [`Pressed::Clicked`]: the button did not go
+    /// down here, and a loop that answers a click by placing a caret would
+    /// place one under the pointer for every row it crossed.
+    Dragged {
+        /// How many rows down the screen.
+        row: usize,
+        /// How many columns across it.
+        column: usize,
+    },
+    /// The button came up somewhere on the screen.
+    ///
+    /// The end of whatever the press began, which is the moment a selection is
+    /// finished and is worth putting on a clipboard. A press that never moved
+    /// ends here too, and ends having covered nothing.
+    Released {
+        /// How many rows down the screen.
+        row: usize,
+        /// How many columns across it.
+        column: usize,
+    },
     /// The window changed size, so whatever is live was laid out for a width
     /// the terminal no longer has.
     Resized,
@@ -291,6 +314,11 @@ fn meaning(event: Event) -> Pressed {
 /// it is paste on this platform, and answering it would take that away and put
 /// a cursor move in its place. Bracketed, that paste arrives as a paste.
 ///
+/// A press, the pointer moving under it, and the button coming up are three
+/// answers rather than one, because a drag is all three and a click is the two
+/// ends with nothing between them. Which of those a loop acts on is not decided
+/// here either.
+///
 /// The wheel is reported as itself rather than as an arrow. A terminal
 /// forwarding buttons is not scrolling with them, so for as long as reporting
 /// is held the wheel is crucible's to answer — and what it is reached for is
@@ -298,6 +326,14 @@ fn meaning(event: Event) -> Pressed {
 fn clicked(mouse: MouseEvent) -> Pressed {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => Pressed::Clicked {
+            row: mouse.row as usize,
+            column: mouse.column as usize,
+        },
+        MouseEventKind::Drag(MouseButton::Left | MouseButton::Right) => Pressed::Dragged {
+            row: mouse.row as usize,
+            column: mouse.column as usize,
+        },
+        MouseEventKind::Up(MouseButton::Left | MouseButton::Right) => Pressed::Released {
             row: mouse.row as usize,
             column: mouse.column as usize,
         },
@@ -640,21 +676,38 @@ mod tests {
     }
 
     #[test]
-    fn a_button_going_down_is_where_it_went_down_and_nothing_else_is() {
-        // Either button places the caret; the release would answer the same
-        // click twice, and the middle one is the platform's paste.
+    fn a_button_is_read_the_whole_way_down_across_and_up_again() {
+        // Three arrivals and one gesture: a drag is a press, motion while the
+        // button is held, and a release, and a selection needs all three to
+        // know where it opened, how far it has reached and when to stop
+        // following the pointer.
         for button in [MouseButton::Left, MouseButton::Right] {
             assert_eq!(
                 meaning(pointer(MouseEventKind::Down(button))),
                 Pressed::Clicked { row: 3, column: 7 },
                 "{button:?}"
             );
+            assert_eq!(
+                meaning(pointer(MouseEventKind::Drag(button))),
+                Pressed::Dragged { row: 3, column: 7 },
+                "{button:?}"
+            );
+            assert_eq!(
+                meaning(pointer(MouseEventKind::Up(button))),
+                Pressed::Released { row: 3, column: 7 },
+                "{button:?}"
+            );
         }
+    }
 
+    #[test]
+    fn the_middle_button_and_a_pointer_nobody_is_holding_are_not_a_gesture() {
+        // The middle button is the platform's own paste, and motion with
+        // nothing held is a pointer crossing the window on its way somewhere.
         for ignored in [
             MouseEventKind::Down(MouseButton::Middle),
-            MouseEventKind::Up(MouseButton::Left),
-            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Middle),
+            MouseEventKind::Drag(MouseButton::Middle),
             MouseEventKind::Moved,
         ] {
             assert_eq!(meaning(pointer(ignored)), Pressed::Ignored, "{ignored:?}");

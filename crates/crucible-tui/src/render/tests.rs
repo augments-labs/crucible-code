@@ -745,3 +745,137 @@ fn a_redirected_run_asks_for_no_clipboard_at_all() {
     assert!(!render.copied("hello").unwrap());
     assert_eq!(render.terminal.written(), "");
 }
+
+// What a drag over the window takes.
+
+/// The bytes that would ask a terminal to put `text` on the clipboard.
+fn onto_the_clipboard(text: &str) -> String {
+    crate::clipboard::copying(text).expect("the sequence was refused")
+}
+
+/// A drag from one place on the window to another, and the bytes it wrote.
+fn drag(drawn: &mut Drawn, from: (usize, usize), to: (usize, usize)) -> String {
+    drawn
+        .took(Pressed::Clicked {
+            row: from.0,
+            column: from.1,
+        })
+        .unwrap();
+    drawn
+        .took(Pressed::Dragged {
+            row: to.0,
+            column: to.1,
+        })
+        .unwrap();
+    drawn.take();
+    drawn
+        .took(Pressed::Released {
+            row: to.0,
+            column: to.1,
+        })
+        .unwrap();
+    drawn.take()
+}
+
+#[test]
+fn a_drag_across_the_transcript_puts_what_it_covered_on_the_clipboard() {
+    // The whole gesture, end to end: where it opened, how far it reached, and
+    // the text that came back off the rows it covered rather than off the
+    // record those rows were folded from.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.commit("first line").unwrap();
+    drawn.commit("second line").unwrap();
+
+    let wrote = drag(&mut drawn, (0, 6), (1, 5));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard("line\nsecond")),
+        "{wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_takes_what_it_covers_wherever_on_the_window_that_is() {
+    // The band the row belongs to is not asked. A reader dragging over their
+    // own prompt gets their own prompt, which is the answer for the one place
+    // the record could not have given it.
+    let mut drawn = Drawn::new(40, 10);
+    let (rows, caret) = boxed();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+
+    let wrote = drag(&mut drawn, (8, 0), (8, 5));
+
+    assert!(wrote.contains(&onto_the_clipboard("│ ›  │")), "{wrote:?}");
+}
+
+#[test]
+fn a_drag_is_answered_here_and_the_loop_underneath_never_hears_it() {
+    // A drag that reached an input loop would be read as whatever that loop
+    // makes of a click — a caret moved, a cut result opened — once per row the
+    // pointer crossed.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.commit("a line").unwrap();
+
+    let opened = Pressed::Clicked { row: 0, column: 0 };
+    assert_eq!(drawn.took(opened.clone()).unwrap(), Some(opened));
+    assert_eq!(
+        drawn.took(Pressed::Dragged { row: 0, column: 4 }).unwrap(),
+        None
+    );
+    assert_eq!(
+        drawn.took(Pressed::Released { row: 0, column: 4 }).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_press_that_never_moved_reaches_the_loop_and_copies_nothing() {
+    // Clicking is how the caret is placed and how a cut result is opened, and
+    // it goes on being that.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.commit("a line").unwrap();
+    drawn.take();
+
+    let opened = Pressed::Clicked { row: 0, column: 2 };
+    assert_eq!(drawn.took(opened.clone()).unwrap(), Some(opened));
+    drawn.took(Pressed::Released { row: 0, column: 2 }).unwrap();
+
+    assert!(!drawn.take().contains("\x1b]52;"));
+}
+
+#[test]
+fn a_scroll_lets_go_of_a_selection_rather_than_holding_it_over_other_words() {
+    // The two ends are screen rows. Moving the picture under them without
+    // dropping them leaves a highlight over text nobody dragged over, and a
+    // release would copy it.
+    let mut drawn = Drawn::new(40, 8);
+    for line in 0..40 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 1, column: 4 }).unwrap();
+    assert!(drawn.scrolled(-3).unwrap());
+    drawn.take();
+    drawn.took(Pressed::Released { row: 1, column: 4 }).unwrap();
+
+    assert!(!drawn.take().contains("\x1b]52;"));
+}
+
+#[test]
+fn a_redirected_run_hands_every_press_straight_on() {
+    // Nothing is drawn there, so there is nothing under the pointer to take,
+    // and the loop underneath is the only thing that could still make sense of
+    // a click.
+    let mut drawn = Drawn {
+        render: Renderer::new(Recording::redirected(40, 10)),
+    };
+
+    for arrived in [
+        Pressed::Clicked { row: 0, column: 0 },
+        Pressed::Dragged { row: 1, column: 4 },
+        Pressed::Released { row: 1, column: 4 },
+    ] {
+        assert_eq!(drawn.took(arrived.clone()).unwrap(), Some(arrived));
+    }
+}
