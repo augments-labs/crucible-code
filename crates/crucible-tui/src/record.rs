@@ -428,6 +428,25 @@ impl Record {
         None
     }
 
+    /// Whether the line numbered `at` carries a span in `slot`.
+    ///
+    /// Numbered as [`Record::at`] hands them back, which is what makes the two
+    /// a pair: one says which line a window row is showing and this says what
+    /// kind of line it is. Asked of the line rather than of the display row it
+    /// folded to, so a cut result long enough to wrap is one cut result on
+    /// every row of itself.
+    ///
+    /// `false` for a line the record has since dropped, which is the honest
+    /// answer: what is no longer held is not on screen either.
+    pub(crate) fn wears(&self, at: usize, slot: Slot) -> bool {
+        let Some(line) = at.checked_sub(self.gone).and_then(|at| self.lines.get(at)) else {
+            return false;
+        };
+
+        let (Line::Flowed(row) | Line::Set(row)) = line;
+        row.kinds().any(|kind| kind == slot)
+    }
+
     /// Move the band `by` display rows, and say whether it moved.
     ///
     /// Negative is towards the head of the session. A band that was following

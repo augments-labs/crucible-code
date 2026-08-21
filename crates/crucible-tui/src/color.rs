@@ -84,6 +84,19 @@ pub enum Slot {
     Strong,
     /// Present but secondary — a hint, a timestamp, a label.
     Quiet,
+    /// What a result the transcript cut short said, on the row offering the
+    /// rest of it.
+    ///
+    /// The one slot whose colour is a fact about the pointer rather than about
+    /// the words. At rest it is the quiet, because a row of the transcript is a
+    /// row of the transcript. With the pointer on any one of them it is the
+    /// reader's own foreground on *all* of them at once, because the question
+    /// a pointer asks is about the screen rather than about the row it happens
+    /// to be over: what here can be opened.
+    ///
+    /// No ground either way. A ground under one row would answer the other
+    /// question — which row is this — and the reader is not asking it.
+    Cut,
     /// The words a link was written under.
     Link,
     /// A phrase the answer leant on rather than raised its voice for.
@@ -520,7 +533,13 @@ impl Slot {
             Self::Plain => NONE,
             Self::Accent => tones.accent,
             Self::Strong => tones.strong,
-            Self::Quiet => QUIET,
+            // A cut result at rest is a quiet row of the transcript and is
+            // worth exactly what one is. [`Palette::open`] answers that slot
+            // before any table is asked, so nothing arrives here wearing it --
+            // it is named beside the slot it resolves to rather than left to a
+            // fallthrough, so a table gaining a say in it would be an edit to
+            // this line.
+            Self::Quiet | Self::Cut => QUIET,
             // Slanted, and nothing else -- the same reasoning as the weight
             // above it, one step quieter. A terminal without italics ignores
             // the attribute and the phrase reads as the prose around it, which
@@ -741,6 +760,14 @@ pub struct Palette {
     /// syntax theme is loaded at all — a session that never shows code pays for
     /// none of this.
     code: Code,
+    /// Whether the pointer is resting on a result the transcript cut short.
+    ///
+    /// Carried here rather than decided by whoever built the row, because what
+    /// it changes is true of every such row at once and the palette is the one
+    /// thing all of their colours pass through. A row keeps saying it is a cut
+    /// result and stops having an opinion about how loudly; the frame settles
+    /// that, once, for the whole screen.
+    pointed: bool,
 }
 
 /// What a syntax theme says the six code slots are worth, at this rung.
@@ -871,6 +898,7 @@ impl Palette {
             band,
             band_mark,
             code: Code::default(),
+            pointed: false,
         }
     }
 
@@ -1022,6 +1050,20 @@ impl Palette {
         }
     }
 
+    /// The same palette, with every cut result in the reader's own foreground.
+    ///
+    /// What a frame says when the pointer is on one of them. Taken by value and
+    /// handed back for the reason the two builders above are: this is what one
+    /// frame is painted from rather than a mode the renderer enters, so there is
+    /// no state to put back when the pointer moves off.
+    #[must_use]
+    pub fn pointing(self, at: bool) -> Self {
+        Self {
+            pointed: at,
+            ..self
+        }
+    }
+
     /// A palette that writes no escape bytes at all.
     #[must_use]
     pub fn plain() -> Self {
@@ -1032,12 +1074,24 @@ impl Palette {
             band: None,
             band_mark: None,
             code: Code::default(),
+            pointed: false,
         }
     }
 
     /// The sequence that starts `slot`, or nothing when there is no colour.
     #[must_use]
     pub fn open(&self, slot: Slot) -> Worn {
+        // The one slot that is a question about the pointer rather than a
+        // colour, answered before any table is asked. Answered here because
+        // here is where every row's colour passes, which is what makes one
+        // pointer light every cut result on the screen and not just the row
+        // it is over.
+        let slot = match slot {
+            Slot::Cut if self.pointed => Slot::Plain,
+            Slot::Cut => Slot::Quiet,
+            slot => slot,
+        };
+
         if self.depth == Depth::Off {
             return Worn::Chosen("");
         }

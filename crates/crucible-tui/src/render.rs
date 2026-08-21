@@ -201,6 +201,14 @@ pub struct Renderer<T: Terminal> {
     /// under it — a scroll, a resize — because a selection that stayed put
     /// while its words moved is a highlight over the wrong text.
     taken: Option<Taken>,
+    /// Which window row the pointer was last reported on.
+    ///
+    /// A row rather than what is on it, and kept across everything that moves
+    /// the picture: what the pointer is over is worked out again for every
+    /// frame, from this and from where the record has got to. A pointer resting
+    /// still while an answer scrolls under it is over whatever is under it now,
+    /// which is what a reader watching the screen sees.
+    pointing: Option<usize>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -231,6 +239,7 @@ impl<T: Terminal> Renderer<T> {
             glyphs: Glyphs::default(),
             notch: NOTCH,
             taken: None,
+            pointing: None,
         }
     }
 
@@ -282,8 +291,42 @@ impl<T: Terminal> Renderer<T> {
                 }
                 Ok(None)
             }
+            // Nothing is being held, so nothing here is the selection's. What
+            // it can change is the picture — a cut result lights while the
+            // pointer is over one — and that is worked out inside the frame, so
+            // all this owes is a frame. One per row crossed rather than one per
+            // cell, and a frame that changed no row writes nothing.
+            Pressed::Hovered { row, .. } => {
+                if self.pointing != Some(row) {
+                    self.pointing = Some(row);
+                    self.draw()?;
+                }
+                Ok(None)
+            }
             _ => Ok(Some(arrived)),
         }
+    }
+
+    /// Whether the pointer is resting on a result the transcript cut short.
+    ///
+    /// Read per frame rather than remembered, which is what keeps it true while
+    /// the picture moves under a pointer that has not: an answer arriving
+    /// scrolls a cut result out from under it, and the next frame says so
+    /// without anything having to notice.
+    fn pointed(&self) -> bool {
+        let Some(row) = self.pointing else {
+            return false;
+        };
+
+        let bands = self.bands();
+
+        if !bands.transcript.contains(&row) {
+            return false;
+        }
+
+        self.record
+            .at(row - bands.transcript.start, bands.transcript.len())
+            .is_some_and(|line| self.record.wears(line, Slot::Cut))
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -1002,19 +1045,23 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
+        // Settled once for the whole frame: what a cut result is worth is a
+        // fact about the pointer rather than about the row, so every row on
+        // screen is painted from the same answer to it.
+        let palette = self.palette.pointing(self.pointed());
         self.painted.selects(self.taken);
         self.painted.open(self.size.rows, self.size.columns);
 
         if let Some(crowned) = &self.crowned {
             for at in bands.head.start..bands.head.end {
-                self.painted.paint(at, crowned, &self.palette);
+                self.painted.paint(at, crowned, &palette);
             }
         }
 
         let showing = self.record.view(bands.transcript.len());
         for at in bands.transcript.start..bands.transcript.end {
             match showing.get(at - bands.transcript.start) {
-                Some(row) => self.painted.paint(at, row, &self.palette),
+                Some(row) => self.painted.paint(at, row, &palette),
                 // Below what there is to show. A session that has just started
                 // reads from the top of the window down, as a terminal's own
                 // scrollback would.

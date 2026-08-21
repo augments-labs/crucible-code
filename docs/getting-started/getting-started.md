@@ -195,6 +195,11 @@ not take you away from it.
 A click puts the cursor where you point in the box, marks a row of a list, or
 opens a result the transcript cut short.
 
+Resting the pointer on one of those results lights every one of them on screen
+at the same moment, in your own foreground rather than the quiet the rest of the
+transcript is in — the question a pointer asks is what here can be opened, and
+that is about the screen rather than the row you happen to be over.
+
 A drag selects, and crucible is what answers it: the rows you cover light up as
 you go, and letting go puts them on your clipboard. It runs over the whole
 window rather than over the transcript alone — an answer, the row above the box

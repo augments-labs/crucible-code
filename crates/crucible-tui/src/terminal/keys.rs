@@ -146,6 +146,21 @@ pub enum Pressed {
         /// How many columns across it.
         column: usize,
     },
+    /// The pointer moved to somewhere on the screen with no button held.
+    ///
+    /// Its own variant rather than a [`Pressed::Dragged`] with nothing behind
+    /// it, because nothing is being dragged: this is the pointer merely
+    /// crossing the window, and what it changes is what the screen offers
+    /// rather than what the reader has hold of.
+    ///
+    /// A terminal sends one of these per cell, so whoever reads them owes them
+    /// a cheap answer.
+    Hovered {
+        /// How many rows down the screen.
+        row: usize,
+        /// How many columns across it.
+        column: usize,
+    },
     /// The button came up somewhere on the screen.
     ///
     /// The end of whatever the press began, which is the moment a selection is
@@ -334,6 +349,10 @@ fn clicked(mouse: MouseEvent) -> Pressed {
             column: mouse.column as usize,
         },
         MouseEventKind::Up(MouseButton::Left | MouseButton::Right) => Pressed::Released {
+            row: mouse.row as usize,
+            column: mouse.column as usize,
+        },
+        MouseEventKind::Moved => Pressed::Hovered {
             row: mouse.row as usize,
             column: mouse.column as usize,
         },
@@ -756,12 +775,14 @@ mod tests {
     }
 
     #[test]
-    fn a_pointer_nobody_is_holding_means_nothing_here() {
-        // Not asked for either — the mode that reports it is not turned on. A
-        // terminal sending it anyway is answered the same way, because a row
-        // says what a click on it would answer by how it is written, and where
-        // the pointer is changes none of that.
-        assert_eq!(meaning(pointer(MouseEventKind::Moved)), Pressed::Ignored);
+    fn a_pointer_nobody_is_holding_is_read_as_where_it_is() {
+        // Told apart from a drag, which is the same motion with a button down.
+        // A loop that read this one as a drag would grow a selection under a
+        // reader who was only moving the pointer across the window.
+        assert_eq!(
+            meaning(pointer(MouseEventKind::Moved)),
+            Pressed::Hovered { row: 3, column: 7 }
+        );
     }
 
     #[test]

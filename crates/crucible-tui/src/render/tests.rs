@@ -879,3 +879,110 @@ fn a_redirected_run_hands_every_press_straight_on() {
         assert_eq!(drawn.took(arrived.clone()).unwrap(), Some(arrived));
     }
 }
+
+// A pointer resting on a result the transcript cut short.
+
+/// A row of the transcript offering more of a result than it is showing.
+fn cut(said: &str) -> Row {
+    Row::new().then(Slot::Cut, said)
+}
+
+/// What that row's words look like on the wire while nothing points at them.
+///
+/// The quiet, which is what every subdued row of the transcript wears — the
+/// point being that at rest a cut result is not told apart from one.
+fn quietly(said: &str) -> String {
+    format!(
+        "{}{said}{}",
+        colourful().open(Slot::Quiet),
+        colourful().close()
+    )
+}
+
+#[test]
+fn a_pointer_on_one_cut_result_lights_every_one_of_them() {
+    // The question a pointer asks is about the screen rather than about the row
+    // it happens to be over: what here has more behind it. So the answer is
+    // every cut result at once, including the ones the pointer is nowhere near.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.wears(colourful());
+    drawn.present(&[cut("first")]).unwrap();
+    drawn.commit("a line with nothing cut from it").unwrap();
+    drawn.present(&[cut("second")]).unwrap();
+
+    // Both of them subdued, drawn before a pointer was ever heard of.
+    let resting = drawn.take();
+    assert!(resting.contains(&quietly("first")), "{resting:?}");
+    assert!(resting.contains(&quietly("second")), "{resting:?}");
+
+    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
+
+    let frame = drawn.take();
+    assert!(frame.contains("first"), "{frame:?}");
+    assert!(frame.contains("second"), "{frame:?}");
+    assert!(!frame.contains(&quietly("first")), "{frame:?}");
+    assert!(!frame.contains(&quietly("second")), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_that_moved_off_puts_every_cut_result_back_in_the_quiet() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.wears(colourful());
+    drawn.present(&[cut("first")]).unwrap();
+    drawn.commit("a line with nothing cut from it").unwrap();
+    drawn.present(&[cut("second")]).unwrap();
+    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: 1, column: 0 }).unwrap();
+
+    let frame = drawn.take();
+    assert!(frame.contains(&quietly("first")), "{frame:?}");
+    assert!(frame.contains(&quietly("second")), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_that_stayed_on_the_row_it_was_on_costs_nothing() {
+    // A terminal reporting all motion sends one of these per cell crossed, and
+    // what the frame is drawn from is the row. Answering each of them with a
+    // frame would be a redraw per cell for a picture that cannot have changed.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.wears(colourful());
+    drawn.present(&[cut("first")]).unwrap();
+    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
+    drawn.take();
+
+    assert_eq!(
+        drawn.took(Pressed::Hovered { row: 0, column: 9 }).unwrap(),
+        None
+    );
+
+    assert_eq!(drawn.take(), "");
+}
+
+#[test]
+fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
+    // What is under the pointer is worked out for every frame rather than
+    // remembered, which is what keeps it right while an answer arrives under a
+    // pointer nobody has touched: the row stays where it was and the transcript
+    // does not.
+    let mut drawn = Drawn::new(40, 4);
+    drawn.wears(colourful());
+    drawn.commit("one").unwrap();
+    drawn.present(&[cut("alpha")]).unwrap();
+    drawn.commit("two").unwrap();
+    drawn.commit("three").unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: 1, column: 0 }).unwrap();
+    let frame = drawn.take();
+    assert!(frame.contains("alpha"), "{frame:?}");
+    assert!(!frame.contains(&quietly("alpha")), "{frame:?}");
+
+    // One more line, and the row the pointer is on is one the transcript said
+    // in full.
+    drawn.commit("four").unwrap();
+
+    let frame = drawn.take();
+    assert!(frame.contains(&quietly("alpha")), "{frame:?}");
+}

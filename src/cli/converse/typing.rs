@@ -467,6 +467,7 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Explain
             | Pressed::Queue
             | Pressed::Dragged { .. }
+            | Pressed::Hovered { .. }
             | Pressed::Released { .. }
             | Pressed::Ignored => offered.is_some(),
 
@@ -1167,6 +1168,7 @@ fn meant(arrived: Pressed) -> Meant {
         | Pressed::Up
         | Pressed::Down
         | Pressed::Dragged { .. }
+        | Pressed::Hovered { .. }
         | Pressed::Released { .. }
         | Pressed::Ignored => Meant::Ignored,
     }

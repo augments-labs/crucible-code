@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 25] {
+fn all() -> [Slot; 26] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -67,27 +67,28 @@ fn all() -> [Slot; 25] {
             Slot::Accent => 1,
             Slot::Strong => 2,
             Slot::Quiet => 3,
-            Slot::Link => 4,
-            Slot::Emphasis => 5,
-            Slot::Struck => 6,
-            Slot::AllowEdits => 7,
-            Slot::FullAccess => 8,
-            Slot::Doing => 9,
-            Slot::DoingMark => 10,
-            Slot::Done => 11,
-            Slot::DoneMark => 12,
-            Slot::Removed => 13,
-            Slot::RemovedNumber => 14,
-            Slot::Added => 15,
-            Slot::AddedNumber => 16,
-            Slot::Prompt => 17,
-            Slot::PromptMark => 18,
-            Slot::Comment => 19,
-            Slot::Keyword => 20,
-            Slot::Str => 21,
-            Slot::Number => 22,
-            Slot::Name => 23,
-            Slot::Operator => 24,
+            Slot::Cut => 4,
+            Slot::Link => 5,
+            Slot::Emphasis => 6,
+            Slot::Struck => 7,
+            Slot::AllowEdits => 8,
+            Slot::FullAccess => 9,
+            Slot::Doing => 10,
+            Slot::DoingMark => 11,
+            Slot::Done => 12,
+            Slot::DoneMark => 13,
+            Slot::Removed => 14,
+            Slot::RemovedNumber => 15,
+            Slot::Added => 16,
+            Slot::AddedNumber => 17,
+            Slot::Prompt => 18,
+            Slot::PromptMark => 19,
+            Slot::Comment => 20,
+            Slot::Keyword => 21,
+            Slot::Str => 22,
+            Slot::Number => 23,
+            Slot::Name => 24,
+            Slot::Operator => 25,
         }
     }
 
@@ -96,6 +97,7 @@ fn all() -> [Slot; 25] {
         Slot::Accent,
         Slot::Strong,
         Slot::Quiet,
+        Slot::Cut,
         Slot::Link,
         Slot::Emphasis,
         Slot::Struck,
@@ -144,6 +146,7 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
         code: Code::default(),
         band,
         band_mark,
+        pointed: false,
     }
 }
 
@@ -403,7 +406,9 @@ fn the_two_diff_grounds_are_told_apart_by_hue_and_not_only_by_the_sign() {
 fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // So the check above is known to have skipped only what it should. Plain is
     // the reader's own foreground and Quiet is their theme's answer to "subdued
-    // on this ground", which is the one judgement worth deferring to. The other
+    // on this ground", which is the one judgement worth deferring to. Cut is
+    // whichever of those two the pointer has made it, so it has no hue of its
+    // own at either end. The other
     // four are that same foreground with an attribute on it -- weight, a slant,
     // a line under it, and a line through it -- so what they are legible
     // against is whatever Plain was. The band takes a ground and writes no ink
@@ -431,6 +436,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
         [
             Slot::Plain,
             Slot::Quiet,
+            Slot::Cut,
             Slot::Link,
             Slot::Emphasis,
             Slot::Struck,
@@ -445,6 +451,31 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Operator,
         ]
     );
+}
+
+#[test]
+fn a_cut_result_is_the_quiet_until_the_pointer_is_on_one() {
+    // The whole of the slot in one place: it has no colour of its own, it has
+    // the pointer's. At rest it is what every other subdued row of the
+    // transcript is, and under the pointer it is the reader's own foreground —
+    // which is to say the palette hands back what it would have handed back for
+    // Quiet and for Plain, rather than a third thing somebody would have to
+    // keep in step with them. The ground comes with that for nothing: neither
+    // of those two takes one, so neither end of this can.
+    for depth in [Depth::Exact, Depth::Indexed, Depth::Basic, Depth::Off] {
+        let palette = at(depth);
+
+        assert_eq!(
+            palette.open(Slot::Cut).as_str(),
+            palette.open(Slot::Quiet).as_str(),
+            "{depth:?}, with the pointer elsewhere"
+        );
+        assert_eq!(
+            palette.pointing(true).open(Slot::Cut).as_str(),
+            palette.open(Slot::Plain).as_str(),
+            "{depth:?}, with the pointer on one"
+        );
+    }
 }
 
 #[test]

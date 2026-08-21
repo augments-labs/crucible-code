@@ -1,9 +1,10 @@
 //! Where the pointer was clicked, for a terminal that was asked to say.
 //!
-//! A terminal does not report the mouse unless it is asked to. Asking is three
+//! A terminal does not report the mouse unless it is asked to. Asking is four
 //! escape sequences: one that turns button reporting on, one that adds motion
-//! under a held button to it, and one that asks for the answers in the form
-//! that survives a window wider than 223 columns.
+//! under a held button to it, one that adds motion under no button at all, and
+//! one that asks for the answers in the form that survives a window wider than
+//! 223 columns.
 //!
 //! Reporting is state on the terminal in the same way [`Raw`] mode is, so it is
 //! held by a guard and handed back on the way out — including the way out
@@ -24,11 +25,15 @@
 //! past a program holding the pointer, and stays the answer for a reader who
 //! wants their emulator's own selection instead of this one.
 //!
-//! Motion under *no* button is not asked for. Which rows answer a click is said
-//! by how those rows are written — a result the transcript cut short is drawn
-//! in the reader's own foreground and one it did not is not — so nothing here
-//! reads a pointer that is merely crossing the window, and a mode that sends an
-//! event per cell would be sending them to be dropped.
+//! Motion under *no* button is asked for as well, and it is the dearest of the
+//! four: a terminal doing all-motion sends an event for every cell the pointer
+//! crosses. What buys it is the one thing on screen whose picture is a fact
+//! about the pointer — a result the transcript cut short rests in the quiet and
+//! takes the reader's own foreground while the pointer is over one, so that
+//! everything on screen with more behind it says so at the same moment. The
+//! price is paid where the events are read rather than here: one that lands on
+//! the row the last one did is dropped without a frame, and a frame that
+//! changes no row writes nothing.
 //!
 //! Holders nest, so they are counted. A session holds one for its whole length
 //! and something standing inside it may hold another, and the end of the inner
@@ -45,23 +50,20 @@ use std::io::{self, IsTerminal, Write as _};
 
 use super::raw::RawError;
 
-/// Report a button going down and coming up, report the pointer moving while
-/// one is held, and report all of it in the form that carries a column past
-/// 223.
+/// Report a button going down and coming up, report the pointer moving whether
+/// or not one is held, and report all of it in the form that carries a column
+/// past 223.
 ///
 /// Motion under a held button is what a selection is made of: without it a drag
 /// arrives as a press and a release with the whole of the reader's gesture
 /// missing from between them.
 ///
-/// Motion under *no* button is not asked for. A terminal doing all-motion sends
-/// an event for every cell the pointer crosses, and nothing here reads one:
-/// what a click would answer is said by how the row is written rather than by
-/// where the pointer happens to be, so every one of those events would arrive
-/// on the render path to be thrown away.
-const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+/// Motion under no button is what tells the screen where the pointer is at all,
+/// and the module doc above says what that is spent on.
+const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
 
-/// The same three, off, innermost first.
-const QUIET: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+/// The same four, off, innermost first.
+const QUIET: &str = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 
 thread_local! {
     /// How many holders are alive, so that the inner one of two does not hand
@@ -228,10 +230,10 @@ mod tests {
     }
 
     #[test]
-    fn the_sequences_turn_the_same_two_modes_on_and_off() {
+    fn the_sequences_turn_the_same_modes_on_and_off() {
         // Off in the reverse order they went on, and neither list longer than
         // the other: a mode left on outlives this process.
-        for mode in ["?1000", "?1002", "?1006"] {
+        for mode in ["?1000", "?1002", "?1003", "?1006"] {
             assert!(
                 REPORTING.contains(&format!("{mode}h")),
                 "{mode} never went on"
