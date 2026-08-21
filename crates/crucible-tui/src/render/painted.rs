@@ -24,12 +24,6 @@
 //! selection that grew by a row writes the two rows it changed and no others —
 //! a highlight is part of the picture, and a picture that changed is a row
 //! worth writing.
-//!
-//! The row under the pointer is lit the same way and for the same reasons, and
-//! it is one row rather than a range. Which row that is is the caller's to say:
-//! this knows how to light a row and nothing at all about what makes one worth
-//! lighting. A selection wins where the two meet, because one of them is what
-//! the reader is doing and the other is where they happen to be pointing.
 
 use crate::color::Palette;
 use crate::row::Row;
@@ -50,8 +44,6 @@ pub(crate) struct Painted {
     lit: String,
     /// What the reader has selected, if anything.
     taken: Option<Taken>,
-    /// The row under the pointer that is worth lighting, if any.
-    under: Option<usize>,
     /// How wide the window is, which is how far a covered row reaches.
     columns: usize,
     /// Whether this frame has written a row.
@@ -82,11 +74,6 @@ impl Painted {
     /// Draws the rows `taken` covers as selected, until told otherwise.
     pub(crate) fn selects(&mut self, taken: Option<Taken>) {
         self.taken = taken;
-    }
-
-    /// Lights `at` whole, or nothing.
-    pub(crate) fn hovers(&mut self, at: Option<usize>) {
-        self.under = at;
     }
 
     /// The text of what is selected, read back off the screen.
@@ -144,12 +131,7 @@ impl Painted {
 
     /// Whichever of the three above ends up writing a row, selection and all.
     fn show(&mut self, at: usize, painted: &str) {
-        let covered = self
-            .taken
-            .and_then(|taken| taken.covers(at, self.columns))
-            .or_else(|| (self.under == Some(at)).then_some(0..self.columns));
-
-        let Some(covered) = covered else {
+        let Some(covered) = self.taken.and_then(|taken| taken.covers(at, self.columns)) else {
             self.set(at, painted);
             return;
         };
@@ -212,7 +194,6 @@ mod tests {
     use crate::color::Slot;
 
     use super::*;
-    use crate::select::LIT;
 
     /// A window wide enough that no test here is about its edge.
     const WIDE: usize = 40;
@@ -398,67 +379,5 @@ mod tests {
         painted.paint(0, &Row::plain("untouched"), &plain());
 
         assert_eq!(painted.read(), String::new());
-    }
-
-    #[test]
-    fn a_hovered_row_is_lit_whole_and_the_others_are_not() {
-        // Whole rather than from a column, which is the difference between a
-        // row somebody is pointing at and one they are dragging across: there
-        // is no place along it the light began.
-        let mut painted = Painted::new();
-        painted.open(2, WIDE);
-        for (at, text) in ["one", "two"].iter().enumerate() {
-            painted.paint(at, &Row::plain(*text), &plain());
-        }
-        painted.sealed();
-
-        painted.hovers(Some(1));
-        painted.open(2, WIDE);
-        for (at, text) in ["one", "two"].iter().enumerate() {
-            painted.paint(at, &Row::plain(*text), &plain());
-        }
-
-        let written = painted.sealed();
-        assert!(
-            written.contains(&format!("{LIT}two")),
-            "the row under the pointer was not lit: {written:?}"
-        );
-        assert!(
-            !written.contains("one"),
-            "a row nobody pointed at was written: {written:?}"
-        );
-    }
-
-    #[test]
-    fn a_row_that_is_both_pointed_at_and_dragged_over_is_lit_from_where_it_was_pressed() {
-        // The two cannot happen at once — one needs a button held and the
-        // other needs none — but the last of each is still remembered, and a
-        // selection is what the reader is doing rather than where they are.
-        let mut painted = Painted::new();
-        painted.open(1, WIDE);
-        painted.selects(Some(dragged((0, 2), (0, 6))));
-        painted.hovers(Some(0));
-        painted.paint(0, &Row::plain("a whole row"), &plain());
-
-        assert_eq!(painted.read(), "whole");
-    }
-
-    #[test]
-    fn a_screen_nobody_is_pointing_at_goes_dark_again() {
-        let mut painted = Painted::new();
-        painted.open(1, WIDE);
-        painted.hovers(Some(0));
-        painted.paint(0, &Row::plain("lit"), &plain());
-        painted.sealed();
-
-        painted.hovers(None);
-        painted.open(1, WIDE);
-        painted.paint(0, &Row::plain("lit"), &plain());
-
-        let written = painted.sealed();
-        assert!(
-            written.contains("lit") && !written.contains(LIT),
-            "the light did not go out: {written:?}"
-        );
     }
 }

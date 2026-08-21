@@ -201,20 +201,6 @@ pub struct Renderer<T: Terminal> {
     /// under it — a scroll, a resize — because a selection that stayed put
     /// while its words moved is a highlight over the wrong text.
     taken: Option<Taken>,
-    /// The screen row lit because the pointer is on it, if any.
-    ///
-    /// Set by the loop that knows what is worth lighting, because this does
-    /// not: a row of the transcript is a line of the record, and whether that
-    /// line has anything behind it is a fact about the session rather than
-    /// about the window. Dropped by the same things that drop a selection, and
-    /// for the same reason.
-    under: Option<usize>,
-    /// Which row the pointer was last reported on.
-    ///
-    /// A terminal reporting motion reports it a cell at a time, and a row lit
-    /// for the second time is a frame nobody would see. This is what makes a
-    /// pointer crossing a row cost one hearing rather than one per column.
-    pointing: Option<usize>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -245,8 +231,6 @@ impl<T: Terminal> Renderer<T> {
             glyphs: Glyphs::default(),
             notch: NOTCH,
             taken: None,
-            under: None,
-            pointing: None,
         }
     }
 
@@ -298,48 +282,15 @@ impl<T: Terminal> Renderer<T> {
                 }
                 Ok(None)
             }
-            // Handed on only where it says something new. Everything else the
-            // pointer does while nothing is held is a row already lit or a row
-            // already dark.
-            Pressed::Hovered { row, .. } => {
-                if self.pointing == Some(row) {
-                    return Ok(None);
-                }
-                self.pointing = Some(row);
-                Ok(Some(arrived))
-            }
             _ => Ok(Some(arrived)),
         }
-    }
-
-    /// Lights the row under the pointer, or none, and says whether that moved.
-    ///
-    /// The caller decides what is worth lighting; this draws it. A row already
-    /// lit costs nothing and reports `false`, which is what lets a loop call
-    /// this on every hearing without asking first.
-    ///
-    /// # Errors
-    ///
-    /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn hovering(&mut self, at: Option<usize>) -> Result<bool, TerminalError> {
-        if self.under == at || !self.terminal.is_terminal() {
-            return Ok(false);
-        }
-
-        self.under = at;
-        self.painted.hovers(at);
-        self.draw()?;
-        Ok(true)
     }
 
     /// Drops whatever is selected, because the picture under it is about to
     /// move.
     fn unselects(&mut self) {
         self.taken = None;
-        self.under = None;
-        self.pointing = None;
         self.painted.selects(None);
-        self.painted.hovers(None);
     }
 
     /// Tells this renderer which palette the run resolved.
@@ -1026,7 +977,6 @@ impl<T: Terminal> Renderer<T> {
 
         let bands = self.bands();
         self.painted.selects(self.taken);
-        self.painted.hovers(self.under);
         self.painted.open(self.size.rows, self.size.columns);
 
         if let Some(crowned) = &self.crowned {

@@ -405,11 +405,11 @@ the eye goes.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
-accent and the rest of the row is not, so a result with more behind it is
-picked out from a line with nothing behind it — and clicking that row opens the
-same view the key does, for the one result it belongs to. Move the pointer over
-it and the row lights up, so you can see which rows answer a click before you
-make one; rows with nothing behind them stay as they are. <kbd>Ctrl+O</kbd> stands
+accent, and what the result said is drawn in your own foreground rather than the
+quiet one a whole result gets — so every row with more behind it stands out from
+every row with nothing behind it, all of them at once, without a pointer
+anywhere near. Clicking one opens the same view the key does, for the one result
+it belongs to. <kbd>Ctrl+O</kbd> stands
 every result that was cut this way where the box was, newest first, each under
 the line of the call it answers. The arrow keys walk it where there is more of
 it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
