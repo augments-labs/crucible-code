@@ -15,6 +15,7 @@ mod startup;
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use startup::{Measure, StartupError};
 
@@ -53,7 +54,11 @@ fn detail(spread: &str) -> Result<(), io::Error> {
 }
 
 fn main() -> ExitCode {
-    let readings = match startup::readings(Measure::Frame { needle: NEEDLE }) {
+    let budget = Duration::from_secs_f64(LIMIT / 1000.0);
+
+    let readings = match startup::best(budget, || {
+        startup::readings(Measure::Frame { needle: NEEDLE })
+    }) {
         Ok(readings) => readings,
         Err(problem) => {
             let _ = explain(&problem);
