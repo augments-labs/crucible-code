@@ -885,17 +885,47 @@ mod tests {
     fn a_host_that_does_not_resolve_is_unreachable_rather_than_a_status() {
         // `.invalid` is reserved by RFC 6761 and never resolves, so this test
         // needs no network and cannot reach anything if it has one.
+        //
+        // Isolated because it is the one test here that asks a real resolver
+        // anything: a resolver that stalls sets the flag every later request
+        // reads, and on the process-wide transport that is every other test in
+        // this file failing for a lookup none of them made.
+        let transport = Https::isolated();
         let problem = post(
-            &Https::new(),
+            &transport,
             "https://crucible.invalid/v1/messages",
             &[],
             "{}",
         )
         .unwrap_err();
 
+        // Refused or never answered — a resolver is not obliged to say which,
+        // and both are this name failing to become a status.
         assert!(
-            matches!(problem, TransportError::Unreachable(_)),
-            "expected an unreachable host, got {problem:?}"
+            matches!(
+                problem,
+                TransportError::Unreachable(_) | TransportError::ResolveStalled
+            ),
+            "expected a host that does not resolve, got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn a_stall_in_one_transport_is_not_the_whole_process() {
+        let mine = Https::isolated();
+        let problem = request_problem(
+            &ureq::Error::Timeout(ureq::Timeout::Resolve),
+            &mine.shared.poisoned,
+        );
+
+        assert!(matches!(problem, TransportError::ResolveStalled));
+        assert!(mine.shared.poisoned.load(Ordering::Acquire));
+        // The flag every other test in this file is read against. A test that
+        // provokes a stall on the shared transport leaves this set, and the
+        // tests that run after it fail on a lookup they never made.
+        assert!(
+            !Https::new().shared.poisoned.load(Ordering::Acquire),
+            "a test poisoned the transport the rest of them share"
         );
     }
 
