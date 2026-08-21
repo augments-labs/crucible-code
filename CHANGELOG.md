@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**A prompt the running turn worked in stops waiting behind it.** A line typed
+mid-turn is offered to the turn and queued behind it, and until now it stayed
+queued even once the turn had taken it — so the panel above the box named a
+prompt that was already in the transcript, and ran it a second time. The turn
+now says which lines it reached, and those leave the queue.
+
 ## [0.14.0] - 2026-08-21
 
 ### Added

@@ -721,10 +721,13 @@ pub(super) fn during<T: Terminal>(
 
             Meant::Queue => {
                 if !editor.is_empty() {
-                    // Steered first, so the running turn works the line in at its
-                    // next pass; then queued, so it is answered as its own turn
-                    // after. The queue takes the editor empty, so the text is read
-                    // off it before `queue` clears it.
+                    // Steered first, so the running turn works the line in at
+                    // its next pass; then queued, because a turn already
+                    // finishing takes nothing and the line is still owed a turn
+                    // of its own. Whichever happens, it leaves the queue: the
+                    // turn reports the lines it reached, and the loop that
+                    // reads that drops them. The queue takes the editor empty,
+                    // so the text is read off it before `queue` clears it.
                     steer.say(editor.text().to_owned());
                     notice = queue(editor, queued, turning, renderer.columns(), style);
                     moved = true;
