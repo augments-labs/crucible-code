@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 use crucible_core::{Compacting, Event};
 #[cfg(test)]
 use crucible_tui::Theme;
-use crucible_tui::{Row, Slot, Working};
+use crucible_tui::{Prompt, Row, Slot, Working};
 
 use super::super::draw;
 use super::super::style::Style;
@@ -64,11 +64,25 @@ const MORE: &str = "more";
 /// The rows this puts above the box, blanks included.
 const ROWS: usize = 3;
 
-/// And with a prompt waiting behind the turn, the row that names it.
+/// What the title on the top edge costs beside itself: the edge it is stood off
+/// the corner by, and the space on either side of the words.
+const INLAID: usize = 3;
+
+/// What a framed queue panel costs before a single name is in it: the blank
+/// that parts it from the row above, and its two borders.
 ///
-/// One row rather than two: it goes directly under the row it belongs to, the
-/// way a call's result goes directly under the call. A blank between them would
-/// make it a second thing on the screen rather than a second line of the first.
+/// A window with no room for one name past this gives the frame up for the
+/// single row that says the count, the way the box below gives its own up in a
+/// narrow window.
+const FRAME: usize = 3;
+
+/// And with a prompt waiting behind the turn, the row the panel is measured
+/// against.
+///
+/// What the panel may take is everything the working row and the footing's own
+/// last blank leave, and how much of that it uses is [`Queued::rows`]'s: a
+/// frame where one name fits inside it, and the single row that says the count
+/// where none does.
 const QUEUED: usize = ROWS + 1;
 
 /// And with a call standing over it: the blank that parts them, the call, and the
@@ -863,10 +877,20 @@ impl Queued {
         let side = glyphs.vertical();
         let mark = glyphs.caret();
 
-        // Too short to open the frame: one line, indented under the word, says
-        // the count and no more. A queue is still a queue whether or not there
-        // is room to name it.
-        if spare < 3 || columns < 8 {
+        // The most names the frame has room for: the blank and the two borders
+        // take theirs, and so does the row counting what the names left out,
+        // where the names left any out at all. Largest first, because a frame
+        // holding two of five is worth more than one holding one.
+        let named = (1..=self.lines.len())
+            .rev()
+            .find(|&named| FRAME + named + usize::from(self.count > named) <= spare);
+
+        // No room for a name inside a frame, or too narrow for the box below to
+        // be drawn framed either: one line, indented under the word, says the
+        // count and no more. A queue is still a queue whether or not there is
+        // room to name it, and a border kept up here after the box gave its own
+        // up would be a frame standing over nothing.
+        let Some(named) = named.filter(|_| columns >= Prompt::FRAMED_AT) else {
             let said = format!("{} queued", self.count);
             let gutter = Working::gutter(glyphs);
             return vec![
@@ -877,75 +901,101 @@ impl Queued {
                         draw::clipped(&said, columns.saturating_sub(gutter), glyphs),
                     ),
             ];
-        }
+        };
 
-        // The frame's two borders, the names that fit between them, and the row
-        // that counts what the names left out. What the names get is what is
-        // left once the borders and the count row have taken theirs.
-        let room = columns - 2;
+        let over = self.count - named;
+
+        // What a name is given: the window less the two borders, the space
+        // inside each of them, and the mark and its own space. Taken from the
+        // box rather than counted again here, which is what holds the two
+        // borders in one column as either changes.
+        let inner = columns - Prompt::CHROME;
+        let across = columns - 2;
 
         // The count is the one thing the top edge must say, so the title is cut
         // to the room rather than drawn past it: a window too narrow for the
         // whole of it still reads that there is a queue, and nothing overruns
         // the last column into a row the terminal wraps and nothing counted.
-        let title_text = format!(" {} queued ", self.count);
-        let title = draw::clipped(&title_text, room, glyphs);
-        let fill = room.saturating_sub(crucible_tui::columns(&title));
+        //
+        // Stood off the corner by an edge and a space on each side, and those
+        // spans are drawn rather than written into the string: the words are
+        // trimmed on their way through the clip, which is right for every
+        // sentence on a row and wrong for one being inlaid into a border.
+        let title = draw::clipped(
+            format!("{} queued", self.count),
+            across.saturating_sub(INLAID + 1),
+            glyphs,
+        );
+        let fill = across.saturating_sub(INLAID + crucible_tui::columns(&title));
 
-        let named = (spare - 2).min(self.lines.len());
-        let over = self.count - named;
-        // The count row is spent on names where nothing is left over.
-        let named = if over == 0 {
-            named.min(spare - 2)
-        } else {
-            named.min(spare - 3)
-        };
-        let named = named.max(1).min(self.lines.len());
-        let over = self.count - named;
-
-        let mut rows = Vec::with_capacity(named + 2 + usize::from(over > 0));
+        // A blank above the frame, because a box is a thing of its own rather
+        // than a second line of the row above it — the rule every other region
+        // in this footing is parted by, and the one the single row this panel
+        // replaced was right to go without.
+        let mut rows = vec![Row::new()];
         rows.push(
             Row::new()
-                .then(Slot::Accent, tl)
+                .then(Slot::Accent, format!("{tl}{edge}"))
+                .then(Slot::Plain, " ")
                 .then(Slot::Quiet, title)
+                .then(Slot::Plain, " ")
                 .then(Slot::Accent, edge.repeat(fill))
                 .then(Slot::Accent, tr),
         );
 
         for said in self.lines.get(..named).unwrap_or_default() {
-            let mut row = Row::new()
-                .then(Slot::Accent, side)
-                .then(Slot::Plain, " ")
-                .then(Slot::Accent, mark)
-                .then(
-                    Slot::Plain,
-                    format!(" {}", draw::clipped(said, room.saturating_sub(3), glyphs)),
-                );
-            row.pad(room);
-            rows.push(row.then(Slot::Accent, side));
+            rows.push(Self::framed(
+                Row::new().then(Slot::Accent, mark),
+                Row::plain(draw::clipped(said, inner, glyphs)),
+                inner,
+                side,
+            ));
         }
 
         if over > 0 {
             let said = format!("… +{over} {MORE}  (ctrl+q to see all)");
-            let mut row = Row::new()
-                .then(Slot::Accent, side)
-                .then(Slot::Plain, " ")
-                .then(
-                    Slot::Quiet,
-                    draw::clipped(&said, room.saturating_sub(1), glyphs),
-                );
-            row.pad(room);
-            rows.push(row.then(Slot::Accent, side));
+            rows.push(Self::framed(
+                Row::new(),
+                Row::new().then(Slot::Quiet, draw::clipped(&said, inner, glyphs)),
+                inner,
+                side,
+            ));
         }
 
         rows.push(
             Row::new()
                 .then(Slot::Accent, bl)
-                .then(Slot::Accent, edge.repeat(room))
+                .then(Slot::Accent, edge.repeat(across))
                 .then(Slot::Accent, br),
         );
 
         rows
+    }
+
+    /// One row inside the frame: the border, the space inside it, `mark` in the
+    /// column the box keeps for one, `said` padded out to `inner`, and the
+    /// space and border on the other side.
+    ///
+    /// Every row is built through here rather than each at its own call, which
+    /// is what makes the right border a column the rows share rather than one
+    /// each of them arrives at. A row with nothing to put in the mark's column
+    /// passes an empty one and keeps the indent, so the names and the count
+    /// under them start together.
+    fn framed(mark: Row, said: Row, inner: usize, side: &str) -> Row {
+        let mut mark = mark;
+        mark.pad(1);
+
+        let mut said = said;
+        said.pad(inner);
+
+        Row::new()
+            .then(Slot::Accent, side)
+            .then(Slot::Plain, " ")
+            .join(mark)
+            .then(Slot::Plain, " ")
+            .join(said)
+            .then(Slot::Plain, " ")
+            .then(Slot::Accent, side)
     }
 }
 
@@ -1633,6 +1683,43 @@ mod tests {
         assert!(whole.contains("2 queued"), "{whole}");
         assert!(whole.contains("› fix the failing test"), "{whole}");
         assert!(whole.contains("› and then commit"), "{whole}");
+    }
+
+    #[test]
+    fn every_row_of_the_panel_ends_in_the_column_the_box_below_it_ends_in() {
+        // The defect this pins: the rows between the borders were padded to the
+        // width the left border was already inside, so each of them closed a
+        // column short of the top and bottom edges and the right-hand side of
+        // the frame stepped in and out. It is read directly above the box, so
+        // the column both of them close in is the same column.
+        for columns in [Prompt::FRAMED_AT, 40, 80] {
+            let said = queueing(&["one", "two longer than the first"], columns, 24);
+            let opens = said
+                .iter()
+                .position(|row| row.starts_with('\u{256d}'))
+                .unwrap_or_else(|| panic!("{columns}: no frame in {said:?}"));
+            let closes = said
+                .iter()
+                .position(|row| row.starts_with('\u{2570}'))
+                .unwrap_or_else(|| panic!("{columns}: the frame never closes in {said:?}"));
+            let panel = said.get(opens..=closes).unwrap_or_default();
+
+            for row in panel {
+                assert_eq!(
+                    crucible_tui::columns(row),
+                    columns,
+                    "{columns}: {row:?} in {said:?}"
+                );
+            }
+
+            // A blank parts the frame from the working row above it: a box is a
+            // thing of its own rather than a second line of the row it stands
+            // under.
+            assert!(
+                opens.checked_sub(1).and_then(|above| said.get(above)) == Some(&String::new()),
+                "{said:?}"
+            );
+        }
     }
 
     #[test]

@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**The panel naming queued prompts is drawn like the box under it.** Its rows
+were padded to a width that had already spent a column on the left border, so
+the right-hand side of the frame stepped in and out against the box below.
+It now takes its border arithmetic from the box, stands off the working row by
+a blank, and gives the frame up in the same narrow window the box does.
+
 **A prompt the running turn worked in stops waiting behind it.** A line typed
 mid-turn is offered to the turn and queued behind it, and until now it stayed
 queued even once the turn had taken it — so the panel above the box named a
