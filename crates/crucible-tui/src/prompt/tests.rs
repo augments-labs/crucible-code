@@ -286,8 +286,9 @@ fn a_question_waiting_on_the_next_key_is_drawn_under_the_status_row() {
 
 #[test]
 fn the_cursor_sits_where_the_line_was_typed_to() {
-    // Counted from the top left of the rows rather than from the terminal's
-    // origin, which an inline renderer never learns.
+    // Counted from the top left of the rows rather than from the screen's
+    // origin, which the box is never told: it is laid out against the rows it
+    // was handed and placed by whatever is drawing it.
     let prompt = typed("hello");
 
     assert_eq!(

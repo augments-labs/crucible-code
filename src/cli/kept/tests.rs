@@ -271,7 +271,7 @@ fn a_call_that_has_not_answered_is_reachable_under_the_line_it_is_running_on() {
     );
 
     // No row of the record offered it, because no row for it has been committed:
-    // a click lands on rows the terminal owns, and this line is still live.
+    // a click lands on rows the record holds, and this line is still live.
     assert!(writing.at().is_none());
     assert!(!cut.is_empty());
 }
