@@ -23,7 +23,9 @@ fn the_row_says_where_the_session_is() {
     // under the box, beside the keys that change it.
     let row = said(&Head { root: NEAR }, 80);
 
-    assert_eq!(row, NEAR);
+    assert!(row.starts_with(NEAR), "{row:?}");
+    assert!(row.ends_with("transcript"), "{row:?}");
+    assert_eq!(width::columns(&row), 80);
 }
 
 #[test]
@@ -32,7 +34,9 @@ fn a_path_longer_than_the_row_keeps_the_end() {
     // same for every project somebody keeps in one place, so it is what goes —
     // and it goes a whole segment at a time, which is what leaves something
     // that still reads as a path.
-    assert_eq!(said(&head(), 46), "…/Projects/augments-labs/crucible-code");
+    let row = said(&head(), 46);
+    assert!(row.starts_with("…/augments-labs/crucible-code"), "{row:?}");
+    assert!(row.ends_with("transcript"), "{row:?}");
 }
 
 #[test]
@@ -42,7 +46,7 @@ fn the_mark_costs_what_the_set_in_force_charges_for_it() {
     // which is the row the terminal wraps.
     let ascii = head().row(31, Glyphs::Ascii).text();
 
-    assert_eq!(ascii, ".../augments-labs/crucible-code");
+    assert_eq!(ascii, ".../crucible-code    transcript");
 }
 
 #[test]
@@ -53,7 +57,7 @@ fn a_path_of_one_long_segment_keeps_what_fits_of_the_front() {
         root: "a-directory-nobody-should-have-named-this-way",
     };
 
-    assert_eq!(said(&unbroken, 20), "a-directory-nobody-s");
+    assert_eq!(said(&unbroken, 20), "a-direct  transcript");
 }
 
 #[test]
@@ -69,4 +73,20 @@ fn every_width_gives_way_in_the_order_this_row_gives_way_in() {
             assert!(!row.is_empty(), "{columns} {row:?}");
         }
     }
+}
+
+#[test]
+fn the_transcript_word_is_the_columns_that_open_its_map() {
+    let row = said(&head(), 80);
+    let control = Head::transcript(80).expect("room for the control");
+
+    assert_eq!(&row[control], "transcript");
+}
+
+#[test]
+fn a_window_too_narrow_for_a_map_keeps_the_path_instead() {
+    let row = said(&Head { root: NEAR }, 10);
+
+    assert_eq!(row, "…/crucible");
+    assert_eq!(Head::transcript(10), None);
 }

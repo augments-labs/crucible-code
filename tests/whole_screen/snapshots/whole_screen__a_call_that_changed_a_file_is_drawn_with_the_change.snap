@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 21,4 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|…/and-something-below-that-again/workspace                            transcript|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · \ enter    adds a line without sending  │|
 |│                                  │ · shift+tab  steps the permission mode    │|

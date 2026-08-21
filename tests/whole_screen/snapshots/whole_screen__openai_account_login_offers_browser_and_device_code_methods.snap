@@ -4,7 +4,7 @@ assertion_line: 349
 expression: window.picture()
 ---
 80x24 cursor 23,0 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|…/and-something-below-that-again/workspace                            transcript|
 |│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|

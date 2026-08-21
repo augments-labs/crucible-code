@@ -4,7 +4,7 @@ assertion_line: 147
 expression: window.picture()
 ---
 80x16 cursor 13,26 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|…/and-something-below-that-again/workspace                            transcript|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |

@@ -163,6 +163,7 @@ pub(crate) fn event<T: Terminal>(
         Event::Steered { line } => {
             renderer.settle()?;
             renderer.apart()?;
+            renderer.landmark();
             renderer.present(&crucible_tui::Prompt::committed(
                 line.as_str(),
                 columns,
@@ -300,6 +301,7 @@ pub(crate) fn queued<T: Terminal>(
     // a turn lands under the answer that turn produced, which is exactly where
     // the blank belongs.
     renderer.apart()?;
+    renderer.landmark();
     renderer.present(&crucible_tui::Prompt::committed(
         said,
         columns,

@@ -16,15 +16,25 @@
 //! The path is shortened rather than dropped, because a path is the one thing
 //! on this screen that has a useful end — the leaf is what tells two checkouts
 //! apart, and the columns before it are the same for every project somebody
-//! keeps in one place.
+//! keeps in one place. At the far end stands `transcript`, the door into the
+//! absolute map over what the session has said. It gives way only where the row
+//! is too narrow to carry a useful piece of the path beside it.
 //!
 //! Like [`crate::Welcome`] this returns a [`Row`] and draws nothing, so every
 //! width is asserted with no terminal attached.
+
+use std::ops::Range;
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
+
+/// The door into absolute transcript travel.
+const TRANSCRIPT: &str = "transcript";
+
+/// Room between the path and the door, so neither reads as part of the other.
+const APART: usize = 2;
 
 /// What the head row says.
 ///
@@ -46,10 +56,27 @@ impl Head<'_> {
     /// The row, drawn for a terminal `columns` wide.
     #[must_use]
     pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
-        let said = tail(self.root, columns, glyphs)
-            .unwrap_or_else(|| width::clip(self.root, columns).to_owned());
+        let Some(control) = Self::transcript(columns) else {
+            let said = tail(self.root, columns, glyphs)
+                .unwrap_or_else(|| width::clip(self.root, columns).to_owned());
+            return Row::new().then(Slot::Quiet, said);
+        };
 
-        Row::new().then(Slot::Quiet, said)
+        let room = control.start.saturating_sub(APART);
+        let said = tail(self.root, room, glyphs)
+            .unwrap_or_else(|| width::clip(self.root, room).to_owned());
+        let mut row = Row::new().then(Slot::Quiet, said);
+        row.pad(control.start);
+        row.push(Slot::Quiet, TRANSCRIPT);
+        row
+    }
+
+    /// The columns the transcript door occupies, where this width has room for
+    /// both it and something meaningful of the path.
+    pub(crate) fn transcript(columns: usize) -> Option<Range<usize>> {
+        let wide = width::columns(TRANSCRIPT);
+        let start = columns.checked_sub(wide)?;
+        (start > APART).then_some(start..columns)
     }
 }
 

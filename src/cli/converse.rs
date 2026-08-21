@@ -44,7 +44,7 @@ use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
     Editor, Head, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling,
-    Terminal, pressed,
+    Terminal,
 };
 
 use super::draw;
@@ -1272,7 +1272,10 @@ fn answered<T: Terminal>(
     }
 
     loop {
-        let said = match heard(pressed()?) {
+        let Some(arrived) = renderer.pressed()? else {
+            continue;
+        };
+        let said = match heard(arrived) {
             Heard::Said(said) => said,
 
             // The renderer is holding a size the screen no longer has, and
@@ -1534,7 +1537,7 @@ fn took<T: Terminal>(
     question: &Question,
 ) -> Result<Option<Chosen>, Fatal> {
     loop {
-        let Some(arrived) = renderer.took(pressed()?)? else {
+        let Some(arrived) = renderer.pressed()? else {
             continue;
         };
 

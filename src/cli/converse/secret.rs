@@ -63,6 +63,7 @@ pub(super) fn ask<T: Terminal>(
     style: Style,
     asking: &str,
 ) -> Result<Option<String>, Fatal> {
+    renderer.identifies()?;
     let mut held = String::new();
     let mut changed = true;
     let mut limited = false;

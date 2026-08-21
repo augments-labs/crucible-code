@@ -37,7 +37,7 @@
 //! belongs in the record is the answer to it, in the words of whatever asked —
 //! which is the caller's to commit after this returns.
 
-use crucible_tui::{Aimed, Caret, Pressed, Renderer, Row, Terminal, pressed};
+use crucible_tui::{Aimed, Caret, Pressed, Renderer, Row, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -111,7 +111,7 @@ pub(super) fn stand<T: Terminal, S>(
         // session. A drag is answered there and comes back as nothing,
         // which is what lets a reader select across a component that has
         // never heard of one.
-        let Some(arrived) = renderer.took(pressed()?)? else {
+        let Some(arrived) = renderer.pressed()? else {
             continue;
         };
 
