@@ -151,7 +151,7 @@ pub struct Renderer<T: Terminal> {
     /// of the record rather than a band, and [`Self::opens`] says how.
     heading: Option<Heading>,
     crowned: Option<Row>,
-    /// Whether the pointer is over the transcript-map door in the fixed head.
+    /// Whether the pointer is over the transcript-map door in the fixed foot.
     ///
     /// One bit rather than its column, because every motion on the same side of
     /// either edge should cost no layout and no frame.
@@ -192,8 +192,7 @@ pub struct Renderer<T: Terminal> {
     /// about the terminal rather than about the answer. Unicode until
     /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
-    /// Absolute travel over the retained transcript, while the head lends its
-    /// row to one pointer gesture and the short idle period after it.
+    /// Absolute travel over the retained transcript in the fixed bottom row.
     map: TranscriptMap,
     /// How many rows of the transcript one notch of the wheel moves.
     ///
@@ -318,14 +317,14 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
-        let on_head = |row| bands.head.contains(&row);
+        let on_map = |row| bands.foot.end.checked_sub(1) == Some(row);
         if let Pressed::Hovered { row, column } = arrived {
             let over = !self.map.open()
-                && on_head(row)
-                && Head::transcript(self.size.columns).is_some_and(|door| door.contains(&column));
+                && on_map(row)
+                && transcript_map::door(self.size.columns)
+                    .is_some_and(|door| door.contains(&column));
             if over != self.map_pointed {
                 self.map_pointed = over;
-                self.crown();
                 self.draw()?;
             }
             return Ok(None);
@@ -333,7 +332,7 @@ impl<T: Terminal> Renderer<T> {
         if self.map.open() {
             match arrived {
                 Pressed::Clicked { row, column }
-                    if on_head(row)
+                    if on_map(row)
                         && transcript_map::track(self.size.columns)
                             .is_some_and(|track| track.contains(&column)) =>
                 {
@@ -357,8 +356,8 @@ impl<T: Terminal> Renderer<T> {
                 _ => {}
             }
         } else if let Pressed::Clicked { row, column } = arrived
-            && on_head(row)
-            && Head::transcript(self.size.columns).is_some_and(|door| door.contains(&column))
+            && on_map(row)
+            && transcript_map::door(self.size.columns).is_some_and(|door| door.contains(&column))
         {
             self.open_map()?;
             return Ok(None);
@@ -479,7 +478,7 @@ impl<T: Terminal> Renderer<T> {
         self.map.remaining(Instant::now())
     }
 
-    /// Restores the identity row if the map has been idle long enough.
+    /// Restores the bottom-row control if the map has been idle long enough.
     ///
     /// # Errors
     ///
@@ -492,7 +491,7 @@ impl<T: Terminal> Renderer<T> {
         Ok(true)
     }
 
-    /// Restores the identity row now.
+    /// Restores the bottom-row control now.
     ///
     /// Used before a secret box takes the keyboard, where no pointer action is
     /// offered to the renderer and an open map would otherwise have no clock.
@@ -506,7 +505,6 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
         self.map_pointed = false;
-        self.crown();
         self.draw()?;
         Ok(true)
     }
@@ -523,13 +521,12 @@ impl<T: Terminal> Renderer<T> {
     /// Puts the row at the top of the window and keeps it there.
     ///
     /// The one thing on screen that is neither the transcript nor something
-    /// standing over the box: it says which directory the session is bound to,
-    /// and lends its far end to the transcript map. It is held against the top
-    /// while everything under it moves.
+    /// standing over the box: it says which directory the session is bound to
+    /// and is held against the top while everything under it moves.
     ///
     /// Said at each prompt because that is where a resize is first known. What
     /// it says cannot change during a session, so the renderer owns the laid-out
-    /// row and can restore it after the temporary map goes to rest.
+    /// row and restores it at the new width itself.
     ///
     /// Nothing at all happens where output is redirected, for the reason
     /// [`Renderer::live`] draws nothing there.
@@ -561,7 +558,7 @@ impl<T: Terminal> Renderer<T> {
             Head {
                 root: &heading.root,
             }
-            .pointed(columns, glyphs, self.map_pointed)
+            .row(columns, glyphs)
         });
     }
 
@@ -1164,7 +1161,6 @@ impl<T: Terminal> Renderer<T> {
         let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
         self.unselects();
         self.map_pointed = false;
-        self.crown();
         self.map.show(span, row, Instant::now());
         self.draw()?;
         Ok(true)
@@ -1209,7 +1205,10 @@ impl<T: Terminal> Renderer<T> {
                 head: self.crowned.as_ref().map_or(0, |_| Head::ROWS),
                 turn: self.standing.turn.len(),
                 prompt: self.standing.prompt.len(),
-                foot: 0,
+                // The bottom control belongs to a session, the same as the
+                // fixed head. Before a session has named itself there is no
+                // transcript-map door to offer.
+                foot: self.crowned.as_ref().map_or(0, |_| 1),
             },
         )
     }
@@ -1250,7 +1249,7 @@ impl<T: Terminal> Renderer<T> {
         self.painted.selects(self.taken);
         self.painted.open(self.size.rows, self.size.columns);
 
-        if let Some(crowned) = self.map.row().or(self.crowned.as_ref()) {
+        if let Some(crowned) = &self.crowned {
             for at in bands.head.start..bands.head.end {
                 self.painted.paint(at, crowned, &palette);
             }
@@ -1280,6 +1279,13 @@ impl<T: Terminal> Renderer<T> {
             self.painted.put(at, row);
         }
         self.standing.prompt = prompt;
+
+        let map = self.map.row().cloned().unwrap_or_else(|| {
+            transcript_map::resting(self.size.columns, self.glyphs, self.map_pointed)
+        });
+        if let Some(at) = (!bands.foot.is_empty()).then(|| bands.foot.end - 1) {
+            self.painted.paint(at, &map, &self.palette);
+        }
 
         let (row, column) = self.parked(&bands);
         self.painted.park(row, column);

@@ -725,13 +725,20 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         "the box was not under the row: {rows:?}"
     );
 
-    // The mode has the last row to itself, for the whole of the stretch it is
-    // deciding things over -- which used to leave with the box and come back
-    // only once there was nothing left to decide.
+    // The mode remains directly under the box for the whole stretch it is
+    // deciding things over. The dedicated transcript-map control is the one
+    // row below it now, so the mode is the penultimate row rather than the last.
+    assert!(
+        rows.iter()
+            .rev()
+            .nth(1)
+            .is_some_and(|row| row.contains("full access mode on")),
+        "the row under the box did not say the mode: {rows:?}"
+    );
     assert!(
         rows.last()
-            .is_some_and(|row| row.contains("full access mode on")),
-        "the foot did not say the mode: {rows:?}"
+            .is_some_and(|row| row.contains("transcript map")),
+        "the map control was not under the mode: {rows:?}"
     );
 
     // And the cursor comes back into the box rather than onto the answer,

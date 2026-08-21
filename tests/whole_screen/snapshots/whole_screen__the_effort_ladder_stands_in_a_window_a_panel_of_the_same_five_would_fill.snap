@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 23,0 scrolled 0
-|…/and-something-below-that-again/workspace                      transcript map →|
-|                                                                                |
+80x24 cursor 22,0 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
@@ -27,3 +26,4 @@ expression: window.picture()
 |  low         medium         high          xhigh          max                   |
 |                                                                                |
 |←/→ to adjust · enter to confirm · esc to cancel                                |
+|                                                               transcript map → |

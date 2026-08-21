@@ -2,8 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,4 scrolled 0
-|first ■───────────────────────────────────○───────────────────────────────── now|
+80x16 cursor 12,4 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |╭─ crucible v0.17.0 ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -13,9 +13,9 @@ expression: window.picture()
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|first ■──────────────────────────────────○────────────────────────────────── now|

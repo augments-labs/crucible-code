@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x32 cursor 29,4 scrolled 0
-|…/and-something-below-that-again/workspace                      transcript map →|
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+80x32 cursor 28,4 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
@@ -35,3 +34,4 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                               transcript map → |

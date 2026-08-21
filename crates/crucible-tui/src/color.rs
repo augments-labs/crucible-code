@@ -10,7 +10,7 @@
 //! whole screen and every cell on it, so the ground is a thing it could paint
 //! and deliberately does not: a cell nothing gave a background attribute to is
 //! left in the one the reader chose. Almost nothing here emits one at all, and
-//! the two things that do are covered below.
+//! the exceptions are covered below.
 //!
 //! **A theme is a table of hues, and it is tuned to one ground.** There used to
 //! be one palette for every terminal, and every colour in it cleared 3:1
@@ -37,13 +37,19 @@
 //! is still legible bolder. A terminal that draws neither loses the emphasis
 //! and keeps the words, which is why nothing is ever said by weight alone.
 //!
-//! A diff is one of two things that take the ground, and it takes it the only
+//! A diff is one of three kinds of thing that take the ground, and it takes it the only
 //! way that is safe: a slot painting a ground paints its ink in the same
 //! sequence, so the pair is a pair this palette chose whole and the reader's
 //! theme is never the other half of a contrast nobody checked. Which is what
 //! the bottom of the file checks about them instead — against the ground they
 //! carry, rather than against black and white, because a row that has taken the
 //! ground has none of the reader's left behind it to clear.
+//!
+//! The transcript-map chip is the smallest exception. At rest it spends the
+//! accent as ink; under the pointer that exact accent becomes the ground under
+//! contrasting black or white text, including one padded cell on each side. The
+//! rectangle says the label is one control, and because the ground is made from
+//! the same table entry it cannot drift from the configured theme.
 //!
 //! The row the reader's own prompt is on is the other, and it is the exception
 //! to the exception: its ground is *their* ground where they have one to give,
@@ -82,6 +88,12 @@ pub enum Slot {
     Accent,
     /// The accent, emphasised: the product's name, and a command's name.
     Strong,
+    /// Contrasting text on the exact accent as a ground under the pointer.
+    ///
+    /// The ground is the same accent [`Slot::Accent`] uses as ink at rest. The
+    /// ink becomes black or white, whichever side the theme is tuned for, so
+    /// both words and rectangle stay legible.
+    Pointed,
     /// Present but secondary — a hint, a timestamp, a label.
     Quiet,
     /// What a result the transcript cut short said, on the row offering the
@@ -507,6 +519,42 @@ const ANSI: Tones = Tones {
     },
 };
 
+/// The exact accent moved from ink to ground, carrying contrasting text.
+///
+/// Spelled beside the theme tables and checked against [`Slot::Accent`] at
+/// every measurable rung. Keeping it static preserves the palette's small,
+/// copyable shape; building a sequence per frame would move formatting onto
+/// the render path.
+const fn pointed(theme: Theme) -> Ink {
+    match theme {
+        Theme::Dark => Ink {
+            exact: "\x1b[48;2;18;137;127;38;2;0;0;0m",
+            indexed: "\x1b[48;5;30;38;5;16m",
+            basic: "\x1b[46;30m",
+        },
+        Theme::Light => Ink {
+            exact: "\x1b[48;2;13;107;98;38;2;255;255;255m",
+            indexed: "\x1b[48;5;23;38;5;231m",
+            basic: "\x1b[46;97m",
+        },
+        Theme::ColourblindDark => Ink {
+            exact: "\x1b[48;2;63;167;196;38;2;0;0;0m",
+            indexed: "\x1b[48;5;38;38;5;16m",
+            basic: "\x1b[46;30m",
+        },
+        Theme::ColourblindLight => Ink {
+            exact: "\x1b[48;2;15;95;120;38;2;255;255;255m",
+            indexed: "\x1b[48;5;24;38;5;231m",
+            basic: "\x1b[46;97m",
+        },
+        Theme::Ansi => Ink {
+            exact: "\x1b[46;30m",
+            indexed: "\x1b[46;30m",
+            basic: "\x1b[46;30m",
+        },
+    }
+}
+
 impl Theme {
     /// The hues this theme spends.
     const fn tones(self) -> Tones {
@@ -523,8 +571,8 @@ impl Theme {
 impl Slot {
     /// What this slot is worth in `theme`, at each rung.
     ///
-    /// `None` for the two slots whose value is not in any table: the prompt
-    /// band is worked out from the reader's own ground, so the palette holds it
+    /// `None` for the slots whose value is not in any table: the prompt band
+    /// is worked out from the reader's own ground, so the palette holds it
     /// rather than the theme.
     const fn ink(self, theme: Theme) -> Option<Ink> {
         let tones = theme.tones();
@@ -533,6 +581,7 @@ impl Slot {
             Self::Plain => NONE,
             Self::Accent => tones.accent,
             Self::Strong => tones.strong,
+            Self::Pointed => pointed(theme),
             // A cut result at rest is a quiet row of the transcript and is
             // worth exactly what one is. [`Palette::open`] answers that slot
             // before any table is asked, so nothing arrives here wearing it --

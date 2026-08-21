@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,4 scrolled 0
-|…/and-something-below-that-again/workspace                      transcript map →|
-|quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy|
+80x16 cursor 12,4 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
 |the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
@@ -19,3 +18,4 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|                                                               transcript map → |

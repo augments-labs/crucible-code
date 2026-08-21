@@ -1,11 +1,13 @@
 //! The transcript map: absolute travel over what the record retains.
 //!
-//! It borrows the fixed head row only while somebody is using it. At rest that
-//! row says where the session is; clicked at its `transcript` word, it becomes a
-//! track from the oldest retained line to the live edge. A drag along the track
-//! moves the transcript directly to the corresponding place, so distance costs
-//! one gesture rather than enough wheel notches to cross it. The wheel remains
-//! the precise control and moves the mark with the transcript.
+//! It owns the fixed row at the bottom of the window, below the prompt's status.
+//! At rest the row directly under the prompt status offers `transcript map` at
+//! its right edge; under the pointer the exact accent becomes the compact
+//! rectangle behind contrasting text. Clicked, the whole row becomes a
+//! track from the oldest retained line to the live edge. A drag
+//! along the track moves the transcript directly to the corresponding place, so
+//! distance costs one gesture rather than enough wheel notches to cross it. The
+//! wheel remains the precise control and moves the mark with the transcript.
 //!
 //! The map is deliberately neutral. Its labels, landmarks and untouched rail
 //! use [`Slot::Quiet`]; the travelled rail and current place use
@@ -18,7 +20,7 @@
 //! display-row ends and keeps a fixed number of prompt landmarks; this row
 //! allocates only in proportion to the terminal width. It also holds no clock
 //! thread. The input waits already owned by the terminal wake at the map's idle
-//! deadline and put the ordinary head back.
+//! deadline and put the bottom-row control back.
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -31,6 +33,35 @@ use crate::width;
 
 /// How long after the last map gesture its row remains visible.
 const REST_AFTER: Duration = Duration::from_secs(3);
+
+/// The door into absolute transcript travel, before its opening mark.
+const CONTROL: &str = "transcript map";
+
+/// Which columns the resting door occupies.
+pub(crate) fn door(columns: usize) -> Option<Range<usize>> {
+    // The mark is one column in both glyph sets, and the space before it one
+    // more. The range therefore means the same before the glyph set is known.
+    // One space on either side is part of the control. Under the pointer those
+    // cells take the ground too, making a compact rectangle rather than a
+    // background that stops at the first and last letter.
+    let wide = width::columns(CONTROL) + 4;
+    let start = columns.checked_sub(wide)?;
+    Some(start..columns)
+}
+
+/// The fixed bottom row before its map is opened.
+pub(crate) fn resting(columns: usize, glyphs: Glyphs, pointed: bool) -> Row {
+    let Some(door) = door(columns) else {
+        return Row::new();
+    };
+    let mut row = Row::new();
+    row.pad(door.start);
+    row.push(
+        if pointed { Slot::Pointed } else { Slot::Accent },
+        format!(" {CONTROL} {} ", glyphs.stepping().1),
+    );
+    row
+}
 
 /// Labels outside the track. Kept short because every column they spend is one
 /// fewer absolute destination a narrow terminal can name.
@@ -58,7 +89,7 @@ pub(crate) struct TranscriptMap {
 }
 
 impl TranscriptMap {
-    /// Whether the head row is currently the map.
+    /// Whether the bottom row is currently the map.
     pub(crate) fn open(&self) -> bool {
         self.span.is_some()
     }
@@ -68,7 +99,7 @@ impl TranscriptMap {
         self.span
     }
 
-    /// What replaces the ordinary head while this stands.
+    /// What replaces the resting control while this stands.
     pub(crate) fn row(&self) -> Option<&Row> {
         self.row.as_ref()
     }
@@ -136,7 +167,7 @@ impl TranscriptMap {
         self.rests.map(|rests| rests.saturating_duration_since(now))
     }
 
-    /// Puts the ordinary head back if the idle period has elapsed.
+    /// Puts the resting control back if the idle period has elapsed.
     pub(crate) fn repose(&mut self, now: Instant) -> bool {
         if self.rests.is_none_or(|rests| now < rests) {
             return false;
@@ -150,7 +181,7 @@ impl TranscriptMap {
         self.rests = Some(Instant::now());
     }
 
-    /// Puts the ordinary head back now.
+    /// Puts the resting control back now.
     pub(crate) fn close(&mut self) -> bool {
         let was = self.open();
         self.span = None;
@@ -209,6 +240,29 @@ pub(crate) fn row(record: &Record, span: MapSpan, columns: usize, glyphs: Glyphs
 mod tests {
     use super::*;
     use crate::record::Record;
+
+    #[test]
+    fn the_resting_control_stands_at_the_bottom_rows_right_edge() {
+        let row = resting(40, Glyphs::Unicode, false);
+        let door = door(40).expect("room for the control");
+
+        assert_eq!(row.columns(), 40);
+        assert!(row.text().ends_with(" transcript map → "));
+        assert_eq!(door.len(), width::columns(" transcript map → "));
+        assert_eq!(row.kinds().last(), Some(Slot::Accent));
+    }
+
+    #[test]
+    fn the_pointed_control_uses_the_accent_as_its_ground() {
+        let row = resting(40, Glyphs::Unicode, true);
+
+        assert_eq!(row.kinds().last(), Some(Slot::Pointed));
+        assert!(
+            resting(40, Glyphs::Ascii, false)
+                .text()
+                .ends_with(" transcript map > ")
+        );
+    }
 
     #[test]
     fn the_map_uses_the_palette_jobs_and_no_hue_of_its_own() {

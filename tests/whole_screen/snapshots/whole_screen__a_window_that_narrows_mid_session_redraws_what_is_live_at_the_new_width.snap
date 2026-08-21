@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-52x20 cursor 17,47 scrolled 0
-|…/workspace                         transcript map →|
-|│                                                  │|
+52x20 cursor 16,47 scrolled 0
+|…/and-something-below-that-again/workspace          |
 |│ Tips                                             │|
 |│                                                  │|
 |│ · /          opens the command list              │|
@@ -23,3 +22,4 @@ expression: window.picture()
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                    |
+|                                   transcript map → |

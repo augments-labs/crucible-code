@@ -23,9 +23,7 @@ fn the_row_says_where_the_session_is() {
     // under the box, beside the keys that change it.
     let row = said(&Head { root: NEAR }, 80);
 
-    assert!(row.starts_with(NEAR), "{row:?}");
-    assert!(row.ends_with("transcript map →"), "{row:?}");
-    assert_eq!(width::columns(&row), 80);
+    assert_eq!(row, NEAR);
 }
 
 #[test]
@@ -34,9 +32,7 @@ fn a_path_longer_than_the_row_keeps_the_end() {
     // same for every project somebody keeps in one place, so it is what goes —
     // and it goes a whole segment at a time, which is what leaves something
     // that still reads as a path.
-    let row = said(&head(), 46);
-    assert!(row.starts_with("…/crucible-code"), "{row:?}");
-    assert!(row.ends_with("transcript map →"), "{row:?}");
+    assert_eq!(said(&head(), 46), "…/Projects/augments-labs/crucible-code");
 }
 
 #[test]
@@ -73,37 +69,4 @@ fn every_width_gives_way_in_the_order_this_row_gives_way_in() {
             assert!(!row.is_empty(), "{columns} {row:?}");
         }
     }
-}
-
-#[test]
-fn the_transcript_map_label_is_the_columns_that_open_it() {
-    let row = said(&head(), 80);
-    let control = Head::transcript(80).expect("room for the control");
-
-    assert!(row.ends_with("transcript map →"), "{row:?}");
-    assert_eq!(control.len(), width::columns("transcript map →"));
-}
-
-#[test]
-fn pointing_at_the_transcript_map_changes_only_its_slot() {
-    let quiet = head().pointed(80, Glyphs::Unicode, false);
-    let pointed = head().pointed(80, Glyphs::Unicode, true);
-
-    assert_eq!(quiet.text(), pointed.text());
-    assert_eq!(quiet.kinds().last(), Some(Slot::Quiet));
-    assert_eq!(pointed.kinds().last(), Some(Slot::Accent));
-    assert!(
-        head()
-            .row(80, Glyphs::Ascii)
-            .text()
-            .ends_with("transcript map >")
-    );
-}
-
-#[test]
-fn a_window_too_narrow_for_a_map_keeps_the_path_instead() {
-    let row = said(&Head { root: NEAR }, 10);
-
-    assert_eq!(row, "…/crucible");
-    assert_eq!(Head::transcript(10), None);
 }

@@ -3,9 +3,8 @@ source: tests/whole_screen/main.rs
 assertion_line: 122
 expression: window.picture()
 ---
-80x24 cursor 21,14 scrolled 0
-|…/and-something-below-that-again/workspace                      transcript map →|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+80x24 cursor 20,14 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
@@ -28,3 +27,4 @@ expression: window.picture()
 |│   third line                                                                 │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
+|                                                               transcript map → |
