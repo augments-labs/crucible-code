@@ -271,10 +271,13 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();
     let _ = write!(
         line,
-        "{:.1} frames/s {LIMIT:.0} opening={:.1} sustained={:.1} ratio={:.3}",
-        burst.sustained,
-        burst.opening,
-        burst.sustained,
+        "{:.1} frames/s {LIMIT:.0} opening={:.1} sustained={:.1} \
+         opening_pace={:.1} sustained_pace={:.1} ratio={:.3}",
+        burst.sustained.rate,
+        burst.opening.rate,
+        burst.sustained.rate,
+        burst.opening.pace,
+        burst.sustained.pace,
         burst.ratio(),
     );
     line.push('\n');
@@ -299,7 +302,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if measured.sustained < LIMIT || measured.ratio() < SUSTAINED_FRACTION {
+    if measured.sustained.rate < LIMIT || measured.ratio() < SUSTAINED_FRACTION {
         return ExitCode::FAILURE;
     }
 

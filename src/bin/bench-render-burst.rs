@@ -259,10 +259,13 @@ fn report(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();
     let _ = write!(
         line,
-        "{:.1} frames/s {LIMIT:.0} opening={:.1} sustained={:.1} ratio={:.3}",
-        burst.sustained,
-        burst.opening,
-        burst.sustained,
+        "{:.1} frames/s {LIMIT:.0} opening={:.1} sustained={:.1} \
+         opening_pace={:.1} sustained_pace={:.1} ratio={:.3}",
+        burst.sustained.rate,
+        burst.opening.rate,
+        burst.sustained.rate,
+        burst.opening.pace,
+        burst.sustained.pace,
         burst.ratio(),
     );
     line.push('\n');
@@ -291,13 +294,14 @@ fn slowing(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();
     let _ = writeln!(
         line,
-        "    FAIL rendering slows as the transcript grows: \
-         {:.0}/s at the start of the burst, {:.0}/s at the end \
-         ({:.0}% of it, floor {:.0}%)",
-        burst.opening,
-        burst.sustained,
+        "    FAIL rendering slows as the transcript grows: against a fixed \
+         yardstick a frame at the end of the burst kept {:.0}% of the pace one \
+         at the start had (floor {:.0}%); {:.0}/s at the start, {:.0}/s at the \
+         end",
         burst.ratio() * 100.0,
         SUSTAINED_FRACTION * 100.0,
+        burst.opening.rate,
+        burst.sustained.rate,
     );
 
     io::stderr().write_all(line.as_bytes())?;
@@ -309,9 +313,9 @@ fn evidence(burst: Burst) -> Result<(), ProbeError> {
     let mut line = String::new();
     let _ = writeln!(
         line,
-        "         render opening {:.0}/s, sustained {:.0}/s, ratio {:.1}%",
-        burst.opening,
-        burst.sustained,
+        "         render opening {:.0}/s, sustained {:.0}/s, pace kept {:.1}%",
+        burst.opening.rate,
+        burst.sustained.rate,
         burst.ratio() * 100.0,
     );
     io::stderr().write_all(line.as_bytes())?;
@@ -334,11 +338,11 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if measured.sustained < LIMIT {
+    if measured.sustained.rate < LIMIT {
         return ExitCode::FAILURE;
     }
 
-    if measured.sustained < measured.opening * SUSTAINED_FRACTION {
+    if measured.ratio() < SUSTAINED_FRACTION {
         let _ = slowing(measured);
         return ExitCode::FAILURE;
     }
