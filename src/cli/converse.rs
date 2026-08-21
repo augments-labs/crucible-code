@@ -21,6 +21,11 @@
 //!
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
+//!
+//! Which is also the last thing a session does. The screen it drew on is
+//! borrowed and handed back, so the transcript goes with it — and this loop
+//! returns a [`Parting`] naming the file it went into, for the caller to write
+//! once the screen is the reader's again.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -216,6 +221,52 @@ impl Terms {
     }
 }
 
+/// What a session leaves on the reader's own screen once it has gone.
+///
+/// Everything a session draws is drawn on a screen this process borrows and
+/// hands back, so what a reader scrolls up to afterwards is the shell they
+/// started from. This is the one thing written after the handing back: where
+/// the rest of it went.
+///
+/// Decided in [`converse`], because that is the last place the session still
+/// exists, and written by the caller, because the screen is the last guard to
+/// be given back and nothing may reach the reader's own until it has.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Parting {
+    /// Say nothing.
+    ///
+    /// Either no screen was taken — so the session drew into the reader's own
+    /// scrollback and is still sitting there — or nothing was recorded, which
+    /// is a run that asked not to be kept and has no file to point at.
+    Nothing,
+
+    /// The transcript went with the screen, and this file holds all of it.
+    Kept(PathBuf),
+
+    /// The transcript went with the screen, and this file holds the part of it
+    /// that reached the disk before the log stopped recording.
+    Lost(PathBuf),
+}
+
+impl Parting {
+    /// What a session that has just ended leaves behind.
+    ///
+    /// `borrowed` is whether a screen was taken, `written` is the file the
+    /// session was recorded to and is absent in a run that asked not to be
+    /// kept, and `problem` is the first write to that file that failed.
+    ///
+    /// A function of three values rather than three reads at the end of the
+    /// loop, because two of them are only ever true on a real terminal: this is
+    /// the whole of the decision, and it can be asked without one.
+    fn of(borrowed: bool, written: Option<PathBuf>, problem: Option<&str>) -> Self {
+        match written {
+            Some(path) if borrowed && problem.is_none() => Self::Kept(path),
+            Some(path) if borrowed => Self::Lost(path),
+            _ => Self::Nothing,
+        }
+    }
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
@@ -227,7 +278,7 @@ pub(crate) fn converse<T: Terminal>(
     terms: &Terms,
     opening: &draw::opening::Standing,
     input: &mut dyn BufRead,
-) -> Result<(), Fatal> {
+) -> Result<Parting, Fatal> {
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
@@ -242,7 +293,13 @@ pub(crate) fn converse<T: Terminal>(
     // configuration, a provider nobody named, a home directory that would not
     // be made private — and a refusal written to a screen that is handed back
     // in the same breath is one nobody reads.
-    let _screen = Screen::take()?;
+    let screen = Screen::take()?;
+
+    // Whether the transcript is about to be taken away with the screen it was
+    // drawn on, which is the whole of what decides if there is anything to say
+    // on the way out. Read here rather than at the end, because it is a fact
+    // about the start of the session and the binding above outlives the answer.
+    let borrowed = screen.is_some();
 
     // Held for the whole session and dropped on the way out however this
     // returns. Between turns it is what draws the box; during one it is what
@@ -482,6 +539,12 @@ pub(crate) fn converse<T: Terminal>(
         }
     }
 
+    // Read before the drain below, which consumes the session. A session that
+    // recorded nothing has no name and no file, and that is the same answer as
+    // a session nothing was hidden from: there is nowhere to send the reader.
+    let session = runner.into_session();
+    let written = session.id().is_some().then(|| session.path().to_path_buf());
+
     // The writer thread is usually still holding the last turn when the loop
     // ends, so the poll above cannot be relied on to have seen a failure
     // recorded during it. Draining here is what stops the one turn most likely
@@ -491,16 +554,21 @@ pub(crate) fn converse<T: Terminal>(
     // the drain is what puts the last turn on the disk: it has to happen
     // whether or not anything has already been said, and a condition is
     // something a later edit can reorder into not happening at all.
-    let problem = runner.into_session().finish();
+    let problem = session.finish();
 
-    if let Some(problem) = problem
+    if let Some(problem) = &problem
         && !held.told
     {
-        draw::trouble(renderer, &problem, terms.style())?;
+        draw::trouble(renderer, problem, terms.style())?;
     }
 
     renderer.settle()?;
-    Ok(())
+
+    // Whatever was said about the log while the screen was still up went with
+    // it, which is why the failure reaches here at all: pointing a reader at a
+    // file and calling it the transcript would be the last thing crucible said
+    // and false.
+    Ok(Parting::of(borrowed, written, problem.as_deref()))
 }
 
 /// Says once that the session log stopped recording.

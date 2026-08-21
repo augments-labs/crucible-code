@@ -19,6 +19,21 @@ Only sessions that were asked something appear. Starting crucible and leaving
 without typing records a file with no turns in it, and there is no row to draw
 for one.
 
+## What is left behind when crucible ends
+
+crucible draws on a screen it borrows from the terminal and hands back when it
+ends, so what you scroll up to afterwards is the shell you started from. The
+transcript is not in the terminal's scrollback and never was.
+
+What crucible writes on its way out is a line naming the file the transcript is
+in, and a line saying `crucible --continue` picks the session up. Where the log
+stopped being written part-way through, that first line says so beside the
+file — a transcript missing its tail is never handed over as a whole one.
+
+Nothing is written where crucible had no screen to borrow, which is every run
+whose input or output is not a terminal. Nothing was hidden from you in one, so
+everything it drew is already in your own scrollback.
+
 ## Continuing
 
 ```bash

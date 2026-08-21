@@ -831,7 +831,14 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     );
 
     drop(held);
-    outcome
+
+    // After every guard the loop was holding has been given back, the screen
+    // among them. What this writes goes to the reader's own scrollback rather
+    // than to the one the session ran on, which is the only reason it says
+    // anything worth keeping.
+    draw::parting(&mut renderer, &outcome?, terms.style())?;
+
+    Ok(())
 }
 
 /// Protects the user configuration before any value can be read from it.

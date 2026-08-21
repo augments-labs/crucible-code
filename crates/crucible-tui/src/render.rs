@@ -722,6 +722,32 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Writes `rows` to whatever screen is there now, one to a line.
+    ///
+    /// Nothing is addressed, nothing is diffed and nothing is recorded: this is
+    /// for after the screen a session ran on has been handed back, when the
+    /// thing being written to is the reader's own scrollback and the rows this
+    /// renderer is holding describe a screen that no longer exists.
+    ///
+    /// Which is also why it may only be called once, at the end. A renderer
+    /// whose picture is still on a screen would be writing under its own frame.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn parting(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        for row in rows {
+            self.terminal.write(&row.paint(&self.palette))?;
+
+            // Both halves, because raw mode may or may not have been left by
+            // the time this runs and a bare newline under it moves down a row
+            // without going back to the first column.
+            self.terminal.write("\r\n")?;
+        }
+
+        self.terminal.flush()
+    }
+
     /// Asks the terminal to put `text` on the reader's clipboard.
     ///
     /// Answers whether it asked. `false` where there is nothing to copy, where
