@@ -22,6 +22,15 @@ its place.
 
 ### Fixed
 
+- **A session picked up comes back as the session it was.** Every result the
+  replay had to cut is lit and opens on the key over it, the same way it did
+  live — the rows were drawn through the live builder and never held, so none of
+  them was offering anything.
+
+- **The session picked up replaces the screen rather than following it.** The
+  transcript is emptied first, so scrolling back walks one conversation instead
+  of leaving one and entering another at a point nothing marks.
+
 - **The schema a strict validator will compile.** The blocks a user keys said
   what an unknown name has to be with a pattern, and that pattern also matched
   the names crucible declares beside it — legal, and refused by the registry

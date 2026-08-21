@@ -46,7 +46,7 @@ use std::fmt;
 
 use crucible_core::{
     Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason, Summary,
-    ToolCall, ToolOutput,
+    ToolCall, ToolId, ToolOutput,
 };
 use crucible_tools::Ended;
 use crucible_tui::{
@@ -174,32 +174,7 @@ pub(crate) fn event<T: Terminal>(
         // One block: the row that says what came back, and under it the lines a
         // call that changed a file moved. No row parts them, because a reader
         // asking what the call did is asking both halves of the same question.
-        Event::ToolFinished { call, output } => {
-            let beyond = beyond(&output);
-            let rows = finished_rows(&output, columns, style);
-
-            renderer.present(&rows)?;
-
-            // After the rows and not before them, because this is what the rows
-            // could not say: a result the row said the whole of is a result
-            // nobody has to be offered, and one held anyway would be an offer to
-            // show somebody what they are already looking at.
-            //
-            // Where the offer went is the block's first row, which is the one
-            // that names the key — the lines under it are a change, and a change
-            // is cut where it is built rather than here, so it offers nothing.
-            // Counted back from the end because the rows have already gone.
-            if beyond > 0 {
-                let at = renderer.lines().saturating_sub(rows.len());
-                kept.finished(&call, output.into_text(), at);
-            } else {
-                // Even when nothing needs retaining, the call and any live tail
-                // are over. Leaving them would show a completed call as live.
-                kept.answered(&call);
-            }
-
-            Ok(())
-        }
+        Event::ToolFinished { call, output } => came_back(renderer, kept, &call, output, style),
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
@@ -741,6 +716,50 @@ pub(crate) fn finished_rows(output: &ToolOutput, window: usize, style: Style) ->
     }
 
     rows
+}
+
+/// One result, on the screen and held where the key that opens it can find it.
+///
+/// The one door a result goes through, and it is one because both paths take
+/// it: the turn drawing what has just come back, and the replay putting a
+/// session back on the screen. A result that lit and expanded live and did
+/// neither on the way back in would be the same result behaving as two, which
+/// is what a reader picking a session up would find strange first.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn came_back<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    kept: &mut Kept,
+    call: &ToolId,
+    output: ToolOutput,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let beyond = beyond(&output);
+    let rows = finished_rows(&output, renderer.columns(), style);
+
+    renderer.present(&rows)?;
+
+    // After the rows and not before them, because this is what the rows could
+    // not say: a result the row said the whole of is a result nobody has to be
+    // offered, and one held anyway would be an offer to show somebody what they
+    // are already looking at.
+    //
+    // Where the offer went is the block's first row, which is the one that names
+    // the key — the lines under it are a change, and a change is cut where it is
+    // built rather than here, so it offers nothing. Counted back from the end
+    // because the rows have already gone.
+    if beyond > 0 {
+        let at = renderer.lines().saturating_sub(rows.len());
+        kept.finished(call, output.into_text(), at);
+    } else {
+        // Even when nothing needs retaining, the call and any live tail are
+        // over. Leaving them would show a completed call as live.
+        kept.answered(call);
+    }
+
+    Ok(())
 }
 
 /// How many lines of a result its row has no room to say.

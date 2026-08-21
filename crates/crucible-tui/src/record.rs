@@ -332,6 +332,31 @@ impl Record {
         }
     }
 
+    /// Drop every line, leaving the record empty and the numbering where it was.
+    ///
+    /// What a session picked up asks for: the transcript it replaces is the
+    /// whole of the band, so the lines that were there go rather than being
+    /// pushed up out of sight. Nothing else in this process is asked to forget
+    /// with it — the numbering carries on past the lines it dropped, so a
+    /// number some other part of the program is holding still names the line it
+    /// named, and names nothing once that line has gone.
+    ///
+    /// The opening goes too, and cannot come back: what a resize redraws is a
+    /// card whose lines are still held, and these are not.
+    pub(crate) fn empties(&mut self) {
+        self.gone += self.lines.len();
+        self.lines.clear();
+        self.tall.clear();
+        self.rows = 0;
+        self.top = Spot {
+            line: self.gone,
+            into: 0,
+        };
+        self.following = true;
+        self.opening = None;
+        self.open = false;
+    }
+
     /// How many lines the session has taken, including those since dropped.
     ///
     /// Counted from the first line of the session rather than the first still
@@ -564,6 +589,39 @@ mod tests {
                 .map(|row| Row::new().then(Slot::Plain, format!("{row}")))
                 .collect()
         })
+    }
+
+    #[test]
+    fn a_record_that_was_emptied_has_nothing_left_of_what_it_held() {
+        let mut record = Record::new(8);
+        record.opens(ruler());
+        record.write(Slot::Plain, "said\n");
+
+        record.empties();
+
+        assert!(said(&record, 8).is_empty());
+
+        // The card goes with the lines and does not come back: what a resize
+        // lays out again is an opening whose lines are still held, and these
+        // are not.
+        record.resized(5);
+        assert!(said(&record, 8).is_empty());
+    }
+
+    #[test]
+    fn the_numbering_carries_on_past_the_lines_a_record_dropped() {
+        let mut record = filled(8, 6);
+        let numbered = record.lines();
+
+        record.empties();
+        assert_eq!(record.lines(), numbered);
+
+        // So a number some other part of the program is holding names the line
+        // it named, and names nothing once that line has gone — rather than
+        // quietly naming whatever was written in its place.
+        record.write(Slot::Plain, "after\n");
+        assert_eq!(record.lines(), numbered + 1);
+        assert_eq!(said(&record, 8), ["after"]);
     }
 
     #[test]
