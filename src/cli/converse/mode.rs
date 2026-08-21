@@ -41,12 +41,17 @@ pub(super) fn named(said: &str) -> Option<Mode> {
     RING.into_iter().find(|mode| mode.to_string() == said)
 }
 
-/// The colour a mode's border and its sentence are drawn in.
+/// The colour a mode's own sentence is drawn in.
 ///
-/// A ramp: the quiet state is quiet, and the border only starts pulling the eye
-/// as the mode gets more permissive. Not red at the top of it — red is what a
-/// denial and a failed tool call are already spelled in, and full access is a
+/// A ramp: the quiet state is quiet, and the sentence only starts pulling the
+/// eye as the mode gets more permissive. Not red at the top of it — red is what
+/// a denial and a failed tool call are already spelled in, and full access is a
 /// choice somebody made rather than something that went wrong.
+///
+/// The sentence and nothing else. The border of the box is one colour whatever
+/// is in force — see [`crucible_tui::Prompt::BORDER`] — because a hue meaning
+/// *be careful* stretched along the largest thing on the screen, in every
+/// frame, is a warning nobody is reading by the second prompt.
 pub(super) const fn tone(mode: Mode) -> Slot {
     match mode {
         Mode::Ask => Slot::Quiet,

@@ -85,7 +85,8 @@ pub struct Prompt<'a> {
     pub column: usize,
     /// What the status row says the mode in force is.
     pub mode: &'a str,
-    /// The colour that mode is drawn in, on the border and on its own sentence.
+    /// The colour that mode's own sentence is drawn in. Not the border's: see
+    /// [`Prompt::BORDER`].
     pub tone: Slot,
     /// What is said quietly after it — the keys that change the mode. Nothing
     /// is drawn in its place when there is none.
@@ -138,6 +139,20 @@ impl Prompt<'_> {
     /// around nothing, standing over a caret with no box under it.
     pub const FRAMED_AT: usize = FRAMED_AT;
 
+    /// The colour the box is framed in, whatever else is true of the session.
+    ///
+    /// One colour rather than the permission mode's, though the mode's sentence
+    /// under the box still carries it. The border is the largest thing on the
+    /// screen and it is up in every frame, so colouring it by mode paints a
+    /// quarter of the window in a hue that means *be careful* and leaves it
+    /// there — which is a warning that has stopped being one by the second
+    /// prompt. The sentence saying which mode is in force is one row, is read
+    /// when it changes, and is where the ramp belongs.
+    ///
+    /// Published so that a frame drawn above the box is drawn in the same
+    /// colour: two borders in two colours read as two kinds of thing.
+    pub const BORDER: Slot = Slot::Quiet;
+
     /// What a framed row spends on its border and the space inside it, both
     /// sides together — so the line itself gets `columns - CHROME`.
     ///
@@ -182,9 +197,9 @@ impl Prompt<'_> {
             let (close, closed) = glyphs.bottom();
             let across = bar.repeat(columns.saturating_sub(2));
 
-            let mut rows = vec![Row::new().then(self.tone, format!("{open}{across}{opened}"))];
+            let mut rows = vec![Row::new().then(Self::BORDER, format!("{open}{across}{opened}"))];
             rows.extend(self.typed(columns, glyphs));
-            rows.push(Row::new().then(self.tone, format!("{close}{across}{closed}")));
+            rows.push(Row::new().then(Self::BORDER, format!("{close}{across}{closed}")));
             rows.push(self.status(columns, glyphs));
             rows
         };
@@ -416,13 +431,13 @@ impl Prompt<'_> {
                 let mark = if at == 0 { glyphs.caret() } else { " " };
 
                 Row::new()
-                    .then(self.tone, edge)
+                    .then(Self::BORDER, edge)
                     .then(Slot::Plain, " ")
                     .then(Slot::Accent, mark)
                     .then(Slot::Plain, " ")
                     .join(line)
                     .then(Slot::Plain, " ")
-                    .then(self.tone, edge)
+                    .then(Self::BORDER, edge)
             })
             .collect()
     }

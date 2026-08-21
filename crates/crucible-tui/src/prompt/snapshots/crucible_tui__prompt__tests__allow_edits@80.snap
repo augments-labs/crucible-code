@@ -2,7 +2,7 @@
 source: crates/crucible-tui/src/prompt/tests.rs
 expression: "dump(&prompt.rows(columns, glyphs), columns)"
 ---
-<AllowEdits>╭──────────────────────────────────────────────────────────────────────────────╮</>
-<AllowEdits>│</> <Accent>›</>                                                                            <AllowEdits>│</>
-<AllowEdits>╰──────────────────────────────────────────────────────────────────────────────╯</>
+<Quiet>╭──────────────────────────────────────────────────────────────────────────────╮</>
+<Quiet>│</> <Accent>›</>                                                                            <Quiet>│</>
+<Quiet>╰──────────────────────────────────────────────────────────────────────────────╯</>
 <AllowEdits>allow edits on</><Quiet> (shift+tab to cycle)</>
