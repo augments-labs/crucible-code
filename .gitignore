@@ -21,12 +21,8 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
-# RustRover
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+# One contributor's JetBrains IDE settings, per machine and per checkout.
+.idea/
 
 # insta writes a rejected picture beside the accepted one. It is the diff you
 # are being asked about, never something to commit.
