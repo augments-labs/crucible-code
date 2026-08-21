@@ -124,15 +124,6 @@ pub(super) fn stand<T: Terminal, S>(
             renderer.resized()?;
         }
 
-        // A row lit because the pointer was over it says a click there would
-        // answer something, and while a component is standing the answer is the
-        // component's. So the light goes out for as long as one stands, rather
-        // than pointing at a door the reader has already opened.
-        if let Pressed::Hovered { .. } = arrived {
-            renderer.hovering(None)?;
-            continue;
-        }
-
         // A click is reported against the whole window, and a component thinks
         // in the rows it drew. The renderer is what knows both, so the click is
         // rewritten to a row of the region here, and one that landed anywhere

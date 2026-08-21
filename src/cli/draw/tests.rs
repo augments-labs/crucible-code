@@ -275,24 +275,24 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
 }
 
 #[test]
-fn the_key_a_cut_result_names_is_the_one_thing_on_the_row_that_is_lit() {
-    // The affordance. A click on this row opens what the key opens, and a row
-    // written entirely in the quiet slot said neither — so a reader looking for
-    // what they could reach found a result that had been cut looking exactly
-    // like a line that had not. Lit the way the only other door on screen is:
-    // the count of what is still running, under the box.
+fn a_cut_result_comes_back_in_the_reader_s_own_foreground() {
+    // What the result said is the part of the row a reader is reading, and on a
+    // row that was cut it is also the part they can have more of. It is written
+    // in the foreground everything else on the screen is written in, so every
+    // result the transcript shortened stands out from the ones it did not —
+    // all of them, at once, whether or not a pointer is anywhere near.
     let output = ToolOutput::ok("one\ntwo\nthree");
     let row = finished(&output, beyond(&output), WIDE, Style::plain());
 
     // The slots in the order the row asked for them, which is what says *which*
-    // run is lit: the indent, the corner, the line that came back, the count,
-    // the key, and the bracket that shuts it.
+    // run carries what: the indent, the corner, the line that came back, the
+    // count, the key, and the bracket that shuts it.
     assert_eq!(
         row.kinds().collect::<Vec<_>>(),
         [
             Slot::Plain,
             Slot::Quiet,
-            Slot::Quiet,
+            Slot::Plain,
             Slot::Quiet,
             Slot::Accent,
             Slot::Quiet
@@ -302,14 +302,32 @@ fn the_key_a_cut_result_names_is_the_one_thing_on_the_row_that_is_lit() {
 }
 
 #[test]
+fn a_window_too_narrow_for_the_offer_still_lights_what_was_cut() {
+    // The offer comes off the row before the words do, so a narrow window keeps
+    // the words and drops the key. What it may not drop is that the result was
+    // cut: the key still works, and a row gone quiet with it would say the
+    // whole result is there.
+    let output = ToolOutput::ok("one\ntwo\nthree");
+    let row = finished(&output, beyond(&output), 24, Style::plain());
+
+    assert!(!row.text().contains("ctrl+o"), "{row:?}");
+    assert!(
+        row.kinds().filter(|slot| *slot == Slot::Plain).count() > 1,
+        "{row:?}"
+    );
+}
+
+#[test]
 fn a_row_with_nothing_cut_lights_nothing() {
     // Nothing was cut, so there is no door, so there is nothing to light. A row
     // that lit one anyway would be an offer to open a result that is already
-    // whole on the screen above it.
+    // whole on the screen above it — and the words go down as quiet as any
+    // other line, which is what leaves the cut ones standing out.
     let output = ToolOutput::ok("done");
     let row = finished(&output, beyond(&output), WIDE, Style::plain());
 
     assert!(!row.kinds().any(|slot| slot == Slot::Accent), "{row:?}");
+    assert_eq!(row.kinds().filter(|slot| *slot == Slot::Plain).count(), 1);
 }
 
 #[test]

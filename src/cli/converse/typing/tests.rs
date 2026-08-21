@@ -116,7 +116,6 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             editor: &mut editor,
             planning: &mut nothing(),
             left: &crucible_tools::Background::new(),
-            kept: &Kept::default(),
             keys: false,
         },
     )
@@ -880,65 +879,4 @@ fn a_box_with_nothing_in_it_says_nothing_and_leaves_the_clipboard_alone() {
         None
     );
     assert_eq!(renderer.terminal().written(), "");
-}
-
-/// A [`Kept`] holding one result, cut down to record line `at`.
-fn holding(at: usize) -> Kept {
-    let mut cut = Kept::default();
-    let call = crucible_core::ToolId::new("call-one".to_owned());
-    cut.calling(call.clone(), "Bash(cargo test)".to_owned());
-    cut.finished(&call, "x".repeat(4).into_boxed_str(), at);
-    cut
-}
-
-#[test]
-fn the_row_worth_lighting_is_the_one_holding_a_result_that_was_cut() {
-    // The whole of what a light promises: point here and a click answers.
-    let mut renderer = drawing();
-    for line in 0..3 {
-        renderer.commit(&format!("line {line}")).unwrap();
-    }
-
-    let cut = holding(1);
-    assert_eq!(worth(&renderer, &cut, 1), Some(1));
-}
-
-#[test]
-fn a_row_of_the_record_with_nothing_behind_it_is_not_worth_lighting() {
-    // A row that lit and then answered nothing is worse than one that never
-    // lit: it teaches the reader that the light means nothing.
-    let mut renderer = drawing();
-    for line in 0..3 {
-        renderer.commit(&format!("line {line}")).unwrap();
-    }
-
-    let cut = holding(1);
-    for row in [0, 2] {
-        assert_eq!(worth(&renderer, &cut, row), None, "row {row}");
-    }
-}
-
-#[test]
-fn no_row_outside_the_record_is_worth_lighting() {
-    // The box and whatever stands over it are laid out by components that
-    // answer their own clicks, and a blank band answers none.
-    let mut renderer = drawing();
-    renderer.commit("line").unwrap();
-    let (rows, caret) = (vec![Row::plain("│ › ")], None);
-    renderer
-        .under(&rows, caret, crucible_tui::Palette::plain())
-        .unwrap();
-
-    let cut = holding(0);
-    let record = (0..renderer.rows())
-        .filter(|row| matches!(renderer.aimed(*row), Some(Aimed::Line(_))))
-        .count();
-    assert!(record > 0, "nothing of the record was on screen");
-
-    for row in 0..renderer.rows() {
-        if matches!(renderer.aimed(row), Some(Aimed::Line(_))) {
-            continue;
-        }
-        assert_eq!(worth(&renderer, &cut, row), None, "row {row}");
-    }
 }

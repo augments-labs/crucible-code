@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+**Every result the transcript cut short is lit, and none of them wears a
+ground.** What the result said is drawn in your own foreground rather than the
+quiet one, so all of them stand out from the lines with nothing behind them at
+once instead of one at a time under a pointer. The pointer is no longer asked
+about: crucible stops turning on the mode that reports it crossing the window.
+
 **The model is back under the box, at the right of the row that was already
 there.** It sits beside the keys that change it rather than a screen away from
 them, and the row along the top keeps the working directory alone. Where the

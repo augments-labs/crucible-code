@@ -175,7 +175,6 @@ impl Leaving {
                 | Pressed::Copy
                 | Pressed::Dragged { .. }
                 | Pressed::Released { .. }
-                | Pressed::Hovered { .. }
                 | Pressed::Ignored => Moved::Still,
             };
         }
@@ -259,7 +258,6 @@ impl Leaving {
             | Pressed::Scrolled { .. }
             | Pressed::Dragged { .. }
             | Pressed::Released { .. }
-            | Pressed::Hovered { .. }
             | Pressed::Ignored => Moved::Still,
         }
     }

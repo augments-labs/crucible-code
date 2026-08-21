@@ -146,17 +146,6 @@ pub enum Pressed {
         /// How many columns across it.
         column: usize,
     },
-    /// The pointer moved to somewhere on the screen with nothing held.
-    ///
-    /// Where it is rather than what it did: nothing has been asked for yet, and
-    /// what this is for is saying what *would* happen if the button went down
-    /// here.
-    Hovered {
-        /// How many rows down the screen.
-        row: usize,
-        /// How many columns across it.
-        column: usize,
-    },
     /// The button came up somewhere on the screen.
     ///
     /// The end of whatever the press began, which is the moment a selection is
@@ -341,10 +330,6 @@ fn clicked(mouse: MouseEvent) -> Pressed {
             column: mouse.column as usize,
         },
         MouseEventKind::Drag(MouseButton::Left | MouseButton::Right) => Pressed::Dragged {
-            row: mouse.row as usize,
-            column: mouse.column as usize,
-        },
-        MouseEventKind::Moved => Pressed::Hovered {
             row: mouse.row as usize,
             column: mouse.column as usize,
         },
@@ -729,11 +714,12 @@ mod tests {
     }
 
     #[test]
-    fn a_pointer_nobody_is_holding_is_read_as_where_it_is() {
-        assert_eq!(
-            meaning(pointer(MouseEventKind::Moved)),
-            Pressed::Hovered { row: 3, column: 7 }
-        );
+    fn a_pointer_nobody_is_holding_means_nothing_here() {
+        // Not asked for either — the mode that reports it is not turned on. A
+        // terminal sending it anyway is answered the same way, because a row
+        // says what a click on it would answer by how it is written, and where
+        // the pointer is changes none of that.
+        assert_eq!(meaning(pointer(MouseEventKind::Moved)), Pressed::Ignored);
     }
 
     #[test]
