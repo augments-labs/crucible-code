@@ -207,7 +207,7 @@ impl Scratch {
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
              \"provider\": \"anthropic\",\n  \"providers\": {{\n    \
              \"anthropic\": {{\"model\": \"bench\", \"baseUrl\": \"{endpoint}\"}}\n  \
-             }},\n  \"output\": {{\"color\": \"never\", \"mouse\": \"off\"}}\n}}\n"
+             }},\n  \"output\": {{\"color\": \"never\"}}\n}}\n"
         );
         fs::write(home.join("config.json"), config)?;
 

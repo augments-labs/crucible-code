@@ -6,6 +6,16 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Removed
+
+**`output.mouse` is gone; the mouse is crucible's, always.** A click in the box
+puts the cursor where you pointed, whether or not a turn is running, and a click
+on a result the transcript cut short opens it. The line worth pointing into is
+the line the arrows are slowest across, and nobody has configured for it before
+they have one. The wheel is the price, as it was: hold the terminal's own
+modifier to scroll or select, and a document still naming the key now fails to
+parse.
+
 ### Changed
 
 **The whole queue goes to one turn rather than a turn each.** Lines typed behind

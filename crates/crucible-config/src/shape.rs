@@ -174,12 +174,6 @@ pub(crate) const COLOR: &[&str] = &["auto", "always", "never"];
 /// Every answer `output.toolDetail` accepts.
 pub(crate) const TOOL_DETAIL: &[&str] = &["compact", "full"];
 
-/// Every answer `output.mouse` accepts.
-///
-/// Two, and they are the two ends of one trade rather than a preference. See
-/// the field below.
-pub(crate) const MOUSE: &[&str] = &["off", "click"];
-
 /// Every answer `output.theme` accepts.
 ///
 /// `auto` is not the absence of an answer: it is the answer "decide from the
@@ -231,13 +225,6 @@ const OUTPUT: &[Field] = &[
         name: "glyphs",
         about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
         shape: Shape::Choice(GLYPHS),
-        examples: &[],
-        widens: false,
-    },
-    Field {
-        name: "mouse",
-        about: "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt and open a result that was cut short, and the wheel stops scrolling",
-        shape: Shape::Choice(MOUSE),
         examples: &[],
         widens: false,
     },

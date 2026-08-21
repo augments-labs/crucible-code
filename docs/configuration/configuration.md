@@ -242,7 +242,6 @@ you with no way to send at all.
 | --- | --- | --- |
 | `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
-| `mouse` | `off`, `click` | Who the mouse belongs to for the length of a session. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
 | `toolDetail` | `compact`, `full` | How much of a tool call and its result one line shows. |
@@ -305,15 +304,17 @@ crucible draws comes out of the same set as the border:
 The name at the top of a session goes the same way: `unicode` draws it from half
 blocks and `ascii` writes it as letters.
 
-`mouse` is one trade with two ends rather than a preference. Left `off`, the
-terminal keeps the mouse: the wheel scrolls its scrollback, dragging selects,
-the middle button pastes. Set to `click`, crucible asks the terminal to forward
-buttons for the whole session, so a click in the box places the cursor between
-turns and a click on a result the transcript
-[cut short](../getting-started/getting-started.md) opens it, whether or not a
-turn is running — and the wheel is a button too, so it stops scrolling until
-crucible exits. crucible draws inline, which means the transcript above the box
-belongs to the terminal, so it cannot scroll that for you in exchange.
+The mouse is not among these keys. It is crucible's for the whole session, and
+a click means the same thing wherever it lands: the cursor goes where you
+pointed in the box, and a result the transcript
+[cut short](../getting-started/getting-started.md) opens. A line long enough to
+be worth pointing into is the line the arrows are slowest across, and a reader
+who has one cannot be asked to have configured for it first.
+
+The wheel is what it costs, since a wheel is a button and a terminal forwarding
+buttons is not using them itself. Hold your terminal's own modifier —
+<kbd>Shift</kbd> in most, <kbd>Fn</kbd> or <kbd>Option</kbd> on macOS — to
+scroll the transcript or select from it as you always did.
 
 ### `updates`
 
@@ -534,8 +535,8 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, glyphs, mouse,
-toolDetail
+crucible has at line 3, column 5 — accepted here: color, theme, syntaxTheme,
+glyphs, toolDetail
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

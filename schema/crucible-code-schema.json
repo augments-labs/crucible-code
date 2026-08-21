@@ -117,14 +117,6 @@
           ],
           "type": "string"
         },
-        "mouse": {
-          "description": "off leaves the mouse to the terminal, so the wheel scrolls it; click lets you place the cursor in the prompt and open a result that was cut short, and the wheel stops scrolling",
-          "enum": [
-            "off",
-            "click"
-          ],
-          "type": "string"
-        },
         "syntaxTheme": {
           "description": "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
           "examples": [
