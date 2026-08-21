@@ -112,7 +112,7 @@ The row under the box counts them, in the accent, because it is the one thing on
 that row you can act on:
 
 ```
-  ask mode on (shift+tab to cycle) · 2 commands        anthropic/claude-opus-5
+  ask mode on (shift+tab to cycle) · 2 commands
 ```
 
 <kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was — the same

@@ -32,7 +32,7 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, Effort};
+use crucible_core::Cancel;
 use crucible_runner::Runner;
 use crucible_tools::Background;
 use crucible_tui::{
@@ -553,12 +553,6 @@ pub(super) struct Says {
     pub(super) mode: Cow<'static, str>,
     /// The keys that act on it, said quietly after.
     pub(super) keys: Cow<'static, str>,
-    /// Which model the next turn goes to, at the other end of the row.
-    pub(super) model: String,
-    /// The vendor it is asked of, drawn before it.
-    pub(super) provider: &'static str,
-    /// How hard it is being asked to think. `None` where no rung is in force.
-    pub(super) effort: Option<&'static str>,
     /// What the border and the sentence are both drawn in.
     pub(super) tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
@@ -1211,9 +1205,6 @@ pub(super) fn saying(runner: &Runner) -> Says {
     Says {
         mode: Cow::Borrowed(mode.sentence()),
         keys: Cow::Borrowed(CYCLE),
-        model: runner.model().to_owned(),
-        provider: runner.serving(),
-        effort: runner.effort().map(Effort::as_str),
         tone: tone(mode),
         asking: None,
         left: runner.left(),
@@ -1347,9 +1338,6 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: &says.keys,
-        model: says.model.as_str(),
-        provider: says.provider,
-        effort: says.effort,
         asking: says.asking,
         running: Some(says.running),
         room,

@@ -79,6 +79,15 @@ pub(crate) struct Standing {
 }
 
 impl Standing {
+    /// The directory this session is working in.
+    ///
+    /// Read back out because the row at the top of the window says it too, and
+    /// says it for as long as the session runs — where the card says it once
+    /// and then scrolls. Resolved in one place so the two cannot disagree.
+    pub(crate) fn root(&self) -> &str {
+        &self.root
+    }
+
     /// Everything the opening says, read off `opening` once.
     ///
     /// The clock is read here rather than per row: four rows drawn against four

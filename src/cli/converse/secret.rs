@@ -144,13 +144,6 @@ fn standing<T: Terminal>(
         // is a key being pasted in, and a door out of it to a list of commands is
         // a door nobody wants while a secret is on screen.
         running: None,
-        // Nothing about the vendor, the model or the rung, which are facts
-        // about the next turn. This box is not one: what is typed into it goes
-        // to no provider, and naming one over a key being pasted in would say
-        // it was about to be sent somewhere.
-        model: "",
-        provider: "",
-        effort: None,
         asking: limited.then_some(LIMITED),
         room: Prompt::room(renderer.rows()),
     };

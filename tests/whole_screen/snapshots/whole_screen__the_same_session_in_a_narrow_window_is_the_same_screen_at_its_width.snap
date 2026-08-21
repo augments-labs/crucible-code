@@ -4,6 +4,7 @@ assertion_line: 94
 expression: window.picture()
 ---
 40x24 cursor 21,4 scrolled 0
+|…/workspace                             |
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -11,7 +12,6 @@ expression: window.picture()
 |Warning: No models available. Use /login|
 |or set an API key environment variable. |
 |Then use /model to select a model.      |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

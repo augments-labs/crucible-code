@@ -4,7 +4,7 @@ assertion_line: 158
 expression: window.picture()
 ---
 80x24 cursor 21,5 scrolled 0
-|│                                  │ · shift+tab  steps the permission mode    │|
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |

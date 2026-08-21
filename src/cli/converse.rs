@@ -32,14 +32,14 @@ use std::time::Duration;
 
 use crucible_auth::Store;
 use crucible_core::{
-    Answer as Chosen, Answered, Cancel, Compacting, Event, Post as _, Question, Remember, Revealed,
-    Room, Sensitivity, ToolCall, Verdict, Workspace,
+    Answer as Chosen, Answered, Cancel, Compacting, Effort, Event, Post as _, Question, Remember,
+    Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
-    pressed,
+    Editor, Head, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling,
+    Terminal, pressed,
 };
 
 use super::draw;
@@ -321,6 +321,18 @@ pub(crate) fn converse<T: Terminal>(
         // reports one; between turns there is nobody reading, so it is noticed
         // here instead.
         renderer.resized()?;
+
+        // The row at the top of the window, said again because a command may
+        // have changed what it says: `/model`, `/effort` and `/login` all end
+        // here, and the directory is the one part of it that cannot. Once per
+        // turn rather than per frame — the renderer keeps the row it lays out
+        // and re-lays it only when the window changes under it.
+        renderer.heads(Head {
+            provider: runner.serving(),
+            model: runner.model(),
+            effort: runner.effort().map(Effort::as_str),
+            root: opening.root(),
+        })?;
 
         // A view opened during the last turn is still open, and it was standing
         // in the rows the box is about to take. So it moves into the region

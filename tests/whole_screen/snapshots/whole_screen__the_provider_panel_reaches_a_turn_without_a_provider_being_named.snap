@@ -4,7 +4,7 @@ assertion_line: 306
 expression: window.picture()
 ---
 80x24 cursor 21,4 scrolled 0
-|│                                  │ · shift+tab  steps the permission mode    │|
+|…/and-something-below-that-again/workspace               anthropic/claude-test-1|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
@@ -27,4 +27,4 @@ expression: window.picture()
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|ask mode on (shift+tab to cycle)                                                |

@@ -94,12 +94,16 @@ fn document(vendor: Option<&Vendor>, allowed: Option<&str>) -> String {
 
 /// The directory a case is given to work in, below the one it is given.
 ///
-/// Deep enough that the welcome always shortens it to its last part. A path
-/// short enough to be drawn whole would carry this run's process id onto the
-/// screen and into the snapshot.
+/// Deep enough that everything drawing it shortens it, and shortens it past the
+/// segment holding this run's process id. A path drawn whole would put that
+/// number into the snapshot, which would then be a picture of one run rather
+/// than of this program. The row at the top of the window is the widest thing
+/// that says it, so the segments below the scratch directory have to fill that
+/// row on their own.
 fn working(scratch: &Path) -> PathBuf {
     scratch
         .join("a-directory-to-be-working-in")
+        .join("and-something-below-that-again")
         .join("workspace")
 }
 
