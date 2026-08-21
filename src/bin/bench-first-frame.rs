@@ -44,9 +44,25 @@ fn explain(problem: &StartupError) -> Result<(), io::Error> {
     io::stderr().write_all(line.as_bytes())
 }
 
+/// Says what the readings looked like, beside a reading that went over budget.
+fn detail(spread: &str) -> Result<(), io::Error> {
+    let mut line = String::new();
+    let _ = writeln!(line, "    bench-first-frame {spread}");
+
+    io::stderr().write_all(line.as_bytes())
+}
+
 fn main() -> ExitCode {
-    let elapsed = match startup::percentile(Measure::Frame { needle: NEEDLE }) {
-        Ok(elapsed) => elapsed.as_secs_f64() * 1000.0,
+    let readings = match startup::readings(Measure::Frame { needle: NEEDLE }) {
+        Ok(readings) => readings,
+        Err(problem) => {
+            let _ = explain(&problem);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let elapsed = match readings.p95() {
+        Ok(p95) => p95.as_secs_f64() * 1000.0,
         Err(problem) => {
             let _ = explain(&problem);
             return ExitCode::FAILURE;
@@ -58,6 +74,7 @@ fn main() -> ExitCode {
     }
 
     if elapsed > LIMIT {
+        let _ = detail(&readings.spread());
         return ExitCode::FAILURE;
     }
 
