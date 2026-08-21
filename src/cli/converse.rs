@@ -251,21 +251,19 @@ pub(crate) fn converse<T: Terminal>(
     // arrives whole and its newlines stay newlines.
     let _pasting = Pasting::bracketed()?;
 
-    // Held beside it and for as long, because a click means something at both
-    // ends of a turn: it puts the cursor where the pointer is in the box
-    // between turns, and it expands a cut result up in the transcript while one
-    // runs. The rows worth clicking are written by a turn, so a guard taken per
-    // prompt would hand the pointer back exactly where it has something to
-    // point at.
+    // Held beside it and for as long, because a click means something wherever
+    // it lands: it puts the cursor where the pointer is in the box, whether or
+    // not a turn is running, and it expands a cut result up in the transcript.
+    // The rows worth clicking are written by a turn, so a guard taken per prompt
+    // would hand the pointer back exactly where it has something to point at.
     //
-    // The wheel is what that costs. A terminal forwarding buttons is not using
-    // them itself, so scrolling back over the transcript stops working for as
-    // long as this is held, and `output.mouse` left alone is how a reader who
-    // scrolls more than they expand keeps it.
-    // Read once and not per turn, unlike the rest of the style: whether a click
-    // means anything is settled at startup and `/theme` does not touch it.
-    let clicks = terms.style().clicks();
-    let _pointer = clicks.then(Reporting::on).transpose()?.flatten();
+    // Not a setting. A line long enough to be worth pointing into is the line
+    // the arrows are slowest across, and a reader who has one cannot be asked to
+    // have configured for it first. The wheel is what that costs — a terminal
+    // forwarding buttons is not using them itself, so scrolling back over the
+    // transcript is the terminal's own modifier away for the length of the
+    // session.
+    let _pointer = Reporting::on()?;
 
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no

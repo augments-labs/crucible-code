@@ -28,7 +28,7 @@ mod variables;
 pub use compaction::{Compaction, When};
 pub use input::Sending;
 pub use layers::{local, user};
-pub use output::{Color, Glyphs, Mouse, ThemeChoice, ToolDetail};
+pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
 pub use updates::Updates;
 pub use variables::ClearScreen;
 

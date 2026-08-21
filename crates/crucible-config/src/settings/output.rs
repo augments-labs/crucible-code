@@ -42,12 +42,6 @@ impl Settings {
         self.output("syntaxTheme")
     }
 
-    /// Whether crucible takes the mouse from the terminal.
-    #[must_use]
-    pub fn mouse(&self) -> Option<Mouse> {
-        Mouse::read(self.output("mouse")?)
-    }
-
     /// One string out of the `output` block.
     fn output(&self, key: &str) -> Option<&str> {
         self.value.get("output")?.get(key)?.as_str()
@@ -145,40 +139,6 @@ impl ToolDetail {
     }
 }
 
-/// Who the mouse belongs to for the length of a session.
-///
-/// The two ends of one trade rather than a preference. A terminal forwarding
-/// buttons to crucible is not using them itself, and the wheel is a button —
-/// so a session where clicking means something to crucible is a session where
-/// the wheel no longer scrolls the terminal's scrollback, which is where
-/// crucible's transcript lives. An inline renderer cannot offer both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mouse {
-    /// The terminal keeps it: the wheel scrolls, dragging selects, the middle
-    /// button pastes.
-    Off,
-    /// crucible takes button reports for the whole session, so a click places
-    /// the cursor in the prompt and opens a result that was cut short.
-    Click,
-}
-
-impl Mouse {
-    /// Whether this answer means crucible asks for button reports.
-    #[must_use]
-    pub fn places(self) -> bool {
-        matches!(self, Self::Click)
-    }
-
-    /// Reads one of [`shape::MOUSE`](crate::shape::MOUSE).
-    fn read(found: &str) -> Option<Self> {
-        match found {
-            "off" => Some(Self::Off),
-            "click" => Some(Self::Click),
-            _ => None,
-        }
-    }
-}
-
 /// Which characters crucible draws its own interface with.
 ///
 /// Stated rather than guessed. A box-drawing character that arrives at a
@@ -239,19 +199,6 @@ mod tests {
         assert_eq!(settings.color(), None);
         assert_eq!(settings.tool_detail(), None);
         assert_eq!(settings.glyphs(), None);
-        assert_eq!(settings.mouse(), None);
-    }
-
-    #[test]
-    fn the_mouse_is_the_terminals_unless_a_layer_asks_for_it() {
-        // The wheel scrolls the terminal's own scrollback, which is where this
-        // program's transcript lives. Taking it by default would trade the
-        // whole transcript for a cursor move.
-        let user = Document::sample(r#"{"output": {"mouse": "click"}}"#, Origin::User);
-
-        assert_eq!(Settings::resolve(vec![user]).mouse(), Some(Mouse::Click));
-        assert!(Mouse::Click.places());
-        assert!(!Mouse::Off.places());
     }
 
     #[test]
@@ -270,9 +217,6 @@ mod tests {
         }
         for name in shape::GLYPHS {
             assert!(Glyphs::read(name).is_some(), "glyphs: {name}");
-        }
-        for name in shape::MOUSE {
-            assert!(Mouse::read(name).is_some(), "mouse: {name}");
         }
         for name in shape::THEME {
             assert!(ThemeChoice::read(name).is_some(), "theme: {name}");

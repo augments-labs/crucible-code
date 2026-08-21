@@ -675,14 +675,14 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
 }
 
 #[test]
-fn a_click_read_during_a_turn_keeps_the_row_it_landed_on_and_drops_the_column() {
-    // The rows worth clicking are the ones a turn writes, so this is the key
-    // that means more while one runs rather than less. Which row it landed on is
-    // the whole of what it means up there: a row that offered to expand offers
-    // it along the whole of its width.
+fn a_click_read_during_a_turn_keeps_both_the_row_and_the_column() {
+    // A click means more while a turn runs rather than less, and it means two
+    // things: the row is what a result the transcript cut short is opened by,
+    // and the column is where the cursor goes in a line being written under the
+    // answer. Dropping either would leave one of the two unanswerable.
     assert_eq!(
         meant(Pressed::Clicked { row: 4, column: 2 }),
-        Meant::Clicked(4)
+        Meant::Clicked(Pointed { row: 4, column: 2 })
     );
 }
 

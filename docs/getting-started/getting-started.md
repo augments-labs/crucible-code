@@ -174,13 +174,16 @@ moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
-The mouse belongs to the terminal: the wheel scrolls, dragging selects, the
-middle button pastes. Set `output.mouse` to `click` and crucible takes the
-buttons instead, for the whole session, so clicking in the box between turns
-puts the cursor where you clicked, and clicking a result that was cut short
-stands it whole — at the price of the wheel, because the wheel is a button and
-the scrollback it scrolls is where crucible's transcript lives. An inline
-renderer cannot have both, which is why it is a choice rather than a default.
+The mouse is crucible's, for the whole session and with nothing to configure.
+Click in the box and the cursor goes where you clicked, whether or not a turn is
+running — which is what a prompt too long to walk with the arrows is for. Click
+a result the transcript cut short and it stands whole.
+
+The wheel is what that costs. A wheel is a button, so a terminal forwarding
+buttons is not scrolling with them, and crucible's transcript lives in that
+scrollback. Every terminal has a modifier that hands the mouse back for one
+drag — <kbd>Shift</kbd> in most, <kbd>Fn</kbd> or <kbd>Option</kbd> on macOS —
+and that is how you scroll or select while crucible is running.
 
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
@@ -392,8 +395,7 @@ which is what the five rows over the box are a sample of. What it holds is what 
 cut more while you were reading is one press away, since opening it again is
 what brings the newer results in.
 
-With `output.mouse` set to `click`, clicking one of those rows stands that one
-result rather than all of them — the row names the call you asked about, so the
+Clicking one of those rows stands that one result rather than all of them — the row names the call you asked about, so the
 answer is the output of that call alone. It reads the same as the key
 otherwise, and works while a turn runs for the same reason. A click anywhere
 else, on a row that offered nothing, leaves the screen as it was.

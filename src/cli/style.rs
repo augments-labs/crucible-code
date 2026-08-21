@@ -5,7 +5,7 @@
 //! characters to draw with, and how much of a line to show. None of those may
 //! be asked per event — two are syscalls and the third is a file.
 
-use crucible_config::{Color, Glyphs as Wanted, Mouse, ThemeChoice, ToolDetail};
+use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail};
 use crucible_tui::{Glyphs, Ground, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
@@ -26,8 +26,6 @@ pub(crate) struct Output {
     pub(crate) glyphs: Option<Wanted>,
     /// How much of a tool call one line shows.
     pub(crate) detail: Option<ToolDetail>,
-    /// Who the mouse belongs to while a prompt is up.
-    pub(crate) mouse: Option<Mouse>,
     /// Which table of colours to draw with.
     pub(crate) theme: Option<ThemeChoice>,
     /// Which theme fenced code is drawn in.
@@ -83,9 +81,6 @@ pub(crate) struct Style {
     detail: ToolDetail,
     /// Which way the terminal said its ground goes, where it has said.
     ground: Option<Ground>,
-    /// Whether a click means anything to crucible. Off leaves the mouse to the
-    /// terminal, which is where the transcript above the box lives.
-    clicks: bool,
 }
 
 impl Style {
@@ -113,7 +108,6 @@ impl Style {
             color: wanted,
             glyphs,
             detail,
-            mouse,
             theme: chosen,
             syntax,
         } = output;
@@ -178,11 +172,6 @@ impl Style {
                 Wanted::Ascii => Glyphs::Ascii,
             },
             detail: detail.unwrap_or(ToolDetail::Compact),
-
-            // Off unless a layer asked. The wheel is a button, so a terminal
-            // forwarding buttons to crucible is one whose wheel no longer
-            // scrolls the scrollback this program's transcript lives in.
-            clicks: mouse.is_some_and(Mouse::places),
         }
     }
 
@@ -245,12 +234,6 @@ impl Style {
     /// What a component's slots are worth here.
     pub(crate) fn palette(self) -> Palette {
         self.palette
-    }
-
-    /// Whether a click places the cursor in the box and expands a cut result up
-    /// in the transcript, at the price of the terminal's own use of the mouse.
-    pub(crate) fn clicks(self) -> bool {
-        self.clicks
     }
 
     /// Which characters a component draws with.

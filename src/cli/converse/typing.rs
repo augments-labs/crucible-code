@@ -587,7 +587,7 @@ pub(super) fn working<T: Terminal>(
     footing: Footing<'_>,
     says: &Says,
     style: Style,
-) -> (Vec<Row>, Caret) {
+) -> (Vec<Row>, Caret, usize) {
     let columns = renderer.columns();
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
@@ -596,10 +596,11 @@ pub(super) fn working<T: Terminal>(
     let room = renderer.rows().saturating_sub(boxed.len());
 
     let mut rows = footing.turning.rows(footing.planning, columns, style, room);
-    caret.row += rows.len();
+    let above = rows.len();
+    caret.row += above;
     rows.append(&mut boxed);
 
-    (rows, caret)
+    (rows, caret, above)
 }
 
 /// What stands between the transcript and the box while a turn runs.
@@ -830,14 +831,26 @@ pub(super) fn during<T: Terminal>(
             // inside a turn, so the list moves under the reader while it stands.
             Meant::Plan => moved |= planning.expand(),
 
-            // The same view over one result rather than all of them, asked for
-            // by pointing at the row that offered it. Most rows offered
-            // nothing, and a click on one of those is answered by the screen
-            // the reader was already looking at.
-            Meant::Clicked(row) => {
-                if let Some(at) = cursor().and_then(|cursor| renderer.recorded(row, cursor)) {
-                    opened.one(kept, at);
-                    moved |= opened.is_open();
+            // Two things a click can land on while a turn runs, and the same
+            // round trip tells them apart as between turns. Up in the
+            // transcript it is the view over one result rather than all of
+            // them, asked for by pointing at the row that offered it. In the
+            // box it is the cursor, put where the pointer is: the line being
+            // written mid-turn is the one most worth pointing into, since it is
+            // being written while something else is on screen holding the
+            // reader's attention. A click anywhere else is answered by the
+            // screen the reader was already looking at.
+            Meant::Clicked(at) => {
+                let (_, _, above) =
+                    working(renderer, editor, Footing { turning, planning }, says, style);
+
+                match landed(renderer, editor, says, above, at) {
+                    Landed::Record(one) => {
+                        opened.one(kept, one);
+                        moved |= opened.is_open();
+                    }
+                    Landed::Line => moved = true,
+                    Landed::Counted | Landed::Nothing => {}
                 }
             }
 
@@ -959,12 +972,14 @@ enum Meant {
     Background,
     /// Ctrl+T: the whole of the plan above the box, or the bounded list again.
     Plan,
-    /// A click on this screen row, which stands the one result offered there.
+    /// A click, which lands on a result the transcript cut short, on the line
+    /// being typed, or on nothing.
     ///
-    /// The rows worth clicking are the ones a turn writes, so this is the key
-    /// that means *more* while one is running rather than less. It is also why
-    /// the terminal is left reporting buttons for the length of a turn.
-    Clicked(usize),
+    /// Both numbers, because both are answered here: up in the transcript the
+    /// row is the whole of it and a row that offered to expand offers it along
+    /// its width, and in the box the column is which character the cursor goes
+    /// before.
+    Clicked(Pointed),
     /// An arrow through a list there is none of, a mode step. Neither has
     /// anything to act on while a turn is running.
     Ignored,
@@ -1000,10 +1015,7 @@ fn meant(arrived: Pressed) -> Meant {
         // is the list that reads it and takes a line back.
         Pressed::Queue => Meant::QueueView,
 
-        // The column is dropped rather than carried: what a click means up in
-        // the transcript is which row it landed on, and a row that offered to
-        // expand offers it along the whole of its width.
-        Pressed::Clicked { row, .. } => Meant::Clicked(row),
+        Pressed::Clicked { row, column } => Meant::Clicked(Pointed { row, column }),
 
         // Ctrl+E among them: what it opens is an explanation of something
         // waiting to be decided about, and a running turn has decided already.
@@ -1093,7 +1105,7 @@ pub(super) fn stand<T: Terminal>(
     says: &Says,
     style: Style,
 ) -> Result<(), Fatal> {
-    let (rows, caret) = working(renderer, editor, footing, says, style);
+    let (rows, caret, _) = working(renderer, editor, footing, says, style);
 
     renderer.under(&rows, Some(caret), style.palette())?;
     Ok(())
@@ -1245,7 +1257,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
 }
 
 /// Where a click landed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Pointed {
     /// The screen row the pointer was on.
     row: usize,
