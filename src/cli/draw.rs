@@ -623,23 +623,48 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
     // row a reader is looking for — how much was cut, and the key that gives it
     // back — so a first line long enough to push it past the window would be
     // hiding the offer behind the thing being offered.
-    let tail = format!(" (+{beyond} lines {} ctrl+o to expand)", glyphs.dot());
+    let (counted, opens, shut) = offer(beyond, glyphs);
+    let tail = columns(&counted)
+        .saturating_add(columns(opens))
+        .saturating_add(columns(shut));
 
     // And where the window is too narrow for even that, the line is what the
     // row keeps: an offer alone says nothing about what came back, and the key
     // it names works whether or not the row had room to mention it.
-    if columns(&tail) >= room {
+    if tail >= room {
         row.push(Slot::Quiet, clipped(said, room, glyphs));
         return row;
     }
 
     row.push(
         Slot::Quiet,
-        clipped(said, room.saturating_sub(columns(&tail)), glyphs),
+        clipped(said, room.saturating_sub(tail), glyphs),
     );
-    row.push(Slot::Quiet, tail);
+    row.push(Slot::Quiet, counted);
+    row.push(Slot::Accent, opens);
+    row.push(Slot::Quiet, shut);
 
     row
+}
+
+/// The two halves of what a cut result offers: how much it cut, and the door.
+///
+/// Parted so they can be lit apart. The count is a fact about what came back
+/// and the key is the way to the rest of it, and a click on this row opens the
+/// same door the key does — so the accent goes on the half that answers one,
+/// the way the count of what is still running is lit under the box and the
+/// mark parting it from the mode is not.
+///
+/// The whole row was quiet before, which said the offer was a remark: a reader
+/// looking for what they could reach found nothing on screen that looked
+/// reachable, and every result that had been cut looked like every line that
+/// had not.
+fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) {
+    (
+        format!(" (+{beyond} lines {} ", glyphs.dot()),
+        "ctrl+o to expand",
+        ")",
+    )
 }
 
 /// Every row one answered call comes back as.
