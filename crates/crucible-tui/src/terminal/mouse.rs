@@ -1,8 +1,9 @@
 //! Where the pointer was clicked, for a terminal that was asked to say.
 //!
-//! A terminal does not report the mouse unless it is asked to. Asking is two
-//! escape sequences: one that turns button reporting on, and one that asks for
-//! the answers in the form that survives a window wider than 223 columns.
+//! A terminal does not report the mouse unless it is asked to. Asking is four
+//! escape sequences: one that turns button reporting on, two that add the
+//! pointer's own motion to it, and one that asks for the answers in the form
+//! that survives a window wider than 223 columns.
 //!
 //! Reporting is state on the terminal in the same way [`Raw`] mode is, so it is
 //! held by a guard and handed back on the way out — including the way out
@@ -19,9 +20,13 @@
 //! anybody reaches the part of it that is off screen, so the pointer is held for
 //! as long as a session is drawn. The selection comes back the same way the
 //! scrolling did — crucible owns the screen, so crucible answers the drag, which
-//! is what the third sequence here asks to hear about. Shift is still the way
+//! is what the motion sequences here ask to hear about. Shift is still the way
 //! past a program holding the pointer, and stays the answer for a reader who
 //! wants their emulator's own selection instead of this one.
+//!
+//! Motion under no button is asked for on the same grounds and answers a
+//! smaller question: which row would answer a click, said before one is made.
+//! A screen that never says so is one a reader has to click to find out about.
 //!
 //! Holders nest, so they are counted. A session holds one for its whole length
 //! and something standing inside it may hold another, and the end of the inner
@@ -39,15 +44,22 @@ use std::io::{self, IsTerminal, Write as _};
 use super::raw::RawError;
 
 /// Report a button going down and coming up, report the pointer moving while
-/// one is held, and report all of it in the form that carries a column past 223.
+/// one is held and while none is, and report all of it in the form that carries
+/// a column past 223.
 ///
-/// The middle one is what a selection is made of: without it a drag arrives as
-/// a press and a release with the whole of the reader's gesture missing from
-/// between them.
-const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+/// Motion under a held button is what a selection is made of: without it a drag
+/// arrives as a press and a release with the whole of the reader's gesture
+/// missing from between them. Motion under no button is what a row can be lit
+/// by, which is how a screen says what would happen if the button went down
+/// where the pointer already is.
+///
+/// The last two overlap — a terminal doing all-motion is already doing the
+/// held kind — and both are asked for anyway, because one that implements only
+/// the narrower mode still owes a drag.
+const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
 
-/// The same three, off, innermost first.
-const QUIET: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+/// The same four, off, innermost first.
+const QUIET: &str = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 
 thread_local! {
     /// How many holders are alive, so that the inner one of two does not hand
@@ -217,7 +229,7 @@ mod tests {
     fn the_sequences_turn_the_same_two_modes_on_and_off() {
         // Off in the reverse order they went on, and neither list longer than
         // the other: a mode left on outlives this process.
-        for mode in ["?1000", "?1002", "?1006"] {
+        for mode in ["?1000", "?1002", "?1003", "?1006"] {
             assert!(
                 REPORTING.contains(&format!("{mode}h")),
                 "{mode} never went on"

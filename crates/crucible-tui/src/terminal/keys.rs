@@ -146,6 +146,17 @@ pub enum Pressed {
         /// How many columns across it.
         column: usize,
     },
+    /// The pointer moved to somewhere on the screen with nothing held.
+    ///
+    /// Where it is rather than what it did: nothing has been asked for yet, and
+    /// what this is for is saying what *would* happen if the button went down
+    /// here.
+    Hovered {
+        /// How many rows down the screen.
+        row: usize,
+        /// How many columns across it.
+        column: usize,
+    },
     /// The button came up somewhere on the screen.
     ///
     /// The end of whatever the press began, which is the moment a selection is
@@ -330,6 +341,10 @@ fn clicked(mouse: MouseEvent) -> Pressed {
             column: mouse.column as usize,
         },
         MouseEventKind::Drag(MouseButton::Left | MouseButton::Right) => Pressed::Dragged {
+            row: mouse.row as usize,
+            column: mouse.column as usize,
+        },
+        MouseEventKind::Moved => Pressed::Hovered {
             row: mouse.row as usize,
             column: mouse.column as usize,
         },
@@ -701,17 +716,24 @@ mod tests {
     }
 
     #[test]
-    fn the_middle_button_and_a_pointer_nobody_is_holding_are_not_a_gesture() {
-        // The middle button is the platform's own paste, and motion with
-        // nothing held is a pointer crossing the window on its way somewhere.
+    fn the_middle_button_is_the_platforms_own_and_is_not_read_here() {
+        // Its press is a paste on X11 and belongs to whatever the reader has
+        // put on their primary selection, not to this.
         for ignored in [
             MouseEventKind::Down(MouseButton::Middle),
             MouseEventKind::Up(MouseButton::Middle),
             MouseEventKind::Drag(MouseButton::Middle),
-            MouseEventKind::Moved,
         ] {
             assert_eq!(meaning(pointer(ignored)), Pressed::Ignored, "{ignored:?}");
         }
+    }
+
+    #[test]
+    fn a_pointer_nobody_is_holding_is_read_as_where_it_is() {
+        assert_eq!(
+            meaning(pointer(MouseEventKind::Moved)),
+            Pressed::Hovered { row: 3, column: 7 }
+        );
     }
 
     #[test]

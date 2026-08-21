@@ -243,6 +243,10 @@ pub(crate) struct Between<'a> {
     /// What is still running behind the box: the count on the row under it, and
     /// what this loop wakes on a clock for while there is anything left to end.
     pub(crate) left: &'a Background,
+    /// What the transcript cut short, which is what says whether a row the
+    /// pointer is over would answer a click. Read only: this loop lights rows
+    /// and never adds to them.
+    pub(crate) kept: &'a Kept,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -328,6 +332,7 @@ pub(crate) fn ask<T: Terminal>(
         editor,
         planning,
         left,
+        kept,
         keys,
     } = between;
 
@@ -445,6 +450,14 @@ pub(crate) fn ask<T: Terminal>(
                     Landed::Counted => stood(renderer, style, &mut listing, left)?,
                     Landed::Nothing => offered.is_some(),
                 }
+            }
+
+            // The pointer, crossing the window with nothing held. Nothing is
+            // asked for and nothing is committed: what changes is which row
+            // looks like the one a click would answer.
+            Pressed::Hovered { row, .. } => {
+                renderer.hovering(worth(renderer, kept, row))?;
+                offered.is_some()
             }
 
             // The arrows walk whatever is open above the box — unless the line
@@ -929,6 +942,10 @@ pub(super) fn during<T: Terminal>(
             // it moves is underneath that: the reader reads back through the
             // turn while the turn goes on being written. The frame is the
             // renderer's own, so nothing is owed here.
+            Meant::Hovered(row) => {
+                renderer.hovering(worth(renderer, kept, row))?;
+            }
+
             Meant::Scrolled { back } => {
                 renderer.notched(back)?;
             }
@@ -1062,6 +1079,10 @@ enum Meant {
     /// its width, and in the box the column is which character the cursor goes
     /// before.
     Clicked(Pointed),
+    /// The pointer, on this row of the window with nothing held. What it is
+    /// for is saying which row a click would answer, so the column is not
+    /// carried: a row that offers to expand offers it along its whole width.
+    Hovered(usize),
     /// The wheel, moving the transcript. `back` is towards the top of the
     /// session.
     Scrolled {
@@ -1108,6 +1129,11 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Queue => Meant::QueueView,
 
         Pressed::Clicked { row, column } => Meant::Clicked(Pointed { row, column }),
+
+        // And the same row, before any button went down on it. It means the
+        // same mid-turn as it does between turns, because what it lights is
+        // the transcript and the turn is writing into that.
+        Pressed::Hovered { row, .. } => Meant::Hovered(row),
 
         // The wheel, which means the same mid-turn as it does between turns:
         // the reader is looking back through what has already been said. That
@@ -1390,6 +1416,21 @@ enum Landed {
     /// The border, a blank row, the shell's own output from before crucible
     /// started — or a terminal that would not say where its cursor is.
     Nothing,
+}
+
+/// Which window row is worth lighting under a pointer on `at`, and `None` for
+/// none.
+///
+/// A light says *this is what a click here would answer*, so the only rows that
+/// may wear one are the rows that would answer one: a line of the record that
+/// cut a result short and still holds it. Whether it does is the session's fact
+/// rather than the window's, which is why the answer is worked out here and the
+/// renderer is only told the row.
+fn worth<T: Terminal>(renderer: &Renderer<T>, kept: &Kept, at: usize) -> Option<usize> {
+    match renderer.aimed(at) {
+        Some(Aimed::Line(line)) => kept.offered(line).then_some(at),
+        _ => None,
+    }
 }
 
 /// Reads where a click landed, moving the cursor where it landed on the line.

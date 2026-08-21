@@ -21,6 +21,11 @@ back and ask for.
 
 ### Added
 
+**A result the transcript cut short lights up when you point at it.** The row is
+the thing a click opens, so pointing at one now shows which rows answer a click
+and which are only text. Nothing else on the window lights, because nothing else
+would answer.
+
 **A row along the top of the window says where the session is.** The working
 directory at the left, and the provider, model and rung at the right, standing
 for as long as the session does. The row under the box is now only about the

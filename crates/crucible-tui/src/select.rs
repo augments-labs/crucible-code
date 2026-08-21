@@ -23,8 +23,9 @@ use std::ops::{Range, RangeInclusive};
 use crate::escape::Escapes;
 use crate::width::along;
 
-/// Reverse video on: what a terminal draws where the reader has selected.
-const LIT: &str = "\x1b[7m";
+/// Reverse video on: what a terminal draws where the reader has selected, and
+/// what lights the row under the pointer.
+pub(crate) const LIT: &str = "\x1b[7m";
 
 /// Reverse video off. Only that attribute, so a row's own colour survives the
 /// end of a selection that crossed part of it.
