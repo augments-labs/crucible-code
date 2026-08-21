@@ -99,6 +99,20 @@ impl fmt::Debug for LoginUpdate {
     }
 }
 
+/// How long a test waits for something a worker is going to do.
+///
+/// A login here runs on its own thread and answers through a channel, and every
+/// wait in these tests is for an answer that is coming — so the number is not a
+/// deadline anything is measured against, it is the point at which a test that
+/// would otherwise hang gives up and says so. Which makes short the wrong
+/// answer: a shared runner hands a thread out when it feels like it, and two
+/// seconds bought nothing over thirty except a suite that failed on a busy
+/// machine and passed on a quiet one. Nothing waits the whole thirty — a channel
+/// hands over the moment the other end sends, and the suite takes the same
+/// second and a half it always did.
+#[cfg(test)]
+pub(crate) const PATIENCE: Duration = Duration::from_secs(30);
+
 /// A running login.
 pub struct LoginAttempt {
     updates: mpsc::Receiver<Result<LoginUpdate, OAuthError>>,

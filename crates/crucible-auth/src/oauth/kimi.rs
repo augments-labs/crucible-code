@@ -213,8 +213,8 @@ impl Flow {
         Self::at(
             host,
             host,
-            Duration::from_secs(2),
-            Duration::from_secs(2),
+            crate::oauth::PATIENCE,
+            crate::oauth::PATIENCE,
             Duration::from_millis(1),
         )
     }
