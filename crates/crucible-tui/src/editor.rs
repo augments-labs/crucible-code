@@ -165,6 +165,27 @@ pub struct Editor {
     /// editor of one line has nowhere to put a second, so a Return there is a
     /// Return whatever a document says.
     sending: Sending,
+    /// Whether the press just read was a bare Return, and so whether the next
+    /// one might be the other half of it.
+    ///
+    /// A break on the wire has always been two bytes, and in raw mode the
+    /// second of them arrives as the byte Ctrl-J is — which this editor already
+    /// reads as a newline in its own right, because that is the newline a
+    /// terminal needs nothing asked for to send. So a terminal spelling a break
+    /// in full sends one key that opens two lines, and a reader who has bound
+    /// one to the other gets a blank row for every line they meant to open.
+    ///
+    /// The pair is one break. It is the rule [`Editor::paste`] already keeps
+    /// for the breaks inside a pasted block, stated here for the ones that
+    /// arrive as presses.
+    ///
+    /// Set only where the bare Return is the press that sends. Under the other
+    /// arrangement the bare one opens the line and the modified one finishes
+    /// it, so the two arriving together is a reader sending a line that ends in
+    /// a blank row — which is a thing to be able to write, and a terminal that
+    /// keeps the modified Return for itself is not one spelling a break in full
+    /// for a key it was bound to.
+    paired: bool,
 }
 
 impl Editor {
@@ -326,6 +347,15 @@ impl Editor {
 
     /// Applies a key, and says what it did.
     pub fn press(&mut self, key: Key) -> Typed {
+        // The second half of a break spelled in full, swallowed. See
+        // [`Editor::paired`] for why a terminal sends one and why taking it as
+        // a press of its own opens a line nobody asked for.
+        let sends = key == Key::Enter && !self.sending.modified();
+        let paired = std::mem::replace(&mut self.paired, sends);
+        if paired && key == Key::Newline {
+            return Typed::Ignored;
+        }
+
         match key {
             Key::Char(typed) => self.insert(typed),
             Key::Backspace => self.rub(),
@@ -672,11 +702,44 @@ impl Editor {
     /// [`Sending`]. Written as one function rather than two arms so that the
     /// swap is stated once: two arms would be two places to get it backwards.
     fn returned(&mut self, modified: bool) -> Typed {
-        if modified == self.sending.modified() {
-            self.submit()
-        } else {
-            self.newline()
+        if modified != self.sending.modified() {
+            return self.newline();
         }
+
+        if self.continued() {
+            return self.newline();
+        }
+
+        self.submit()
+    }
+
+    /// Whether the press that sends was answered by a backslash, and takes it
+    /// off the line where it was.
+    ///
+    /// The newline that asks the terminal for nothing. Shift and Return only
+    /// arrive where the terminal agreed to spell a modified key apart, and Alt
+    /// and Ctrl-J arrive everywhere but are two more bindings to have been told
+    /// about — while a backslash on the end of a line has meant *this goes on*
+    /// for as long as there have been shells, and it is typed rather than
+    /// signalled. So the arrangement works on a terminal that forwards none of
+    /// the three, with nothing configured and nothing to learn that a reader
+    /// with a shell does not already know.
+    ///
+    /// Cursor-local rather than end-of-line, because that is the rule somebody
+    /// can predict from where they are looking. A backslash further back is
+    /// text, which is what lets a prompt naming a Windows path be sent at all.
+    fn continued(&mut self) -> bool {
+        if !self.multiline
+            || !self
+                .said
+                .get(..self.at)
+                .is_some_and(|before| before.ends_with('\\'))
+        {
+            return false;
+        }
+
+        self.cut(self.at - 1, self.at);
+        true
     }
 
     fn submit(&self) -> Typed {
