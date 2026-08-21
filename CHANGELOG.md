@@ -6,6 +6,30 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**A backslash on the end of a line opens the next one.** Press Return after it
+and the backslash goes, the box grows a row, and the prompt is still yours to
+finish. Shift+Return needs a terminal that agreed to spell a modified key apart,
+and Alt+Return and Ctrl+J are two more bindings to have been told about; this is
+the one that asks the terminal for nothing and is already in the fingers of
+anybody who has used a shell.
+
+### Fixed
+
+**A terminal that spells a break in full no longer opens two lines for it.** The
+second byte of a carriage return and line feed is the byte Ctrl+J is, and Ctrl+J
+opens a line here in its own right — so one key bound to send the pair left a
+blank row behind every line it opened, and a blank first row on the prompt after
+every one it sent. The pair is one break, which is the rule a pasted block was
+already read by.
+
+**Which press finishes a prompt is `input.send` while a turn is running too.**
+Return was answered before the editor saw it, so on the arrangement that exists
+for a terminal keeping Shift+Return to itself the bare key queued a line the
+reader had asked to break, and the modified key — the one that does send — was
+dropped on the way back.
+
 ### Removed
 
 **`output.mouse` is gone; the mouse is crucible's, always.** A click in the box

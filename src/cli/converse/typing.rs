@@ -739,21 +739,6 @@ pub(super) fn during<T: Terminal>(
                 moved = true;
             }
 
-            Meant::Queue => {
-                if !editor.is_empty() {
-                    // Steered first, so the running turn works the line in at
-                    // its next pass; then queued, because a turn already
-                    // finishing takes nothing and the line is still owed a turn
-                    // of its own. Whichever happens, it leaves the queue: the
-                    // turn reports the lines it reached, and the loop that
-                    // reads that drops them. The queue takes the editor empty,
-                    // so the text is read off it before `queue` clears it.
-                    steer.say(editor.text().to_owned());
-                    notice = queue(editor, queued, turning, renderer.columns(), style);
-                    moved = true;
-                }
-            }
-
             // The queue itself, opened whole: the panel names what fits and
             // counts the rest, and this is the list the count is about. A line
             // taken back returns to the box to be edited or sent sooner.
@@ -813,7 +798,21 @@ pub(super) fn during<T: Terminal>(
                     moved = true;
                 }
 
-                Typed::Ignored | Typed::Submitted | Typed::Ended => {}
+                // The line is finished, and what finished it was whichever
+                // press `input.send` says finishes one. Steered first, so the
+                // running turn works it in at its next pass; then queued,
+                // because a turn already finishing takes nothing and the line
+                // is still owed a turn of its own. Whichever happens, it leaves
+                // the queue: the turn reports the lines it reached, and the
+                // loop that reads that drops them. The queue takes the editor
+                // empty, so the text is read off it before `queue` clears it.
+                Typed::Submitted => {
+                    steer.say(editor.text().to_owned());
+                    notice = queue(editor, queued, turning, renderer.columns(), style);
+                    moved = true;
+                }
+
+                Typed::Ignored | Typed::Ended => {}
             },
 
             // The key the cut rows themselves name, doing what they say while
@@ -946,10 +945,10 @@ enum Meant {
     Resized,
     /// The turn is asked to stop.
     Interrupt,
-    /// Return: the finished line joins the queue the next turn is read from.
-    Queue,
     /// Ctrl+Q: the queue itself, stood whole so it can be read and a waiting
-    /// line taken back. Distinct from [`Meant::Queue`], which adds to it.
+    /// line taken back. Distinct from the press that finishes a line, which
+    /// adds to it — that one is [`Meant::Editing`], because which press finishes
+    /// a line is the editor's to say.
     QueueView,
     /// A run of characters beginning here, taken into the line in one edit.
     Typing(char),
@@ -995,7 +994,6 @@ fn meant(arrived: Pressed) -> Meant {
         // turn is running the turn is the thing in front of you.
         Pressed::Escape => Meant::Interrupt,
 
-        Pressed::Key(Key::Enter) => Meant::Queue,
         Pressed::Key(Key::Char(first)) => Meant::Typing(first),
         // A paste mid-turn is typed into the box like any other: the turn above
         // it is none of the line's business, and its newlines are characters.
@@ -1003,7 +1001,11 @@ fn meant(arrived: Pressed) -> Meant {
 
         // Ctrl-C among them, which is the point: it reaches the editor here the
         // same way it does between turns, so it throws away the line rather
-        // than meaning something a running turn taught it to mean.
+        // than meaning something a running turn taught it to mean. Both
+        // spellings of Return for the same reason: which one finishes a line is
+        // `input.send`, and the editor is what reads it — decided here instead,
+        // the bare key queued a line a reader had asked to break and the
+        // modified one came back finished with nowhere to go.
         Pressed::Key(key) => Meant::Editing(key),
 
         Pressed::Expand => Meant::Expand,

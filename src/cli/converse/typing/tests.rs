@@ -661,10 +661,8 @@ fn esc_is_what_stops_a_turn_and_ctrl_c_is_the_line_s_own_in_both_loops() {
 #[test]
 fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     // The rest of the table, pinned so that the swap above is the whole change.
-    // Return still queues rather than submits, because a line finished under a
-    // turn belongs above the turn it starts; Ctrl-D still reaches the editor.
+    // Ctrl-D still reaches the editor.
     assert_eq!(meant(Pressed::Resized), Meant::Resized);
-    assert_eq!(meant(Pressed::Key(Key::Enter)), Meant::Queue);
     assert_eq!(meant(Pressed::Key(Key::Char('a'))), Meant::Typing('a'));
     assert_eq!(meant(Pressed::Key(Key::Eof)), Meant::Editing(Key::Eof));
     assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
@@ -672,6 +670,23 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     for arrived in [Pressed::Up, Pressed::Down, Pressed::Cycle, Pressed::Ignored] {
         assert_eq!(meant(arrived.clone()), Meant::Ignored, "{arrived:?}");
     }
+}
+
+#[test]
+fn neither_spelling_of_return_is_decided_here() {
+    // Which press finishes a line and which opens one under it is `input.send`,
+    // and the editor is the one thing that reads it. Answering Return here
+    // instead read it for the reader: on a terminal keeping the modified Return
+    // for itself, the arrangement that exists for exactly that case had the
+    // bare key queueing a line the reader meant to break, and the modified key
+    // — which the editor did answer, with a line to send — dropped on the way
+    // back. Both spellings go to the editor now, and what comes back says which
+    // it was.
+    assert_eq!(meant(Pressed::Key(Key::Enter)), Meant::Editing(Key::Enter));
+    assert_eq!(
+        meant(Pressed::Key(Key::Newline)),
+        Meant::Editing(Key::Newline)
+    );
 }
 
 #[test]

@@ -564,6 +564,100 @@ fn the_two_swap_for_a_terminal_that_keeps_the_modified_return() {
 }
 
 #[test]
+fn a_backslash_behind_the_press_that_sends_opens_a_line_instead() {
+    // The newline that needs nothing asked for and no modifier at all. Shift
+    // and Return only arrive where the terminal agreed to spell them apart, and
+    // Alt and Ctrl-J are two more keys to have been told about; a trailing
+    // backslash is what a shell has meant by *this line goes on* for as long as
+    // there have been shells, and it is typed rather than signalled.
+    let mut editor = typed("one\\").multiline();
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+}
+
+#[test]
+fn the_backslash_goes_with_whichever_press_sends() {
+    // One rule rather than a rule about Return: what it answers is *the line is
+    // not finished*, and which press would have finished it is [`Sending`].
+    let mut editor = typed("one\\").multiline().sends(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+    assert_eq!(editor.press(Key::Newline), Typed::Submitted);
+}
+
+#[test]
+fn a_backslash_that_is_not_behind_the_cursor_is_a_backslash() {
+    // The rule is cursor-local, so a backslash left further back in the line is
+    // text — otherwise a prompt naming a Windows path could not be sent at all.
+    let mut editor = lines("C:\\Users then more");
+
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+    assert_eq!(editor.text(), "C:\\Users then more");
+}
+
+#[test]
+fn a_line_with_only_a_backslash_on_it_still_opens_a_line() {
+    // Nothing to send yet, but something to continue: the backslash is taken
+    // and the line opens, rather than the press being read as sending nothing.
+    let mut editor = typed("\\").multiline();
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "\n");
+}
+
+#[test]
+fn a_one_line_editor_keeps_its_backslash_and_sends() {
+    // A secret and an answer to an ask are one line each, and there is no line
+    // for a backslash to open under them.
+    let mut editor = typed("pa55\\");
+
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+    assert_eq!(editor.text(), "pa55\\");
+}
+
+#[test]
+fn a_break_spelled_with_both_bytes_opens_one_line_and_not_two() {
+    // A terminal asked to send a break sends what a break has always been on
+    // the wire, which is two bytes; in raw mode the second of them is the byte
+    // Ctrl-J is, and Ctrl-J opens a line here in its own right. Read as two
+    // presses, one key would open two lines — so the pair is one break, the
+    // same rule the editor already keeps for a break inside a paste.
+    let mut editor = typed("one\\").multiline();
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.press(Key::Newline), Typed::Ignored);
+    assert_eq!(editor.text(), "one\n");
+}
+
+#[test]
+fn the_line_feed_that_follows_a_send_is_not_the_next_prompt_s_first_line() {
+    // The same pair, arriving on a line with no backslash on it: the first byte
+    // finishes the line and the second would otherwise open a line in the empty
+    // box behind it, so the next prompt would start with a blank row nobody
+    // typed.
+    let mut editor = typed("one").multiline();
+
+    assert_eq!(editor.press(Key::Enter), Typed::Submitted);
+    assert_eq!(editor.press(Key::Newline), Typed::Ignored);
+    assert_eq!(editor.text(), "one");
+}
+
+#[test]
+fn a_line_feed_on_its_own_is_still_a_newline() {
+    // Only the byte that follows a Return is the second half of one. Ctrl-J
+    // reached on its own is the newline that needs nothing asked for, and is
+    // the whole reason it is bound.
+    let mut editor = typed("one").multiline();
+
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.text(), "one\n\n");
+}
+
+#[test]
 fn the_swap_still_refuses_to_send_nothing() {
     // Whichever press sends, an empty box has nothing to send — otherwise the
     // arrangement below would turn a stray Alt+Return into a turn about

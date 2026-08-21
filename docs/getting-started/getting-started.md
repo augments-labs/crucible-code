@@ -502,12 +502,17 @@ put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taki
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
-A prompt can be more than one line. <kbd>Shift+Enter</kbd> adds a line without
-sending, and the box grows a row for it. Some terminals cannot send that key —
-the encoding they use has no room for the modifier, so they send the same bytes
-for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks each terminal
-for the newer encoding on the way in. Where it declines, <kbd>Alt+Enter</kbd> and
-<kbd>Ctrl+J</kbd> do the same thing and need nothing asked for.
+A prompt can be more than one line. End a line with a backslash and press
+<kbd>Enter</kbd>: the backslash goes, the box grows a row, and you carry on
+typing. That is what a backslash has meant at the end of a line for as long as
+there have been shells, it is typed rather than signalled, and it works in every
+terminal with nothing configured.
+
+<kbd>Shift+Enter</kbd> does the same where your terminal can send it. Some
+cannot — the encoding they use has no room for the modifier, so they send the
+same bytes for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks
+each terminal for the newer encoding on the way in. Where it declines,
+<kbd>Alt+Enter</kbd> and <kbd>Ctrl+J</kbd> need nothing asked for.
 
 If your terminal keeps all three for itself, swap the two presses over:
 `"input": { "send": "altEnter" }` in your

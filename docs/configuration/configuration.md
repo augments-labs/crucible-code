@@ -222,8 +222,9 @@ to put it in project configuration.
 ```
 
 Leave it alone and Return sends, while Shift+Return, Alt+Return and Ctrl+J each
-open a line under the one you are typing. That is what almost every terminal
-makes possible and it is what the prompt does out of the box.
+open a line under the one you are typing — as does a backslash on the end of the
+line you are on, which asks the terminal for nothing at all. That is what almost
+every terminal makes possible and it is what the prompt does out of the box.
 
 Set it to `altEnter` and the two swap: Return opens a line and a modified Return
 sends. That is the answer for a terminal that keeps Shift+Return for itself and
