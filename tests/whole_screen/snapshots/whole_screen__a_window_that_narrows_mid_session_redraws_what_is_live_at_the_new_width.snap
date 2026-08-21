@@ -7,10 +7,10 @@ expression: window.picture()
 |│                                                  │|
 |│ Tips                                             │|
 |│                                                  │|
-|│ · /            opens the command list            │|
-|│ · shift+enter  adds a line without sending       │|
-|│ · shift+tab    steps the permission mode         │|
-|│ · ctrl+c       clears the line typed so far      │|
+|│ · /          opens the command list              │|
+|│ · \ enter    adds a line without sending         │|
+|│ · shift+tab  steps the permission mode           │|
+|│ · ctrl+c     clears the line typed so far        │|
 |╰──────────────────────────────────────────────────╯|
 |                                                    |
 |                                                    |

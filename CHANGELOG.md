@@ -23,6 +23,11 @@ anybody who has used a shell.
 
 ### Fixed
 
+**The card names the backslash rather than a key some terminals swallow.** Its
+tips row said `shift+enter`, which is the one entry there that could be untrue
+on the terminal reading it. It now names the two keystrokes every terminal
+sends.
+
 **The welcome card is laid out again every time the window changes size.** It
 was written straight into scrollback, where a card is artwork the terminal
 re-wraps and nobody can redraw — so a drag left its two columns shredded across

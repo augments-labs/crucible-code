@@ -35,16 +35,17 @@ const TIPS: &str = "Tips";
 /// `--help` cannot hold, because there is nothing to look up until you already
 /// know the key exists.
 ///
-/// The newline is the one that most needs saying, and the one whose entry is
-/// least honest: a terminal that will not spell a modified key sends the same
-/// bytes for Return and Shift+Return, so on that terminal this row names a key
-/// that does nothing. Naming the fallback instead would be worse — it would
-/// teach every reader a stranger key to avoid an answer some of them will never
-/// need — so the row names the one people already reach for, and the docs carry
-/// the other two.
+/// The newline is the one that most needs saying, and the backslash is the
+/// spelling of it that works everywhere: a terminal that will not spell a
+/// modified key apart sends the same bytes for Return and Shift+Return, so a
+/// row naming the modifier names a key that does nothing on the terminal some
+/// readers are on. The backslash asks the terminal for nothing, and the space
+/// between the two keys is what a `+` is not: one after the other rather than
+/// both at once. Shift+Return, Alt+Return and Ctrl+J are in the docs, where a
+/// reader whose terminal has one can find it.
 const AFFORDANCES: [(&str, &str); 4] = [
     ("/", "opens the command list"),
-    ("shift+enter", "adds a line without sending"),
+    ("\\ enter", "adds a line without sending"),
     ("shift+tab", "steps the permission mode"),
     ("ctrl+c", "clears the line typed so far"),
 ];
