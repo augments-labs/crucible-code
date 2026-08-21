@@ -130,8 +130,8 @@ pub(crate) fn event<T: Terminal>(
         // stands a call that has not answered yet as well. Committing it would
         // put the tail of a build immediately above the same tail inside the
         // result that follows it.
-        Event::Wrote { text, .. } => {
-            kept.wrote(text.as_str());
+        Event::Wrote { call, text } => {
+            kept.wrote(&call, text.as_str());
             Ok(())
         }
 
@@ -150,7 +150,10 @@ pub(crate) fn event<T: Terminal>(
         // it is live until the tool answers, standing in the footing with a
         // mark that moves, and a line that is still moving is not one the
         // transcript can hold. It commits through [`returned`].
-        Event::ToolRequested { .. } => renderer.settle(),
+        Event::ToolRequested { call, summary } => {
+            kept.calling(call.id.clone(), called(&call, &summary));
+            renderer.settle()
+        }
 
         // A line steered into the running turn, committed as the reader's own
         // words. The stream is settled first so the line lands after whatever
@@ -170,7 +173,7 @@ pub(crate) fn event<T: Terminal>(
         // One block: the row that says what came back, and under it the lines a
         // call that changed a file moved. No row parts them, because a reader
         // asking what the call did is asking both halves of the same question.
-        Event::ToolFinished { output, .. } => {
+        Event::ToolFinished { call, output } => {
             let beyond = beyond(&output);
             let rows = finished_rows(&output, columns, style);
 
@@ -187,7 +190,11 @@ pub(crate) fn event<T: Terminal>(
             // Counted back from the end because the rows have already gone.
             if beyond > 0 {
                 let at = renderer.lines().saturating_sub(rows.len());
-                kept.finished(output.into_text(), at);
+                kept.finished(&call, output.into_text(), at);
+            } else {
+                // Even when nothing needs retaining, the call and any live tail
+                // are over. Leaving them would show a completed call as live.
+                kept.answered(&call);
             }
 
             Ok(())
@@ -781,24 +788,33 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
         Compacting::Refused => "the model would not take another request this size",
     };
     let turns = if compacted.kept == 1 { "turn" } else { "turns" };
+    let result = if compacted.replaced == 0 {
+        format!(
+            " old tool output was cleared {} {} → {} carried {} {} {turns} kept whole",
+            glyphs.dot(),
+            tokens(compacted.before),
+            tokens(compacted.after),
+            glyphs.dot(),
+            compacted.kept,
+        )
+    } else {
+        format!(
+            " {} messages became a recap {} {} → {} carried {} {} {turns} kept whole",
+            compacted.replaced,
+            glyphs.dot(),
+            tokens(compacted.before),
+            tokens(compacted.after),
+            glyphs.dot(),
+            compacted.kept,
+        )
+    };
 
     vec![
         rule(),
         Row::new()
             .then(Slot::Plain, " compacted ")
             .then(Slot::Quiet, format!("{} {why}", glyphs.dot())),
-        Row::new().then(
-            Slot::Quiet,
-            format!(
-                " {} messages became a recap {} {} → {} carried {} {} {turns} kept whole",
-                compacted.replaced,
-                glyphs.dot(),
-                tokens(compacted.before),
-                tokens(compacted.after),
-                glyphs.dot(),
-                compacted.kept,
-            ),
-        ),
+        Row::new().then(Slot::Quiet, result),
         rule(),
     ]
 }

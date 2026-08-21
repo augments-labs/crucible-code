@@ -271,7 +271,6 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
         // call that has not answered has not been counted among them.
         Over::Everything(cut) => kept
             .writing()
-            .into_iter()
             .chain(kept.newest().skip(kept.cut().saturating_sub(cut)))
             .map(showing)
             .collect(),

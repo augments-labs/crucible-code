@@ -30,6 +30,11 @@
           "minimum": 0,
           "type": "integer"
         },
+        "recap": {
+          "description": "Maximum tokens a structured compaction recap may produce; ordinary recaps stop earlier",
+          "minimum": 0,
+          "type": "integer"
+        },
         "reserve": {
           "description": "Tokens to keep free for the next answer and the tools it calls, instead of the room crucible works out from the model",
           "minimum": 0,

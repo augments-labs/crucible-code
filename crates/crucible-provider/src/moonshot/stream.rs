@@ -96,6 +96,21 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn cached_moonshot_input_is_not_added_to_prompt_tokens_again() {
+        // Kimi's `prompt_tokens` is the complete prompt; `cached_tokens` is a
+        // detail of it. Adding the detail would overstate every cached request.
+        let body = ANSWER.replace(
+            r#""prompt_tokens":9,"completion_tokens":4"#,
+            r#""prompt_tokens":900,"cached_tokens":700,"completion_tokens":4"#,
+        );
+        let mut stream = reading(&body, &Cancel::new());
+
+        let deltas = deltas(&mut stream);
+        assert!(deltas.contains(&Delta::Carried(Carried::new(900))));
+        assert!(!deltas.contains(&Delta::Carried(Carried::new(1600))));
+    }
+
+    #[test]
     fn the_sentinel_that_closes_the_stream_is_not_read_as_a_payload() {
         // `[DONE]` is not JSON. Parsed as one it fails the turn at the last
         // event, after a complete answer has already arrived — and every turn

@@ -24,8 +24,13 @@ fn cut(called: &[&str]) -> Kept {
     let mut kept = Kept::default();
 
     for (at, one) in called.iter().enumerate() {
-        kept.calling((*one).to_owned());
-        kept.finished(format!("{one} answered this\nand then this\n").into(), at);
+        let call = crucible_core::ToolId::new(format!("call-{at}"));
+        kept.calling(call.clone(), (*one).to_owned());
+        kept.finished(
+            &call,
+            format!("{one} answered this\nand then this\n").into(),
+            at,
+        );
     }
 
     kept
@@ -43,8 +48,9 @@ fn opened(standing: &mut Standing) -> &mut View {
 fn overflowing() -> Kept {
     let mut kept = Kept::default();
 
-    kept.calling("Bash(cargo build)".to_owned());
-    kept.finished("a line of it\n".repeat(200).into(), 0);
+    let call = crucible_core::ToolId::new("build");
+    kept.calling(call.clone(), "Bash(cargo build)".to_owned());
+    kept.finished(&call, "a line of it\n".repeat(200).into(), 0);
 
     kept
 }
@@ -155,8 +161,9 @@ fn a_view_over_a_result_the_ceiling_dropped_lays_out_no_rows() {
     let mut standing = Standing::default();
     standing.one(&held, 0);
 
-    held.calling("Bash(cat big)".to_owned());
-    held.finished("x".repeat(1024 * 1024).into_boxed_str(), 1);
+    let call = crucible_core::ToolId::new("cat");
+    held.calling(call.clone(), "Bash(cat big)".to_owned());
+    held.finished(&call, "x".repeat(1024 * 1024).into_boxed_str(), 1);
 
     let rows = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 40);
     assert!(rows.is_empty(), "{rows:?}");
@@ -174,8 +181,9 @@ fn a_view_stands_still_while_the_turn_under_it_goes_on_cutting() {
     standing.open(&held);
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
-    held.calling("Bash(cargo test)".to_owned());
-    held.finished("something else entirely\n".into(), 1);
+    let call = crucible_core::ToolId::new("test");
+    held.calling(call.clone(), "Bash(cargo test)".to_owned());
+    held.finished(&call, "something else entirely\n".into(), 1);
 
     let after = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
     assert_eq!(before, after);
@@ -192,8 +200,9 @@ fn opening_it_again_is_what_brings_the_newer_results_in() {
     standing.open(&held);
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
-    held.calling("Bash(cargo test)".to_owned());
-    held.finished("something else entirely\n".into(), 1);
+    let call = crucible_core::ToolId::new("test");
+    held.calling(call.clone(), "Bash(cargo test)".to_owned());
+    held.finished(&call, "something else entirely\n".into(), 1);
 
     standing.open(&held);
     let after = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);

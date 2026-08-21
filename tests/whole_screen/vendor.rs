@@ -61,15 +61,15 @@ impl Vendor {
         Self::serving(vec![stream(text)])
     }
 
-    /// Starts one that answers each request with the next of `texts`, and
-    /// every request past the last with that last one again.
-    ///
-    /// Several answers of the same kind, which [`Self::calling`] cannot give: a
-    /// case that takes some turns and then makes room needs the answer that
-    /// makes it to run to a different length from the ones before it, because
-    /// what such a case watches is the screen drawn while that length arrives.
-    pub(crate) fn answering_each(texts: &[&str]) -> Self {
-        Self::serving(texts.iter().map(|text| stream(text)).collect())
+    /// Starts with ordinary answers, then returns a structured recap and the
+    /// answer after it.
+    pub(crate) fn recapping_after(before: &[&str], note: &str, after: Option<&str>) -> Self {
+        let mut bodies: Vec<Vec<String>> = before.iter().map(|text| stream(text)).collect();
+        bodies.push(stream(&recap(note)));
+        if let Some(after) = after {
+            bodies.push(stream(after));
+        }
+        Self::serving(bodies)
     }
 
     /// Starts one whose first answer asks for `tool` with `input`, and whose
@@ -215,6 +215,13 @@ fn stream(text: &str) -> Vec<String> {
     events.push(STOPPED.to_owned());
 
     events
+}
+
+/// A complete structured recap containing `note`.
+fn recap(note: &str) -> String {
+    format!(
+        "## Goal\n{note}\n\n## Constraints & Preferences\n(none)\n\n## Progress\n### Done\n(none)\n\n### In Progress\n{note}\n\n### Blocked\n(none)\n\n## Decisions\n(none)\n\n## Next Steps\n1. {note}\n\n## Critical Context\n(none)"
+    )
 }
 
 /// A call for `tool` with `input`, as the same API streams one.

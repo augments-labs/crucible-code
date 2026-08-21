@@ -726,6 +726,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // command can change, because `/login` is what fills it in on a machine
         // that started with nothing.
         provider: Cell::new(launch.serving.map(|one| one.name)),
+        settings: settings.clone(),
         choosing: crucible_config::user(&home),
 
         // What `/login` sets a session up with, answered the way this launch

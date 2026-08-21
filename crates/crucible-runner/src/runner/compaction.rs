@@ -32,7 +32,7 @@ use crucible_core::{
     ToolOutput, Transcript, TurnError,
 };
 
-use super::Runner;
+use super::{Load, Runner};
 
 /// How much recent tool output is never cleared, in bytes.
 ///
@@ -60,23 +60,27 @@ const MINIMUM: u64 = 30_000;
 /// drop a category from: left to its own wording, a recap quietly omits the one
 /// decision that mattered. Each heading is a thing the next turn cannot do
 /// without. The files are not the model's to recall — they are collected from
-/// the calls being replaced and appended under a line the model is told to
-/// reproduce and extend, so the list survives a second compaction instead of
-/// going out with the first recap.
+/// the calls being replaced and appended by code after validation, so the list
+/// survives a second compaction instead of going out with the first recap.
 const RECAP: &str = "\
-Before anything else, write down what is worth keeping from everything above, \
-for yourself, so that you can carry on with it and nothing else. Use exactly \
-these headings, and leave one out only where there is genuinely nothing to say \
-under it:\n\n\
-## Goal — what was asked for\n\
-## Decisions — what was settled, and why\n\
-## Changes — what was changed, and where\n\
-## State — where things stand: what failed, what is blocked, what is next\n\n\
-After the last heading, reproduce the `Files so far` list below in full and \
-extend it with any files this span read or changed, one per line, \
-`path (read)` or `path (modified)`. Write it as notes to yourself, not as a \
-report to somebody else, and write nothing before the first heading or after \
-the list.";
+Before anything else, create a structured context checkpoint from everything \
+above so another model pass can continue the work. Use exactly every heading \
+and subheading below, in this order. Keep each section concise. Write `(none)` \
+where a section has nothing to say rather than omitting it.\n\n\
+## Goal\n\
+## Constraints & Preferences\n\
+## Progress\n\
+### Done\n\
+### In Progress\n\
+### Blocked\n\
+## Decisions\n\
+## Next Steps\n\
+## Critical Context\n\n\
+Preserve exact file paths, function and type names, commands, error messages, \
+requirements, decisions and unfinished state. Write operational notes for \
+yourself, not a report to the user. End after the content of \
+`## Critical Context`; the exact `Files so far` list is appended by the program. \
+Output nothing before `## Goal` or after that final section.";
 
 /// The line the tracked files stand under in a recap.
 ///
@@ -85,13 +89,6 @@ the list.";
 /// twice. The log line is the only copy — the runner keeps no state of its own
 /// across compactions, and the recap it already wrote is the record.
 const FILES: &str = "Files so far:";
-
-/// The most a recap may be, in tokens.
-///
-/// Notes rather than an essay, and far under what an answer may be: a recap
-/// that ran to the model's whole answer ceiling would be replacing a session
-/// with something nearly as large as the part it replaced.
-const ROOM: u32 = 4_096;
 
 /// How far a recap has run when the row that says so reads half done, in bytes.
 ///
@@ -106,6 +103,13 @@ const ROOM: u32 = 4_096;
 /// run long, and never claims to have finished something still arriving. What
 /// finishes it is the notes finishing, and the row goes with them.
 const HALFWAY: u64 = 2_048;
+
+/// What the standalone recap request produced.
+enum Recap {
+    Complete(String),
+    Stopped,
+    Incomplete,
+}
 
 impl Runner {
     /// Makes room, and says what it took.
@@ -127,25 +131,59 @@ impl Runner {
         events: &dyn Post,
         cancel: &Cancel,
     ) -> Result<Room, TurnError> {
-        let Some(replacing) = self.replacing() else {
-            return Ok(Room::Nothing);
-        };
+        // Choose the recap boundary before pruning. Clearing output can make
+        // old turns look cheap enough to keep, but where a recap was possible
+        // before it remains useful afterwards; only the previously fruitless
+        // no-middle case should turn into prune-only progress.
+        let replacing = self.replacing();
 
         // Measured before anything moves, because this is what the compaction
-        // is judged against: the pruning below frees real room, and a `before`
-        // taken after it would already count that room as freed — so a prune
-        // that worked, followed by a recap whose replacement came out
-        // near-neutral, would read as a compaction that freed nothing. That is
-        // the loop the caller is watching for, and a turn stopped for it is a
-        // turn that had room all along.
+        // is judged against: pruning can be all the room a current turn needs,
+        // and a `before` taken after it would read that progress as none.
         let before = self.load.tokens();
 
-        // The lightest touch first. Old tool results are the bulk of most
-        // sessions, and clearing them is free where the recap is a request — so
-        // it runs before one, and the recap that follows reads a span already
-        // leaner. The originals stay in the log; this is only what the model is
-        // sent, here and on every request after.
+        // The lightest touch first. Tool results can fill the current turn by
+        // themselves, and that is exactly where there is no older middle for a
+        // recap to replace. Prune before giving up on finding one so those
+        // results do not become untouchable merely because the turn is active.
         self.prune();
+
+        let replacing = if let Some(replacing) = replacing {
+            replacing
+        } else {
+            let after = self.load.tokens();
+            if after < before {
+                let compacted = Compacted {
+                    why,
+                    replaced: 0,
+                    before,
+                    after,
+                    kept: self.transcript.turns(),
+                };
+                events.post(crucible_core::Event::Compacted { compacted });
+                return Ok(Room::Made(compacted));
+            }
+
+            // A turn runs compaction only between passes, after every call has
+            // its result. If that complete active turn is all that is left and
+            // still does not fit, recap it too. Keeping it whole forever is the
+            // dead end that used to report NoRoom even though the session log
+            // still held everything being replaced.
+            let completed_pass = self
+                .transcript
+                .messages()
+                .iter()
+                .rev()
+                .take_while(|message| !matches!(message, Message::User(_)))
+                .any(|message| matches!(message, Message::ToolResults(_)));
+            match (why, completed_pass) {
+                (Compacting::Full | Compacting::Refused, true) => self.transcript.len(),
+                (Compacting::Asked | Compacting::Resumed, _)
+                | (Compacting::Full | Compacting::Refused, false) => {
+                    return Ok(Room::Nothing);
+                }
+            }
+        };
 
         // The files the replaced span touched, and the files every recap before
         // it already carried. Collected before anything is recorded, while the
@@ -155,12 +193,11 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let Some(recap) = self.recap(why, &touched, events, cancel)? else {
-            return Ok(Room::Stopped);
+        let recap = match self.recap(why, &touched, events, cancel)? {
+            Recap::Complete(recap) => recap,
+            Recap::Incomplete => return Err(TurnError::RecapIncomplete),
+            Recap::Stopped => return Ok(Room::Stopped),
         };
-        if recap.is_empty() {
-            return Ok(Room::Nothing);
-        }
 
         let mut messages = std::mem::take(&mut self.transcript).into_messages();
 
@@ -186,8 +223,10 @@ impl Runner {
 
         self.load.replaced();
         for message in self.transcript.messages() {
-            self.load.recorded(message);
+            self.load.recounted(message);
         }
+        self.load
+            .requesting(self.model.system.as_deref(), &self.tools.advertised());
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -212,13 +251,15 @@ impl Runner {
     /// Counted back from the end in **estimated tokens**, not in turns: a turn
     /// can be enormous, so a fixed number of them can be most of the window,
     /// and the kept tail is the thing that has to fit beside the recap. The
-    /// current turn is always kept, whatever it has cost so far — cutting into
-    /// it would drop work the model is in the middle of. Each turn before it is
-    /// kept while the running byte estimate stays under the budget, and the cut
-    /// lands on a user prompt, which is the boundary that never parts a call
-    /// from the result answering it. That boundary is a rule, not a
-    /// coincidence: a message kind added later that does not open a turn has to
-    /// be counted into the turn it belongs to here, or the cut would land
+    /// current turn is always kept by this ordinary boundary. Automatic
+    /// compaction has one fallback above it: after pruning has failed and no
+    /// older middle remains, a complete active turn may be recapped too. That
+    /// happens only between passes, where no tool call is in flight.
+    ///
+    /// Earlier turns are kept while the running byte estimate stays under the
+    /// budget, and every ordinary cut lands on a user prompt. That boundary is a rule,
+    /// not a coincidence: a message kind added later that does not open a turn
+    /// has to be counted into the turn it belongs to here, or the cut would land
     /// between a call and its answer.
     ///
     /// The estimate uses the model's own calibrated bytes-per-token where the
@@ -230,8 +271,8 @@ impl Runner {
         let messages = self.transcript.messages();
 
         // The newest turn is kept whole. Starting one user prompt back from the
-        // end puts the boundary before whatever the model is doing now, and a
-        // session with a single turn has nothing behind it to replace.
+        // end puts the ordinary boundary before whatever the model is doing now,
+        // and a session with a single turn has no older middle to replace.
         let mut marks = messages
             .iter()
             .enumerate()
@@ -286,9 +327,6 @@ impl Runner {
     /// than copied alongside it, because a copy of the transcript is the one
     /// allocation this crate may not make.
     ///
-    /// `None` where the answer was stopped part way. What has arrived by then
-    /// is notes that break off mid-sentence, and the caller may not stand them
-    /// in place of anything: a stop is somebody saying leave the session alone.
     /// The files to carry into the recap, read and modified apart.
     ///
     /// Two sources, in the order they happened: the lists every previous recap
@@ -341,30 +379,40 @@ impl Runner {
         touched: &(Vec<String>, Vec<String>),
         events: &dyn Post,
         cancel: &Cancel,
-    ) -> Result<Option<String>, TurnError> {
-        let mut asking = RECAP.to_owned();
-        asking.push_str("\n\n");
-        asking.push_str(FILES);
-        asking.push('\n');
-        if touched.0.is_empty() && touched.1.is_empty() {
-            asking.push_str("(none yet)");
-        } else {
-            for path in &touched.0 {
-                let _ = writeln!(asking, "{path} (read)");
-            }
-            for path in &touched.1 {
-                let _ = writeln!(asking, "{path} (modified)");
-            }
-        }
-
+    ) -> Result<Recap, TurnError> {
+        let asking = RECAP.to_owned();
+        let asking_bytes = asking.len() as u64;
         self.transcript.push(Message::User(asking.into()));
+
+        // The recap is a standalone request: no ordinary system prompt or tool
+        // schemas, and its output has to fit beside the request itself. This is
+        // a bound on what may be produced, not a promise that a recap is long.
+        // `tokens` may include ordinary system/tool overhead that this request
+        // omits. Keeping it is the conservative direction; adding only the new
+        // instruction avoids estimating the existing transcript a second time.
+        let request_tokens = self
+            .load
+            .tokens()
+            .saturating_add(Load::cautious(asking_bytes));
+        let safe = self.model.window.map_or(u32::MAX, |window| {
+            u32::try_from(u64::from(window).saturating_sub(request_tokens)).unwrap_or(u32::MAX)
+        });
+        let room = self
+            .compacting
+            .recap_tokens
+            .min(self.model.max_tokens)
+            .min(safe);
+        if room == 0 {
+            self.transcript.pop();
+            return Ok(Recap::Incomplete);
+        }
 
         let asked = self.provider.stream(
             Request {
                 model: &self.model.name,
                 transcript: &self.transcript,
                 tools: &[],
-                max_tokens: ROOM.min(self.model.max_tokens),
+                max_tokens: room,
                 system: None,
                 effort: self.model.effort,
             },
@@ -378,7 +426,7 @@ impl Runner {
         let said = asked.map(|mut stream| {
             let mut said = String::new();
             let mut part = 0;
-            let mut stopped = false;
+            let mut stopped = None;
 
             while let Some(delta) = stream.next() {
                 match delta {
@@ -395,15 +443,31 @@ impl Runner {
                             events.post(crucible_core::Event::Compacting { why, part });
                         }
                     }
-                    Ok(Delta::Stopped(StopReason::Cancelled)) => {
-                        stopped = true;
+                    Ok(Delta::Stopped(reason)) => {
+                        stopped = Some(reason);
                         break;
                     }
                     Err(_) => break,
                     Ok(_) => {}
                 }
             }
-            (!stopped).then_some(said)
+            match stopped {
+                Some(StopReason::Yielded) if structured(&said) => {
+                    append_files(&mut said, touched);
+                    Recap::Complete(said)
+                }
+                Some(StopReason::Cancelled) => Recap::Stopped,
+                Some(
+                    StopReason::Yielded
+                    | StopReason::OutOfTokens
+                    | StopReason::WindowExceeded
+                    | StopReason::Filtered
+                    | StopReason::Paused
+                    | StopReason::Unknown
+                    | StopReason::WantsTools,
+                )
+                | None => Recap::Incomplete,
+            }
         });
 
         self.transcript.pop();
@@ -474,9 +538,81 @@ impl Runner {
         // the moment it is known to be exact.
         self.load.replaced();
         for message in self.transcript.messages() {
-            self.load.recorded(message);
+            self.load.recounted(message);
         }
+        self.load
+            .requesting(self.model.system.as_deref(), &self.tools.advertised());
     }
+}
+
+/// Whether every required checkpoint section is present, ordered and filled.
+///
+/// `Progress` is a container; its three subsections carry the content. Every
+/// other section must say something, including `(none)`, so a clean provider
+/// stop cannot make a structurally truncated checkpoint look complete.
+fn structured(said: &str) -> bool {
+    const SECTIONS: &[(&str, bool)] = &[
+        ("## Goal", true),
+        ("## Constraints & Preferences", true),
+        ("## Progress", false),
+        ("### Done", true),
+        ("### In Progress", true),
+        ("### Blocked", true),
+        ("## Decisions", true),
+        ("## Next Steps", true),
+        ("## Critical Context", true),
+    ];
+
+    if !said.starts_with("## Goal\n") || said.lines().any(|line| line == FILES) {
+        return false;
+    }
+
+    let lines: Vec<&str> = said.lines().collect();
+    let headings: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(at, line)| line.starts_with("##").then_some(at))
+        .collect();
+    if headings.len() != SECTIONS.len()
+        || headings
+            .iter()
+            .zip(SECTIONS)
+            .any(|(at, (expected, _))| lines.get(*at) != Some(expected))
+    {
+        return false;
+    }
+
+    SECTIONS.iter().enumerate().all(|(index, (_, required))| {
+        if !required {
+            return true;
+        }
+        let Some(start) = headings.get(index).map(|heading| heading + 1) else {
+            return false;
+        };
+        let end = headings.get(index + 1).copied().unwrap_or(lines.len());
+        lines
+            .get(start..end)
+            .is_some_and(|section| section.iter().any(|line| !line.trim().is_empty()))
+    })
+}
+
+/// Appends the file record derived from calls and prior checkpoints.
+fn append_files(recap: &mut String, touched: &(Vec<String>, Vec<String>)) {
+    while recap.ends_with(char::is_whitespace) {
+        recap.pop();
+    }
+    let _ = write!(recap, "\n\n{FILES}\n");
+    if touched.0.is_empty() && touched.1.is_empty() {
+        recap.push_str("(none yet)");
+        return;
+    }
+    for path in &touched.0 {
+        let _ = writeln!(recap, "{path} (read)");
+    }
+    for path in &touched.1 {
+        let _ = writeln!(recap, "{path} (modified)");
+    }
+    recap.pop();
 }
 
 /// How far along the notes read, given how far they have run.
@@ -527,8 +663,9 @@ impl Files {
 ///
 /// Everything from the `Files so far:` line to the end, one `path (read)` or
 /// `path (modified)` per line. Anything that does not parse as one of those is
-/// left out rather than guessed at: the list is the model's to keep accurate,
-/// and a line it wrote some other way is not a file this session touched.
+/// left out rather than guessed at: a line from an older recap written some
+/// other way is not a file this session touched. New recaps receive this list
+/// from code, not from the model.
 fn listed(recap: &str) -> Vec<(&str, bool)> {
     let Some((_, files)) = recap.split_once(FILES) else {
         return Vec::new();
@@ -579,6 +716,21 @@ mod tests {
     }
 
     #[test]
+    fn a_structured_recap_has_every_heading_once_in_exact_order() {
+        let complete = "## Goal\ngoal\n## Constraints & Preferences\n(none)\n## Progress\n### Done\ndone\n### In Progress\n(none)\n### Blocked\n(none)\n## Decisions\n(none)\n## Next Steps\nnext\n## Critical Context\n(none)";
+        assert!(structured(complete));
+
+        let extra = complete.replace("## Decisions", "## Surprise\nextra\n## Decisions");
+        assert!(!structured(&extra));
+
+        let duplicate = complete.replace("## Next Steps", "## Decisions\nagain\n## Next Steps");
+        assert!(!structured(&duplicate));
+
+        let empty = complete.replace("## Critical Context\n(none)", "## Critical Context");
+        assert!(!structured(&empty));
+    }
+
+    #[test]
     fn a_recap_without_a_file_list_carries_none_forward() {
         // A recap written before this existed, or by a model that left the list
         // out, has nothing to carry — and that is an answer, not a failure.
@@ -595,9 +747,9 @@ mod tests {
 
     #[test]
     fn a_line_that_is_not_a_file_is_not_read_as_one() {
-        // The list is the model's to keep accurate. A line it wrote some other
-        // way — a heading, a stray sentence — is not a file the session
-        // touched, and is left out rather than guessed at.
+        // Older recap text may have carried this list itself. A line it wrote
+        // some other way is not a file the session touched and is left out
+        // rather than guessed at; new recaps receive the list from code.
         let recap = "Files so far:\nsrc/main.rs (read)\nnot a file line\n(modified)\n";
 
         assert_eq!(listed(recap), [("src/main.rs", false)]);
