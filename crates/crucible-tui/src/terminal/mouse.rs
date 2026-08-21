@@ -1,8 +1,9 @@
 //! Where the pointer was clicked, for a terminal that was asked to say.
 //!
-//! A terminal does not report the mouse unless it is asked to. Asking is two
-//! escape sequences: one that turns button reporting on, and one that asks for
-//! the answers in the form that survives a window wider than 223 columns.
+//! A terminal does not report the mouse unless it is asked to. Asking is four
+//! escape sequences: one that turns button reporting on, two that add the
+//! pointer's own motion to it, and one that asks for the answers in the form
+//! that survives a window wider than 223 columns.
 //!
 //! Reporting is state on the terminal in the same way [`Raw`] mode is, so it is
 //! held by a guard and handed back on the way out — including the way out
@@ -19,9 +20,13 @@
 //! anybody reaches the part of it that is off screen, so the pointer is held for
 //! as long as a session is drawn. The selection comes back the same way the
 //! scrolling did — crucible owns the screen, so crucible answers the drag, which
-//! is what the third sequence here asks to hear about. Shift is still the way
+//! is what the motion sequences here ask to hear about. Shift is still the way
 //! past a program holding the pointer, and stays the answer for a reader who
 //! wants their emulator's own selection instead of this one.
+//!
+//! Motion under no button is asked for on the same grounds and answers a
+//! smaller question: which row would answer a click, said before one is made.
+//! A screen that never says so is one a reader has to click to find out about.
 //!
 //! Holders nest, so they are counted. A session holds one for its whole length
 //! and something standing inside it may hold another, and the end of the inner
