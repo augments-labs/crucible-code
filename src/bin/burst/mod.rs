@@ -43,6 +43,14 @@
 //! sharing this file differ by an order of magnitude in what a frame costs, and a
 //! frame count that is brief for one is longer than any gap for the other.
 //!
+//! How many windows there are to look through is the other half of that, and it
+//! belongs to the phase rather than the window. A phase of a few dozen is shorter
+//! than one stretch of a machine being taken away, so every window in it can be
+//! one the machine was absent for, and the best of them is the best of a bad lot.
+//! A phase here is hundreds of windows for that reason — long enough to outlast
+//! such a stretch, so that even the phase with fewest untouched windows to offer
+//! still has one.
+//!
 //! The floor stays the middle window and stays a rate, because thirty a second is
 //! a claim about somebody watching, and somebody watching sees the machine they
 //! have rather than the machine at liberty.
@@ -77,9 +85,15 @@ const MOST: usize = 512;
 /// Timed windows in each phase.
 ///
 /// Odd, so the median is a window that was measured rather than the average of
-/// two that were. Enough of them that the quickest is a window the machine left
-/// alone even where it was taking the thread away throughout the phase.
-pub(crate) const WINDOWS: usize = 65;
+/// two that were.
+///
+/// This many, because a phase is only worth reading if it holds a window the
+/// machine left alone, and a shared runner is taken away in stretches long
+/// enough to cover a phase of a few dozen whole. At this count a phase spans
+/// hundreds of milliseconds and outlasts one — in the phase the thread is taken
+/// away from throughout, which has fewest untouched windows to offer, as much as
+/// in the phase it is not.
+pub(crate) const WINDOWS: usize = 513;
 
 /// Frames drawn between the two phases and timed by neither.
 ///
