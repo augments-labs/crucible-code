@@ -31,6 +31,7 @@
 use std::fmt;
 
 use std::collections::VecDeque;
+use std::ops::Range;
 
 use crate::color::Slot;
 use crate::row::Row;
@@ -494,6 +495,44 @@ impl Record {
         None
     }
 
+    /// Which rows of a band `rows` tall are showing the line numbered `at`.
+    ///
+    /// The other half of [`Record::at`], and worked out the same way: that one
+    /// says which line a row is showing, this one says every row showing a
+    /// line. Empty for a line the band is not showing.
+    ///
+    /// What the pair is for is a cut result long enough to wrap. It is one
+    /// result however many rows it folded to, so a pointer anywhere on it is
+    /// pointing at the whole of it -- and at none of what is above or below.
+    pub(crate) fn covering(&self, at: usize, rows: usize) -> Range<usize> {
+        let from = if self.following {
+            self.foot(rows)
+        } else {
+            self.top
+        };
+
+        let mut start = 0;
+        let mut skip = usize::from(from.into);
+        for (line, tall) in self
+            .tall
+            .iter()
+            .enumerate()
+            .skip(from.line.saturating_sub(self.gone))
+        {
+            let shown = usize::from(*tall).saturating_sub(skip);
+            skip = 0;
+            if self.gone + line == at {
+                return start..(start + shown).min(rows);
+            }
+            start += shown;
+            if start >= rows {
+                break;
+            }
+        }
+
+        start.min(rows)..start.min(rows)
+    }
+
     /// Whether the line numbered `at` carries a span in `slot`.
     ///
     /// Numbered as [`Record::at`] hands them back, which is what makes the two
@@ -841,6 +880,40 @@ mod tests {
                 .map(|row| Row::new().then(Slot::Plain, format!("{row}")))
                 .collect()
         })
+    }
+
+    #[test]
+    fn the_rows_covering_a_line_are_exactly_the_rows_showing_it() {
+        // The pair this makes with [`Record::at`]: one says which line a row is
+        // showing and the other every row showing that line, so a pointer on
+        // any row of a wrapped line is pointing at the whole of it.
+        let mut record = Record::new(8);
+        record.write(Slot::Plain, "one\n");
+        record.write(Slot::Plain, "a line that takes several rows\n");
+        record.write(Slot::Plain, "last\n");
+
+        let rows = 12;
+        for row in 0..rows {
+            let Some(line) = record.at(row, rows) else {
+                continue;
+            };
+            assert!(
+                record.covering(line, rows).contains(&row),
+                "row {row} shows line {line} and is not among the rows covering it"
+            );
+        }
+
+        // And something here really did fold, or the walk above would hold just
+        // as well for a record that never wrapped a line in its life.
+        let wrapped = record.at(1, rows).expect("a second row");
+        assert!(record.covering(wrapped, rows).len() > 1);
+    }
+
+    #[test]
+    fn a_line_the_band_is_not_showing_is_covered_by_no_row_of_it() {
+        let record = filled(8, 40);
+
+        assert!(record.covering(0, 5).is_empty());
     }
 
     #[test]

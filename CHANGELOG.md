@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**Pointing at a result the transcript cut short lights that one, and not every
+one on screen.** Every row of the result under the pointer takes your own
+foreground while the rest of the transcript stays in the quiet it was in, so
+what lights is what a click there opens. <kbd>Ctrl+O</kbd> still reaches every
+result the session cut, wherever the pointer is.
+
 ## [0.18.0] - 2026-08-21
 
 ### Added
