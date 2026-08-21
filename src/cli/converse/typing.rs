@@ -49,6 +49,7 @@ use super::expanding::{self, Standing};
 use super::leaving::Leaving;
 use super::mode::tone;
 use super::planning::Planning;
+use super::queueing;
 use super::turning::Turning;
 use super::{Prompts, Retained};
 
@@ -662,6 +663,7 @@ pub(super) fn during<T: Terminal>(
         planning,
         kept,
         opened,
+        viewing,
         says,
         background,
         style,
@@ -706,6 +708,23 @@ pub(super) fn during<T: Terminal>(
             continue;
         }
 
+        // And the queue, for the same reason and by the same rule. Only one of
+        // the two is ever standing — the key that opens this one is swallowed
+        // above while that one is up — so the order between them decides
+        // nothing, and reading them in the order they are drawn in is what
+        // keeps that visible.
+        if viewing.is_open() {
+            moved |= viewing.against(
+                &arrived,
+                queueing::Reading {
+                    queue: queued,
+                    editor,
+                    steer,
+                },
+            );
+            continue;
+        }
+
         match meant(arrived) {
             Meant::Background => background.ask(),
             // Taken back and re-wrapped above, before the view could have been
@@ -738,9 +757,8 @@ pub(super) fn during<T: Terminal>(
             // counts the rest, and this is the list the count is about. A line
             // taken back returns to the box to be edited or sent sooner.
             Meant::QueueView => {
-                if queued.viewing(renderer, editor, style)? {
-                    moved = true;
-                }
+                viewing.open(queued, steer);
+                moved |= viewing.is_open();
             }
 
             Meant::Typing(first) => {
@@ -843,10 +861,13 @@ pub(super) fn during<T: Terminal>(
     // what stands above the box while nobody is pressing anything.
     moved |= planning.moved();
 
-    if moved && !expanding::under(renderer, style, kept, opened)? {
-        // The view takes the rows the box has, so a frame draws one or the
-        // other. A window with no room for the view has closed it above, and
-        // the box comes back in the same frame.
+    if moved
+        && !expanding::under(renderer, style, kept, opened)?
+        && !queueing::under(renderer, style, queued, viewing, steer)?
+    {
+        // A view takes the rows the box has, so a frame draws one of the three.
+        // A window with no room for either view has closed it above, and the
+        // box comes back in the same frame.
         let footing = Footing { turning, planning };
         match notice {
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
@@ -1014,6 +1035,9 @@ pub(super) struct During<'a> {
     /// `leaving` is, and one more: the view goes on standing after the turn it
     /// was opened under has ended.
     pub(super) opened: &'a mut Standing,
+    /// Whether the queue is standing open to be gone over, which is the other
+    /// thing that takes the box's rows while the turn goes on writing above.
+    pub(super) viewing: &'a mut queueing::Standing,
     pub(super) says: &'a Says,
     /// Where a command the turn is waiting on is asked to be left running.
     ///

@@ -303,6 +303,51 @@ fn a_line_the_turn_steered_by_stops_waiting_behind_it() {
 }
 
 #[test]
+fn the_whole_queue_goes_into_one_turn_rather_than_one_turn_each() {
+    // Three lines typed behind a turn are one thing the reader wanted said, not
+    // three conversations. Taken one at a time the first of them was answered
+    // before the model had read the second, so the agent worked to a question
+    // the reader had already added to -- and the reader watched three turns go
+    // by saying what one turn was asked.
+    let mut waiting = Prompts::default();
+    for line in [
+        "run the tests",
+        "then fix what failed",
+        "and say what you did",
+    ] {
+        let mut editor = typed(line);
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    // The oldest is the turn's prompt and the rest are offered to that same
+    // turn, which records them together at its first boundary. Nothing is left
+    // waiting, and the bytes they reserved come back with them.
+    let steer = crucible_core::Steer::new();
+    assert_eq!(
+        batched(&mut waiting, &steer).as_deref(),
+        Some("run the tests")
+    );
+    assert_eq!(waiting.waiting_count(), 0);
+    assert_eq!(waiting.bytes, 0);
+    assert_eq!(
+        steer.take(),
+        vec!["then fix what failed", "and say what you did"]
+    );
+}
+
+#[test]
+fn an_empty_queue_is_no_turn_and_offers_nothing() {
+    // The loop asks the queue before it asks the keyboard, and almost every
+    // time there is nothing there. Nothing is what it must get back: a turn
+    // taken on an empty queue is a prompt nobody typed.
+    let mut waiting = Prompts::default();
+    let steer = crucible_core::Steer::new();
+
+    assert!(batched(&mut waiting, &steer).is_none());
+    assert!(steer.take().is_empty());
+}
+
+#[test]
 fn what_is_waiting_is_the_line_that_goes_next_rather_than_the_one_typed_last() {
     // The row above the box names it, so which of the queue it names is what
     // the reader checks their typing against. The oldest is the one the next

@@ -193,8 +193,9 @@ the screen — so a tool call arriving ten minutes into a turn is read beside th
 mode that let it through.
 
 You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
-queues what you wrote as the next prompt, and it is run the moment the turn
-ends. Up to 64 finished prompts and 1 MiB of their text can wait; when either
+queues what you wrote, and it is offered to the turn that is running: a turn
+still working takes it at its next step and adjusts course, and one that was
+already finishing leaves it to be answered as its own turn. Up to 64 finished prompts and 1 MiB of their text can wait; when either
 bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
 it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode is
 not offered there, because the mode is away with the turn until it finishes, and
@@ -228,22 +229,48 @@ count next and the clock after that, since all three are recoverable — the key
 is named under the box, and the other two will be back next second; the word is
 the last thing left.
 
-A prompt queued while the turn runs is named directly under that row, so a line
-that left the box has somewhere it can be read back:
+The prompts waiting behind the turn stand in a panel over the box, framed the
+way the box is because they are the same thing a moment apart — your own words,
+one of them being typed and the rest already sent for:
 
 ```
-✳ thinking (2m 56s · ↓ 12.8k · esc to interrupt)
-  Next: fix the failing test
+┌─ 4 queued ───────────────────────────────────────────────┐
+│ › fix the failing test                                   │
+│ › then run the gate                                      │
+│ › and write the changelog                                │
+│   … +1 more  (ctrl+q to see all)                         │
+└──────────────────────────────────────────────────────────┘
 ```
 
-It is the one the next turn takes — the oldest of the queue rather than the last
-you typed — and it starts in the column the word above it starts in, with no
-mark of its own, since nothing about it has begun. A prompt too wide for the
-window is cut at the right. Nothing parts it from the row above, because it is a
-second line of that row rather than a second thing beside it. On a window too
-short for everything standing over the box, this row goes before the one above
-it does: the prompt is still in the queue and its own turn will say it, and the
-row saying a turn is running is written nowhere else.
+Three are named and the rest are counted, oldest first, which is the order they
+will be said in. A line too wide for the window is cut at the right. On a window
+too narrow to open a frame the panel is one indented row saying how many are
+waiting, since that is the fact that cannot go, and on one too short for
+everything standing over the box it gives its rows up before the row saying a
+turn is running does — a queued prompt has its own turn coming, and that row is
+written nowhere else.
+
+They go together. When the turn ends the whole queue is one turn: the oldest is
+its prompt and the rest are handed to the same turn before it asks anything, so
+the model reads all of it and then answers all of it. Three lines typed behind a
+turn are one thing you wanted said, and answering the first before reading the
+third is working to a question you had already added to. Each is still its own
+message, in the order you typed it — nothing is joined into a prompt you did not
+write.
+
+<kbd>Ctrl+Q</kbd> stands the whole queue where the box was. Up and down walk it,
+<kbd>x</kbd> takes the marked line back into the box to be edited or sent ahead
+of the rest, and <kbd>Esc</kbd> — or <kbd>Ctrl+Q</kbd> again — closes it. While
+it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather
+than interrupting the turn.
+
+Nothing leaves the queue while it stands open. The turn above goes on writing,
+tools go on running, the answer goes on arriving; what waits is the one moment
+those lines would cross into the transcript, and it waits exactly as long as you
+hold the view open. A line already in the transcript cannot be taken back, which
+is why the ones you are still going over are kept out of it. Closing the view
+gives the whole batch up at once — edited and untouched alike — and the turn
+works them in at its next pass.
 
 While room is being made, a second line under the word says why it is happening
 and how far the notes have got:

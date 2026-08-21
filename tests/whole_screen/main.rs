@@ -459,6 +459,11 @@ fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
     // while the notes are being written, and the line finished there is sent
     // afterwards — against the session that has just been made smaller, which
     // is the whole reason it waits rather than going first.
+    //
+    // Once, which is the other half of what the picture pins. The line is
+    // offered to the running turn and queued behind it, and a turn that ended
+    // without reaching it leaves it in both places: sent as its own prompt here
+    // and worked into this turn as well, so the record said it twice.
     let notes = "notes to self about everything that has happened so far ".repeat(24);
     let vendor = Vendor::answering_each(&[
         "one answer",
