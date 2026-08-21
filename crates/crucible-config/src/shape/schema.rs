@@ -15,7 +15,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{DOCUMENT, Field, Shape};
+use super::{DOCUMENT, Field, Shape, Whole};
 
 /// The dialect this schema is written in.
 ///
@@ -76,7 +76,13 @@ fn of(shape: &Shape) -> Value {
         // `minimum` rather than an upper bound as well: how large a count may
         // be is a fact about somebody's model, which this crate does not have.
         Shape::Count => json!({ "type": "integer", "minimum": 0 }),
-        Shape::Fields(_) | Shape::Named(_) => object(shape),
+
+        // `minimum` and `maximum` would say nothing here: they hold for a
+        // number, and this is a string, which is what the environment has.
+        // `pattern` is what an editor checks a string against, so the bounds
+        // are spelled as one.
+        Shape::Whole(bounds) => json!({ "type": "string", "pattern": pattern(bounds) }),
+        Shape::Fields(_) | Shape::Named { .. } => object(shape),
 
         // `uniqueItems` because no list here means anything by a repeat: the
         // kind decides which rule wins, so a second copy of a rule cannot
@@ -88,6 +94,30 @@ fn of(shape: &Shape) -> Value {
             "uniqueItems": true,
         }),
     }
+}
+
+/// Every number between two bounds, as a pattern an editor can check.
+///
+/// One alternative per number rather than a decomposition into digit ranges.
+/// The published bounds are then the accepted ones by construction, with no
+/// algorithm in between that a test would have to stand behind — and the
+/// pattern is read by editors rather than by people, so its length is paid in
+/// bytes and not in comprehension.
+///
+/// A leading `+` and any number of leading zeros are allowed because the reader
+/// that turns one of these into a value takes them: `+6` and `06` are spellings
+/// of a number somebody meant, and a schema that squiggled what the program
+/// accepts is the disagreement this whole file exists to prevent.
+fn pattern(bounds: &Whole) -> String {
+    let mut written = String::from(r"^\+?0*(?:");
+    for number in bounds.least..=bounds.most {
+        if number > bounds.least {
+            written.push('|');
+        }
+        written.push_str(&number.to_string());
+    }
+    written.push_str(r")$");
+    written
 }
 
 /// One field of an object, as a schema: its shape, its sentence, its examples.
@@ -105,6 +135,7 @@ fn described(field: &Field) -> Value {
         about,
         shape,
         examples,
+        usual,
         // Which layers a key may be written in is not something one schema can
         // say: this file is served to all three, and a key refused in one of
         // them is a key everywhere else. The sentence above says it in words
@@ -115,6 +146,9 @@ fn described(field: &Field) -> Value {
     let mut described = of(shape);
     if let Some(into) = described.as_object_mut() {
         into.insert("description".into(), (*about).into());
+        if let Some(usual) = usual {
+            into.insert("default".into(), (*usual).into());
+        }
     }
     if examples.is_empty() {
         return described;
@@ -122,9 +156,12 @@ fn described(field: &Field) -> Value {
 
     let holder = match shape {
         Shape::List(_) => described.get_mut("items"),
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Fields(_) | Shape::Named(_) => {
-            Some(&mut described)
-        }
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::Count
+        | Shape::Whole(_)
+        | Shape::Fields(_)
+        | Shape::Named { .. } => Some(&mut described),
     };
     if let Some(into) = holder.and_then(Value::as_object_mut) {
         into.insert("examples".into(), json!(examples));
@@ -158,14 +195,28 @@ fn object(shape: &Shape) -> Value {
         // pattern rather than by `additionalProperties`, so the reserved keys
         // above keep their own shape instead of having to satisfy the inner
         // one — `$comment` is a string, and a provider is not.
-        Shape::Named(inner) => json!({
-            "type": "object",
-            "properties": properties,
-            "patternProperties": { "^[^$]": of(inner) },
-            "additionalProperties": false,
-        }),
+        //
+        // The names crucible chose here are properties like any other, which is
+        // what gets them a sentence, a default and completion. They sit beside
+        // the pattern rather than in place of it: a property and a
+        // `patternProperties` entry both matching is the standard's own answer
+        // for exactly this, and every other name still has to satisfy the
+        // shape below.
+        Shape::Named { declared, others } => {
+            for field in *declared {
+                properties.insert(field.name.into(), described(field));
+            }
+            json!({
+                "type": "object",
+                "properties": properties,
+                "patternProperties": { "^[^$]": of(others) },
+                "additionalProperties": false,
+            })
+        }
 
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::List(_) => of(shape),
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Whole(_) | Shape::List(_) => {
+            of(shape)
+        }
     }
 }
 

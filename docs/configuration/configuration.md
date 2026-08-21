@@ -525,6 +525,14 @@ that accepts a document and a crucible that refuses it would have to disagree
 with itself. [`schema/crucible-code-schema.json`](../../schema/crucible-code-schema.json)
 in this repository is the copy a build gate keeps honest.
 
+`env` is a block you key, so most of what goes in it is a name crucible has
+never heard of and any string will do. The variables crucible reads for itself
+are the exception: they are named in the schema beside that, with the number
+each one falls back to and the range it takes, so an editor completes the value
+and marks one out of range as you type. It offers the fallback because that is
+the value the program uses — a default the schema invented would be a sentence
+about behaviour that nothing runs.
+
 The schema is not fixed. Keys may be added, renamed or removed in any 0.x
 release, and the URL above serves one copy — the newest release, not the version
 you are running. An editor marking something red is worth a second look; the

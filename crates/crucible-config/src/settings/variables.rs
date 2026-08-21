@@ -17,37 +17,24 @@
 //! answer that survives every layer.
 
 use crate::error::{Accepted, ConfigError};
+use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED};
 
 use super::Settings;
 
-/// How many rows of the transcript one notch of the wheel moves.
+/// The fewest rows a notch may move, and the most.
 ///
-/// Spelled out rather than built from the prefix, because a name assembled at
-/// run time is a name nobody can grep for. The test below is what keeps it in
-/// the namespace.
-pub(crate) const MOUSE_SCROLL_SPEED: &str = "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED";
-
-/// The fewest rows a notch may move.
-///
-/// One rather than none. A wheel set to move nothing is a setting that looks
-/// applied and does nothing, which is the failure every refusal in this module
-/// exists to prevent — and a reader who wants the wheel to leave the transcript
-/// alone is asking for a thing crucible no longer has to give, because the
-/// screen it scrolls is its own.
-const LEAST: u16 = 1;
-
-/// The most rows a notch may move.
-///
-/// A screenful on most terminals. Past that the wheel stops being a scroll and
-/// becomes a jump: two notches and the rows that were on screen are gone with
-/// nothing between them to read, which is a worse way to lose your place than
-/// scrolling too slowly ever is.
-const MOST: u16 = 30;
+/// Read from the declaration rather than restated, so the bounds an editor is
+/// told about and the bounds this refuses by are the same pair. The reasoning
+/// for each number sits beside it there.
+const LEAST: u16 = SCROLL_SPEED.least;
+const MOST: u16 = SCROLL_SPEED.most;
 
 /// What a notch moves where nothing said otherwise.
 ///
 /// Three lines of prose per notch, which is fast enough to cross a long answer
 /// in a few flicks and slow enough that the rows going past can still be read.
+/// The schema states it too, as the string a document would hold, and the test
+/// below is what keeps the two the same number.
 const USUAL: u16 = 6;
 
 /// What a setting of this kind takes, for the message when it was given
@@ -55,6 +42,11 @@ const USUAL: u16 = 6;
 ///
 /// A sentence rather than a list, because the answers are a range and a range
 /// written out is thirty words nobody reads to the end of.
+///
+/// Written out rather than built from the bounds, because [`Accepted`] holds
+/// what it is given for as long as the program runs and a sentence assembled
+/// per refusal could not be. The test below is what keeps it saying the numbers
+/// this actually refuses by.
 fn accepted() -> Accepted {
     Accepted::new(vec!["a whole number of rows from 1 to 30"])
 }
@@ -140,7 +132,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use crate::document::{Document, Origin};
-    use crate::env;
+    use crate::{env, shape};
 
     use super::*;
 
@@ -161,6 +153,31 @@ mod tests {
     /// Nothing written anywhere.
     fn nothing() -> impl Fn(&str) -> Option<String> {
         shell(&[])
+    }
+
+    #[test]
+    fn the_schema_states_the_number_this_module_falls_back_to() {
+        // Two lists again: the string an editor fills in and the number this
+        // returns when nothing was written. Without this the schema would go on
+        // offering a default the program stopped having, which is worse than
+        // offering none — an editor writes it into the file.
+        let declared = shape::DOCUMENT
+            .field("env")
+            .and_then(|env| env.declared(MOUSE_SCROLL_SPEED))
+            .expect("the variable is declared");
+
+        assert_eq!(declared.usual, Some(USUAL.to_string().as_str()));
+    }
+
+    #[test]
+    fn the_sentence_a_refusal_ends_with_names_the_bounds_it_refuses_by() {
+        // The sentence is a literal, because what holds it holds it for as long
+        // as the program runs. This is what keeps it true as the declared
+        // bounds move.
+        let said = accepted().to_string();
+
+        assert!(said.contains(&LEAST.to_string()), "{said}");
+        assert!(said.contains(&MOST.to_string()), "{said}");
     }
 
     #[test]
