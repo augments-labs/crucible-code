@@ -40,16 +40,36 @@ use rustix::pty::{self, OpenptFlags};
 #[cfg(target_os = "linux")]
 use rustix::termios::{self, OptionalActions, Winsize};
 
+/// Runs in one window.
+///
+/// The percentile below is nearest-rank, so the size of what it is taken over
+/// decides how far into the tail it stands: over twenty readings the 95th is
+/// the second worst, which is one slow launch away from deciding a budget.
+/// Twenty-two puts it at the second worst still, and that is the point — a
+/// window is *meant* to be decidable by a stall, so that the median across
+/// windows can throw the stalled ones away.
+const PER_WINDOW: usize = 22;
+
+/// Windows the runs are cut into.
+///
+/// Odd, so the median is a window that was measured rather than the average of
+/// two that were. Nine of them means five have to be disturbed together before
+/// the reading is anything but what this program does.
+///
+/// The same shape as the burst probes' phases, and for the same reason. A
+/// percentile over one long run is decided by whatever else the machine was
+/// doing while it ran, and on a shared runner that is another job's build: a
+/// stall lands in the window it happened in, while a program that got slower is
+/// slower in all nine. Taking the tail of each window and the middle of those
+/// keeps the statistic a tail — it is still the second worst of twenty-two —
+/// and stops one bad stretch of wall clock from being the answer.
+const WINDOWS: usize = 9;
+
 /// Runs per reading.
 ///
-/// The percentile below is nearest-rank, so the sample size decides how far
-/// into the tail it stands: over twenty readings the 95th is the second worst,
-/// which is one slow launch away from deciding a budget. Two hundred puts it at
-/// the eleventh worst, far enough in that a machine stalling underneath the
-/// probe stops reading as this program having got slower. A launch costs a
-/// couple of milliseconds, so the whole probe still finishes well inside a
-/// second.
-const RUNS: usize = 200;
+/// A launch costs a couple of milliseconds, so the whole probe still finishes
+/// well inside a second.
+const RUNS: usize = WINDOWS * PER_WINDOW;
 
 /// A stuck launch is a failed measurement rather than a benchmark that hangs.
 #[cfg(target_os = "linux")]
@@ -166,21 +186,32 @@ pub(crate) fn readings(measure: Measure) -> Result<Readings, StartupError> {
     Ok(Readings::new(taken))
 }
 
-/// Every reading one probe took, sorted.
+/// Every reading one probe took, in the order it took them.
 pub(crate) struct Readings(Vec<Duration>);
 
 impl Readings {
-    /// Sorts on the way in, because every question asked below is about an
-    /// order statistic and none of them is about the order they arrived in.
-    fn new(mut taken: Vec<Duration>) -> Self {
-        taken.sort_unstable();
+    /// Kept in the order they arrived, which is the whole of what the windows
+    /// are about: a machine stalls for a stretch of wall clock, and a run
+    /// sorted on the way in has thrown away which readings were next to each
+    /// other. Everything below that wants an order statistic sorts a window.
+    fn new(taken: Vec<Duration>) -> Self {
         Self(taken)
     }
 
-    /// The 95th percentile, by nearest rank.
+    /// The 95th percentile of each window, and the middle of those.
     pub(crate) fn p95(&self) -> Result<Duration, StartupError> {
-        let rank = self.0.len().saturating_mul(95).div_ceil(100).max(1) - 1;
-        self.0.get(rank).copied().ok_or(StartupError::Nothing)
+        let mut windows = self.windows();
+        windows.sort_unstable();
+
+        windows
+            .get(windows.len() / 2)
+            .copied()
+            .ok_or(StartupError::Nothing)
+    }
+
+    /// What each window came to, in the order the windows were run.
+    fn windows(&self) -> Vec<Duration> {
+        self.0.chunks(PER_WINDOW).filter_map(percentile).collect()
     }
 
     /// What the readings looked like, for a probe saying why it went over.
@@ -191,17 +222,30 @@ impl Readings {
     /// worth looking at, so a probe that fails prints this beside its reading
     /// rather than leaving the next reader to guess it.
     pub(crate) fn spread(&self) -> String {
-        let Some(best) = self.0.first().copied() else {
+        let mut sorted = self.0.clone();
+        sorted.sort_unstable();
+
+        let Some(best) = sorted.first().copied() else {
             return String::from("no runs");
         };
         // All three are present: the slice is not empty, and `p95` can only
         // fail on one that is.
-        let worst = self.0.last().copied().unwrap_or(best);
-        let median = self.0.get(self.0.len() / 2).copied().unwrap_or(best);
+        let worst = sorted.last().copied().unwrap_or(best);
+        let median = sorted.get(sorted.len() / 2).copied().unwrap_or(best);
         let p95 = self.p95().unwrap_or(worst);
 
+        // The windows in the order they ran, because that is where a stall is
+        // legible: one number far above the rest is a stretch of wall clock
+        // this program did not own, and nine that agree is this program.
+        let windows = self
+            .windows()
+            .iter()
+            .map(|window| ms(*window))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         format!(
-            "{} runs: best {}, median {}, p95 {}, worst {}",
+            "{} runs: best {}, median {}, p95 {}, worst {} — windows {windows}",
             self.0.len(),
             ms(best),
             ms(median),
@@ -209,6 +253,18 @@ impl Readings {
             ms(worst),
         )
     }
+}
+
+/// The 95th of `taken`, by nearest rank.
+///
+/// `None` for nothing, which is what makes a run with no readings at all a
+/// reading that could not be taken rather than a zero.
+fn percentile(taken: &[Duration]) -> Option<Duration> {
+    let mut sorted = taken.to_vec();
+    sorted.sort_unstable();
+
+    let rank = sorted.len().saturating_mul(95).div_ceil(100).max(1) - 1;
+    sorted.get(rank).copied()
 }
 
 /// One reading, in the milliseconds every budget here is written in.
@@ -460,7 +516,7 @@ fn beside(name: &str) -> Result<PathBuf, StartupError> {
 }
 
 /// A home of its own, holding a configuration file and taking the session logs,
-/// so twenty runs neither read nor write anything belonging to whoever is
+/// so the runs neither read nor write anything belonging to whoever is
 /// benchmarking.
 #[derive(Debug)]
 pub(crate) struct Scratch {
@@ -515,45 +571,80 @@ impl Drop for Scratch {
 mod tests {
     use std::time::Duration;
 
-    use super::{RUNS, Readings, Scratch, TITLE, USABLE};
+    use super::{PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS};
 
-    /// A full set of readings where `slow` of them stalled and the rest did not.
-    fn taken(slow: usize) -> Readings {
-        let mut all = vec![Duration::from_millis(1); RUNS - slow];
-        all.extend(vec![Duration::from_millis(100); slow]);
+    /// A full set of readings, stalled from end to end of the first `windows`
+    /// windows and clean through the rest.
+    fn stalled_in(windows: usize) -> Readings {
+        let mut all = Vec::with_capacity(RUNS);
+
+        for window in 0..WINDOWS {
+            let taken = if window < windows { 100 } else { 1 };
+            all.extend(std::iter::repeat_n(
+                Duration::from_millis(taken),
+                PER_WINDOW,
+            ));
+        }
+
         Readings::new(all)
     }
 
     #[test]
-    fn a_few_stalled_launches_do_not_decide_the_percentile() {
-        // The reason the sample is the size it is. A machine that stalls under
-        // the probe now has to do it ten times before the budget hears about
-        // it; at twenty readings once was enough, and once is what a shared
-        // machine does without anything here having changed.
+    fn a_stalled_stretch_does_not_decide_the_percentile() {
+        // What the windows are for, and the whole of why the reading changed
+        // shape: a fifth of this run was spent on a machine with other work on
+        // it, and the answer is still what this program does. Over one long
+        // run, forty-four slow launches out of a hundred and ninety-eight were
+        // past the 95th and the budget failed.
         assert_eq!(
-            taken(10).p95().expect("a reading"),
+            stalled_in(2).p95().expect("a reading"),
             Duration::from_millis(1)
         );
     }
 
     #[test]
     fn enough_of_them_still_do() {
-        // The other half of it: this is a percentile, not a best-of. A machine
-        // slow often enough is one the budget is entitled to notice.
+        // The other half of it: this is a percentile, not a best-of. Slow in
+        // most of the windows is slow all session, and the budget is entitled
+        // to notice.
         assert_eq!(
-            taken(11).p95().expect("a reading"),
+            stalled_in(5).p95().expect("a reading"),
             Duration::from_millis(100)
         );
     }
 
     #[test]
+    fn one_slow_launch_in_every_window_is_still_not_the_reading() {
+        // The statistic stays a tail inside the window. A single launch that
+        // stalled cannot be a window's answer, so a run peppered with them
+        // from end to end is not slow either.
+        let mut all = Vec::with_capacity(RUNS);
+
+        for _ in 0..WINDOWS {
+            for run in 0..PER_WINDOW {
+                all.push(Duration::from_millis(if run == 0 { 100 } else { 1 }));
+            }
+        }
+
+        assert_eq!(
+            Readings::new(all).p95().expect("a reading"),
+            Duration::from_millis(1)
+        );
+    }
+
+    #[test]
     fn the_spread_shows_a_middle_sitting_far_below_the_tail() {
-        // What tells a program that got slower from a machine that stalled.
-        let said = taken(10).spread();
+        // What tells a program that got slower from a machine that stalled:
+        // the windows are printed in the order they ran, and the slow one is
+        // on its own at the front.
+        let said = stalled_in(1).spread();
 
         assert!(said.contains(&format!("{RUNS} runs")), "{said}");
         assert!(said.contains("median 1.0 ms"), "{said}");
+        assert!(said.contains("p95 1.0 ms"), "{said}");
         assert!(said.contains("worst 100.0 ms"), "{said}");
+        assert!(said.contains("windows 100.0 ms, 1.0 ms, 1.0 ms"), "{said}");
+        assert_eq!(said.matches("100.0 ms").count(), 2, "{said}");
     }
 
     #[test]
