@@ -38,7 +38,7 @@ use crucible_core::{
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Sending, Spelling, Terminal, pressed,
+    Editor, Key, Pasting, Pressed, Raw, Renderer, Sending, Spelling, Terminal, pressed,
 };
 
 use super::draw;
@@ -53,7 +53,6 @@ use expanding::Standing;
 use planning::Planning;
 use turning::Turning;
 use typing::Asked;
-use typing::between;
 
 mod asking;
 mod command;
@@ -252,20 +251,6 @@ pub(crate) fn converse<T: Terminal>(
     // arrives whole and its newlines stay newlines.
     let _pasting = Pasting::bracketed()?;
 
-    // Held beside it and for as long, because a click means something wherever
-    // it lands: it puts the cursor where the pointer is in the box, whether or
-    // not a turn is running, and it expands a cut result up in the transcript.
-    // The rows worth clicking are written by a turn, so a guard taken per prompt
-    // would hand the pointer back exactly where it has something to point at.
-    //
-    // Not a setting. A line long enough to be worth pointing into is the line
-    // the arrows are slowest across, and a reader who has one cannot be asked to
-    // have configured for it first. The wheel is what that costs — a terminal
-    // forwarding buttons is not using them itself, so scrolling back over the
-    // transcript is the terminal's own modifier away for the length of the
-    // session.
-    let _pointer = Reporting::on()?;
-
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no
     // room to say, the view over it, the plan, and where an answer comes from.
@@ -384,13 +369,13 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let between = between(
-            &mut runner,
-            &mut held.editor,
-            &mut held.planning,
+        let between = typing::Between {
+            runner: &mut runner,
+            editor: &mut held.editor,
+            planning: &mut held.planning,
             left,
             keys,
-        );
+        };
         let asked = typing::ask(renderer, style, &mut standing, between)?;
 
         // A line finished writes the opening down on its way past. What is

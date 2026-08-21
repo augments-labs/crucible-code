@@ -305,17 +305,13 @@ crucible draws comes out of the same set as the border:
 The name at the top of a session goes the same way: `unicode` draws it from half
 blocks and `ascii` writes it as letters.
 
-The mouse is not among these keys. It is crucible's for the whole session, and
-a click means the same thing wherever it lands: the cursor goes where you
-pointed in the box, and a result the transcript
-[cut short](../getting-started/getting-started.md) opens. A line long enough to
-be worth pointing into is the line the arrows are slowest across, and a reader
-who has one cannot be asked to have configured for it first.
+The mouse is not among these keys, and it is not a setting either. It is the
+terminal's, so selecting and scrolling work as they always did — a terminal
+forwarding buttons to a program is not using them itself, and while you are
+reading and typing they are worth more to you than a click would be.
 
-The wheel is what it costs, since a wheel is a button and a terminal forwarding
-buttons is not using them itself. Hold your terminal's own modifier —
-<kbd>Shift</kbd> in most, <kbd>Fn</kbd> or <kbd>Option</kbd> on macOS — to
-scroll the transcript or select from it as you always did.
+A list or a panel takes it for as long as it stands, where the wheel walking
+rows is what a wheel is for and there is no scrollback underneath to give up.
 
 ### `updates`
 

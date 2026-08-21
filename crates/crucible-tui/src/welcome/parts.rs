@@ -43,6 +43,7 @@ const TIPS: &str = "Tips";
 /// between the two keys is what a `+` is not: one after the other rather than
 /// both at once. Shift+Return, Alt+Return and Ctrl+J are in the docs, where a
 /// reader whose terminal has one can find it.
+///
 const AFFORDANCES: [(&str, &str); 4] = [
     ("/", "opens the command list"),
     ("\\ enter", "adds a line without sending"),

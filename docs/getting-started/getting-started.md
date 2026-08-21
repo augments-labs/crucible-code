@@ -174,16 +174,16 @@ moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
-The mouse is crucible's, for the whole session and with nothing to configure.
-Click in the box and the cursor goes where you clicked, whether or not a turn is
-running — which is what a prompt too long to walk with the arrows is for. Click
-a result the transcript cut short and it stands whole.
+The mouse is the terminal's, which is where selecting and scrolling already
+live: drag to select and turn the wheel to scroll, with nothing held and nothing
+configured. A terminal forwarding buttons to a program is not using them itself,
+so the two cannot both have it — and while you are reading and typing it is
+yours.
 
-The wheel is what that costs. A wheel is a button, so a terminal forwarding
-buttons is not scrolling with them, and crucible's transcript lives in that
-scrollback. Every terminal has a modifier that hands the mouse back for one
-drag — <kbd>Shift</kbd> in most, <kbd>Fn</kbd> or <kbd>Option</kbd> on macOS —
-and that is how you scroll or select while crucible is running.
+A list or a panel is the exception, and takes it for as long as it stands. The
+wheel walks its rows and a click marks one, which is what a wheel and a click
+were going to be reached for there anyway, and there is no scrollback under a
+panel to give up. It goes back to the terminal when the panel does.
 
 Selecting the box itself is the one thing that drag does badly, and no terminal
 can be asked to do it better: what it takes is the picture — a border down each
@@ -402,9 +402,8 @@ which is what the five rows over the box are a sample of. What it holds is what 
 cut more while you were reading is one press away, since opening it again is
 what brings the newer results in.
 
-Clicking one of those rows stands that one result rather than all of them — the row names the call you asked about, so the
-answer is the output of that call alone. It reads the same as the key
-otherwise, and works while a turn runs for the same reason. A click anywhere
+The row names the call you asked about, so what stands is the output of that
+call alone. A click anywhere
 else, on a row that offered nothing, leaves the screen as it was.
 
 A call that changed a file is the exception, and says so by offering nothing. It

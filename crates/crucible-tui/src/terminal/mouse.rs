@@ -10,27 +10,28 @@
 //! reporting clicks after crucible has gone sends escape bytes into whatever
 //! runs next.
 //!
-//! It has a price, and the price is why nothing here is on unless it was asked
-//! for. A terminal that is forwarding buttons is not using them itself, and the
-//! wheel is a button.
+//! It has a price, and the price is the whole of why nothing here is on unless
+//! something asked for it. A terminal forwarding buttons is not using them
+//! itself: the wheel stops reaching the scrollback, and a drag stops selecting.
+//! Both of those are the reader's own and neither is crucible's to spend, so
+//! the pointer is the terminal's until something takes it rather than the other
+//! way about.
 //!
-//! The binary holds one for as long as it is reading keys at all, which is a
-//! prompt and the turn that follows it alike. What settles that is what a click
-//! does rather than when it arrives: a result the transcript cut down to a row
-//! is expanded by clicking the row, and the rows worth clicking are written by
-//! a turn. A guard dropped at the top of one would take the pointer away
-//! exactly where it has something to point at.
+//! Two things take it. A key, held for as long as a reader wants a click to put
+//! the cursor where they point; and a list, held for as long as it stands —
+//! there the wheel walking the list is what a wheel was going to be reached for
+//! anyway, and there is no scrollback under a list to lose.
 //!
-//! The wheel is what that costs, and it is a real cost rather than a small one:
-//! a terminal forwarding buttons is not using them itself, so scrolling back
-//! over the transcript stops working for the length of a turn. An inline
-//! renderer cannot offer both, because the transcript above the prompt is the
-//! terminal's rather than crucible's. `output.mouse` left alone keeps the wheel
-//! and gives up the click, which is the trade for a reader who scrolls more
-//! than they expand.
+//! Which means holders nest, so they are counted. A list opened while the key
+//! is held hands the pointer back at the end of the list and not at the end of
+//! the key, and the count is the only thing that knows the difference. It is
+//! per thread because writing to the terminal is one thread's job here, and a
+//! count two threads could race is a count that turns reporting off under the
+//! holder still holding it.
 //!
 //! [`Raw`]: super::raw::Raw
 
+use std::cell::Cell;
 use std::fmt;
 use std::io::{self, IsTerminal, Write as _};
 
@@ -42,6 +43,15 @@ const REPORTING: &str = "\x1b[?1000h\x1b[?1006h";
 
 /// The same two, off, innermost first.
 const QUIET: &str = "\x1b[?1006l\x1b[?1000l";
+
+thread_local! {
+    /// How many holders are alive, so that the inner one of two does not hand
+    /// the pointer back under the outer one.
+    ///
+    /// Zero is the terminal's own mouse, which is what a session starts and
+    /// ends with.
+    static HELD: Cell<usize> = const { Cell::new(0) };
+}
 
 /// Holds the terminal reporting clicks for as long as this value is alive.
 pub struct Reporting {
@@ -69,7 +79,18 @@ impl Reporting {
             return Ok(None);
         }
 
-        write(REPORTING)?;
+        // Counted before the sequence goes out, so a write that fails has a
+        // count to put back — which is what keeps the number and the terminal
+        // saying the same thing. Only the first holder asks; every one after it
+        // is nested inside a terminal that is already reporting.
+        let first = HELD.with(|held| {
+            held.set(held.get() + 1);
+            held.get() == 1
+        });
+        if first && let Err(trouble) = write(REPORTING) {
+            HELD.with(|held| held.set(held.get() - 1));
+            return Err(trouble.into());
+        }
 
         Ok(Some(Self {
             quiet: || write(QUIET),
@@ -79,10 +100,20 @@ impl Reporting {
 
 impl Drop for Reporting {
     fn drop(&mut self) {
-        // Best effort and deliberately silent, the same as every other guard
-        // here: the terminal is being handed back on the way out, and what
-        // would report a failure is what is being given up.
-        let _ = (self.quiet)();
+        // Only the last one hands it back. The others are nested inside a
+        // holder that is still holding it, and a sequence written for one of
+        // those would take the pointer away from whoever asked first.
+        let last = HELD.with(|held| {
+            let left = held.get().saturating_sub(1);
+            held.set(left);
+            left == 0
+        });
+        if last {
+            // Best effort and deliberately silent, the same as every other
+            // guard here: the terminal is being handed back on the way out, and
+            // what would report a failure is what is being given up.
+            let _ = (self.quiet)();
+        }
     }
 }
 
@@ -125,8 +156,10 @@ mod tests {
         Err(io::Error::other("the terminal went away"))
     }
 
-    /// A guard holding nothing but the counter above.
+    /// A guard holding nothing but the counter above, counted the way a real
+    /// one is so that dropping it means what dropping a real one means.
     fn held() -> Reporting {
+        HELD.with(|held| held.set(held.get() + 1));
         Reporting { quiet: counted }
     }
 
@@ -181,6 +214,22 @@ mod tests {
         // the other: a mode left on outlives this process.
         assert!(REPORTING.contains("?1000h") && REPORTING.contains("?1006h"));
         assert!(QUIET.contains("?1000l") && QUIET.contains("?1006l"));
+    }
+
+    #[test]
+    fn a_second_holder_does_not_hand_the_pointer_back_under_the_first() {
+        // The nesting the module doc claims: a list stands while the key that
+        // took the pointer is still held, and the end of the list is not the
+        // end of the key. Without the count the reader presses one key, opens
+        // one list, closes it, and finds their clicks gone.
+        QUIETED.with(|count| count.set(0));
+
+        let outer = held();
+        drop(held());
+        assert_eq!(QUIETED.with(Cell::get), 0, "the inner holder gave it back");
+
+        drop(outer);
+        assert_eq!(QUIETED.with(Cell::get), 1, "the outer holder kept it");
     }
 
     #[test]
