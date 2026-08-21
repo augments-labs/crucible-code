@@ -669,17 +669,22 @@ fn the_mark_on_a_committed_line_is_on_the_band_rather_than_beside_it() {
 }
 
 #[test]
-fn a_committed_line_takes_no_ground_where_the_terminal_said_nothing() {
-    // The state a terminal that answered neither question leaves this in, and
-    // it is correct rather than merely safe: the mark, the words, and the blank
-    // row above, which is what the row looked like before any of this existed.
-    let plain = Palette::resolve(true, Theme::Dark, None, &|name| {
+fn a_committed_line_still_takes_a_ground_where_the_terminal_said_nothing() {
+    // Most terminals say nothing -- the question is not widely implemented --
+    // so this is the ordinary case rather than the degraded one, and a band
+    // that only appeared where it was answered was a band most readers never
+    // saw. What it is blended off instead is the ground the table in force was
+    // drawn for.
+    let assumed = Palette::resolve(true, Theme::Dark, None, &|name| {
         (name == "COLORTERM").then(|| "truecolor".to_owned())
     });
 
-    for row in Prompt::committed("fix the resolution", 40, Glyphs::Unicode, true) {
-        assert!(!row.paint(&plain).contains("\x1b[48;"), "{:?}", row.text());
-    }
+    assert!(
+        Prompt::committed("fix the resolution", 40, Glyphs::Unicode, true)
+            .iter()
+            .any(|row| row.paint(&assumed).contains("\x1b[48;")),
+        "no row of the prompt took a ground"
+    );
 }
 
 #[test]

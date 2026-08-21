@@ -406,9 +406,11 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // on this ground", which is the one judgement worth deferring to. The other
     // four are that same foreground with an attribute on it -- weight, a slant,
     // a line under it, and a line through it -- so what they are legible
-    // against is whatever Plain was. The band's ground is the reader's own and its ink is deliberately
-    // theirs as well, and the six code slots are a syntax theme's to fill —
-    // empty until one is read, and never in any table here.
+    // against is whatever Plain was. The band takes a ground and writes no ink
+    // at all, so the words on it stay theirs — its mark is the one slot here
+    // that does carry a hue and is checked with the band instead. The six code
+    // slots are a syntax theme's to fill — empty until one is read, and never
+    // in any table here.
     let hueless: Vec<Slot> = all()
         .into_iter()
         .filter(|slot| {
@@ -435,7 +437,6 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,
-            Slot::PromptMark,
             Slot::Comment,
             Slot::Keyword,
             Slot::Str,
@@ -515,20 +516,60 @@ fn the_band_is_a_step_off_the_readers_own_ground_and_never_a_stride() {
 }
 
 #[test]
-fn the_band_is_nothing_at_all_where_no_ground_is_known() {
-    // The state a terminal that answered neither question leaves this in, and
-    // it is a correct state rather than a failure: the prompt row is drawn with
-    // its mark and its blank row and no ground, which is what it looked like
-    // before any of this existed.
+fn the_band_is_drawn_off_the_table_where_no_ground_was_ever_answered() {
+    // The common case rather than the odd one: the question is not widely
+    // implemented, so a band that waited to be told was a band most readers
+    // never saw. What stands in for the answer is the ground the table in force
+    // was drawn for, which is an assumption every other colour here already
+    // makes.
     for theme in THEMES {
         for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
             let palette = wearing(depth, theme, None);
 
             for slot in [Slot::Prompt, Slot::PromptMark] {
+                assert_ne!(
+                    palette.open(slot).as_str(),
+                    "",
+                    "{theme:?} at {depth:?}: {slot:?} left the row with no ground"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_ground_the_terminal_answered_still_outranks_the_one_the_table_assumes() {
+    // The assumption is a fallback and never a replacement. A reader whose
+    // terminal does answer gets a band blended off their own ground, which is
+    // the only band that cannot fight a terminal theme nobody here has seen.
+    let mine = (40, 42, 54);
+
+    for theme in [Theme::Dark, Theme::Light] {
+        let answered = wearing(Depth::Exact, theme, Some(mine));
+        let assumed = wearing(Depth::Exact, theme, None);
+
+        assert_ne!(
+            answered.open(Slot::Prompt).as_str(),
+            assumed.open(Slot::Prompt).as_str(),
+            "{theme:?}: the answer changed nothing"
+        );
+    }
+}
+
+#[test]
+fn the_band_is_nothing_at_all_where_there_is_no_colour() {
+    // The one state left in which the row takes no ground, and it is the state
+    // a reader asked for: `NO_COLOR`, `--color never`, or output that is not a
+    // terminal at all.
+    for theme in THEMES {
+        for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
+            let palette = wearing(Depth::Off, theme, ground);
+
+            for slot in [Slot::Prompt, Slot::PromptMark] {
                 assert_eq!(
                     palette.open(slot).as_str(),
                     "",
-                    "{theme:?} at {depth:?}: {slot:?}"
+                    "{theme:?} on {ground:?}: {slot:?}"
                 );
             }
         }

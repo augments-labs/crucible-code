@@ -11,10 +11,10 @@
 //! about somebody else's format. See [`crate::asked`].
 //!
 //! **Nothing here guesses.** A variable in a spelling this does not know is
-//! `None` rather than a default, because the caller has a correct thing to do
-//! with `None`: draw the prompt row with no ground at all. A default would
-//! replace a known-unknown with a wrong-known, and paint a band against a
-//! ground nobody has established.
+//! `None` rather than a default: what the caller does about an unanswered
+//! question is the caller's decision, and one taken here would be taken again
+//! there, out of sight of whatever else it knows by then. What the palette does
+//! do with `None` is in [`crate::color`], beside the table it does it from.
 
 /// Which way the terminal's own background goes.
 ///

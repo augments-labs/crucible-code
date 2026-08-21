@@ -412,10 +412,11 @@ mod tests {
     #[test]
     fn a_band_is_blended_only_where_the_terminal_answered_with_channels() {
         // The distinction the two parameters exist for. A ground known only by
-        // which way it goes cannot be blended off, and guessing channels for it
-        // would paint a band against a colour nobody reported -- so that case
-        // gets the fallback the design calls correct: the prompt row keeps its
-        // mark and its blank row and takes no ground.
+        // which way it goes cannot be blended off -- but it still picks the
+        // table, and the table is what the band falls back to, so every one of
+        // these paints. What the exact answer buys is a band off the reader's
+        // own colour rather than off the one their table was drawn for, which
+        // is a different sequence and is the assertion at the foot of this.
         let painted = |exact, seeded| {
             Style::resolve(
                 Output {
@@ -433,11 +434,14 @@ mod tests {
             .to_owned()
         };
 
-        assert!(painted(None, None).is_empty());
-        assert!(painted(None, Some(Ground::Dark)).is_empty());
-        assert!(painted(None, Some(Ground::Light)).is_empty());
+        assert!(!painted(None, None).is_empty());
+        assert!(!painted(None, Some(Ground::Dark)).is_empty());
+        assert!(!painted(None, Some(Ground::Light)).is_empty());
         assert!(!painted(Some((13, 13, 16)), None).is_empty());
         assert!(!painted(Some((255, 255, 255)), None).is_empty());
+
+        assert_ne!(painted(Some((13, 13, 16)), None), painted(None, None));
+        assert_ne!(painted(Some((255, 255, 255)), None), painted(None, None));
     }
 
     #[test]
