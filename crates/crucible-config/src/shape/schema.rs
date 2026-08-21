@@ -22,7 +22,7 @@ use super::{DOCUMENT, Field, Shape, Whole};
 /// draft-07 rather than 2020-12 because SchemaStore asks for it: later drafts
 /// are not recommended there until editor support catches up, and a schema
 /// nobody's editor reads is a schema that does nothing. Nothing here is newer
-/// than draft-07 anyway — `type`, `properties`, `patternProperties`, `enum` and
+/// than draft-07 anyway — `type`, `properties`, `propertyNames`, `enum` and
 /// `additionalProperties` are all in it — so this costs a version string and
 /// buys the registry that serves the file.
 const DIALECT: &str = "http://json-schema.org/draft-07/schema#";
@@ -191,17 +191,17 @@ fn object(shape: &Shape) -> Value {
             })
         }
 
-        // Keys the user chose: a provider name, a variable name. Matched by
-        // pattern rather than by `additionalProperties`, so the reserved keys
-        // above keep their own shape instead of having to satisfy the inner
-        // one — `$comment` is a string, and a provider is not.
+        // Keys the user chose: a provider name, a variable name. Every name
+        // not spoken for above answers to `additionalProperties`, so the ones
+        // that are — `$comment`, and the names crucible chose here — keep their
+        // own shape instead of having to satisfy the inner one.
         //
-        // The names crucible chose here are properties like any other, which is
-        // what gets them a sentence, a default and completion. They sit beside
-        // the pattern rather than in place of it: a property and a
-        // `patternProperties` entry both matching is the standard's own answer
-        // for exactly this, and every other name still has to satisfy the
-        // shape below.
+        // Which leaves the `$` prefix to guard, since it belongs to the
+        // standard and an unrecognised one is a misspelling rather than a
+        // variable. `propertyNames` is what says so. A pattern would say it
+        // too, and would then also match the names declared just above — legal,
+        // and refused by a validator in strict mode, which is what the registry
+        // compiles this file with.
         Shape::Named { declared, others } => {
             for field in *declared {
                 properties.insert(field.name.into(), described(field));
@@ -209,8 +209,8 @@ fn object(shape: &Shape) -> Value {
             json!({
                 "type": "object",
                 "properties": properties,
-                "patternProperties": { "^[^$]": of(others) },
-                "additionalProperties": false,
+                "propertyNames": { "anyOf": [{ "pattern": "^[^$]" }, { "enum": RESERVED }] },
+                "additionalProperties": of(others),
             })
         }
 
@@ -293,9 +293,48 @@ mod tests {
         // No property list, because crucible cannot know what a provider will
         // be called — but the value under whatever name is used still has to be
         // a provider.
-        let inner = at(at(providers, "patternProperties"), "^[^$]");
+        let inner = at(providers, "additionalProperties");
         assert_eq!(at(inner, "type"), "object");
         assert!(at(at(inner, "properties"), "apiKeyEnv").is_object());
+    }
+
+    #[test]
+    fn a_name_crucible_declares_never_sits_beside_a_pattern_that_matches_it() {
+        // Legal, and refused by every validator running in strict mode — which
+        // includes the registry's own gate, so a schema carrying the overlap is
+        // one no editor ever fetches. The blocks a user keys are also the
+        // blocks crucible declares names in, so the pattern is what has to go:
+        // an unknown name answers to `additionalProperties` instead.
+        fn walk(node: &Value, route: &str) {
+            let Some(fields) = node.as_object() else {
+                return;
+            };
+            assert!(
+                !fields.contains_key("patternProperties"),
+                "{route} keys names by pattern"
+            );
+            for (key, value) in fields {
+                walk(value, &format!("{route}.{key}"));
+            }
+        }
+
+        walk(&generated(), "");
+    }
+
+    #[test]
+    fn a_dollar_name_the_standard_did_not_reserve_is_refused_by_a_block_the_user_keys() {
+        let schema = generated();
+
+        // `additionalProperties` alone would take `$scehma` for an environment
+        // variable and say nothing. The `$` prefix belongs to the standard, and
+        // a block the user keys still lends it out only to the two names above.
+        for name in ["providers", "env"] {
+            assert_eq!(
+                at(property(&schema, &[name]), "propertyNames"),
+                &json!({ "anyOf": [{ "pattern": "^[^$]" }, { "enum": RESERVED }] }),
+                "{name}"
+            );
+        }
     }
 
     #[test]
