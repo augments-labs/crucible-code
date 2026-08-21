@@ -248,17 +248,30 @@ pub(crate) fn gone<T: Terminal>(
         None => (glyphs.failed(), "killed".to_owned()),
     };
 
-    let said = clipped(
-        format!(
-            "{} ended on its own {} {how} {} {} lines",
-            spelled(ended.tool, &ended.called),
-            glyphs.dot(),
-            glyphs.dot(),
-            ended.lines
-        ),
-        style.output(renderer.columns()).saturating_sub(2),
+    // The command is what gives up room, and the words after it are what the
+    // row is for. A command is as long as somebody typed it, so clipping the
+    // sentence whole is clipping the end of it — and the end is how it ended
+    // and how much it printed, which is the part nobody can go back and ask
+    // for. So the tail is measured first and kept, and the command is cut to
+    // what is left.
+    let tail = format!(
+        " ended on its own {} {how} {} {} lines",
+        glyphs.dot(),
+        glyphs.dot(),
+        ended.lines
+    );
+
+    let room = style.output(renderer.columns()).saturating_sub(2);
+    let called = clipped(
+        spelled(ended.tool, &ended.called),
+        room.saturating_sub(columns(&tail)),
         glyphs,
     );
+
+    // Clipped again, because a window narrower than the tail alone has room
+    // for neither and the row still may not be wider than the window it is
+    // drawn on.
+    let said = clipped(format!("{called}{tail}"), room, glyphs);
 
     renderer.settle()?;
     renderer.apart()?;

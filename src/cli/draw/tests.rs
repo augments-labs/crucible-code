@@ -1074,3 +1074,70 @@ fn a_question_is_wrapped_rather_than_cut_however_narrow_the_window() {
         assert!(joined.contains("Python"), "at {columns}: {written}");
     }
 }
+
+/// The line a background command that ended on its own leaves behind, on a
+/// window `columns` wide.
+fn ended_on(called: &str, columns: usize) -> String {
+    let mut renderer = Renderer::new(Recording::new(columns, 24));
+
+    gone(
+        &mut renderer,
+        &crucible_tools::Ended {
+            tool: "bash",
+            number: 1,
+            called: called.into(),
+            code: Some(0),
+            lines: 120,
+        },
+        Style::plain(),
+    )
+    .expect("the ending to draw");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_command_long_enough_to_fill_the_row_still_says_how_it_ended() {
+    // The failure this is written against: the sentence was clipped whole, so a
+    // command somebody typed at length took every column and what the row exists
+    // to report — how it ended, how much it printed — was the part cut off. The
+    // count under the box had gone down and nothing on screen said why.
+    let said = ended_on(
+        "for i in $(seq 1 120); do printf 'tick %d/120\\n' \"$i\"; sleep 1; done; echo complete",
+        80,
+    );
+
+    assert!(said.contains("finished"), "{said}");
+    assert!(said.contains("120 lines"), "{said}");
+    assert!(said.contains("Bash(for i in"), "{said}");
+    assert!(said.contains(unicode().ellipsis()), "{said}");
+}
+
+#[test]
+fn a_command_the_row_has_room_for_is_written_out_whole() {
+    let said = ended_on("npm run dev", 80);
+
+    assert!(
+        said.contains("Bash(npm run dev) ended on its own"),
+        "{said}"
+    );
+    assert!(!said.contains(unicode().ellipsis()), "{said}");
+}
+
+#[test]
+fn a_window_with_no_room_for_the_words_either_still_fits_the_window() {
+    // The tail is kept ahead of the command, and a window narrower than the
+    // tail alone has room for neither. What may not happen is a row wider than
+    // the window: the terminal would wrap it, and the row under it would be a
+    // row further down than every live tail counted on.
+    for columns in 1..40 {
+        let said = ended_on("npm run dev", columns);
+        let widest = said
+            .lines()
+            .map(crucible_tui::columns)
+            .max()
+            .unwrap_or_default();
+
+        assert!(widest <= columns, "{columns}: {said}");
+    }
+}
