@@ -221,6 +221,7 @@ pub(crate) fn converse<T: Terminal>(
     mut runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
+    opening: draw::opening::Standing,
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
     // Named once here because the prompt asks for it every frame: it is what the
@@ -278,6 +279,19 @@ pub(crate) fn converse<T: Terminal>(
     // resumed session is one the model can see and the reader cannot, and the
     // terminal it is being read in is either empty or holds somebody else's
     // scrollback.
+    // The opening stands in the live region so that a window dragged narrower
+    // has it laid out again at the new width. It can only stand where the
+    // screen is nothing but the opening: a resumed session writes what it
+    // already said above the box, and a row of the record is a row no rewind
+    // may reach -- so there the card is written down first and keeps whatever
+    // width it was drawn at.
+    let mut standing = Some(opening);
+    if !runner.transcript().is_empty()
+        && let Some(opening) = standing.take()
+    {
+        opening.commit(renderer)?;
+    }
+
     replaying::replayed(renderer, &runner, terms.style())?;
 
     // Answered rather than acted on. Making room is a request, and a request is
@@ -377,7 +391,15 @@ pub(crate) fn converse<T: Terminal>(
             left,
             keys,
         );
-        let asked = typing::ask(renderer, style, between)?;
+        let asked = typing::ask(renderer, style, &mut standing, between)?;
+
+        // A line finished writes the opening down on its way past. What is
+        // left here is every other way the call can end -- and a session with
+        // no keyboard, which reaches this having drawn nothing at all and is
+        // about to read a line from a pipe instead.
+        if let Some(standing) = standing.take() {
+            standing.commit(renderer)?;
+        }
 
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the

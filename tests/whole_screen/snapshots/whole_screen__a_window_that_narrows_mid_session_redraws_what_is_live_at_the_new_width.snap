@@ -2,24 +2,24 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-52x20 cursor 15,47 scrolled 4
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
-|│                                  │ ───────────────|
-|│  /…/workspace                    │                |
-|│                                  │ Tips           |
-|│                                  │                |
-|│                                  │ · /            |
-|│                                  │ · shift+enter  |
-|│                                  │ · shift+tab    |
-|│                                  │ · ctrl+c       |
-|╰───────────────────────────────────────────────────|
+52x20 cursor 17,47 scrolled 14
+|│ ──────────────────────────────────────────────── │|
+|│                                                  │|
+|│ Tips                                             │|
+|│                                                  │|
+|│ · /            opens the command list            │|
+|│ · shift+enter  adds a line without sending       │|
+|│ · shift+tab    steps the permission mode         │|
+|│ · ctrl+c       clears the line typed so far      │|
+|╰──────────────────────────────────────────────────╯|
 |                                                    |
 |                                                    |
-|Warning: No models available. Use /login or set an A|
+|Warning: No models available. Use /login or set an  |
+|API key environment variable. Then use /model to    |
+|select a model.                                     |
+|                                                    |
 |                                                    |
 |╭──────────────────────────────────────────────────╮|
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                    |
-|                                                    |
-|                                                    |

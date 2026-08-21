@@ -16,6 +16,31 @@ use super::*;
 use crate::cli::fake::{Fixed, Script, Stalling, changing, running};
 use crate::cli::sample::Sample;
 
+/// The opening a session starts with.
+///
+/// What it says is not what any of these tests is about, but the loop takes one
+/// and draws it, so they hand it a real one rather than a shape that only
+/// exists here.
+pub(super) fn opening() -> draw::opening::Standing {
+    let workspace =
+        crucible_core::Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+
+    draw::opening::Standing::new(
+        &draw::Opening {
+            credential: None,
+            model: Some("script"),
+            provider: None,
+            unasked: crate::cli::NOTHING_TO_ASK,
+            trouble: None,
+            workspace: &workspace,
+            sessions: &[],
+            update: None,
+            style: Style::plain(),
+        },
+        std::time::SystemTime::now(),
+    )
+}
+
 /// An editor holding `text`, arrived at the way the box would have.
 fn typed(text: &str) -> Editor {
     let mut editor = Editor::new();
@@ -107,7 +132,7 @@ fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -168,7 +193,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
 
     let worn = |style: Style| {
         style
@@ -202,7 +227,7 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     let mut renderer = Renderer::new(Narrowing::new());
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -497,7 +522,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -531,18 +556,19 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         session,
     );
 
-    // One write is the prompt mark, colour and all, which the loop makes before
-    // it reads. That leaves the first frame of the turn as what finds the
-    // terminal gone -- after the worker has been handed the runner.
+    // Two writes are the opening, written down once the first prompt has been
+    // read, and the prompt mark, colour and all. Both come before the turn,
+    // which leaves its first frame as what finds the terminal gone -- after the
+    // worker has been handed the runner.
     let mut renderer = Renderer::new(BreakingWhenStarted {
         inner: Recording::new(80, 24),
-        left: 1,
+        left: 2,
         started: Arc::clone(&started),
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem =
-        converse(runner, &mut renderer, &plain(), &mut input).expect_err("the terminal to fail");
+    let problem = converse(runner, &mut renderer, &plain(), opening(), &mut input)
+        .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert_eq!(started.load(Ordering::Acquire), 1, "the turn never began");
@@ -573,12 +599,12 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let cancellation = terms.cancel.clone();
     let mut renderer = Renderer::new(Breaking {
         inner: Recording::new(80, 24),
-        left: 1,
+        left: 2,
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem =
-        converse(runner, &mut renderer, &terms, &mut input).expect_err("the terminal to fail");
+    let problem = converse(runner, &mut renderer, &terms, opening(), &mut input)
+        .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert!(cancellation.requested(), "the provider was never cancelled");
@@ -611,7 +637,7 @@ fn the_prompt_line_names_the_mode_in_force() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");
@@ -636,7 +662,7 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
             ..plain()
         };
 
-        converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+        converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
 
         let written = renderer.terminal().written();
         assert!(written.contains(said), "{glyphs:?}: {written}");
@@ -659,7 +685,7 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("full access mode on"), "{written}");
@@ -696,7 +722,7 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, terms, &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, terms, opening(), &mut input).expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -752,7 +778,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("carried on"), "{written}");
@@ -783,7 +809,7 @@ fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) ->
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -1086,7 +1112,7 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(b"what is 2+2\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), &mut input)
+    let problem = converse(runner, &mut renderer, &plain(), opening(), &mut input)
         .expect_err("a run that answered nothing to fail");
 
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");

@@ -41,6 +41,7 @@ use crucible_tui::{
 };
 
 use crate::cli::Fatal;
+use crate::cli::draw::opening;
 use crate::cli::kept::Kept;
 use crate::cli::style::Style;
 
@@ -310,6 +311,7 @@ fn arriving<T: Terminal>(
 pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    opening: &mut Option<opening::Standing>,
     between: Between<'_>,
 ) -> Result<Asked, Fatal> {
     let Between {
@@ -349,7 +351,13 @@ pub(crate) fn ask<T: Terminal>(
     // Whatever was typed while the last turn ran is already here, so the list a
     // slash opens has to be worked out from it rather than assumed empty.
     let mut open = Opened::filtered(editor.text(), glyphs);
-    let mut above = draw(renderer, editor, style, around(planning, &open, &says))?;
+    let mut above = framed(
+        renderer,
+        editor,
+        style,
+        around(planning, &open, &says),
+        opening,
+    )?;
 
     let mut following = None;
     loop {
@@ -360,7 +368,13 @@ pub(crate) fn ask<T: Terminal>(
             arrived
         } else {
             let Some(arrived) = arriving(renderer, left, &mut says, style)? else {
-                above = draw(renderer, editor, style, around(planning, &open, &says))?;
+                above = framed(
+                    renderer,
+                    editor,
+                    style,
+                    around(planning, &open, &says),
+                    opening,
+                )?;
                 continue;
             };
 
@@ -477,7 +491,7 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(LIMITED);
                     true
                 }
-                Typed::Submitted => return said(renderer, editor, &open, style),
+                Typed::Submitted => return said(renderer, editor, &open, opening, style),
 
                 // Ctrl-C against a line with nothing on it. The first press
                 // says what a second one would do; the second does it, so long
@@ -502,7 +516,13 @@ pub(crate) fn ask<T: Terminal>(
         };
 
         if moved {
-            above = draw(renderer, editor, style, around(planning, &open, &says))?;
+            above = framed(
+                renderer,
+                editor,
+                style,
+                around(planning, &open, &says),
+                opening,
+            )?;
         }
     }
 }
@@ -1180,7 +1200,8 @@ fn draw<T: Terminal>(
     editor: &Editor,
     style: Style,
     around: Around<'_>,
-) -> Result<usize, Fatal> {
+    opening: Option<&opening::Standing>,
+) -> Result<Drawn, Fatal> {
     let columns = renderer.columns();
     let prompt = writing(editor, around.says, Prompt::room(renderer.rows()));
 
@@ -1188,7 +1209,9 @@ fn draw<T: Terminal>(
     let mut caret = prompt.caret(columns);
 
     // What is left for a list once the box and the blank row that keeps it off
-    // the box have taken theirs.
+    // the box have taken theirs. The opening is not counted here: a list opened
+    // over it is what the reader is looking at, and shrinking it to keep a card
+    // that has already been read is the wrong way round.
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
     let mut listed = around.open.rows(columns, room, style.glyphs());
@@ -1201,9 +1224,12 @@ fn draw<T: Terminal>(
         listed.push(Row::new());
     }
 
-    let mut rows = around
-        .planning
-        .rows(columns, room.saturating_sub(listed.len()), style.glyphs());
+    let mut rows = Vec::new();
+    rows.append(&mut around.planning.rows(
+        columns,
+        room.saturating_sub(listed.len()),
+        style.glyphs(),
+    ));
     rows.append(&mut listed);
 
     // Directly over the box, right-aligned, so it sits in the column the row a
@@ -1213,12 +1239,75 @@ fn draw<T: Terminal>(
         rows.push(row);
     }
 
+    // Above everything else, because the opening is what the session opened
+    // with and nothing has been said yet for it to be under.
+    //
+    // It stands only where the whole frame fits the window with it. A live
+    // region taller than the window has its top above the first row of the
+    // screen, where no rewind may reach it, so the frame after would leave
+    // what it could not reach behind; and a card that took its rows from the
+    // list would hide the thing that was just opened. Either way the answer is
+    // the same, and it is the caller who writes it down.
+    let stood = match opening {
+        Some(opening) => {
+            let mut card = opening.rows(columns);
+            if card.len() + rows.len() + boxed.len() > renderer.rows() {
+                return Ok(Drawn {
+                    above: 0,
+                    stood: false,
+                });
+            }
+            card.append(&mut rows);
+            rows = card;
+            true
+        }
+        None => false,
+    };
+
     let above = rows.len();
     caret.row += above;
     rows.append(&mut boxed);
 
     renderer.live(&rows, caret, style.palette())?;
-    Ok(above)
+    Ok(Drawn { above, stood })
+}
+
+/// What one frame of the box left behind.
+struct Drawn {
+    /// How many rows of the region ended up above the box.
+    above: usize,
+    /// Whether the opening stood in that region. `false` where the window had
+    /// no room for it beside the box, which is what the frame below writes it
+    /// down on.
+    stood: bool,
+}
+
+/// One frame of the box, writing the opening down where it can no longer stand
+/// over it.
+///
+/// The window is the only thing that decides: a card that fits is drawn again
+/// on every frame and therefore at every width, and one that does not is
+/// committed at the width it has now and belongs to the terminal from then on.
+/// Which way it goes is asked per frame rather than once, because the window is
+/// dragged between them.
+fn framed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    editor: &Editor,
+    style: Style,
+    around: Around<'_>,
+    opening: &mut Option<opening::Standing>,
+) -> Result<usize, Fatal> {
+    let drawn = draw(renderer, editor, style, around, opening.as_ref())?;
+    if drawn.stood {
+        return Ok(drawn.above);
+    }
+
+    let Some(card) = opening.take() else {
+        return Ok(drawn.above);
+    };
+
+    card.commit(renderer)?;
+    Ok(draw(renderer, editor, style, around, None)?.above)
 }
 
 /// How much of the window is left, against the end of its own row.
@@ -1453,6 +1542,7 @@ fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &mut Editor,
     open: &Opened,
+    opening: &mut Option<opening::Standing>,
     style: Style,
 ) -> Result<Asked, Fatal> {
     let chosen = open.chosen();
@@ -1462,6 +1552,16 @@ fn said<T: Terminal>(
     let columns = renderer.columns();
 
     renderer.settle()?;
+
+    // The opening stood in the live region the settle above has just taken
+    // back, and this is the last moment it can be written down: the line below
+    // is the first row of the record that is not the opening, and a row of the
+    // record is a row no rewind may reach. From here the width it was last
+    // drawn at is the width it keeps.
+    if let Some(opening) = opening.take() {
+        opening.commit(renderer)?;
+    }
+
     // What was asked is a block like any other, and what parts one block from
     // the next is a row of nothing. Asked on the way in rather than left behind
     // on the way out, because this cannot know it was the last: a session that

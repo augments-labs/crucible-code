@@ -1,15 +1,17 @@
 //! What a session puts on screen before it asks for anything.
 //!
-//! The one place in the wiring that draws a component rather than a line. Its
-//! job is to hand the component the facts it cannot know — the release, the
-//! directory and recent sessions — and to hand the renderer the terminal's
-//! answers about colour and glyphs, both settled once at startup.
+//! The one place in the wiring that composes components rather than lines. Its
+//! job is to hand them the facts they cannot know — the release, the directory
+//! and recent sessions — and to keep the answer, because the opening is drawn
+//! again every time the window changes size until the first prompt is read.
 
 use std::time::SystemTime;
 
 use crucible_core::Workspace;
 use crucible_runner::Recorded;
-use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, clip};
+use crucible_tui::{
+    Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, clip, fold,
+};
 
 use crate::cli::CredentialSource;
 use crate::cli::release::Newer;
@@ -49,112 +51,195 @@ pub(crate) struct Opening<'a> {
     pub(crate) style: Style,
 }
 
-/// Draws the welcome, whatever has to be said under it, and leaves a row.
+/// The opening, laid out again whenever the window it is drawn in changes size.
 ///
-/// The root is drawn because every tool path is relative to it, and a user who
-/// started crucible in the wrong directory should find out before the first
-/// tool call rather than after it.
+/// Owned rather than borrowed from whatever composed it, because it outlives
+/// that call: it stands in the live region until the first prompt is answered,
+/// and every frame of that draws it again for the width the window has at that
+/// moment. A card that was committed the instant it was drawn could only be
+/// re-wrapped by the terminal, and a frame is not text — a box re-wrapped is a
+/// box in pieces.
+pub(crate) struct Standing {
+    /// The directory being worked in, already shortened for drawing.
+    root: String,
+    /// What was worked on here before: what each session was about, and how
+    /// long ago it was. Read once, at the one instant this was built, so four
+    /// rows are four ages measured from one now.
+    recent: Vec<(String, String)>,
+    /// The sentence naming the provider and where its key came from.
+    authentication: Option<String>,
+    /// What a newer release is called and where to get it.
+    update: Option<(String, String)>,
+    /// What reading the logins could not do, where it could not.
+    trouble: Option<String>,
+    /// Which half of setting crucible up is still missing, where one is.
+    unasked: Option<String>,
+    /// Whether to write colour, and what to draw with.
+    style: Style,
+}
+
+impl Standing {
+    /// Everything the opening says, read off `opening` once.
+    ///
+    /// The clock is read here rather than per row: four rows drawn against four
+    /// different instants would be four sessions dated from four different
+    /// nows, and this is the only place that has one to read.
+    pub(crate) fn new(opening: &Opening<'_>, now: SystemTime) -> Self {
+        Self {
+            root: opening.workspace.root().display().to_string(),
+            recent: opening
+                .sessions
+                .iter()
+                .map(|session| {
+                    (
+                        session.asked().to_owned(),
+                        when::ago(session.started(), now),
+                    )
+                })
+                .collect(),
+            authentication: opening.provider.zip(opening.credential).map(
+                |(provider, credential)| {
+                    // The mark is the whole of what says the provider and the
+                    // place its key came from are two facts rather than one
+                    // long name.
+                    format!(
+                        "authentication: {provider} {} {credential}",
+                        opening.style.glyphs().dot()
+                    )
+                },
+            ),
+            update: opening.update.map(|newer| {
+                (
+                    format!(
+                        "New version {} is available. Download it from",
+                        newer.version
+                    ),
+                    newer.from.to_string(),
+                )
+            }),
+            trouble: opening.trouble.map(str::to_owned),
+            unasked: opening.model.is_none().then(|| opening.unasked.to_owned()),
+            style: opening.style,
+        }
+    }
+
+    /// The whole opening, drawn for a terminal `columns` wide.
+    ///
+    /// The root is drawn because every tool path is relative to it, and a user
+    /// who started crucible in the wrong directory should find out before the
+    /// first tool call rather than after it.
+    ///
+    /// Rows rather than lines committed one at a time: these are rows crucible
+    /// composed itself, so their colour is decided by the palette rather than
+    /// arriving as escape bytes inside a string, and rows are what can be drawn
+    /// again at another width.
+    ///
+    /// The order is the order of what the reader can act on. A release they do
+    /// not have yet is a fact about the program and comes first; a session that
+    /// cannot take a turn is a fact about this run and sits nearest the prompt
+    /// where the answer gets typed. Every piece is followed by the blank row
+    /// that keeps the next one off it.
+    pub(crate) fn rows(&self, columns: usize) -> Vec<Row> {
+        let glyphs = self.style.glyphs();
+        let recent: Vec<Recent<'_>> = self
+            .recent
+            .iter()
+            .map(|(title, when)| Recent { title, when })
+            .collect();
+
+        let welcome = Welcome {
+            version: concat!("v", env!("CARGO_PKG_VERSION")),
+            root: &self.root,
+            sessions: &recent,
+        };
+
+        let mut rows = welcome.rows(columns, glyphs);
+        rows.push(Row::new());
+
+        if let Some(said) = &self.authentication {
+            rows.push(Row::new().then(Slot::Quiet, clip(said, columns)));
+            rows.push(Row::new());
+        }
+
+        if let Some((said, from)) = &self.update {
+            let notice = Notice {
+                heading: "Update Available",
+                said,
+                named: Some(from),
+            };
+
+            rows.extend(notice.rows(columns, glyphs));
+            rows.push(Row::new());
+        }
+
+        // Above the sentence about there being nothing to ask, because it is
+        // one of the reasons there might be nothing: a store that could not be
+        // read is a login that did not count, and somebody who ran `/login`
+        // yesterday would otherwise be told only that they have no key.
+        if let Some(trouble) = &self.trouble {
+            let said = format!("! {trouble}");
+            rows.extend(
+                fold(&said, columns)
+                    .into_iter()
+                    .map(|row| Row::new().then(Slot::Plain, row)),
+            );
+            rows.push(Row::new());
+        }
+
+        // Bold and in the accent, which is the loudest this program gets, and
+        // not a notice between rules like the one above it: the rules are what
+        // say a block is about the release rather than about this run, and this
+        // one is about exactly this run.
+        if let Some(unasked) = &self.unasked {
+            rows.push(Row::new());
+            rows.extend(
+                fold(unasked, columns)
+                    .into_iter()
+                    .map(|row| Row::new().then(Slot::Strong, row)),
+            );
+            rows.push(Row::new());
+        }
+
+        rows
+    }
+
+    /// Writes the opening into the record, where it stops being this
+    /// renderer's to draw again.
+    ///
+    /// Called once the first prompt has been read, which is the moment the
+    /// screen stops being nothing but the opening: from here on there is a
+    /// transcript above it that no rewind may reach, so the last width it was
+    /// drawn at is the width it keeps.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub(crate) fn commit<T: Terminal>(
+        &self,
+        renderer: &mut Renderer<T>,
+    ) -> Result<(), TerminalError> {
+        let rows = self.rows(renderer.columns());
+        renderer.present(&rows, self.style.palette())
+    }
+}
+
+/// Reads the opening off what only the wiring knows, ready to be drawn.
 ///
-/// Through [`Renderer::present`] rather than `commit`: these are rows crucible
-/// composed itself, so their colour is decided here by the palette rather than
-/// arriving as escape bytes inside a string. The blank row afterwards is the
-/// one thing a component does not draw — it says how wide it is, not what
-/// follows it.
+/// The width was read once when the renderer was built, which is before the
+/// session's files were opened and the launch was resolved — a stretch on a slow
+/// disk is long enough to have resized the window over. Asked again here so the
+/// first frame is laid out against the terminal it is about to be drawn on
+/// rather than the one that was there at launch.
 ///
-/// The order under the welcome is the order of what the reader can act on. A
-/// release they do not have yet is a fact about the program and comes first; a
-/// session that cannot take a turn is a fact about this run and sits nearest
-/// the prompt where the answer gets typed.
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
 pub(crate) fn opening<T: Terminal>(
     renderer: &mut Renderer<T>,
     opening: &Opening<'_>,
-) -> Result<(), TerminalError> {
-    let root = opening.workspace.root().display().to_string();
-    let style = opening.style;
-
-    // The clock is read once, here, rather than per row: four rows drawn
-    // against four different instants would be four sessions dated from four
-    // different nows, and this is the only place that has one to read.
-    let now = SystemTime::now();
-    let when: Vec<String> = opening
-        .sessions
-        .iter()
-        .map(|session| when::ago(session.started(), now))
-        .collect();
-
-    let recent: Vec<Recent<'_>> = opening
-        .sessions
-        .iter()
-        .zip(&when)
-        .map(|(session, when)| Recent {
-            title: session.asked(),
-            when,
-        })
-        .collect();
-
-    let welcome = Welcome {
-        version: concat!("v", env!("CARGO_PKG_VERSION")),
-        root: &root,
-        sessions: &recent,
-    };
-
-    // The width was read once when the renderer was built, which is before the
-    // session's files were opened and the launch was resolved — a stretch on a
-    // slow disk is long enough to have resized the window over. Asked again
-    // here, once, so the card is laid out against the terminal it is about to
-    // be drawn on rather than the one that was there at launch.
+) -> Result<Standing, TerminalError> {
     renderer.resized()?;
-    let columns = renderer.columns();
-    renderer.present(&welcome.rows(columns, style.glyphs()), style.palette())?;
-    renderer.commit("")?;
-
-    if let (Some(provider), Some(credential)) = (opening.provider, opening.credential) {
-        // The mark is the whole of what says the provider and the place its
-        // key came from are two facts rather than one long name.
-        let said = format!(
-            "authentication: {provider} {} {credential}",
-            style.glyphs().dot()
-        );
-        let row = Row::new().then(Slot::Quiet, clip(&said, columns));
-        renderer.present(&[row], style.palette())?;
-        renderer.commit("")?;
-    }
-
-    if let Some(newer) = opening.update {
-        let said = format!(
-            "New version {} is available. Download it from",
-            newer.version
-        );
-        let notice = Notice {
-            heading: "Update Available",
-            said: &said,
-            named: Some(&newer.from),
-        };
-
-        renderer.present(&notice.rows(columns, style.glyphs()), style.palette())?;
-        renderer.commit("")?;
-    }
-
-    // Above the sentence about there being nothing to ask, because it is one of
-    // the reasons there might be nothing: a store that could not be read is a
-    // login that did not count, and somebody who ran `/login` yesterday would
-    // otherwise be told only that they have no key. Through `commit`, which is
-    // the path that wraps and drops escape sequences — the sentence carries a
-    // path off the disk.
-    if let Some(trouble) = opening.trouble {
-        renderer.commit(&format!("! {trouble}"))?;
-        renderer.commit("")?;
-    }
-
-    // Bold and in the accent, which is the loudest this program gets, and not a
-    // notice between rules like the one above it: the rules are what say a
-    // block is about the release rather than about this run, and this one is
-    // about exactly this run.
-    if opening.model.is_none() {
-        super::unconfigured(renderer, opening.unasked, style)?;
-    }
-
-    Ok(())
+    Ok(Standing::new(opening, SystemTime::now()))
 }
 
 #[cfg(test)]
@@ -210,7 +295,10 @@ mod tests {
         };
         let mut renderer = Renderer::new(recording);
 
-        super::opening(&mut renderer, opening).expect("the opening to draw");
+        super::opening(&mut renderer, opening)
+            .expect("the opening to be read")
+            .commit(&mut renderer)
+            .expect("the opening to draw");
 
         renderer.terminal().written().to_string()
     }

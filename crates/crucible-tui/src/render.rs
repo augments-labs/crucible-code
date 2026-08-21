@@ -757,17 +757,20 @@ impl<T: Terminal> Renderer<T> {
     /// live region.
     ///
     /// The rows on screen, less the ones below wherever the cursor was parked,
-    /// and never more than the window is tall. A rewind moves the cursor
-    /// through rows of the screen it is written to; above the top of that
-    /// screen there is no live region left to reach, only scrollback that has
-    /// been committed and is still being read.
+    /// and never further than the top of the screen. A rewind moves the cursor
+    /// through rows of the screen it is written to; above that screen's first
+    /// row there is no live region left to reach, only scrollback that has been
+    /// committed and is still being read.
     ///
     /// The two counts come apart when the window gets shorter: the rows were
     /// drawn on the taller one, the terminal has already scrolled the top of
-    /// them away, and what is left to take back is one screen of them at most.
-    /// Clamping here rather than at the one caller that resizes, because this
-    /// is the whole of the answer to how far back a frame may reach, and a
-    /// second answer beside it is one that would go on being right by accident.
+    /// them away, and what is left to take back is whatever is still above the
+    /// cursor. Which is the window, less the row the cursor is on and the rows
+    /// parked below it -- the furthest down the screen the cursor can be, and
+    /// so the furthest back a rewind can reach from it. Clamping here rather
+    /// than at the one caller that resizes, because this is the whole of the
+    /// answer to how far back a frame may reach, and a second answer beside it
+    /// is one that would go on being right by accident.
     fn region(&self) -> usize {
         // Against the width the window has now rather than the one each row was
         // drawn at, which is the whole of what a resize changes here: a row too
@@ -784,12 +787,14 @@ impl<T: Terminal> Renderer<T> {
         // a terminal that did re-wrap, which is every terminal a window is
         // dragged in.
         let columns = self.size.columns.max(1);
-        self.widths
-            .iter()
-            .take(self.drawn().saturating_sub(self.parked))
-            .map(|width| width.div_ceil(columns).max(1))
-            .sum::<usize>()
-            .min(self.size.rows)
+        let rows = |widths: &mut dyn Iterator<Item = &usize>| {
+            widths.map(|width| width.div_ceil(columns).max(1)).sum()
+        };
+
+        let above = self.drawn().saturating_sub(self.parked);
+        let below: usize = rows(&mut self.widths.iter().skip(above));
+
+        rows(&mut self.widths.iter().take(above)).min(self.size.rows.saturating_sub(below))
     }
 
     /// How many rows this renderer has on screen.

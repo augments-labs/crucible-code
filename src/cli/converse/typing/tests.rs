@@ -121,6 +121,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     let asked = ask(
         &mut renderer,
         Style::plain(),
+        &mut None,
         Between {
             runner: &mut runner,
             editor: &mut editor,
@@ -150,6 +151,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -171,6 +173,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -191,6 +194,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -208,6 +212,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &editor,
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
@@ -216,6 +221,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -256,6 +262,7 @@ fn a_blank_row_parts_the_prompt_from_the_answer_above_it() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -284,6 +291,7 @@ fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -302,6 +310,7 @@ fn no_blank_row_is_spent_at_the_top_of_a_session() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -321,6 +330,7 @@ fn a_second_prompt_in_a_row_is_parted_from_the_first_by_one_blank_and_no_more() 
             &mut renderer,
             &mut editor,
             &Opened::default(),
+            &mut None,
             Style::plain(),
         )
         .expect("the line to be taken");
@@ -340,6 +350,7 @@ fn the_editor_is_empty_afterwards_and_ready_for_the_next_line() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -409,6 +420,7 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -436,6 +448,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
         &typed("/m"),
         Style::plain(),
         around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -452,6 +465,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -473,6 +487,7 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &Editor::new(),
         Style::plain(),
         around(&nothing(), &Opened::default(), &leaving(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -533,6 +548,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
         &mut renderer,
         &mut editor,
         &listing("/resu"),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -551,6 +567,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
         &mut renderer,
         &mut editor,
         &listing("what does /resume do"),
+        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -769,6 +786,7 @@ fn the_plan_stands_above_the_box_between_turns() {
         &typed("hi"),
         Style::plain(),
         around(&planned(3), &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -792,6 +810,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("hi"),
         Style::plain(),
         around(&plan, &Opened::default(), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 
@@ -801,6 +820,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("/m"),
         Style::plain(),
         around(&plan, &listing("/m"), &settled(Mode::Ask)),
+        None,
     )
     .expect("the box to be drawn");
 

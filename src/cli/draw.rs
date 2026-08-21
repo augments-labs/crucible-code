@@ -55,7 +55,7 @@ use crucible_tui::{
 use super::kept::Kept;
 use super::style::Style;
 
-mod opening;
+pub(crate) mod opening;
 pub(crate) mod when;
 
 pub(crate) use opening::{Opening, opening};

@@ -391,10 +391,10 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // now. A terminal that re-wraps has made two rows out of each row of the
     // region by then, and a rewind counted in rows drawn strands the top of it.
     //
-    // This screen clips rather than re-wrapping, so the same count reaches a
-    // row or two of record above the region. That is the trade, written down
-    // beside `Renderer::region` and priced here: the picture below is what it
-    // costs on the terminal that pays it.
+    // Nothing of the opening is stranded, because none of it was committed
+    // while the window still had room for it: the card below is the one laid
+    // out for fifty-two columns, written down on the frame that found it no
+    // longer fit beside the box.
     let mut window = Watched::open("resized", 80, 24);
 
     window.types("the quick brown fox jumps over the lazy dog");

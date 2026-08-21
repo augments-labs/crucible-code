@@ -17,6 +17,12 @@ anybody who has used a shell.
 
 ### Fixed
 
+**The welcome card is laid out again every time the window changes size.** It
+was written straight into scrollback, where a card is artwork the terminal
+re-wraps and nobody can redraw — so a drag left its two columns shredded across
+the rows above the box. It now stands with the box until the first prompt is
+read, and is written down only where the window no longer has room for both.
+
 **A window dragged narrower leaves nothing of the box behind.** The rows on
 screen are re-wrapped by the terminal as the window shrinks, so a rewind counted
 in rows drawn stopped short of the top and stranded what it did not reach — one
