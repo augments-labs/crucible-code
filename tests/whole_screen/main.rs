@@ -391,9 +391,13 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     //
     // What is drawn again is not the same as what is laid out again. Text is
     // folded at whatever the window is now, so the line being typed re-wraps
-    // inside a narrower box. A card is not: it was arranged into columns by
-    // something that is no longer here to arrange them differently, so it is
-    // clipped, and the opening below shows the half of itself that fits.
+    // inside a narrower box, and a card arranged into columns by something that
+    // has since gone is clipped rather than folded.
+    //
+    // The opening is the one card that has not gone: it is drawn from facts
+    // read once at launch and held for the session, so it is arranged again for
+    // the window there is. Which is why it comes back below in one column
+    // instead of showing the left half of two.
     let mut window = Watched::open("resized", 80, 24);
 
     window.types("the quick brown fox jumps over the lazy dog");

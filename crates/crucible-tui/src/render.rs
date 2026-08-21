@@ -148,6 +148,8 @@ pub struct Renderer<T: Terminal> {
     /// itself: everything else standing is handed over as rows and dropped when
     /// the window changes under it, and a row that is meant to be there the
     /// whole session cannot be a row the caller has to remember to put back.
+    /// The opening is laid out again too and is not one of these — it is a line
+    /// of the record rather than a band, and [`Self::opens`] says how.
     heading: Option<Heading>,
     crowned: Option<Row>,
     /// The size the record is folded for and the bands are shared out over.
@@ -435,6 +437,30 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Writes the opening into the transcript, keeping what draws it.
+    ///
+    /// Everything else handed to [`Self::present`] arrives as rows and stays as
+    /// rows: what laid them out is a component that answered once and went, so
+    /// a narrower window clips them. The opening is the exception, and the only
+    /// one. It is drawn from facts read once at launch and held for the whole
+    /// session, so what laid it is still here to lay it again — and it is what
+    /// a reader is looking at when they take the corner of a fresh window and
+    /// pull.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            // Nothing will resize a file, so holding what could draw it again
+            // would be holding it for an event that cannot arrive.
+            return self.present(&lay(self.columns()));
+        }
+
+        self.record.opens(lay);
+        self.draw()
+    }
+
     /// Draws the box and leaves it standing, with the cursor where `caret`
     /// says it goes.
     ///
@@ -615,9 +641,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// The record is folded again at the new width, which is what keeps the
     /// reader on the line they were reading rather than on a row number that
-    /// meant something else. What was standing is dropped rather than redrawn
-    /// wrongly: it was laid out against a window that has gone, and the caller
-    /// lays out the next one.
+    /// meant something else, and the opening is drawn again rather than folded.
+    /// What was standing is dropped rather than redrawn wrongly: it was laid
+    /// out against a window that has gone, and the caller lays out the next
+    /// one.
     ///
     /// # Errors
     ///

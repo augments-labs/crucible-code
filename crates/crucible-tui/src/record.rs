@@ -19,6 +19,16 @@
 //! box were laid out against a width by something that is no longer here to lay
 //! them out again, so a narrower window clips them rather than pretending it
 //! can fold what it did not build.
+//!
+//! One block is set and is laid out again anyway, because for that one the
+//! reason above is not true. The opening is drawn from facts read once at
+//! launch and kept for the whole session, so what laid it is still here — and
+//! it is the block a reader is most often looking at when they reach for the
+//! corner of the window. [`Record::opens`] takes what laid it rather than only
+//! what it laid, and a resize replaces those lines with the same card drawn for
+//! the window there is now.
+
+use std::fmt;
 
 use std::collections::VecDeque;
 
@@ -41,6 +51,31 @@ enum Line {
     Flowed(Row),
     /// Rows a component laid out against a width. Clipped, never re-folded.
     Set(Row),
+}
+
+/// The opening, and what can draw it again.
+///
+/// Where its lines are rather than a promise that they are first: nothing else
+/// is laid this way today, and a span that says where it is costs one word and
+/// cannot be wrong about it.
+struct Opening {
+    /// The first of its lines, counted as [`Record::gone`] counts.
+    from: usize,
+    /// How many lines it laid, at the width they were laid at.
+    lines: usize,
+    /// What laid them, kept for as long as they are held.
+    lay: Box<dyn Fn(usize) -> Vec<Row>>,
+}
+
+impl fmt::Debug for Opening {
+    /// By hand because a closure has no `Debug`, and the span is the part of
+    /// this a reader debugging a scroll position wants anyway.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Opening")
+            .field("from", &self.from)
+            .field("lines", &self.lines)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Everything crucible has drawn into the transcript band, and where in it the
@@ -77,6 +112,12 @@ pub(crate) struct Record {
     /// not scrolled is watching the answer arrive. Scrolling up clears it;
     /// scrolling back to the foot sets it again.
     following: bool,
+    /// The opening and what laid it, while its lines are still held.
+    ///
+    /// `None` once the record has spilled far enough to eat into them: the
+    /// lines that are left were drawn at a width that has gone, and replacing
+    /// part of a card with a whole one would draw it twice.
+    opening: Option<Opening>,
     /// Whether the last line is still being written to.
     ///
     /// A line is open from the first delta that lands in it until the newline
@@ -115,6 +156,7 @@ impl Record {
             gone: 0,
             top: Spot { line: 0, into: 0 },
             following: true,
+            opening: None,
             open: false,
         }
     }
@@ -141,6 +183,59 @@ impl Record {
         for row in rows {
             self.put(Line::Set(row));
         }
+    }
+
+    /// Lay down the opening, keeping what laid it.
+    ///
+    /// The one block a resize draws again — see the prose at the top of this
+    /// file for why this one and nothing else.
+    pub(crate) fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+        self.end();
+        let from = self.gone + self.lines.len();
+        let laid = lay(self.columns);
+        let lines = laid.len();
+        self.lay(laid);
+        self.opening = Some(Opening { from, lines, lay });
+    }
+
+    /// Draw the opening again for `columns`, in the lines it already holds.
+    ///
+    /// Before the heights are worked out again rather than after: this changes
+    /// which lines there are, and [`Self::resized`] is what measures them.
+    fn relay(&mut self, columns: usize) {
+        let Some(opening) = self.opening.take() else {
+            return;
+        };
+
+        // Part of it has fallen off the top, so what is left is no longer a
+        // card — it is the bottom of one. Dropped rather than redrawn, which
+        // leaves those lines standing as any other set rows do.
+        if opening.from < self.gone {
+            return;
+        }
+
+        let at = opening.from - self.gone;
+        let laid = (opening.lay)(columns);
+        let lines = laid.len();
+
+        for _ in 0..opening.lines {
+            self.lines.remove(at);
+        }
+        for (step, row) in laid.into_iter().enumerate() {
+            self.lines.insert(at + step, Line::Set(row));
+        }
+
+        // The reader's place is a line number, and there are now a different
+        // number of lines above it. One inside the card has nowhere of its own
+        // to go back to, so it goes to the top of the card.
+        let past = opening.from + opening.lines;
+        if self.top.line >= past {
+            self.top.line = (self.top.line + lines).saturating_sub(opening.lines);
+        } else if self.top.line > opening.from {
+            self.top.line = opening.from;
+        }
+
+        self.opening = Some(Opening { lines, ..opening });
     }
 
     /// Add `text` to the open line, opening one if none is.
@@ -354,6 +449,7 @@ impl Record {
             return;
         }
         self.columns = columns;
+        self.relay(columns);
         self.rows = 0;
         self.tall.clear();
         for line in &self.lines {
@@ -458,6 +554,79 @@ mod tests {
     /// What the view says, as plain text.
     fn said(record: &Record, rows: usize) -> Vec<String> {
         record.view(rows).iter().map(Row::text).collect()
+    }
+
+    /// A source that lays one row per column of the window, so what width it
+    /// was called at can be read straight off what it laid.
+    fn ruler() -> Box<dyn Fn(usize) -> Vec<Row>> {
+        Box::new(|columns| {
+            (0..columns)
+                .map(|row| Row::new().then(Slot::Plain, format!("{row}")))
+                .collect()
+        })
+    }
+
+    #[test]
+    fn the_opening_is_laid_out_again_when_the_window_changes() {
+        let mut record = Record::new(8);
+        record.opens(ruler());
+        record.write(Slot::Plain, "after\n");
+
+        record.resized(5);
+
+        let laid: Vec<String> = record.lines.iter().map(measured).collect();
+        assert_eq!(laid, ["0", "1", "2", "3", "4", "after"]);
+    }
+
+    #[test]
+    fn a_card_that_changes_height_leaves_the_reader_on_the_line_they_were_on() {
+        let mut record = Record::new(8);
+        record.opens(ruler());
+        for line in 0..6 {
+            record.write(Slot::Plain, &format!("said {line}\n"));
+        }
+
+        // Above the foot, so the reader's place is a spot rather than a
+        // promise to follow — and below the card, which is the half of this a
+        // shorter card moves.
+        record.scroll(-2, 4);
+        let reading = said(&record, 4);
+        assert_eq!(reading.first().map(String::as_str), Some("said 0"));
+
+        // Two lines shorter than it was, so a place counted from the top of the
+        // record means two lines further down than it did. Wide enough that
+        // what is under the card still folds to one row apiece, because that
+        // is the other half of a resize and is not what this is about.
+        record.resized(6);
+
+        assert_eq!(said(&record, 4), reading);
+    }
+
+    #[test]
+    fn a_reader_inside_a_card_that_was_laid_out_again_is_left_at_the_top_of_it() {
+        let mut record = Record::new(8);
+        record.opens(ruler());
+        for line in 0..6 {
+            record.write(Slot::Plain, &format!("said {line}\n"));
+        }
+
+        // Four rows into the card, which is a row the shorter card does not
+        // have: eight rows became five. There is no line to be left on, so the
+        // reader is left on the thing they were reading rather than on a
+        // number that used to be inside it.
+        record.scroll(-6, 4);
+        assert_eq!(said(&record, 1), ["4"]);
+
+        record.resized(5);
+
+        assert_eq!(said(&record, 1), ["0"]);
+    }
+
+    /// The text of one line, whichever kind it is.
+    fn measured(line: &Line) -> String {
+        match line {
+            Line::Flowed(row) | Line::Set(row) => row.text(),
+        }
     }
 
     /// What the record is tall, worked out the slow way.

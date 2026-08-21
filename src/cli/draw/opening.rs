@@ -58,7 +58,9 @@ pub(crate) struct Opening<'a> {
 /// were opened, and the width it is drawn against is only known one call
 /// further on, in the loop that owns the renderer. Between the two it is
 /// facts — a clock read once, so four recent sessions are four ages measured
-/// from one now.
+/// from one now. Cloned once, on the way into the record, so that what lays the
+/// card out is still there when the window changes size under it.
+#[derive(Clone)]
 pub(crate) struct Standing {
     /// The directory being worked in, already shortened for drawing.
     root: String,
@@ -212,14 +214,15 @@ impl Standing {
         rows
     }
 
-    /// Writes the opening into the record, where it stops being this
-    /// renderer's to draw again.
+    /// Writes the opening into the record, and hands over what draws it.
     ///
     /// Called before the session asks for anything, because the opening is the
     /// first thing in the transcript rather than something standing over the
-    /// box: it scrolls with whatever is said after it, and a reader who has
-    /// scrolled back to find it is reading rows laid out at the width the
-    /// window had when it was written.
+    /// box: it scrolls with whatever is said after it. What goes over is a
+    /// clone rather than the rows it makes, which is what lets the card be laid
+    /// out for the window there is rather than the one there was — the facts it
+    /// draws from were read once and never change again, so the only thing that
+    /// can be out of date about it is the width.
     ///
     /// # Errors
     ///
@@ -228,8 +231,8 @@ impl Standing {
         &self,
         renderer: &mut Renderer<T>,
     ) -> Result<(), TerminalError> {
-        let rows = self.rows(renderer.columns());
-        renderer.present(&rows)
+        let standing = self.clone();
+        renderer.opens(Box::new(move |columns| standing.rows(columns)))
     }
 }
 
