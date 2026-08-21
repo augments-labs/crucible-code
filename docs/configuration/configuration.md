@@ -314,13 +314,14 @@ The name at the top of a session goes the same way: `unicode` draws it from half
 blocks and `ascii` writes it as letters.
 
 The mouse is not among these keys. crucible holds it for the whole session: the
-wheel scrolls the transcript, and a click puts the cursor where you point or
-opens a result the transcript cut short.
+wheel scrolls the transcript, a click puts the cursor where you point or opens a
+result the transcript cut short, and a drag selects what it covers and puts it
+on your clipboard when you let go.
 
-The price is that a drag no longer selects, because a terminal forwarding
-buttons to a program is not using them itself. Hold **Shift** while you drag and
-the selection is your terminal's again — every terminal keeps Shift as the way
-past a program holding the pointer.
+Hold **Shift** while you drag and the selection is your terminal's own again —
+every terminal keeps Shift as the way past a program holding the pointer, which
+is the answer for a reader who wanted their emulator's selection rather than
+this one.
 
 ### `updates`
 
