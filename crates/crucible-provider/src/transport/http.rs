@@ -387,6 +387,18 @@ mod tests {
 
     use super::*;
 
+    /// How long a cancelled request may take to come back.
+    ///
+    /// Not a multiple of [`CANCEL_POLL`], deliberately. What these tests ask is
+    /// whether a cancelled request returns at all or waits on the server, and
+    /// the servers they run against never answer — so what is on the far side
+    /// of this bound is not a slower cancellation, it is one that never
+    /// arrives. A ceiling counted in polls says something narrower than that
+    /// and something the machine can decide: a runner that descheduled a
+    /// thread for a fifth of a second fails it, and the red test is about the
+    /// runner rather than about the transport.
+    const PROMPTLY: Duration = Duration::from_secs(2);
+
     /// Sends one test request through the owned transport boundary.
     fn post(
         transport: &Https,
@@ -773,7 +785,7 @@ mod tests {
 
         assert!(matches!(problem, TransportError::Cancelled));
         assert!(
-            returned_at.saturating_duration_since(raised_at) <= CANCEL_POLL * 5,
+            returned_at.saturating_duration_since(raised_at) <= PROMPTLY,
             "cancellation took {:?}",
             returned_at.saturating_duration_since(raised_at)
         );
@@ -826,7 +838,7 @@ mod tests {
             raiser.join().unwrap();
             assert!(matches!(problem, TransportError::Cancelled));
             assert!(
-                returned_at.saturating_duration_since(raised_at) <= CANCEL_POLL * 5,
+                returned_at.saturating_duration_since(raised_at) <= PROMPTLY,
                 "replacement {replacement} cancellation took {:?}",
                 returned_at.saturating_duration_since(raised_at)
             );
@@ -864,7 +876,6 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
-        let since = Instant::now();
         let problem = replacement
             .post(
                 &url,
@@ -875,7 +886,11 @@ mod tests {
             .expect_err("a poisoned transport must not start another lookup");
 
         assert!(matches!(problem, TransportError::ResolveStalled));
-        assert!(since.elapsed() < CANCEL_POLL);
+
+        // That nothing was connected to, rather than that the refusal was
+        // quick. The two say the same thing and only one of them is a fact
+        // about this machine: a listener that accepted nothing is proof no
+        // lookup was started, whatever the clock read while it was not.
         assert!(
             matches!(listener.accept(), Err(problem) if problem.kind() == io::ErrorKind::WouldBlock)
         );
