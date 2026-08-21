@@ -30,7 +30,7 @@
 //! belongs in the record is the answer to it, in the words of whatever asked —
 //! which is the caller's to commit after this returns.
 
-use crucible_tui::{Caret, Pressed, Renderer, Row, Terminal, caret, pressed};
+use crucible_tui::{Caret, Pressed, Renderer, Reporting, Row, Terminal, caret, pressed};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -86,6 +86,14 @@ pub(super) fn stand<T: Terminal, S>(
     mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
+    // The mouse, for as long as the list stands and no longer. A list is where
+    // the wheel walking rows is what a wheel would have been reached for
+    // anyway, and there is no scrollback under one to lose — so this is the
+    // one place the pointer is taken without anybody asking for it. Held by a
+    // guard rather than handed back at each `return`, because there are four
+    // of them and one is a `?`.
+    let _pointer = Reporting::on()?;
+
     let mut changed = true;
 
     loop {

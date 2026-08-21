@@ -1,6 +1,5 @@
 ---
 source: crates/crucible-tui/src/welcome/tests.rs
-assertion_line: 55
 expression: "dump(&welcome.rows(columns, glyphs), columns)"
 ---
 <Accent>╭─ </><Strong>crucible</> <Quiet>v0.0.8</><Accent> ────────────────────────────────────────────────────────────╮</>

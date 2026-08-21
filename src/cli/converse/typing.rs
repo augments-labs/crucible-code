@@ -249,27 +249,6 @@ pub(crate) struct Between<'a> {
     pub(crate) keys: bool,
 }
 
-/// The four of them at one call.
-///
-/// A function rather than a literal at the one place that asks, for the reason
-/// [`around`] is one: the names are worth writing once, and the loop that owns
-/// all four of these is long enough already.
-pub(crate) fn between<'a>(
-    runner: &'a mut Runner,
-    editor: &'a mut Editor,
-    planning: &'a mut Planning,
-    left: &'a Background,
-    keys: bool,
-) -> Between<'a> {
-    Between {
-        runner,
-        editor,
-        planning,
-        left,
-        keys,
-    }
-}
-
 /// How often the prompt looks up from the keyboard while something is running.
 ///
 /// The beat the row above a running turn already moves on, because it is the
