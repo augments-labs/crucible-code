@@ -123,6 +123,56 @@ const STEPS: usize = 20_000;
 /// is still recoverable.
 pub(crate) const SUSTAINED_FRACTION: f64 = 0.5;
 
+/// What has to be left of the opening pace for a reading to have been about the
+/// machine rather than about the host it was sharing.
+///
+/// Well above [`SUSTAINED_FRACTION`], because this is not the budget: it is the
+/// line under which a reading is taken again rather than believed. A machine
+/// holding level lands near one, and a reading that lands under this either
+/// found a renderer that grew or lost the thread for a while — and only one of
+/// those is worth a second reading.
+pub(crate) const AT_LIBERTY: f64 = 0.8;
+
+/// How many readings of the same machine one about it is taken from.
+///
+/// Three because a reading is a fraction of a second and the second and third
+/// are only ever taken when the first landed under [`AT_LIBERTY`].
+const LIBERTY: usize = 3;
+
+/// The best of [`LIBERTY`] readings, by how much of the opening pace is left.
+///
+/// This is what a window already does one level down, at the size of a run: a
+/// pace is read from the window nothing interrupted, because being interrupted
+/// can only make a window worse. A host shared with other work can take the
+/// thread away for longer than any one window is, and a reading it did that to
+/// has said nothing about the machine.
+///
+/// It is not a way to pass. `again` must build its machine from nothing every
+/// time it is called, which is what makes every reading about the same thing:
+/// a renderer whose cost grows with what came before grows the same way in all
+/// three, and the ratio catches it in all three. Only the host differs between
+/// them. Handed a machine that carries state across readings the guarantee
+/// inverts — the second reading would open already late, its ratio would read
+/// level however much the renderer had grown, and this would hand back the one
+/// reading that saw nothing.
+pub(crate) fn best<E>(mut again: impl FnMut() -> Result<Burst, E>) -> Result<Burst, E> {
+    let mut best = again()?;
+
+    for _ in 1..LIBERTY {
+        if best.ratio() > AT_LIBERTY {
+            break;
+        }
+
+        let next = again()?;
+
+        if next.ratio() > best.ratio() {
+            best = next;
+        }
+    }
+
+    Ok(best)
+}
+
 /// What one phase came to, read two ways.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Reading {
@@ -374,6 +424,7 @@ fn per_second(window: usize, seconds: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::convert::Infallible;
 
     use super::*;
 
@@ -552,6 +603,25 @@ mod tests {
         );
     }
 
+    /// The best of [`LIBERTY`] readings of the machine `frame` and `yard`
+    /// describe, taken the way a probe takes one.
+    ///
+    /// [`machine`] builds its counter fresh on every call, so each reading here
+    /// is about the same described machine and nothing carries between them —
+    /// which is what [`best`] requires of anything it is handed.
+    ///
+    /// Only the two bursts below take it, and only because both are about a
+    /// machine rather than about a renderer. The one that has to *catch* a
+    /// renderer reads a single burst: what it is checking is that a burst with
+    /// growth in it fails, and a reading that fell back on a second attempt
+    /// would leave that unsaid.
+    fn at_liberty(
+        frame: impl Fn(Where) -> usize + Copy,
+        yard: impl Fn(Where) -> usize + Copy,
+    ) -> Burst {
+        best(|| Ok::<_, Infallible>(machine(frame, yard))).expect("a burst")
+    }
+
     #[test]
     fn a_machine_that_slowed_between_the_phases_is_not_a_renderer_that_grew() {
         // The failure the yardstick exists for, and one of the two that had
@@ -565,14 +635,14 @@ mod tests {
             }
         };
 
-        let burst = machine(slower(FRAME), slower(YARD));
+        let burst = at_liberty(slower(FRAME), slower(YARD));
 
         assert!(
             burst.sustained.rate / burst.opening.rate < SUSTAINED_FRACTION,
             "the machine did not slow down, so this proves nothing: {burst:?}"
         );
         assert!(
-            burst.ratio() > 0.8,
+            burst.ratio() > AT_LIBERTY,
             "a machine that slowed was read as a renderer that grew: {burst:?}"
         );
     }
@@ -596,7 +666,7 @@ mod tests {
         // part of a window to be running when one happens. What tells this apart
         // from the burst below is not how dear the frames got but how many
         // windows it reached.
-        let burst = machine(
+        let burst = at_liberty(
             |at| {
                 if at.late() && at.closing() % TAKEN != 0 {
                     FRAME * DEARER
@@ -612,7 +682,7 @@ mod tests {
             "the thread was never taken away, so this proves nothing: {burst:?}"
         );
         assert!(
-            burst.ratio() > 0.8,
+            burst.ratio() > AT_LIBERTY,
             "a thread taken away was read as a renderer that grew: {burst:?}"
         );
     }
@@ -632,6 +702,85 @@ mod tests {
             burst.ratio() < SUSTAINED_FRACTION,
             "a renderer that grew went unnoticed: {burst:?}"
         );
+    }
+
+    /// A reading whose closing phase kept `left` of its opening pace.
+    fn left(left: f64) -> Burst {
+        Burst {
+            opening: Reading {
+                rate: 100.0,
+                pace: 100.0,
+            },
+            sustained: Reading {
+                rate: 100.0,
+                pace: 100.0 * left,
+            },
+        }
+    }
+
+    #[test]
+    fn a_reading_the_host_interfered_with_is_taken_again() {
+        // The first reading lost the thread during its closing phase; the
+        // second is the same machine read once it had it back. What decides is
+        // the second, and taking it is the whole point of the retry.
+        let taken = Cell::new(0_usize);
+        let readings = [0.4_f64, 0.9, 0.95];
+
+        let burst = best(|| {
+            let at = taken.get();
+            taken.set(at + 1);
+
+            Ok::<_, Infallible>(left(readings.get(at).copied().unwrap_or_default()))
+        })
+        .expect("a burst");
+
+        assert_eq!(taken.get(), 2, "the reading was believed as it stood");
+        assert!((burst.ratio() - 0.9).abs() < f64::EPSILON, "{burst:?}");
+    }
+
+    #[test]
+    fn a_renderer_that_grew_in_every_reading_is_still_one() {
+        // The failure a retry could become. Growth is in the machine rather
+        // than in the host, so it is there in all three readings, and what
+        // comes back is still under the budget.
+        let taken = Cell::new(0_usize);
+        let readings = [0.2_f64, 0.15, 0.18];
+
+        let burst = best(|| {
+            let at = taken.get();
+            taken.set(at + 1);
+
+            Ok::<_, Infallible>(left(readings.get(at).copied().unwrap_or_default()))
+        })
+        .expect("a burst");
+
+        assert_eq!(
+            taken.get(),
+            LIBERTY,
+            "it settled for less than it could read"
+        );
+        assert!(
+            (burst.ratio() - 0.2).abs() < f64::EPSILON,
+            "the kindest of the three is not what came back: {burst:?}"
+        );
+        assert!(
+            burst.ratio() < SUSTAINED_FRACTION,
+            "a renderer that grew went unnoticed: {burst:?}"
+        );
+    }
+
+    #[test]
+    fn a_reading_nothing_interfered_with_is_the_only_one_taken() {
+        let taken = Cell::new(0_usize);
+
+        let burst = best(|| {
+            taken.set(taken.get() + 1);
+            Ok::<_, Infallible>(left(0.95))
+        })
+        .expect("a burst");
+
+        assert_eq!(taken.get(), 1, "a reading that stood was read again");
+        assert!((burst.ratio() - 0.95).abs() < f64::EPSILON, "{burst:?}");
     }
 
     #[test]

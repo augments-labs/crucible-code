@@ -323,7 +323,7 @@ fn evidence(burst: Burst) -> Result<(), ProbeError> {
 }
 
 fn main() -> ExitCode {
-    let measured = match measure() {
+    let measured = match burst::best(measure) {
         Ok(measured) => measured,
         Err(problem) => {
             let _ = explain(&problem);
