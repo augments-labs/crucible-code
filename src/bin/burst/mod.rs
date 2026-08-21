@@ -364,7 +364,20 @@ mod tests {
     /// is sized for, so a scheduler taking the thread away changes a window
     /// rather than deciding it — and few enough that a whole burst is a fraction
     /// of a second.
-    const FRAME: usize = 1_000;
+    const FRAME: usize = 500;
+
+    /// How much dearer a frame or a yardstick gets late in these bursts.
+    ///
+    /// Six rather than the three it was, because one of the two bursts below
+    /// begins by checking that the wall clock alone would have condemned the
+    /// run — and the wall clock is the thing every machine here disagrees
+    /// about. A runner that reaches its clock speed some way into a run is
+    /// already most of the way to that check on its own, and a factor of three
+    /// left it deciding whether a machine warming up counted as a machine that
+    /// slowed. Six is far enough from [`SUSTAINED_FRACTION`] that only a
+    /// machine changing speed threefold could reach it, and a machine doing
+    /// that is not one any reading here is about.
+    const DEARER: usize = 6;
 
     /// What a yardstick costs in the bursts below.
     ///
@@ -391,11 +404,11 @@ mod tests {
     fn a_machine_that_slowed_between_the_phases_is_not_a_renderer_that_grew() {
         // The failure the yardstick exists for, and the one that had this probe
         // failing on a shared runner. Everything after the opening phase costs
-        // three times as much — the frames and the yardstick alike, which is
-        // what a machine losing two thirds of its speed does and what a renderer
+        // [`DEARER`] times as much — the frames and the yardstick alike, which
+        // is what a machine losing most of its speed does and what a renderer
         // that grew does not.
         let slower =
-            |quick: usize| move |index: usize| if index < LATE { quick } else { quick * 3 };
+            |quick: usize| move |index: usize| if index < LATE { quick } else { quick * DEARER };
 
         let burst = machine(slower(FRAME), slower(YARD));
 
@@ -415,7 +428,7 @@ mod tests {
         // Here the machine held its speed and only the frames got dearer, which
         // is exactly what the ratio is for.
         let burst = machine(
-            |index| if index < LATE { FRAME } else { FRAME * 3 },
+            |index| if index < LATE { FRAME } else { FRAME * DEARER },
             |_| YARD,
         );
 
