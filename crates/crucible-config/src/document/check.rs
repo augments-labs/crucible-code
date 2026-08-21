@@ -69,11 +69,17 @@ impl Reader<'_> {
         spot: Spot<'_>,
     ) -> Result<(), ConfigError> {
         match shape {
-            Shape::Text => self.text_at(value, shape, spot),
+            // A whole number is a string here, and the bounds beside it are not
+            // read: what is out of range is refused by `settings::variables`,
+            // which is the one refusal that can name the variable without
+            // quoting what was written next to it. So the two are one arm — a
+            // second arm doing the same thing would be a claim that this layer
+            // tells them apart.
+            Shape::Text | Shape::Whole(_) => self.text_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Fields(_) => self.fields(value, shape, spot),
-            Shape::Named(inner) => self.named(value, inner, shape, spot),
+            Shape::Named { others, .. } => self.named(value, others, shape, spot),
             Shape::List(inner) => self.list(value, inner, shape, spot),
         }
     }
@@ -175,11 +181,15 @@ impl Reader<'_> {
 
     /// An object whose keys the user chose — a provider name, a variable name.
     /// There is no unknown key here, only a value of the wrong kind.
+    ///
+    /// A name crucible declared under one of these is still not a key the user
+    /// had to write; what being declared buys it is a shape of its own, walked
+    /// in place of the one every other name takes.
     fn named(
         &self,
         value: &Value,
-        inner: &'static Shape,
-        shape: &Shape,
+        others: &'static Shape,
+        shape: &'static Shape,
         spot: Spot<'_>,
     ) -> Result<(), ConfigError> {
         let Some(object) = value.as_object() else {
@@ -192,6 +202,7 @@ impl Reader<'_> {
             }
             let path = join(spot.path, key);
             let at = At::of(key, self.text);
+            let inner = shape.declared(key).map_or(others, |field| &field.shape);
             self.check(held, inner, Spot { path: &path, at })?;
         }
         Ok(())

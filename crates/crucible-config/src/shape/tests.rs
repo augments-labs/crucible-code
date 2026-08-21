@@ -33,17 +33,28 @@ fn offering(
 
         // A key the user chooses, so there is no name to walk through. Any one
         // will do to stand a document up, and what is below it is declared the
-        // same way as everything else.
-        Shape::Named(inner) => {
+        // same way as everything else. The names crucible chose here are walked
+        // under the names they have, because those are the ones a document
+        // would write.
+        Shape::Named { declared, others } => {
+            for field in *declared {
+                path.push(field.name);
+                if !field.examples.is_empty() {
+                    found.push((path.clone(), field));
+                }
+                offering(&field.shape, path, found);
+                path.pop();
+            }
+
             path.push("whatever");
-            offering(inner, path, found);
+            offering(others, path, found);
             path.pop();
         }
 
         // Nothing below to reach. Spelled out rather than closed with a
         // wildcard, so a shape that later does hold fields has to be decided
         // about here instead of dropping out of the walk in silence.
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::List(_) => {}
+        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Whole(_) | Shape::List(_) => {}
     }
 }
 
@@ -52,9 +63,12 @@ fn written(path: &[&str], shape: &Shape, example: &str) -> String {
     let mut value = match shape {
         // Examples are elements, so one goes in a list of its own.
         Shape::List(_) => json!([example]),
-        Shape::Text | Shape::Choice(_) | Shape::Count | Shape::Fields(_) | Shape::Named(_) => {
-            json!(example)
-        }
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::Count
+        | Shape::Whole(_)
+        | Shape::Fields(_)
+        | Shape::Named { .. } => json!(example),
     };
 
     for key in path.iter().rev() {

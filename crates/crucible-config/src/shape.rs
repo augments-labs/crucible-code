@@ -37,12 +37,37 @@ pub(crate) enum Shape {
     /// the fact it does not have.
     Count,
 
+    /// A whole number *written as a string*, between two bounds.
+    ///
+    /// A string because the one place this appears is `env`, and the
+    /// environment holds strings — see [`VALUE`]. The bounds are what the
+    /// schema publishes; refusing a value outside them is
+    /// `settings::variables`, one layer down, because a refusal there names the
+    /// variable without quoting what was set beside it and the block it is in
+    /// is the block a token would be in. Two lists, tested against each other,
+    /// the same way a [`Choice`](Shape::Choice) and its reader are.
+    Whole(&'static Whole),
+
     /// An object whose keys are exactly these, all of them optional.
     Fields(&'static [Field]),
 
     /// An object whose keys the user chooses — a provider name, a variable
     /// name — each value having the same shape.
-    Named(&'static Shape),
+    ///
+    /// `declared` is the handful of those names crucible chose after all. The
+    /// `env` block is the environment and a variable in it is somebody's own,
+    /// except for the ones under crucible's namespace, whose meanings this
+    /// program fixes — and a name whose meaning is fixed here is a name an
+    /// editor can complete, describe and fill in. It is not a second kind of
+    /// key: an undeclared one is still accepted and still takes `others`,
+    /// which is what keeps this an object the user keys.
+    Named {
+        /// Names crucible chose, which the schema describes and the walk uses
+        /// in place of `others`.
+        declared: &'static [Field],
+        /// Every other name, whoever chose it.
+        others: &'static Shape,
+    },
 
     /// An array, every element having the same shape.
     ///
@@ -76,6 +101,16 @@ pub(crate) struct Field {
     /// pasted.
     pub(crate) examples: &'static [&'static str],
 
+    /// What this key means where no layer set it, written as it would be
+    /// written in a document.
+    ///
+    /// An editor fills it in from here, which is the whole reason it is a
+    /// string rather than a value: what goes in the file is what a reader
+    /// meets. `None` where crucible has no answer to state — a window worked
+    /// out from the model, an effort the vendor decides — because a default
+    /// invented for the schema is a sentence about behaviour that nothing runs.
+    pub(crate) usual: Option<&'static str>,
+
     /// Whether this key can only ever loosen what crucible does unasked.
     ///
     /// Declared here, beside the key, rather than as a list of paths somewhere
@@ -99,6 +134,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         // No example. It would have to name a real model, and a model id in a
         // file served to every editor outlives the model.
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -107,6 +143,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         shape: Shape::Choice(EFFORT),
         // A `Choice` lists its own answers.
         examples: &[],
+        usual: None,
         widens: false,
     },
     // The *name*. A key never appears in a configuration file: this workspace
@@ -119,6 +156,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         about: "Name of the environment variable holding this provider's API key — the name, never the key",
         shape: Shape::Text,
         examples: &[],
+        usual: None,
         widens: true,
     },
     // The one key here that decides *who* the request goes to, which is who
@@ -130,6 +168,7 @@ const PROVIDER: Shape = Shape::Fields(&[
         about: "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
         shape: Shape::Text,
         examples: &["https://gateway.example/v1/messages"],
+        usual: None,
         widens: true,
     },
     Field {
@@ -137,13 +176,18 @@ const PROVIDER: Shape = Shape::Fields(&[
         about: "How many tokens to assume any model of this provider accepts, where it is not named above",
         shape: Shape::Count,
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
         name: "contextWindow",
         about: "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
-        shape: Shape::Named(&WINDOW),
+        shape: Shape::Named {
+            declared: &[],
+            others: &WINDOW,
+        },
         examples: &[],
+        usual: None,
         widens: false,
     },
 ]);
@@ -154,6 +198,59 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// the environment and the environment holds strings. `"12"` is what the
 /// variable would have to be to arrive any other way.
 const VALUE: Shape = Shape::Text;
+
+/// The bounds a whole number written as a string is allowed to fall between.
+///
+/// Both are written out by the schema, one alternative per number, which is
+/// what makes the published bounds exactly the accepted ones without an
+/// algorithm standing between them. That costs a line of pattern per number, so
+/// this is for a range small enough to write out; a wider one wants a different
+/// answer here rather than a longer version of this one.
+pub(crate) struct Whole {
+    /// The smallest accepted.
+    pub(crate) least: u16,
+    /// The largest.
+    pub(crate) most: u16,
+}
+
+/// How far one notch of the wheel may be asked to move the transcript.
+///
+/// One rather than none at the bottom. A wheel set to move nothing is a setting
+/// that looks applied and does nothing, and a reader who wants the wheel to
+/// leave the transcript alone is asking for a thing crucible no longer has to
+/// give, because the screen it scrolls is its own.
+///
+/// A screenful on most terminals at the top. Past that the wheel stops being a
+/// scroll and becomes a jump: two notches and the rows that were on screen are
+/// gone with nothing between them to read, which is a worse way to lose your
+/// place than scrolling too slowly ever is.
+pub(crate) const SCROLL_SPEED: Whole = Whole { least: 1, most: 30 };
+
+/// The name of that setting, as it is written in the block.
+///
+/// Spelled out rather than built from [`crate::env::NAMESPACE`], because a name
+/// assembled at run time is a name nobody can grep for. A test keeps it inside
+/// the namespace.
+pub(crate) const MOUSE_SCROLL_SPEED: &str = "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED";
+
+/// The variables in the `env` block whose meaning crucible fixes.
+///
+/// Everything else there is somebody's own and takes [`VALUE`]. These are
+/// settings that happen to be spelled as environment variables, so that one of
+/// them can be written for a project, for a user, or in front of a single run —
+/// and being declared is what lets an editor say what each one does and what it
+/// is when nobody says.
+const ENV: &[Field] = &[Field {
+    name: MOUSE_SCROLL_SPEED,
+    about: "How many rows of the transcript one notch of the wheel moves",
+    shape: Shape::Whole(&SCROLL_SPEED),
+    // The bounds are the answers, and the schema writes them out.
+    examples: &[],
+    usual: Some("6"),
+    // Crucible's own namespace is what either project file may set: these are
+    // settings rather than secrets, and none of them widens anything.
+    widens: false,
+}];
 
 /// Every answer `providers.<name>.effort` accepts, weakest first.
 ///
@@ -205,6 +302,7 @@ const OUTPUT: &[Field] = &[
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -212,6 +310,7 @@ const OUTPUT: &[Field] = &[
         about: "Which colours crucible draws with: auto follows the terminal's own background, ansi spends only the sixteen it already has",
         shape: Shape::Choice(THEME),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -219,6 +318,7 @@ const OUTPUT: &[Field] = &[
         about: "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
         shape: Shape::Text,
         examples: &["Monokai Extended", "GitHub"],
+        usual: None,
         widens: false,
     },
     Field {
@@ -226,6 +326,7 @@ const OUTPUT: &[Field] = &[
         about: "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
         shape: Shape::Choice(GLYPHS),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -233,6 +334,7 @@ const OUTPUT: &[Field] = &[
         about: "How much of a tool call and its result one line shows",
         shape: Shape::Choice(TOOL_DETAIL),
         examples: &[],
+        usual: None,
         widens: false,
     },
 ];
@@ -259,6 +361,7 @@ const INPUT: &[Field] = &[Field {
     about: "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Enter for itself",
     shape: Shape::Choice(SEND),
     examples: &[],
+    usual: None,
     widens: false,
 }];
 
@@ -275,6 +378,7 @@ const UPDATES: &[Field] = &[Field {
     about: "Whether crucible asks GitHub which release is newest, and says so when this one is behind",
     shape: Shape::Choice(UPDATE_CHECK),
     examples: &[],
+    usual: None,
     widens: false,
 }];
 
@@ -298,6 +402,7 @@ const COMPACTION: &[Field] = &[
         about: "Whether a full window is answered by compacting the session, or by letting the turn fail",
         shape: Shape::Choice(COMPACTION_WHEN),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -305,6 +410,7 @@ const COMPACTION: &[Field] = &[
         about: "Tokens to keep free for the next answer and the tools it calls, instead of the room crucible works out from the model",
         shape: Shape::Count,
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -312,6 +418,7 @@ const COMPACTION: &[Field] = &[
         about: "How many tokens of recent turns are kept word for word after the rest becomes a recap",
         shape: Shape::Count,
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -319,6 +426,7 @@ const COMPACTION: &[Field] = &[
         about: "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
         shape: Shape::Count,
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -326,6 +434,7 @@ const COMPACTION: &[Field] = &[
         about: "The most tokens one turn may produce before crucible stops it, where a runaway turn is worth bounding",
         shape: Shape::Count,
         examples: &[],
+        usual: None,
         widens: false,
     },
 ];
@@ -359,6 +468,7 @@ const PERMISSIONS: &[Field] = &[
         about: "What happens to a call no rule mentions: ask about every change and command, allow changes to files, or allow everything. Read only from the configuration file in your home directory",
         shape: Shape::Choice(MODE),
         examples: &[],
+        usual: None,
         widens: true,
     },
     Field {
@@ -369,6 +479,7 @@ const PERMISSIONS: &[Field] = &[
         // would read as the obvious thing to write and would cover `git push`,
         // and an example is where somebody learns which one to write.
         examples: &["read(src/**)", "bash(cargo test)"],
+        usual: None,
         widens: true,
     },
     Field {
@@ -376,6 +487,7 @@ const PERMISSIONS: &[Field] = &[
         about: "Rules for calls that are always put to you, whatever the mode says",
         shape: Shape::List(&RULE),
         examples: &["edit(Cargo.lock)", "bash(git push)"],
+        usual: None,
         widens: false,
     },
     Field {
@@ -383,6 +495,7 @@ const PERMISSIONS: &[Field] = &[
         about: "Rules for calls that are refused in every mode, beating any allow written beside them",
         shape: Shape::List(&RULE),
         examples: &["read(.env)", "edit(.git/**)"],
+        usual: None,
         widens: false,
     },
     Field {
@@ -400,6 +513,7 @@ const PERMISSIONS: &[Field] = &[
         // A directory outside the working directory is reach the workspace
         // would otherwise refuse, so naming one is widening even though no
         // rule is written.
+        usual: None,
         widens: true,
     },
 ];
@@ -426,20 +540,29 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         // serves, and that list belongs to the binary rather than to this
         // crate — the schema is generated from here and served to every editor.
         examples: &[],
+        usual: None,
         widens: true,
     },
     Field {
         name: "providers",
         about: "Per-provider defaults, keyed by provider name",
-        shape: Shape::Named(&PROVIDER),
+        shape: Shape::Named {
+            declared: &[],
+            others: &PROVIDER,
+        },
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
         name: "env",
         about: "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
-        shape: Shape::Named(&VALUE),
+        shape: Shape::Named {
+            declared: ENV,
+            others: &VALUE,
+        },
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -447,6 +570,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "What the keyboard does",
         shape: Shape::Fields(INPUT),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -454,6 +578,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "What the terminal shows",
         shape: Shape::Fields(OUTPUT),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -461,6 +586,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "What runs without being put to you, what is refused outright, and where tools may reach",
         shape: Shape::Fields(PERMISSIONS),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -468,6 +594,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "What happens when the model's window fills up",
         shape: Shape::Fields(COMPACTION),
         examples: &[],
+        usual: None,
         widens: false,
     },
     Field {
@@ -475,6 +602,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         about: "Whether crucible finds out that a newer release exists",
         shape: Shape::Fields(UPDATES),
         examples: &[],
+        usual: None,
         widens: false,
     },
 ]);
@@ -487,21 +615,31 @@ impl Shape {
     pub(crate) fn keys(&self) -> Vec<&'static str> {
         match self {
             Self::Fields(fields) => fields.iter().map(|field| field.name).collect(),
-            Self::Text | Self::Choice(_) | Self::Count | Self::Named(_) | Self::List(_) => {
-                Vec::new()
-            }
+
+            // Empty even where a `Named` declares some, because under one no
+            // key is unknown: the sentence this feeds is the one a misspelling
+            // gets back, and there is no misspelling of a name the user chose.
+            Self::Text
+            | Self::Choice(_)
+            | Self::Count
+            | Self::Whole(_)
+            | Self::Named { .. }
+            | Self::List(_) => Vec::new(),
         }
     }
 
     /// The whole declaration of `name` under this one, if crucible declared it.
     ///
-    /// Only a shape whose keys crucible chose has one. Under a
-    /// [`Shape::Named`] the key is the user's — a provider name, a variable
-    /// name — and there is nothing declared about it to return.
+    /// Under a [`Shape::Named`] most keys are the user's — a provider name, a
+    /// variable name — and there is nothing declared about one to return. The
+    /// handful crucible did choose there answer the same way a field does.
     pub(crate) fn declared(&self, name: &str) -> Option<&'static Field> {
         match self {
-            Self::Fields(fields) => fields.iter().find(|field| field.name == name),
-            Self::Text | Self::Choice(_) | Self::Count | Self::Named(_) | Self::List(_) => None,
+            Self::Fields(fields)
+            | Self::Named {
+                declared: fields, ..
+            } => fields.iter().find(|field| field.name == name),
+            Self::Text | Self::Choice(_) | Self::Count | Self::Whole(_) | Self::List(_) => None,
         }
     }
 
@@ -509,8 +647,10 @@ impl Shape {
     pub(crate) fn field(&self, name: &str) -> Option<&'static Shape> {
         match self {
             Self::Fields(_) => self.declared(name).map(|field| &field.shape),
-            Self::Named(inner) => Some(inner),
-            Self::Text | Self::Choice(_) | Self::Count | Self::List(_) => None,
+            Self::Named { others, .. } => {
+                Some(self.declared(name).map_or(*others, |field| &field.shape))
+            }
+            Self::Text | Self::Choice(_) | Self::Count | Self::Whole(_) | Self::List(_) => None,
         }
     }
 
@@ -522,7 +662,12 @@ impl Shape {
     pub(crate) fn element(&self) -> Option<&'static Shape> {
         match self {
             Self::List(inner) => Some(inner),
-            Self::Text | Self::Choice(_) | Self::Count | Self::Fields(_) | Self::Named(_) => None,
+            Self::Text
+            | Self::Choice(_)
+            | Self::Count
+            | Self::Whole(_)
+            | Self::Fields(_)
+            | Self::Named { .. } => None,
         }
     }
 
@@ -532,7 +677,8 @@ impl Shape {
             Self::Text => "a string",
             Self::Choice(_) => "one of a fixed set of strings",
             Self::Count => "a whole number that is not negative",
-            Self::Fields(_) | Self::Named(_) => "an object",
+            Self::Whole(_) => "a whole number written as a string",
+            Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List(_) => "a list",
         }
     }
