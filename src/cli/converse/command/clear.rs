@@ -293,7 +293,16 @@ mod tests {
         assert_eq!(listed(&sample, 1), ["what was said before"]);
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
-        super::super::resume::run("1", &mut renderer, &mut runner, &terms, false)
+        let mut input = std::io::empty();
+        let mut held = crate::cli::converse::Held::new(
+            Plan::new(),
+            crucible_tui::Sending::default(),
+            crate::cli::converse::Answers {
+                input: &mut input,
+                keys: false,
+            },
+        );
+        super::super::resume::run("1", &mut renderer, &mut runner, &mut held, &terms)
             .expect("the terminal to be written");
 
         let written = renderer.terminal().written().to_string();

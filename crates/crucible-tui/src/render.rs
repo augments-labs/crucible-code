@@ -751,6 +751,32 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Empties the transcript, leaving the band ready for what replaces it.
+    ///
+    /// What a session picked up asks for. A resumed session is not the next
+    /// thing that happened in the one on screen — it is a different
+    /// conversation, and putting it under what was there would leave a reader
+    /// scrolling back through two of them, joined at a point nothing marks.
+    ///
+    /// The record's numbering carries on past the lines it drops, so a number
+    /// some other part of the program is holding names the line it named and
+    /// names nothing once that line has gone.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn empties(&mut self) -> Result<(), TerminalError> {
+        self.record.empties();
+        self.standing.clear();
+        self.unselects();
+
+        // Every row of the band is showing a line that is no longer in the
+        // record, so the next frame may not skip any of them.
+        self.painted.forget();
+
+        self.draw()
+    }
+
     /// Writes something the reader is expected to type after.
     ///
     /// The one thing here with two answers. On a screen this process owns, it

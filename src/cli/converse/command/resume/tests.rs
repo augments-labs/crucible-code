@@ -8,11 +8,12 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use crucible_auth::Store;
-use crucible_core::{Cancel, Message, Revealed, StopReason};
+use crucible_core::{Cancel, Message, Revealed, StopReason, ToolId};
 use crucible_runner::{Model, Runner, Tools};
 use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer};
 
+use crate::cli::converse::{Answers, Held};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
@@ -121,14 +122,33 @@ fn at(sample: &Sample, wanted: &str, of: usize) -> String {
     }
 }
 
+/// What a session holds, for a session holding nothing.
+///
+/// No keys, because these drive a recording rather than a terminal somebody is
+/// at, and the question a large session asks has nobody to answer it — which is
+/// also why the reader it reads answers from is empty.
+fn lent(input: &mut dyn std::io::BufRead) -> Held<'_> {
+    Held::new(
+        Plan::new(),
+        crucible_tui::Sending::default(),
+        Answers { input, keys: false },
+    )
+}
+
 /// Runs `/resume {said}` against `runner`, and says what the window ends up
 /// showing — one row a line, the blank ones left out.
 fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = std::io::empty();
 
-    // No keys: these drive a recording rather than a terminal somebody is at,
-    // and the question a large session asks has nobody to answer it.
-    run(said, &mut renderer, runner, &terms(sample), false).expect("the terminal to be written");
+    run(
+        said,
+        &mut renderer,
+        runner,
+        &mut lent(&mut input),
+        &terms(sample),
+    )
+    .expect("the terminal to be written");
 
     renderer.terminal().picture().said().join("\n")
 }
@@ -291,4 +311,62 @@ fn what_stands_between_the_count_and_the_age_comes_out_of_the_glyph_set() {
 
     assert!(said(Glyphs::Unicode).starts_with("2 messages · started"));
     assert!(said(Glyphs::Ascii).starts_with("2 messages - started"));
+}
+
+#[test]
+fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
+    // Two conversations in one band would be joined at a point nothing marks,
+    // and a reader scrolling back would walk out of the session they picked up
+    // and into the one they left without being told.
+    let sample = Sample::new("resume-replaces");
+    drop(recorded(&sample, "what was asked before"));
+
+    let mut runner = over(Session::nowhere());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer
+        .present(&[Row::new().then(Slot::Plain, "said in the session being left")])
+        .expect("a recording cannot fail");
+
+    let mut input = std::io::empty();
+    run(
+        "1",
+        &mut renderer,
+        &mut runner,
+        &mut lent(&mut input),
+        &terms(&sample),
+    )
+    .expect("the terminal to be written");
+
+    let written = renderer.terminal().picture().said().join("\n");
+
+    assert!(written.contains("what was asked before"), "{written}");
+    assert!(
+        !written.contains("said in the session being left"),
+        "{written}"
+    );
+}
+
+#[test]
+fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
+    // A key opening what is behind a row nobody can see is the one thing worse
+    // than not offering at all.
+    let sample = Sample::new("resume-forgets");
+    drop(recorded(&sample, "what was asked before"));
+
+    let mut runner = over(Session::nowhere());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    let call = ToolId::new("a call of the session being left");
+    let mut input = std::io::empty();
+    let mut held = lent(&mut input);
+    held.kept.calling(call.clone(), "read a file".into());
+    held.kept.finished(&call, "line\nline\nline".into(), 0);
+    assert!(!held.kept.is_empty());
+
+    run("1", &mut renderer, &mut runner, &mut held, &terms(&sample))
+        .expect("the terminal to be written");
+
+    // The session picked up made no calls of its own, so anything left here is
+    // the old session's.
+    assert!(held.kept.is_empty());
 }

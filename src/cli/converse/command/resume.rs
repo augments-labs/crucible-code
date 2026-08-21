@@ -13,6 +13,12 @@
 //! it was allowed for the rest of *its* run is forgotten by the runner — see
 //! [`Runner::pick_up`]. The record of what has been read is emptied with it,
 //! because it answers for the session being left rather than for this run.
+//!
+//! The screen goes the same way. What is put back is a different conversation
+//! rather than the next thing that happened in the one on it, so the transcript
+//! is emptied and the session picked up replaces it — and what was held behind
+//! the rows of the old one is dropped with them, because a key that opens what
+//! is behind a row nobody can see is worse than a row that offers nothing.
 
 use std::time::SystemTime;
 
@@ -23,6 +29,7 @@ use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
 use crate::cli::Fatal;
 use crate::cli::draw::when;
 
+use super::super::Held;
 use super::Terms;
 
 /// How many sessions the list holds.
@@ -37,8 +44,8 @@ pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
+    held: &mut Held<'_>,
     terms: &Terms,
-    keys: bool,
 ) -> Result<Option<Compacting>, Fatal> {
     let listed = recent(&terms.sessions, &terms.workspace, SHOWN);
 
@@ -69,7 +76,7 @@ pub(super) fn run<T: Terminal>(
         return Ok(None);
     };
 
-    picking(picked, renderer, runner, terms, keys)
+    picking(picked, renderer, runner, held, terms)
 }
 
 /// Picks one up, having decided which.
@@ -77,8 +84,8 @@ fn picking<T: Terminal>(
     picked: &Recorded,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
+    held: &mut Held<'_>,
     terms: &Terms,
-    keys: bool,
 ) -> Result<Option<Compacting>, Fatal> {
     let columns = renderer.columns();
 
@@ -104,7 +111,7 @@ fn picking<T: Terminal>(
             }
         };
 
-    let held = transcript.len();
+    let messages = transcript.len();
     let left = runner.pick_up(session, transcript);
 
     // The files remembered were read by the session just left, and `write`
@@ -119,13 +126,25 @@ fn picking<T: Terminal>(
         renderer.commit(&format!("! {problem}"))?;
     }
 
+    // The transcript on screen belonged to the session just closed, and what
+    // follows is a different conversation rather than the next thing that
+    // happened in that one. Left standing, the two would be joined at a point
+    // nothing marks, and a reader scrolling back would walk out of the session
+    // they picked up and into one they left without being told.
+    //
+    // What was held of the old session's results goes with the rows that offered
+    // them: the offers are no longer on screen, and a key opening what is behind
+    // a row nobody can see is the one thing worse than not offering at all.
+    held.kept.forget();
+    renderer.empties()?;
+
     renderer.present(
         // Read here rather than carried in: one row is dated against one
         // instant however it was reached, unlike the list above, which is
         // several rows and has to share one.
         &picked_up(
             picked,
-            held,
+            messages,
             SystemTime::now(),
             columns,
             terms.style().glyphs(),
@@ -135,8 +154,8 @@ fn picking<T: Terminal>(
     // Both of these are what a session picked up on the command line gets, and
     // for the same reason: what it already said, and what it costs to carry,
     // are facts about the session rather than about which way reached it.
-    super::super::replaying::replayed(renderer, runner, terms.style())?;
-    super::super::resuming::asked(renderer, runner, terms, keys)
+    super::super::replaying::replayed(renderer, runner, &mut held.kept, terms.style())?;
+    super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
 }
 
 /// The rows that say what was picked up.

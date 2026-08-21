@@ -26,7 +26,7 @@ use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
-use super::{Terms, mode};
+use super::{Held, Terms, mode};
 
 mod clear;
 mod effort;
@@ -229,8 +229,8 @@ pub(super) fn run<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
+    held: &mut Held<'_>,
     terms: &Terms,
-    keys: bool,
 ) -> Result<Ran, Fatal> {
     // Nothing is drawn on the way out. The loop is about to end and the shell's
     // own prompt is the next thing on the screen; a row saying goodbye is a row
@@ -244,7 +244,7 @@ pub(super) fn run<T: Terminal>(
     // block's neighbours — the line that asked, the box below — are rows the
     // eye is already resting on.
     renderer.commit("")?;
-    let making = answer(wanted, renderer, runner, terms, keys)?;
+    let making = answer(wanted, renderer, runner, held, terms)?;
     renderer.commit("")?;
 
     Ok(making.map_or(Ran::Again, Ran::Room))
@@ -255,8 +255,8 @@ fn answer<T: Terminal>(
     wanted: Wanted<'_>,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
+    held: &mut Held<'_>,
     terms: &Terms,
-    keys: bool,
 ) -> Result<Option<Compacting>, Fatal> {
     let columns = renderer.columns();
     let style = terms.style();
@@ -286,22 +286,22 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Model,
             rest,
-        } => model::run(rest, renderer, runner, terms, keys)?,
+        } => model::run(rest, renderer, runner, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Effort,
             rest,
-        } => effort::run(rest, renderer, runner, terms, keys)?,
+        } => effort::run(rest, renderer, runner, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Login,
             rest,
-        } => login::run(rest, renderer, runner, terms, keys)?,
+        } => login::run(rest, renderer, runner, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Logout,
             rest,
-        } => logout::run(rest, renderer, runner, terms, keys)?,
+        } => logout::run(rest, renderer, runner, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Mode,
@@ -311,7 +311,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Theme,
             rest,
-        } => theme::run(rest, renderer, terms, keys)?,
+        } => theme::run(rest, renderer, terms, held.answers.keys)?,
 
         // The one other command that can end in a request: a session picked up
         // is put to the reader before it is carried, and one of the three
@@ -319,7 +319,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Resume,
             rest,
-        } => return resume::run(rest, renderer, runner, terms, keys),
+        } => return resume::run(rest, renderer, runner, held, terms),
 
         Wanted::Known {
             command: Command::Clear,

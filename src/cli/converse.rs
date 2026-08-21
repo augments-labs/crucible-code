@@ -357,7 +357,7 @@ pub(crate) fn converse<T: Terminal>(
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
-    replaying::replayed(renderer, &runner, terms.style())?;
+    replaying::replayed(renderer, &runner, &mut held.kept, terms.style())?;
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
@@ -492,7 +492,7 @@ pub(crate) fn converse<T: Terminal>(
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
         if let Some(wanted) = command::wanted(&prompt) {
-            match command::run(wanted, renderer, &mut runner, terms, keys)? {
+            match command::run(wanted, renderer, &mut runner, &mut held, terms)? {
                 Ran::Again => continue,
                 Ran::Leave => break,
                 Ran::Room(why) => {
@@ -1145,6 +1145,12 @@ fn batched(queued: &mut Prompts, steer: &crucible_core::Steer) -> Option<String>
 /// read, and what a turn needs next is added here rather than at each of the
 /// three places one starts. The prompt is not among them, because the prompt is
 /// what the turn is about rather than something it hands back.
+///
+/// A command is lent it too, and for the same reason. A command runs between
+/// turns, on this thread, and the ones that reach in here reach for what the
+/// session is holding rather than for anything of their own: `/resume` drops
+/// what the session it is leaving had held, and every command that opens
+/// something asks first whether there is a keyboard to answer it with.
 struct Held<'a> {
     /// The line being written, one for the whole session rather than one per
     /// prompt: what was typed while a turn ran is still in the box when it

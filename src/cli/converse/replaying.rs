@@ -18,6 +18,13 @@
 //! touched: the theme somebody chose, the mark in front of a prompt, the colour
 //! a tool's name is in. So there is one set, and this walks messages into it.
 //!
+//! Which goes for what a row is *offering* as well as for what it says. A result
+//! too long for its row is cut here the way it was cut live and held where the
+//! key over it can reach it, so a session put back on the screen is one whose
+//! rows still light and still open. A row that behaved one way live and another
+//! on the way back would be the same row behaving as two, and that is what a
+//! reader picking a session up would find strange first.
+//!
 //! What this module adds to the screen is a rule and a heading, saying where the
 //! session picked up stops and this one starts. That is the one thing the
 //! messages cannot say for themselves.
@@ -33,6 +40,7 @@ use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::draw;
+use crate::cli::kept::Kept;
 use crate::cli::style::Style;
 
 /// The heading over the lot.
@@ -58,6 +66,7 @@ const NOTES: &str = "notes on everything before this";
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
+    kept: &mut Kept,
     style: Style,
 ) -> Result<(), Fatal> {
     if runner.transcript().is_empty() {
@@ -68,7 +77,7 @@ pub(super) fn replayed<T: Terminal>(
     renderer.present(&opened(renderer.columns(), style))?;
 
     for message in runner.transcript().messages() {
-        said(renderer, runner, message, style)?;
+        said(renderer, runner, kept, message, style)?;
     }
 
     // Whatever the last message left live, ended: a session whose last turn was
@@ -103,6 +112,7 @@ fn rule(columns: usize, style: Style) -> Row {
 fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
+    kept: &mut Kept,
     message: &Message,
     style: Style,
 ) -> Result<(), Fatal> {
@@ -140,7 +150,14 @@ fn said<T: Terminal>(
             // answered. What the call was about is asked of the tool that owns
             // the arguments, the same way it was asked the first time.
             for call in calls {
-                draw::returned(renderer, &draw::called(call, &runner.about(call)), style)?;
+                let line = draw::called(call, &runner.about(call));
+
+                // Named before the row that answers it goes down, the same way
+                // the turn named it: the expansion carries the call's line, and
+                // a result whose call was never named would open under a heading
+                // nobody wrote.
+                kept.calling(call.id.clone(), line.clone());
+                draw::returned(renderer, &line, style)?;
             }
 
             // An answer that did not end the way the model meant it to is worth
@@ -156,7 +173,17 @@ fn said<T: Terminal>(
         // call did is already looking.
         Message::ToolResults(results) => {
             for result in results {
-                renderer.present(&draw::finished_rows(&result.output, columns, style))?;
+                // Through the door the turn drew it through, which is what makes
+                // the row that comes back the row that went down: lit where it
+                // was cut, and holding the lines it was cut from where the key
+                // over it can reach them.
+                // Copied rather than moved, which is the one thing this path
+                // does that the turn's did not: the transcript owns this result
+                // and goes on being sent, so what is held for the key to open is
+                // a second copy of one result. Bounded by the tool that made it
+                // and by the ceiling the record keeps, so what a replay costs is
+                // the same after four hundred messages as after four.
+                draw::came_back(renderer, kept, &result.id, result.output.clone(), style)?;
             }
         }
     }
@@ -174,6 +201,7 @@ mod tests {
     use crucible_tui::{Picture, Recording, Renderer};
 
     use crate::cli::fake::Script;
+    use crate::cli::kept::Whole;
 
     use super::*;
 
@@ -243,9 +271,86 @@ mod tests {
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(style.palette());
 
-        replayed(&mut renderer, &runner, style).expect("a recording cannot fail");
+        replayed(&mut renderer, &runner, &mut Kept::default(), style)
+            .expect("a recording cannot fail");
 
         renderer.terminal().written().to_string()
+    }
+
+    /// What a replay left held, and the renderer it drew onto.
+    fn holding(transcript: Transcript, columns: usize) -> (Kept, Renderer<Recording>) {
+        let runner = resumed(transcript);
+        let mut kept = Kept::default();
+        let mut renderer = Renderer::new(Recording::new(columns, 24));
+        renderer.wears(Style::plain().palette());
+
+        replayed(&mut renderer, &runner, &mut kept, Style::plain())
+            .expect("a recording cannot fail");
+
+        (kept, renderer)
+    }
+
+    #[test]
+    fn a_result_the_replay_had_to_cut_is_one_the_key_over_it_still_opens() {
+        // The row says how many lines it could not fit and names the key that
+        // gives them back. Live, pressing it works; replayed, it used to name a
+        // key with nothing behind it — the same row, offering something only one
+        // of the two paths could deliver.
+        let (kept, _) = holding(everything(), 80);
+
+        let whole = kept.newest().next().expect("the result that was cut");
+        assert!(
+            whole.text().contains("nine hundred lines after it"),
+            "{:?}",
+            whole.text()
+        );
+        assert!(
+            whole.called().contains("crucible.json"),
+            "the call it opens under: {:?}",
+            whole.called()
+        );
+    }
+
+    #[test]
+    fn the_row_a_replayed_result_was_cut_on_is_the_row_a_click_lands_on() {
+        // The other half of the offer, and the half a pointer uses: a click
+        // becomes a row of the record, and a row of the record has to become
+        // this. Off by a row and the reader opens the result above the one they
+        // pointed at.
+        let (kept, _) = holding(everything(), 80);
+
+        let at = kept
+            .newest()
+            .next()
+            .and_then(Whole::at)
+            .expect("a row the offer went on");
+
+        assert!(kept.offered(at), "row {at} made no offer");
+    }
+
+    #[test]
+    fn a_result_that_fitted_leaves_nothing_behind_to_be_opened() {
+        // The rule the live path keeps, kept here too: an offer to expand a
+        // result the row said the whole of is an offer to show somebody what
+        // they are looking at.
+        let mut transcript = Transcript::new();
+        transcript.push(Message::Agent {
+            text: String::new().into(),
+            calls: vec![ToolCall {
+                id: ToolId::new("c-1"),
+                name: "read".into(),
+                args: ToolArgs::new(r#"{"path":"crucible.json"}"#),
+            }],
+            stop: Some(StopReason::WantsTools),
+        });
+        transcript.push(Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("c-1"),
+            output: ToolOutput::ok("one line and no more"),
+        }]));
+
+        let (kept, _) = holding(transcript, 80);
+
+        assert!(kept.is_empty());
     }
 
     #[test]

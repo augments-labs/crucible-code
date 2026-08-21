@@ -95,8 +95,28 @@ somewhere else immediately. Its session-long permission answers end with it —
 is asked again. The mode carries over, and so do the rules in your configuration
 files, which were never held in a session to begin with.
 
+The screen is different too. The session picked up replaces what was on it
+rather than following it: the transcript is emptied first, so what you scroll
+back through is one conversation and stops where it started. What was on screen
+before is not recoverable from inside crucible — the session it belonged to is
+still on disk, and picking it back up is how you read it again.
+
 The one session `/resume` will not pick up is the one you are in. It says so,
 rather than reporting the claim it would find on that file as another crucible's.
+
+## What comes back looks like what you left
+
+A session put back on the screen is drawn by the code that drew it live, so it
+is the same session rather than a rendering of one. A result too long for its
+row still says how much it left over, still stands out from the rows with
+nothing behind them, and still opens on
+[<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md) — the
+lines are read back out of the log rather than out of the run that produced
+them.
+
+One thing does not: a call that changed a file replays as the result it
+returned rather than as the lines it moved, because a diff is never written to
+a log.
 
 ## One at a time
 

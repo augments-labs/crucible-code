@@ -15,11 +15,14 @@
 //! it, so what this costs is the same after four hundred turns as after four —
 //! the rule the whole renderer is built to keep.
 //!
-//! It outlives a session, and has to. `/clear` opens a new one and deletes
-//! nothing: the rows of the old one are still in the transcript, still saying
-//! how many lines they could not fit and still naming the key that gives them
-//! back. Emptying this there would leave those offers on screen with nothing
-//! behind them, which is the one thing worse than not making them.
+//! What decides whether it outlives a session is what happened to the rows that
+//! made the offers. `/clear` opens a new session and deletes nothing: the rows
+//! of the old one are still in the transcript, still saying how many lines they
+//! could not fit and still naming the key that gives them back, so this is left
+//! exactly as it was. `/resume` empties the transcript — the session picked up
+//! replaces what was on screen rather than following it — and this is emptied
+//! with it. Either way the rule is the same one: what is held here is what a row
+//! somebody can still see has offered.
 //!
 //! One kind of cut is not here and cannot be. A call that changed a file is
 //! shown as the change itself, and a change too long for the block is cut down
@@ -239,6 +242,20 @@ impl Kept {
             .iter()
             .position(|one| one.id == *call)
             .and_then(|at| self.pending.remove(at))
+    }
+
+    /// Drops everything, held and pending alike.
+    ///
+    /// What a session picked up asks for, and only that: the rows that made
+    /// these offers have gone from the screen with the transcript they were in,
+    /// so what is behind them is unreachable and holding it would be holding it
+    /// for nobody.
+    ///
+    /// The count of what has been cut goes back to nothing with them, because
+    /// what it is for is a view stepping over results that arrived underneath
+    /// it — and none of these can arrive again.
+    pub(crate) fn forget(&mut self) {
+        *self = Self::default();
     }
 
     /// Everything still reachable, newest first.
