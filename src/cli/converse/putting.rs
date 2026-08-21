@@ -526,7 +526,9 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
 
         // Ctrl+O, ctrl+T and the rest open things that stand in this same
         // region, which would leave a question on screen with nothing left to
-        // answer it with.
+        // answer it with. The key that copies the line is here for the other
+        // reason: an ask is not a line being typed, and there is nothing in the
+        // box for it to take.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
@@ -536,6 +538,7 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Queue
+        | Pressed::Copy
         | Pressed::Ignored => Moved::Still,
     }
 }

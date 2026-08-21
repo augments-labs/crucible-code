@@ -1045,3 +1045,24 @@ fn a_row_is_never_put_down_inside_an_answer_still_arriving() {
         "one row for each item, and nothing between them"
     );
 }
+
+#[test]
+fn a_line_copied_out_reaches_the_terminal_as_one_request_and_nothing_else() {
+    // Everything else this renderer writes is a picture. This is the one write
+    // that asks the terminal for something, so it goes down whole and on its
+    // own -- a frame around it would be rows the region never counted.
+    let mut render = Renderer::new(Recording::new(80, 24));
+
+    assert!(render.copied("one two").unwrap());
+    assert_eq!(render.terminal.written(), "\x1b]52;c;b25lIHR3bw==\x07");
+}
+
+#[test]
+fn a_redirected_run_asks_for_no_clipboard_at_all() {
+    // The escape would not be a request there, it would be bytes in the middle
+    // of somebody's file -- the same reason every guard in this crate checks.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+
+    assert!(!render.copied("one two").unwrap());
+    assert_eq!(render.terminal.written(), "");
+}

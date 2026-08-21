@@ -11,6 +11,7 @@
 //! construction rather than by care. The sequences themselves live in
 //! [`frame`]; this module decides when a frame happens.
 
+use crate::clipboard;
 use crate::color::Palette;
 use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
@@ -479,6 +480,39 @@ impl<T: Terminal> Renderer<T> {
         self.widths.clear();
         self.parked = 0;
         Ok(())
+    }
+
+    /// Asks the terminal to put `text` on the reader's clipboard.
+    ///
+    /// Answers whether it asked. `false` where there is nothing to copy, where
+    /// there is more of it than a terminal will take, and where output is
+    /// redirected — a clipboard is a thing only a terminal has, and the request
+    /// written into a file would be bytes in the middle of it.
+    ///
+    /// A terminal that does not implement the sequence drops it, and there is
+    /// no reply to wait for either way. So a `true` here says the request was
+    /// written, not that it landed; what says it landed is the reader's next
+    /// paste, and nothing this process can ask changes that.
+    ///
+    /// Outside the frame, deliberately. This is not a row and never becomes
+    /// one: it goes down between frames, moves no cursor, and leaves the live
+    /// region exactly as tall as it was.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn copied(&mut self, text: &str) -> Result<bool, TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(false);
+        }
+
+        let Some(asking) = clipboard::copying(text) else {
+            return Ok(false);
+        };
+
+        self.terminal.write(&asking)?;
+        self.terminal.flush()?;
+        Ok(true)
     }
 
     /// Re-wraps for a terminal the user resized.
