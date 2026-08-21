@@ -30,6 +30,8 @@
 
 use std::collections::VecDeque;
 
+use crucible_core::ToolId;
+
 /// The most text held at once, in bytes.
 ///
 /// Half a mebibyte, against a process budgeted 35. One result is bounded far
@@ -105,18 +107,11 @@ pub(crate) struct Kept {
     /// result arrives on, and a walk over the whole queue there would be work
     /// proportional to how long the session has run.
     held: usize,
-    /// The line of the call whose result has not arrived yet.
+    /// Calls waiting for results, in request order and carrying their identity.
     ///
-    /// A result says which call it answers by an identifier, and the reader
-    /// knows the call by the line that was committed for it. The two meet here,
-    /// one event apart, the same way they do on screen.
-    calling: Option<String>,
-    /// What that call has printed so far, where it has printed anything.
-    ///
-    /// The end of it, bounded by [`WRITING`]. It is replaced by the result the
-    /// moment the call answers, so what is held here is one call's tail and
-    /// never a session's.
-    writing: Option<Whole>,
+    /// A pass is bounded to 128 calls, so a linear identity lookup keeps this
+    /// representation bounded while preserving the order the model requested.
+    pending: VecDeque<Pending>,
     /// How many results have been cut this session, counting the ones since
     /// dropped.
     ///
@@ -127,20 +122,44 @@ pub(crate) struct Kept {
     cut: usize,
 }
 
+/// One call that has not answered yet.
+#[derive(Debug)]
+struct Pending {
+    id: ToolId,
+    called: String,
+    writing: Option<Whole>,
+}
+
 impl Kept {
-    /// Remembers the line of the call whose result comes next.
-    pub(crate) fn calling(&mut self, called: String) {
-        self.calling = Some(called);
+    /// Remembers the line of one call until the result naming it arrives.
+    pub(crate) fn calling(&mut self, call: ToolId, called: String) {
+        if let Some(pending) = self.pending.iter_mut().find(|one| one.id == call) {
+            pending.called = called;
+            if let Some(writing) = &mut pending.writing {
+                writing.called.clone_from(&pending.called);
+            }
+        } else {
+            self.pending.push_back(Pending {
+                id: call,
+                called,
+                writing: None,
+            });
+        }
     }
 
     /// Keeps what the call still out has printed.
     ///
     /// The end of it: bounded by dropping from the front, and by whole lines
     /// where it can, so what is held opens on a line rather than half of one.
-    pub(crate) fn wrote(&mut self, text: &str) {
-        let called = self.calling.clone().unwrap_or_default();
-        let writing = self.writing.get_or_insert_with(|| Whole {
-            called,
+    pub(crate) fn wrote(&mut self, call: &ToolId, text: &str) {
+        let Some(pending) = self.pending.iter_mut().find(|one| one.id == *call) else {
+            // A mismatched event is not permission to create an anonymous live
+            // call that can never finish. In particular it must not borrow the
+            // heading of another call still waiting beside it.
+            return;
+        };
+        let writing = pending.writing.get_or_insert_with(|| Whole {
+            called: pending.called.clone(),
             text: String::new().into(),
             at: None,
         });
@@ -182,12 +201,8 @@ impl Kept {
     ///
     /// `at` is the row of the record the offer went onto, which is what a click
     /// on that row is looked up by.
-    pub(crate) fn finished(&mut self, text: Box<str>, at: usize) {
-        let called = self.calling.take().unwrap_or_default();
-
-        // What the call printed is now in a result that says its own gap, so the
-        // tail held while it ran has nothing left to say.
-        self.writing = None;
+    pub(crate) fn finished(&mut self, call: &ToolId, text: Box<str>, at: usize) {
+        let called = self.take(call).map_or_else(String::new, |one| one.called);
 
         self.cut = self.cut.saturating_add(1);
         self.held = self.held.saturating_add(text.len());
@@ -206,6 +221,24 @@ impl Kept {
                 self.held = self.held.saturating_sub(gone.text.len());
             }
         }
+    }
+
+    /// Forgets a call whose complete result fitted on screen.
+    pub(crate) fn answered(&mut self, call: &ToolId) {
+        self.take(call);
+    }
+
+    /// Forgets a call that reached a terminal turn event without a result.
+    pub(crate) fn abandoned(&mut self, call: &ToolId) {
+        self.take(call);
+    }
+
+    /// Takes one pending call by identity without disturbing its neighbours.
+    fn take(&mut self, call: &ToolId) -> Option<Pending> {
+        self.pending
+            .iter()
+            .position(|one| one.id == *call)
+            .and_then(|at| self.pending.remove(at))
     }
 
     /// Everything still reachable, newest first.
@@ -243,8 +276,8 @@ impl Kept {
     /// Kept apart from [`Kept::newest`] rather than folded into it, because the
     /// count of what has been cut is what a standing view steps over to keep its
     /// rows still — and a call that has not answered has not been cut.
-    pub(crate) fn writing(&self) -> Option<&Whole> {
-        self.writing.as_ref()
+    pub(crate) fn writing(&self) -> impl DoubleEndedIterator<Item = &Whole> {
+        self.pending.iter().filter_map(|one| one.writing.as_ref())
     }
 
     /// Whether nothing has been cut.
@@ -253,7 +286,7 @@ impl Kept {
     /// nothing held there was no offer on screen to have prompted it, so the
     /// answer is no frame rather than an empty one.
     pub(crate) fn is_empty(&self) -> bool {
-        self.whole.is_empty() && self.writing.is_none()
+        self.whole.is_empty() && self.writing().next().is_none()
     }
 }
 

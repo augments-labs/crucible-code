@@ -129,10 +129,15 @@ be the one being replaced.
 
 When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down
-what is worth keeping, and that recap stands where the messages it replaced
-were, with the most recent turns kept word for word — bounded in tokens rather
-than counted in turns, so a turn that is mostly tool output cannot carry the
-tail past the window on its own. The turn you are in is always kept whole:
+what is worth keeping in a fixed Goal/Constraints/Progress/Decisions/Next
+Steps/Critical Context checkpoint, and that recap stands where the messages it
+replaced were. The most recent turns stay word for word — bounded in tokens
+rather than counted in turns, so a turn that is mostly tool output cannot carry
+the tail past the window on its own. Old bulky tool output is pruned first; if a
+completed active tool pass still cannot fit, automatic recovery may recap that
+complete pass at the safe boundary before the next request.
+
+The result is reported in place:
 
 ```text
 ────────────────────────────────────────────────────────────────────────────────
@@ -157,9 +162,10 @@ room. Escape stops the notes, and the session is left exactly as it was:
 ```
 
 Half a recap is not a session's memory, and standing it in place of the messages
-it was meant to replace would lose the rest of them for good. So a stop replaces
-nothing, and a turn that was making room for itself ends there rather than
-asking for the notes again.
+it was meant to replace would lose the rest of them for good. So a cancelled,
+malformed, filtered, silently ended, or token-truncated recap replaces nothing,
+and a turn that was making room for itself ends there rather than asking for the
+notes again.
 
 If a provider refuses a request for want of room — because crucible had the
 window wrong, or was never told it — the same thing happens and the question

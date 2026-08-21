@@ -137,6 +137,7 @@ What happens when the model's window fills up. See
 | `when` | `full` to make room when there is none left, or `never`. |
 | `reserve` | Tokens kept free for the next answer and the tools it calls. |
 | `keep` | How many tokens of recent turns are kept word for word after the rest becomes a recap. |
+| `recap` | Maximum output tokens for the structured recap; concise recaps stop earlier. |
 | `askOnResume` | How large a session must be, in tokens, before picking it up asks about it. |
 | `spendCeiling` | The most tokens one turn may produce before crucible stops it. |
 
@@ -154,6 +155,11 @@ tail has to fit the window beside the recap, and only a figure in the window's
 own unit can promise that. The turn you are in is always kept whole, whatever
 it has cost so far; the budget bounds the turns before it. Left unset, crucible
 keeps the most recent 20,000 tokens.
+
+`recap` is a ceiling rather than a requested length. Left unset, a structured
+recap may produce up to 10,240 tokens, further limited by the model's output
+ceiling and the room safely available in its window. A recap that reaches its
+token ceiling or omits a required section replaces nothing.
 
 `reserve` is worked out from the model if you do not set it: enough for one
 answer of the length crucible asks for, plus the tool results a pass carries

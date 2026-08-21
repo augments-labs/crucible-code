@@ -143,23 +143,34 @@ fn spent(payload: &Value) -> Option<Delta> {
 /// before the model has written a word — which is the same reason [`spent`]
 /// arrives repeatedly and this does not.
 ///
-/// `input_tokens` alone. This endpoint reports what a cache read and a cache
-/// write cost in fields beside it, and crucible asks for neither: no request it
-/// builds carries a cache instruction, so those fields are absent and adding
-/// them would be reading a number nothing here can produce.
+/// Anthropic reports uncached input, cache writes, and cache reads as separate
+/// fields. All three occupy the request's context window, so the carried count
+/// is their sum. The cache fields may appear even where crucible did not mark a
+/// block itself — a gateway or provider feature can cache the request — and
+/// omitting them makes a mostly cached session look almost empty.
 ///
-/// Absent rather than zero where the count is missing, for the reason [`spent`]
-/// gives about its own: a request whose size nobody reported and one that
-/// carried nothing are different facts, and this is the one compaction is
-/// decided on.
+/// Absent rather than zero only where none of the three counts is present, for
+/// the reason [`spent`] gives about its own: a request whose size nobody
+/// reported and one that carried nothing are different facts.
 fn opened(payload: &Value) -> Option<Delta> {
-    let tokens = payload
+    let usage = payload
         .get("message")
-        .and_then(|message| message.get("usage"))
-        .and_then(|usage| usage.get("input_tokens"))
-        .and_then(Value::as_u64)?;
+        .and_then(|message| message.get("usage"))?;
+    let fields = [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ];
+    let mut reported = false;
+    let mut tokens = 0_u64;
+    for field in fields {
+        if let Some(count) = usage.get(field).and_then(Value::as_u64) {
+            reported = true;
+            tokens = tokens.saturating_add(count);
+        }
+    }
 
-    Some(Delta::Carried(Carried::new(tokens)))
+    reported.then(|| Delta::Carried(Carried::new(tokens)))
 }
 
 /// The model saying it has stopped, and why.
@@ -408,6 +419,21 @@ mod tests {
             deltas(&event(
                 "message_start",
                 r#"{"message":{"id":"msg_1","usage":{"input_tokens":1200}}}"#,
+            ))
+            .unwrap(),
+            vec![Delta::Carried(Carried::new(1200))]
+        );
+    }
+
+    #[test]
+    fn cached_input_is_part_of_what_an_anthropic_request_carried() {
+        // These are disjoint usage buckets in the Messages API. Counting only
+        // `input_tokens` makes a request served mostly from cache look almost
+        // empty even though cache reads and writes occupy the same window.
+        assert_eq!(
+            deltas(&event(
+                "message_start",
+                r#"{"message":{"id":"msg_1","usage":{"input_tokens":200,"cache_creation_input_tokens":300,"cache_read_input_tokens":700}}}"#,
             ))
             .unwrap(),
             vec![Delta::Carried(Carried::new(1200))]

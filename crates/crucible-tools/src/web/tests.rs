@@ -282,7 +282,7 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
         .expect("a source failure to reach the model rather than the runner");
 
     assert!(output.is_failed());
-    assert!(output.text().contains("503"), "{}", output.text());
+    assert_eq!(output.text(), "web source error: fake: HTTP 503: busy\n");
 }
 
 #[test]

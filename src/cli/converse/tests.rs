@@ -71,6 +71,7 @@ pub(super) fn plain() -> Terms {
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.
         provider: Cell::new(Some("anthropic")),
+        settings: crucible_config::Settings::default(),
         choosing: unwritten.join("config.json"),
 
         // The same again: `/login` is driven where a store of its own is

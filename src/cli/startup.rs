@@ -42,7 +42,7 @@ use super::{Fatal, PROVIDERS, Served};
 /// the room kept free for the next exchange is worked out from this figure.
 /// Sixteen thousand is a long answer or a large edit, and a fraction of even a
 /// small window.
-const CEILING: u32 = 16_000;
+pub(super) const CEILING: u32 = 16_000;
 
 /// And where this build knows nothing about the model at all.
 ///
@@ -50,7 +50,7 @@ const CEILING: u32 = 16_000;
 /// asking for a long answer risks a vendor refusing the request outright — and
 /// a conservative ceiling costs a truncated answer at worst, where an optimistic
 /// one costs the turn.
-const UNKNOWN_CEILING: u32 = 8192;
+pub(super) const UNKNOWN_CEILING: u32 = 8192;
 
 /// The name the tool that writes the plan is called by.
 ///
@@ -807,6 +807,7 @@ fn compacting(settings: &Settings) -> Compaction {
         automatic: said.when.automatic(),
         reserve: said.reserve,
         keep_tokens: said.keep.unwrap_or(asked.keep_tokens),
+        recap_tokens: said.recap.unwrap_or(asked.recap_tokens),
         spend_ceiling: said.spend_ceiling,
         ask_on_resume: said.ask_on_resume,
     }
@@ -821,7 +822,7 @@ fn compacting(settings: &Settings) -> Compaction {
 /// away — or die at the vendor — before anybody could tell why. Where nothing is
 /// known the turn simply runs without a proactive bound, and the provider
 /// refusing is what makes room instead.
-fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
+pub(super) fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
     settings
         .context_window(provider, model)
         .or_else(|| super::facts(provider, model).map(|facts| facts.window))
@@ -834,7 +835,7 @@ fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
 /// for — a name one word from a listed one is a name nothing is known about,
 /// and borrowing the neighbour's figure is how a request comes to be refused
 /// for a reason nobody can see.
-fn ceiling(provider: &str, model: &str) -> u32 {
+pub(super) fn ceiling(provider: &str, model: &str) -> u32 {
     super::facts(provider, model).map_or(UNKNOWN_CEILING, |facts| facts.output.min(CEILING))
 }
 

@@ -18,7 +18,59 @@ fn nothing_has_been_reported_so_the_load_is_what_was_appended_at_a_cautious_rate
     // No response has been seen, so there is no rate to use but the pessimistic
     // one. Over-stating here costs an early compaction; under-stating costs the
     // turn.
-    assert_eq!(load.tokens(), 1_000);
+    assert_eq!(load.tokens(), 1_002);
+}
+
+#[test]
+fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
+    let mut load = Load::default();
+    load.recorded(&Message::User("x".repeat(300).into()));
+    let tools = [ToolSchema {
+        name: "read",
+        schema: Box::leak("s".repeat(536).into_boxed_str()),
+    }];
+
+    load.requesting(Some(&"i".repeat(60)), &tools);
+
+    // 300 transcript bytes + 60 instructions + 4 name + 536 schema + the
+    // conservative 64-byte provider wrapper, at three bytes per token.
+    assert_eq!(load.tokens(), 322);
+    assert_eq!(load.left(Some(200_000)), None);
+}
+
+#[test]
+fn same_sized_new_request_overhead_invalidates_an_exact_percentage() {
+    let mut load = Load::default();
+    load.recorded(&Message::User("request".into()));
+    load.requesting(Some("system one"), &[]);
+    load.responding();
+    load.carried(Carried::new(100));
+    assert_eq!(load.left(Some(200)), Some(50));
+
+    load.requesting(Some("system two"), &[]);
+
+    assert_eq!(load.left(Some(200)), None);
+    assert!(
+        load.tokens() > 100,
+        "the replacement overhead disappeared from the estimate"
+    );
+}
+
+#[test]
+fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
+    let mut load = Load::default();
+    load.recorded(&Message::User("x".repeat(300).into()));
+    let tools = [ToolSchema {
+        name: "read",
+        schema: Box::leak("s".repeat(536).into_boxed_str()),
+    }];
+    load.requesting(Some(&"i".repeat(60)), &tools);
+    load.responding();
+
+    load.carried(Carried::new(1_000));
+
+    assert_eq!(load.tokens(), 1_000, "request overhead was counted twice");
+    assert_eq!(load.left(Some(2_000)), Some(50));
 }
 
 #[test]
@@ -43,9 +95,10 @@ fn what_was_appended_since_is_estimated_at_this_models_own_rate() {
     load.spent(Spend::new(1_000));
     load.recorded(&results(40_000));
 
-    // 40 000 bytes at that rate is 10 000 tokens — not the 13 333 the
-    // uncalibrated divisor would have guessed.
-    assert_eq!(load.tokens(), 111_000);
+    // Result IDs are request metadata too. At the calibrated rate, this
+    // appended result conservatively rounds up to 10 002 tokens rather than
+    // using the uncalibrated 13 336.
+    assert_eq!(load.tokens(), 111_002);
 }
 
 #[test]
@@ -67,16 +120,85 @@ fn the_answer_is_counted_once_rather_than_measured_as_well() {
 }
 
 #[test]
+fn agent_prose_is_estimated_when_an_existing_transcript_is_recounted() {
+    let mut load = Load::default();
+    load.recounted(&Message::Agent {
+        text: "x".repeat(3_000).into(),
+        calls: Vec::new(),
+        stop: None,
+    });
+
+    assert_eq!(load.tokens(), 1_000);
+    assert_eq!(load.left(Some(200_000)), None);
+}
+
+#[test]
 fn a_response_supersedes_the_last_one_rather_than_adding_to_it() {
     let mut load = Load::default();
     load.carried(Carried::new(100_000));
+    load.spent(Spend::new(2_000));
     load.recorded(&results(4_000));
 
     // The transcript goes whole to the provider every time, so the next
-    // response's count already contains everything the last one's did.
-    load.carried(Carried::new(102_000));
+    // response's input already includes the preceding response's output and
+    // everything appended after it. Neither may remain beside the new count.
+    load.responding();
+    load.carried(Carried::new(104_000));
 
-    assert_eq!(load.tokens(), 102_000, "the two counts were added together");
+    assert_eq!(load.tokens(), 104_000, "old output was counted twice");
+}
+
+#[test]
+fn locally_estimated_tool_output_hides_an_older_exact_percentage() {
+    let mut load = Load::default();
+    load.carried(Carried::new(50_000));
+    assert_eq!(load.left(Some(200_000)), Some(75));
+
+    load.recorded(&results(30_000));
+
+    assert_eq!(load.left(Some(200_000)), None);
+    assert!(load.tokens() > 50_000, "the estimate stopped counting");
+}
+
+#[test]
+fn response_growth_hides_the_percentage_until_output_usage_catches_up() {
+    let mut load = Load::default();
+    load.carried(Carried::new(50_000));
+    assert!(load.produced());
+    assert_eq!(load.left(Some(200_000)), None);
+    assert!(!load.produced(), "a second fragment invalidated it twice");
+
+    load.spent(Spend::new(10_000));
+    assert_eq!(load.left(Some(200_000)), Some(70));
+}
+
+#[test]
+fn unreported_response_output_is_estimated_when_it_is_recorded() {
+    let mut load = Load::default();
+    load.recorded(&results(3_000));
+    load.carried(Carried::new(1_000));
+    load.produced();
+    load.recorded(&Message::Agent {
+        text: "x".repeat(3_000).into(),
+        calls: Vec::new(),
+        stop: None,
+    });
+
+    // The six-byte result ID is part of the calibration, so 3 000 bytes of
+    // prose conservatively round up to 999 tokens at that request's rate.
+    assert_eq!(load.tokens(), 1_999);
+    assert_eq!(load.left(Some(200_000)), None);
+}
+
+#[test]
+fn an_estimate_is_not_presented_as_an_exact_window_percentage() {
+    let mut load = Load::default();
+    load.recorded(&results(50_000));
+
+    assert_eq!(load.left(Some(200_000)), None);
+
+    load.carried(Carried::new(50_000));
+    assert_eq!(load.left(Some(200_000)), Some(75));
 }
 
 #[test]
@@ -103,8 +225,9 @@ fn bytes_become_tokens_at_the_rate_the_last_response_proved() {
     let mut load = Load::default();
     assert_eq!(load.bytes_to_tokens(3_000), 1_000);
 
-    // Once a response has said what 400 000 bytes carried, the same bytes are
-    // read at that rate instead.
+    // Once a response has said what the result and its six-byte ID carried,
+    // the same bytes are read at that rate instead. A fractional token rounds
+    // up because this estimate protects a request boundary.
     load.recorded(&results(400_000));
     load.carried(Carried::new(100_000));
     assert_eq!(load.bytes_to_tokens(40_000), 10_000);
@@ -137,8 +260,11 @@ fn a_window_is_full_once_there_is_no_room_left_for_another_exchange() {
     let mut load = Load::default();
     load.carried(Carried::new(160_000));
 
-    assert!(!load.full(Some(200_000), 36_000));
-    assert!(load.full(Some(196_000), 36_000));
+    // Exactly the production rule: carried + reserve >= window, equivalently
+    // carried >= window - reserve. One token below the boundary still fits;
+    // the boundary itself compacts before another request is sent.
+    assert!(!load.full(Some(200_000), 39_999));
+    assert!(load.full(Some(200_000), 40_000));
 
     // And never, where no window is known: nothing here decides a session is
     // full against a number nobody stated.

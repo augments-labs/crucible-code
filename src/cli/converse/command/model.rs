@@ -240,7 +240,11 @@ fn taken<T: Terminal>(
         runner.serve(set.provider);
         terms.provider.set(Some(provider));
     }
-    runner.ask(name);
+    runner.ask(
+        name,
+        crate::cli::startup::ceiling(provider, name),
+        crate::cli::startup::window(provider, name, &terms.settings),
+    );
 
     // The word may have come off the line and was never shape-checked — anything
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
@@ -312,9 +316,14 @@ fn listed<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
-    use crucible_tui::Glyphs;
+    use crucible_runner::{Model as RunnerModel, Session, Tools};
+    use crucible_tui::{Glyphs, Recording, Renderer};
 
-    use super::{PROVIDERS, Selected, beside};
+    use crate::cli::converse::tests::plain;
+    use crate::cli::fake::Script;
+    use crate::cli::sample::Sample;
+
+    use super::{PROVIDERS, Selected, beside, taken};
 
     #[test]
     fn what_stands_between_the_vendor_and_the_flag_comes_out_of_the_glyph_set() {
@@ -340,5 +349,43 @@ mod tests {
                 provider.shown, provider.name, model.name
             )
         );
+    }
+    #[test]
+    fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
+        let sample = Sample::new("model-runtime-limits");
+        let mut terms = plain();
+        terms.settings = sample.settings(
+            r#"{"providers":{"anthropic":{"contextWindow":{"claude-haiku-4-5":345678}}}}"#,
+        );
+        let mut runner = crucible_runner::Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            RunnerModel {
+                name: "old".into(),
+                max_tokens: 17,
+                window: Some(99),
+                system: None,
+                effort: None,
+            },
+            Session::nowhere(),
+        );
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        let anthropic = PROVIDERS
+            .into_iter()
+            .find(|provider| provider.name == "anthropic")
+            .expect("anthropic is served");
+
+        taken(
+            anthropic,
+            "claude-haiku-4-5",
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the model to be taken");
+
+        assert_eq!(runner.model(), "claude-haiku-4-5");
+        assert_eq!(runner.maximum_output(), 16_000);
+        assert_eq!(runner.context_window(), Some(345_678));
     }
 }

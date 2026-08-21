@@ -18,7 +18,10 @@
 //! carries a tokenizer, a divisor per vendor, or a table to keep up to date: a
 //! provider added later is calibrated by its first answer.
 
-use crucible_core::{Carried, Message, Spend};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use crucible_core::{Carried, Message, Spend, ToolSchema};
 
 /// Bytes per token before any response has been seen.
 ///
@@ -63,12 +66,36 @@ pub(super) struct Counting {
 pub(super) struct Load {
     /// What the last response said its own request carried.
     carried: u64,
-    /// What that response produced, which is in the transcript now.
+    /// Whether the current response reported its request input.
+    input_reported: bool,
+    /// Output reported since `carried`, across every response for which no
+    /// newer input count has superseded it yet.
     spent: u64,
-    /// Bytes of the transcript when that request went out.
+    /// The current response's contribution to `spent`.
+    ///
+    /// Providers may repeat a cumulative output count as a response streams.
+    /// Keeping this separately lets a later reading replace that response's
+    /// earlier reading without replacing output from an earlier uncounted-input
+    /// response too.
+    current_spent: u64,
+    /// Whether the current response has produced visible content or call data.
+    output_seen: bool,
+    /// Whether a provider count covers all output seen in this response so far.
+    output_reported: bool,
+    /// Estimated content bytes in the request whose input count was reported.
     sent: u64,
+    /// System-instruction and tool-schema bytes in that request.
+    sent_overhead: u64,
+    /// Identity of the fixed request content that report covered.
+    sent_overhead_signature: u64,
+    /// Content bytes in the request currently being answered.
+    in_flight: u64,
     /// Bytes appended since, less the answer already counted by `spent`.
     appended: u64,
+    /// System-instruction and advertised-tool bytes in the next request.
+    overhead: u64,
+    /// Identity of that fixed request content, including order and boundaries.
+    overhead_signature: u64,
     /// Bytes of the whole transcript, kept as it grows.
     ///
     /// Counted a message at a time rather than measured when it is wanted: the
@@ -78,19 +105,97 @@ pub(super) struct Load {
 }
 
 impl Load {
+    /// Sets the non-transcript content of the next ordinary model request.
+    ///
+    /// A provider's carried-input report includes both of these. They are only
+    /// estimated while no report covers the request being built; once one
+    /// arrives, [`Self::carried`] supersedes this estimate whole.
+    pub(super) fn requesting(&mut self, system: Option<&str>, tools: &[ToolSchema]) {
+        let system_bytes = system.map_or(0_u64, |text| text.len() as u64);
+        let schemas = tools.iter().fold(0_u64, |bytes, tool| {
+            bytes
+                .saturating_add(tool.name.len() as u64)
+                .saturating_add(tool.schema.len() as u64)
+                // Conservative allowance for the provider-specific object and
+                // field names wrapped around every function declaration.
+                .saturating_add(64)
+        });
+        self.overhead = system_bytes.saturating_add(schemas);
+
+        // Length alone is not identity: changing one same-sized instruction or
+        // schema changes tokenization just as surely as changing its size. The
+        // signature is used only inside this process to decide whether an old
+        // exact report still covers the request now being built.
+        let mut signature = DefaultHasher::new();
+        system.hash(&mut signature);
+        system.is_some().hash(&mut signature);
+        tools.len().hash(&mut signature);
+        for tool in tools {
+            tool.name.hash(&mut signature);
+            tool.schema.hash(&mut signature);
+        }
+        self.overhead_signature = signature.finish();
+    }
+
+    /// Opens another provider response over the request as it stands.
+    pub(super) fn responding(&mut self) {
+        self.input_reported = false;
+        self.current_spent = 0;
+        self.output_seen = false;
+        self.output_reported = false;
+        self.in_flight = self.bytes.saturating_add(self.overhead);
+    }
+
     /// What the request that has just been answered carried.
     pub(super) fn carried(&mut self, carried: Carried) {
         self.carried = carried.tokens();
+        self.input_reported = true;
+        // The count just reported is the input to the response now arriving.
+        // Output from preceding responses and everything appended after them is
+        // already inside that input. Preserve only an output count belonging to
+        // this response in case a compatible endpoint reported it first.
+        self.spent = self.current_spent;
         // What the transcript held when the request went out, which is what it
         // holds now: this arrives while the answer is still being read, before
         // any of it has been recorded.
-        self.sent = self.bytes;
+        self.sent = if self.in_flight == 0 {
+            self.bytes.saturating_add(self.overhead)
+        } else {
+            self.in_flight
+        };
+        self.sent_overhead = self.overhead;
+        self.sent_overhead_signature = self.overhead_signature;
         self.appended = 0;
     }
 
     /// What that response produced.
     pub(super) fn spent(&mut self, spent: Spend) {
-        self.spent = spent.tokens();
+        let spent = spent.tokens();
+        self.spent = self
+            .spent
+            .saturating_sub(self.current_spent)
+            .saturating_add(spent);
+        self.current_spent = spent;
+        self.output_reported = true;
+    }
+
+    /// Notes provider output whose exact token count has not caught up yet.
+    ///
+    /// Returns whether an exact percentage was just invalidated, so a stream of
+    /// text posts one clearing event rather than one per fragment.
+    pub(super) fn produced(&mut self) -> bool {
+        let was = self.exact();
+        self.output_seen = true;
+        self.output_reported = false;
+        was
+    }
+
+    fn exact(&self) -> bool {
+        self.input_reported
+            && self.appended == 0
+            && self.overhead == self.sent_overhead
+            && self.overhead_signature == self.sent_overhead_signature
+            && (!self.output_seen || self.output_reported)
     }
 
     /// A message added to the transcript since.
@@ -100,22 +205,62 @@ impl Load {
     /// exactly and is already held as `spent`, so estimating its bytes as well
     /// would count one answer twice.
     pub(super) fn recorded(&mut self, message: &Message) {
-        let (bytes, estimated) = match message {
-            Message::Agent { text, .. } => (text.len(), false),
-            Message::User(said) => (said.len(), true),
-            Message::ToolResults(results) => (
-                results
-                    .iter()
-                    .map(|result| result.output.text().len())
-                    .sum::<usize>(),
-                true,
-            ),
+        let bytes = Self::bytes(message);
+        let estimated = match message {
+            Message::Agent { .. } => !self.output_reported,
+            Message::User(_) | Message::ToolResults(_) => true,
         };
 
-        self.bytes = self.bytes.saturating_add(bytes as u64);
+        self.bytes = self.bytes.saturating_add(bytes);
         if estimated {
-            self.appended = self.appended.saturating_add(bytes as u64);
+            self.appended = self.appended.saturating_add(bytes);
         }
+        if matches!(message, Message::User(_) | Message::ToolResults(_)) {
+            // The next response has not reported the request containing this
+            // message, nor any output it may go on to produce.
+            self.input_reported = false;
+            self.output_reported = false;
+        }
+    }
+
+    /// A message already standing when the load's calibration was reset.
+    ///
+    /// Unlike [`Self::recorded`], an agent answer here has no matching `spent`
+    /// count left beside it. It must therefore be estimated with every other
+    /// message; otherwise model changes and compaction make all earlier agent
+    /// prose disappear from the next-request load.
+    pub(super) fn recounted(&mut self, message: &Message) {
+        let bytes = Self::bytes(message);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.appended = self.appended.saturating_add(bytes);
+    }
+
+    fn bytes(message: &Message) -> u64 {
+        (match message {
+            Message::Agent { text, calls, .. } => text.len().saturating_add(
+                calls
+                    .iter()
+                    .map(|call| {
+                        call.id
+                            .as_str()
+                            .len()
+                            .saturating_add(call.name.len())
+                            .saturating_add(call.args.as_str().len())
+                    })
+                    .sum::<usize>(),
+            ),
+            Message::User(said) => said.len(),
+            Message::ToolResults(results) => results
+                .iter()
+                .map(|result| {
+                    result
+                        .id
+                        .as_str()
+                        .len()
+                        .saturating_add(result.output.text().len())
+                })
+                .sum::<usize>(),
+        }) as u64
     }
 
     /// The whole of what the next request would carry, in tokens.
@@ -131,17 +276,40 @@ impl Load {
     /// At this model's own rate where one response has been seen, and at a
     /// deliberately pessimistic one before that.
     fn estimated(&self) -> u64 {
+        let bytes = if self.sent == 0 || self.carried == 0 {
+            // No exact request exists to include its fixed request content.
+            self.appended.saturating_add(self.overhead)
+        } else {
+            // The exact request already included its own overhead. Only growth
+            // since then belongs beside it. A decrease is deliberately not
+            // subtracted from an exact token count using a byte estimate: that
+            // conservatively overcounts until the next report supersedes it.
+            let changed = self.overhead != self.sent_overhead
+                || self.overhead_signature != self.sent_overhead_signature;
+            self.appended
+                .saturating_add(if changed { self.overhead } else { 0 })
+        };
+
         if self.sent == 0 || self.carried == 0 {
-            return self.appended / UNCALIBRATED;
+            return Self::ceiling(bytes, UNCALIBRATED);
         }
 
-        // `appended * carried / sent` — the appended bytes at the rate the last
-        // request's true token count implies. Multiplied before dividing so a
-        // short append does not round to nothing.
-        self.appended
-            .saturating_mul(self.carried)
-            .checked_div(self.sent)
-            .unwrap_or(0)
+        // `bytes * carried / sent` — new request bytes at the rate the last
+        // request's true token count implies. Rounded up: this count protects a
+        // request boundary, so dropping a fractional token would spend room the
+        // runner does not know it has.
+        Self::ceiling(bytes.saturating_mul(self.carried), self.sent)
+    }
+
+    /// Unreported request text at the deliberately cautious initial rate.
+    ///
+    /// A standalone recap prompt is not part of the transcript a prior provider
+    /// report calibrated, so using that ratio could amplify hidden request
+    /// overhead into thousands of invented tokens. Three bytes per token is the
+    /// conservative rate used before any report exists.
+    #[must_use]
+    pub(super) fn cautious(bytes: u64) -> u64 {
+        Self::ceiling(bytes, UNCALIBRATED)
     }
 
     /// What `bytes` of transcript is estimated to cost the window, in tokens.
@@ -154,15 +322,18 @@ impl Load {
     #[must_use]
     pub(super) fn bytes_to_tokens(&self, bytes: u64) -> u64 {
         if self.sent == 0 || self.carried == 0 {
-            return bytes / UNCALIBRATED;
+            return Self::ceiling(bytes, UNCALIBRATED);
         }
 
         // `bytes * carried / sent` — the bytes at the rate the last request's
-        // true token count implies, multiplied before dividing so a short
-        // message does not round to nothing.
-        bytes
-            .saturating_mul(self.carried)
-            .checked_div(self.sent)
+        // true token count implies. As above, a conservative estimate rounds up.
+        Self::ceiling(bytes.saturating_mul(self.carried), self.sent)
+    }
+
+    fn ceiling(numerator: u64, denominator: u64) -> u64 {
+        numerator
+            .saturating_add(denominator.saturating_sub(1))
+            .checked_div(denominator)
             .unwrap_or(0)
     }
 
@@ -172,6 +343,10 @@ impl Load {
     /// already run out.
     #[must_use]
     pub(super) fn left(&self, window: Option<u32>) -> Option<u8> {
+        if !self.exact() {
+            return None;
+        }
+
         let window = u64::from(window?);
         let used = self.tokens().min(window);
 
@@ -181,7 +356,7 @@ impl Load {
     /// Whether there is no longer room for another exchange.
     #[must_use]
     pub(super) fn full(&self, window: Option<u32>, reserve: u64) -> bool {
-        window.is_some_and(|window| self.tokens() + reserve >= u64::from(window))
+        window.is_some_and(|window| self.tokens().saturating_add(reserve) >= u64::from(window))
     }
 
     /// Starts again over a transcript that has been replaced.
@@ -191,6 +366,24 @@ impl Load {
     /// request this session will now never send.
     pub(super) fn replaced(&mut self) {
         *self = Self::default();
+    }
+
+    /// Invalidates provider-specific usage while keeping transcript bytes.
+    ///
+    /// Used for model and provider changes. It is the same conservative recount
+    /// as [`Self::recounted`], but constant-time because no message changed and
+    /// the byte total is already maintained as the transcript grows.
+    pub(super) fn reestimated(&mut self) {
+        let bytes = self.bytes;
+        let overhead = self.overhead;
+        let overhead_signature = self.overhead_signature;
+        *self = Self {
+            appended: bytes,
+            overhead,
+            overhead_signature,
+            bytes,
+            ..Self::default()
+        };
     }
 }
 

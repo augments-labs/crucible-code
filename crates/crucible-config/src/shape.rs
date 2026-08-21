@@ -422,6 +422,14 @@ const COMPACTION: &[Field] = &[
         widens: false,
     },
     Field {
+        name: "recap",
+        about: "Maximum tokens a structured compaction recap may produce; ordinary recaps stop earlier",
+        shape: Shape::Count,
+        examples: &[],
+        usual: None,
+        widens: false,
+    },
+    Field {
         name: "askOnResume",
         about: "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
         shape: Shape::Count,

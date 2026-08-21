@@ -699,3 +699,13 @@ fn the_tools_a_session_already_had_are_unchanged_in_name_and_order() {
         ]
     );
 }
+
+#[test]
+fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
+    let defaults = compacting(&Settings::default());
+    assert_eq!(defaults.recap_tokens, 10_240);
+
+    let sample = Sample::new("compaction-recap-ceiling");
+    let configured = sample.settings(r#"{"compaction":{"recap":12000}}"#);
+    assert_eq!(compacting(&configured).recap_tokens, 12_000);
+}

@@ -26,6 +26,7 @@ pub(crate) struct SentRequest {
     pub(crate) transcript_len: usize,
     agent_text: Vec<u64>,
     pub(crate) tools: Vec<ToolSchema>,
+    pub(crate) max_tokens: u32,
     pub(crate) effort: Option<Effort>,
 }
 
@@ -134,6 +135,7 @@ impl Provider for Script {
                 })
                 .collect(),
             tools: request.tools.to_vec(),
+            max_tokens: request.max_tokens,
             effort: request.effort,
         });
 

@@ -99,6 +99,14 @@ struct TurnBounds {
     tool_output: usize,
 }
 
+/// The state one provider request reads and updates together.
+struct Listening<'a> {
+    events: &'a dyn Post,
+    cancel: &'a Cancel,
+    advertised: &'a [ToolSchema],
+    counting: &'a mut Counting,
+}
+
 impl TurnBounds {
     fn heard(&mut self, answer: &Answer) {
         self.retained = self.retained.saturating_add(answer.retained());
@@ -142,6 +150,8 @@ pub struct Compaction {
     /// enormous: the kept tail is what has to fit beside the recap, and only a
     /// figure in the window's own unit can promise that.
     pub keep_tokens: u64,
+    /// Maximum output tokens given to the structured recap request.
+    pub recap_tokens: u32,
     /// The most one turn may produce before it is stopped, in tokens.
     pub spend_ceiling: Option<u64>,
     /// How large a session must be before picking it up asks about it.
@@ -162,6 +172,9 @@ impl Default for Compaction {
             // needs. In tokens, so a turn that is mostly tool output cannot
             // blow straight past it.
             keep_tokens: 20_000,
+            // A ceiling rather than a target. Ordinary checkpoints finish far
+            // below it; long technical sessions are not forced through 4k.
+            recap_tokens: 10_240,
             spend_ceiling: None,
             ask_on_resume: None,
         }
@@ -189,7 +202,7 @@ impl Runner {
     /// A session that has not said anything yet.
     #[must_use]
     pub fn new(provider: Box<dyn Provider>, tools: Tools, model: Model, session: Session) -> Self {
-        Self {
+        let mut runner = Self {
             provider,
             tools,
             model,
@@ -199,7 +212,11 @@ impl Runner {
             turn: TurnId::FIRST,
             compacting: Compaction::default(),
             load: Load::default(),
-        }
+        };
+        runner
+            .load
+            .requesting(runner.model.system.as_deref(), &runner.tools.advertised());
+        runner
     }
 
     /// Takes the engine configuration described, rather than the default one.
@@ -247,8 +264,10 @@ impl Runner {
     fn recount(&mut self) {
         self.load.replaced();
         for message in self.transcript.messages() {
-            self.load.recorded(message);
+            self.load.recounted(message);
         }
+        self.load
+            .requesting(self.model.system.as_deref(), &self.tools.advertised());
     }
 
     /// Puts this runner on a different session, and hands back the one it was
@@ -365,6 +384,18 @@ impl Runner {
         &self.model.name
     }
 
+    /// The maximum output carried with the next provider request.
+    #[must_use]
+    pub fn maximum_output(&self) -> u32 {
+        self.model.max_tokens
+    }
+
+    /// The context window used for proactive compaction, where known.
+    #[must_use]
+    pub fn context_window(&self) -> Option<u32> {
+        self.model.window
+    }
+
     /// The vendor this session is writing to, by the name it is asked for on
     /// the command line and written down under.
     ///
@@ -386,8 +417,16 @@ impl Runner {
     ///
     /// Reachable between turns, where [`Runner::switch`] is and for the same
     /// reason: a turn owns the runner while it runs.
-    pub fn ask(&mut self, model: &str) {
+    ///
+    /// The limits travel with the name. Usage reported by the previous model is
+    /// not meaningful against either the new tokenizer or its window, so the
+    /// transcript is recounted as a conservative estimate until the new model
+    /// reports an exact request size of its own.
+    pub fn ask(&mut self, model: &str, max_tokens: u32, window: Option<u32>) {
         self.model.name = model.into();
+        self.model.max_tokens = max_tokens;
+        self.model.window = window;
+        self.load.reestimated();
     }
 
     /// Stands the session under different instructions from the next turn on.
@@ -403,6 +442,8 @@ impl Runner {
     /// reason: a turn owns the runner while it runs.
     pub fn telling(&mut self, system: &str) {
         self.model.system = Some(system.into());
+        self.load
+            .requesting(self.model.system.as_deref(), &self.tools.advertised());
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -422,6 +463,10 @@ impl Runner {
     /// reason: a turn owns the runner while it runs.
     pub fn serve(&mut self, provider: Box<dyn Provider>) {
         self.provider = provider;
+        // Cached-token and tokenizer semantics belong to the provider that
+        // reported them. Keep the transcript, but not that provider's exact
+        // reading of it.
+        self.load.reestimated();
     }
 
     /// How hard this session is asking the model to think.
@@ -603,12 +648,21 @@ impl Runner {
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
                 self.record(Message::User(line.into()));
+                events.post(Event::Carried { left: None });
             }
+
+            // Read once per pass: `tool_search` can reveal a schema mid-turn.
+            // The exact set measured here is handed to the request below, so an
+            // estimate cannot count one set and send another.
+            let advertised = self.tools.advertised();
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
             // is what makes the check below see the results of the last one.
             counting.load = self.load;
+            counting
+                .load
+                .requesting(self.model.system.as_deref(), &advertised);
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -633,7 +687,10 @@ impl Runner {
             // carries on afterwards rather than ending.
             if self.compacting.automatic && counting.load.full(counting.window, reserve) {
                 match self.made_room(Compacting::Full, events, cancel, &mut fruitless)? {
-                    After::Carry => {}
+                    // Re-enter the boundary check against the reduced load.
+                    // A prune that helped but did not help enough may still need
+                    // the complete-active-pass recap before any request is safe.
+                    After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
                     After::Stopped => return Ok(StopReason::Cancelled),
                 }
@@ -642,7 +699,23 @@ impl Runner {
             // The other half of the reactive rail. One vendor says the request
             // did not fit inside a response it went on to stream; the others
             // refuse it outright, and the remedy is the same either way.
-            let heard = match self.listen(events, cancel, &bounds, &mut counting) {
+            // Compaction replaced `self.load`; refresh the request estimate
+            // before sending rather than carrying the pre-compaction count into
+            // the response that calibrates it.
+            counting.load = self.load;
+            counting
+                .load
+                .requesting(self.model.system.as_deref(), &advertised);
+
+            let heard = match self.listen(
+                &bounds,
+                Listening {
+                    events,
+                    cancel,
+                    advertised: &advertised,
+                    counting: &mut counting,
+                },
+            ) {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
                     if self.compacting.automatic =>
                 {
@@ -735,6 +808,7 @@ impl Runner {
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
             self.record(Message::ToolResults(results));
+            events.post(Event::Carried { left: None });
 
             match went {
                 Went::On => {}
@@ -831,10 +905,8 @@ impl Runner {
     /// transcript holding the half that was taken back.
     fn listen(
         &mut self,
-        events: &dyn Post,
-        cancel: &Cancel,
         bounds: &TurnBounds,
-        counting: &mut Counting,
+        mut listening: Listening<'_>,
     ) -> Result<(Answer, StopReason), TurnError> {
         let mut left = RETRIES;
         let mut pause = FIRST_PAUSE;
@@ -846,18 +918,18 @@ impl Runner {
                 MAX_TURN_RESPONSE_BYTES,
             );
 
-            let problem = match self.hearing(&mut answer, events, cancel, counting) {
+            let problem = match self.hearing(&mut answer, &mut listening) {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
 
             if left > 0 && Self::again(&problem, &answer) {
                 left -= 1;
-                events.post(Event::Retrying);
+                listening.events.post(Event::Retrying);
 
                 // A pause the user sat through and then had to interrupt would
                 // be this program keeping them waiting rather than the provider.
-                if Self::pausing(pause, cancel) {
+                if Self::pausing(pause, listening.cancel) {
                     pause = pause.saturating_mul(2);
                     continue;
                 }
@@ -883,18 +955,20 @@ impl Runner {
     fn hearing(
         &self,
         answer: &mut Answer,
-        events: &dyn Post,
-        cancel: &Cancel,
-        counting: &mut Counting,
+        listening: &mut Listening<'_>,
     ) -> Result<StopReason, TurnError> {
-        // Read once per pass rather than once per turn: `tool_search` reveals a
-        // name while the turn is running, and what it revealed has to be in the
-        // very next request or the model cannot call what it just looked up.
-        let advertised = self.tools.advertised();
-        let mut stream = self.provider.stream(self.request(&advertised), cancel)?;
+        listening.counting.load.responding();
+        let mut stream = self
+            .provider
+            .stream(self.request(listening.advertised), listening.cancel)?;
 
-        Self::hear(stream.as_mut(), answer, events, counting)
-            .and_then(|()| answer.reached().map_err(TurnError::from))
+        Self::hear(
+            stream.as_mut(),
+            answer,
+            listening.events,
+            listening.counting,
+        )
+        .and_then(|()| answer.reached().map_err(TurnError::from))
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
@@ -948,14 +1022,27 @@ impl Runner {
                 Delta::Text(text) => {
                     answer.say(&text)?;
                     events.post(Event::Delta { text });
+                    Self::output_grew(events, counting);
                 }
-                Delta::ToolStarted { id, name } => answer.calling(id, name)?,
-                Delta::ToolArgs(fragment) => answer.arguments(&fragment)?,
+                Delta::ToolStarted { id, name } => {
+                    answer.calling(id, name)?;
+                    Self::output_grew(events, counting);
+                }
+                Delta::ToolArgs(fragment) => {
+                    answer.arguments(&fragment)?;
+                    Self::output_grew(events, counting);
+                }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
                     counting.load.spent(said);
                     events.post(Event::Spent {
                         spend: counting.spent,
+                    });
+                    // Output occupies the same context window as input. Report
+                    // the percentage again as it grows rather than leaving the
+                    // opening input count on screen for the whole response.
+                    events.post(Event::Carried {
+                        left: counting.load.left(counting.window),
                     });
                 }
                 // Not added to the spend beside it, and not accumulated at
@@ -996,6 +1083,13 @@ impl Runner {
         }
 
         Ok(())
+    }
+
+    /// Hides an exact percentage once uncounted response output arrives.
+    fn output_grew(events: &dyn Post, counting: &mut Counting) {
+        if counting.load.produced() {
+            events.post(Event::Carried { left: None });
+        }
     }
 
     /// Where a transcript that already happened leaves the count.
