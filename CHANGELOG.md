@@ -4,7 +4,7 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] - 2026-08-21
 
 ### Added
 
@@ -20,6 +20,35 @@ finish. Shift+Return needs a terminal that agreed to spell a modified key apart,
 and Alt+Return and Ctrl+J are two more bindings to have been told about; this is
 the one that asks the terminal for nothing and is already in the fingers of
 anybody who has used a shell.
+
+### Changed
+
+**The whole queue goes to one turn rather than a turn each.** Lines typed behind
+a turn are one thing you wanted said, and answering the first before the model
+had read the third meant working to a question you had already added to. The
+oldest is now the turn's prompt and the rest are handed to the same turn before
+it asks anything; each stays its own message, in the order it was typed.
+
+**A queue stood open with Ctrl+Q is nobody's but yours until you close it.** The
+turn above goes on writing and takes none of those lines, so a prompt you are
+part-way through editing cannot land in the transcript where it can no longer be
+taken back. Closing the view releases the batch at once, and Esc while it stands
+closes it rather than interrupting the turn.
+
+**The prompt box is framed in one colour, whatever permission mode is in
+force.** The mode's own sentence under the box keeps its ramp, so the screen
+still says which one you are in — but the border is the largest thing on it and
+is up in every frame, and a hue meaning *be careful* stretched along it had
+stopped being a warning by the second prompt.
+
+### Removed
+
+**`output.mouse` is gone, and so is holding the mouse all session.** Selecting
+with a drag and scrolling with the wheel are the terminal's again, everywhere,
+with nothing held and nothing configured — a terminal forwarding buttons is not
+using them itself, and neither was worth what it cost. A list or a panel still
+takes the pointer for as long as it stands, and a document naming the removed
+key now fails to parse.
 
 ### Fixed
 
@@ -60,37 +89,6 @@ Return was answered before the editor saw it, so on the arrangement that exists
 for a terminal keeping Shift+Return to itself the bare key queued a line the
 reader had asked to break, and the modified key — the one that does send — was
 dropped on the way back.
-
-### Removed
-
-**`output.mouse` is gone, and so is holding the mouse all session.** Selecting
-with a drag and scrolling with the wheel are the terminal's again, everywhere,
-with nothing held and nothing configured — a terminal forwarding buttons is not
-using them itself, and neither was worth what it cost. A list or a panel still
-takes the pointer for as long as it stands, and a document naming the removed
-key now fails to parse.
-
-### Changed
-
-**The whole queue goes to one turn rather than a turn each.** Lines typed behind
-a turn are one thing you wanted said, and answering the first before the model
-had read the third meant working to a question you had already added to. The
-oldest is now the turn's prompt and the rest are handed to the same turn before
-it asks anything; each stays its own message, in the order it was typed.
-
-**A queue stood open with Ctrl+Q is nobody's but yours until you close it.** The
-turn above goes on writing and takes none of those lines, so a prompt you are
-part-way through editing cannot land in the transcript where it can no longer be
-taken back. Closing the view releases the batch at once, and Esc while it stands
-closes it rather than interrupting the turn.
-
-**The prompt box is framed in one colour, whatever permission mode is in
-force.** The mode's own sentence under the box keeps its ramp, so the screen
-still says which one you are in — but the border is the largest thing on it and
-is up in every frame, and a hue meaning *be careful* stretched along it had
-stopped being a warning by the second prompt.
-
-### Fixed
 
 **The panel naming queued prompts is drawn like the box under it.** Its rows
 were padded to a width that had already spent a column on the left border, so
@@ -2428,7 +2426,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/augments-labs/crucible-code/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/augments-labs/crucible-code/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/augments-labs/crucible-code/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/augments-labs/crucible-code/compare/v0.13.0...v0.13.1
