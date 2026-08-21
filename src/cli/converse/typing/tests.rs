@@ -880,3 +880,48 @@ fn a_box_with_nothing_in_it_says_nothing_and_leaves_the_clipboard_alone() {
     );
     assert_eq!(renderer.terminal().written(), "");
 }
+
+/// One command that ended on its own, as the reaper hands it over.
+fn ended(number: usize, code: Option<i32>) -> Ended {
+    Ended {
+        tool: "bash",
+        number,
+        called: "cargo build --release".into(),
+        code,
+        lines: 42,
+    }
+}
+
+#[test]
+fn nothing_having_ended_asks_for_no_turn() {
+    assert!(woken(&[]).is_none());
+}
+
+#[test]
+fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
+    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0))]) else {
+        panic!("an ending to ask for a turn");
+    };
+
+    // The number is how the model refers to it and how the panel lists it, the
+    // command is what it was, and the exit is the half a reader cannot go back
+    // and ask for once the process is gone.
+    assert!(said.contains("#1"), "{said}");
+    assert!(said.contains("cargo build --release"), "{said}");
+    assert!(said.contains("finished"), "{said}");
+}
+
+#[test]
+fn every_command_that_ended_is_in_the_one_turn_they_ask_for() {
+    // Two servers falling over between one turn and the next is one turn about
+    // both of them. A turn each would be the second one arriving after the
+    // model had already answered about the first.
+    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0)), ended(2, Some(2)), ended(3, None)])
+    else {
+        panic!("the endings to ask for a turn");
+    };
+
+    assert!(said.contains("#1"), "{said}");
+    assert!(said.contains("exit status 2"), "{said}");
+    assert!(said.contains("killed"), "{said}");
+}

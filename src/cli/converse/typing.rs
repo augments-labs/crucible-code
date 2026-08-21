@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
-use crucible_tools::Background;
+use crucible_tools::{Background, Ended};
 use crucible_tui::{
     Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot,
     Terminal, Typed, characters, pressed, waiting,
@@ -42,6 +42,7 @@ use crucible_tui::{
 
 use crate::cli::Fatal;
 use crate::cli::kept::Kept;
+use crate::cli::standing;
 use crate::cli::style::Style;
 
 use super::command;
@@ -148,6 +149,17 @@ pub(crate) enum Asked {
     Clicked(usize),
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
+    /// A command left running has ended, and this is the turn it asks for.
+    ///
+    /// The reader was told in a line the moment it happened, and being told is
+    /// where it ends for them. For the model it is not: one that started a
+    /// build and yielded is waiting on the machine rather than on the person at
+    /// the keyboard, and a fact it can only be handed at the top of a turn is a
+    /// fact it never gets where nobody types one.
+    ///
+    /// Nothing comes out of the box for it. Nobody typed this, so the half-
+    /// written line somebody left there is still there afterwards.
+    Woke(String),
 }
 
 /// Moves the cursor within a many-rowed line, where there is a row to reach.
@@ -317,6 +329,16 @@ fn arriving<T: Terminal>(
     }
 }
 
+/// The turn `ended` asks for, where it asks for one.
+///
+/// The endings are taken from the one place a typed turn's note is taken from,
+/// so a command that ended is either the turn or under one and never both.
+/// `None` is what almost every call gets, and it is the answer that costs
+/// nothing.
+fn woken(ended: &[Ended]) -> Option<Asked> {
+    standing::said(ended).map(Asked::Woke)
+}
+
 /// Reads one prompt, drawing it as it arrives.
 pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -359,6 +381,15 @@ pub(crate) fn ask<T: Terminal>(
 
     // Whatever was typed while the last turn ran is already here, so the list a
     // slash opens has to be worked out from it rather than assumed empty.
+    // Before the box is drawn, because what this answers is whether a box is
+    // what is owed at all: a command that ended during the last turn — or after
+    // it, while this was between two calls — leaves the model owing a turn, and
+    // drawing the box first would put a cursor under it and wait for a person
+    // who is waiting for the agent.
+    if let Some(woke) = woken(&left.reported()) {
+        return Ok(woke);
+    }
+
     let mut open = Opened::filtered(editor.text(), glyphs);
     draw(renderer, editor, style, around(planning, &open, &says))?;
 
@@ -371,6 +402,14 @@ pub(crate) fn ask<T: Terminal>(
             arrived
         } else {
             let Some(arrived) = arriving(renderer, left, &mut says, style)? else {
+                // The other end of the same fact: nothing arrived because a
+                // command ended, and the line above it is now on screen. The
+                // model is owed the turn from here rather than from the top of
+                // the call, since this is where the waiting was happening.
+                if let Some(woke) = woken(&left.reported()) {
+                    return Ok(woke);
+                }
+
                 draw(renderer, editor, style, around(planning, &open, &says))?;
                 continue;
             };
