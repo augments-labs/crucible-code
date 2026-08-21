@@ -6,6 +6,13 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**The welcome card is drawn again when the window changes size.** It used to
+keep the shape it was folded into at launch, so a window taken wider left it in
+a column down the left and a narrower one cut it in half. Everything else a
+component laid out is still clipped rather than refolded.
+
 ### Added
 
 **A row along the top of the window says where the session is.** The working
