@@ -119,9 +119,19 @@ impl Burst {
 /// that grew. Written down rather than claimed away, because it is the one thing
 /// the reading below does not divide out.
 fn yardstick() -> u64 {
+    mixing(STEPS)
+}
+
+/// `steps` of that chain.
+///
+/// Parted from the yardstick so the tests can ask for a different amount of the
+/// same work, which is how they stand up a frame that costs what they say it
+/// costs: work is what a frame spends, and it is the one thing on this path that
+/// costs the same on a machine whose clock is dear to read.
+fn mixing(steps: usize) -> u64 {
     let mut held = 0x243f_6a88_85a3_08d3_u64;
 
-    for _ in 0..STEPS {
+    for _ in 0..steps {
         held = held
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
@@ -252,7 +262,6 @@ fn per_second(seconds: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-    use std::time::Duration;
 
     use super::*;
 
@@ -318,17 +327,19 @@ mod tests {
         assert_eq!(yardstick(), yardstick());
     }
 
-    /// Busies the thread for `taken`. A sleep is far too coarse for this.
-    fn spin(taken: Duration) {
-        let until = Instant::now() + taken;
-        while Instant::now() < until {
-            std::hint::spin_loop();
-        }
-    }
-
-    /// A burst on a machine where a frame costs `frame` and a yardstick costs
-    /// `yard`, both told how far into the burst they are being run.
-    fn machine(frame: impl Fn(usize) -> Duration, yard: impl Fn(usize) -> Duration) -> Burst {
+    /// A burst on a machine where a frame costs `frame` steps of mixing and a
+    /// yardstick costs `yard`, both told how far into the burst they are being
+    /// run.
+    ///
+    /// Steps rather than a duration, because a duration here has to be spent by
+    /// watching the clock and the clock is not free to read. A machine where one
+    /// reading costs a microsecond rounds a frame asked for one up to two and a
+    /// frame asked for three up to four, so a test that meant *three times as
+    /// dear* stands up a machine a third slower — and the reading it then makes
+    /// is true of a machine nobody described. Work is what a frame actually
+    /// spends, and how much of it a step is does not change between the two ends
+    /// of a burst.
+    fn machine(frame: impl Fn(usize) -> usize, yard: impl Fn(usize) -> usize) -> Burst {
         // The yardstick is not handed the index, because on a real machine it
         // is not told one either. It reads how far the frames have got, which
         // is the same thing the machine it stands for would know.
@@ -337,13 +348,29 @@ mod tests {
         measure_with::<()>(
             |index| {
                 reached.set(index);
-                spin(frame(index));
+                black_box(mixing(frame(index)));
                 Ok(())
             },
-            || spin(yard(reached.get())),
+            || {
+                black_box(mixing(yard(reached.get())));
+            },
         )
         .expect("a burst")
     }
+
+    /// What a frame costs in the bursts below, in steps of mixing.
+    ///
+    /// Enough that a window of them is milliseconds — the same thing [`WINDOW`]
+    /// is sized for, so a scheduler taking the thread away changes a window
+    /// rather than deciding it — and few enough that a whole burst is a fraction
+    /// of a second.
+    const FRAME: usize = 1_000;
+
+    /// What a yardstick costs in the bursts below.
+    ///
+    /// The real one, so a window's two readings stand in the same proportion
+    /// here as they do under a probe.
+    const YARD: usize = STEPS;
 
     #[test]
     fn the_opening_phase_times_the_early_frames_and_the_closing_one_the_late() {
@@ -352,10 +379,7 @@ mod tests {
         // and the budget would hold however much the renderer had grown. So
         // make the early frames the expensive ones and check that the opening
         // rate is the one that shows it.
-        let burst = machine(
-            |index| Duration::from_micros(u64::from(index < LATE) * 2),
-            |_| Duration::ZERO,
-        );
+        let burst = machine(|index| usize::from(index < LATE) * FRAME, |_| 0);
 
         assert!(
             burst.opening.rate < burst.sustained.rate,
@@ -370,11 +394,10 @@ mod tests {
         // three times as much — the frames and the yardstick alike, which is
         // what a machine losing two thirds of its speed does and what a renderer
         // that grew does not.
-        let slower = |quick: u64| {
-            move |index: usize| Duration::from_micros(if index < LATE { quick } else { quick * 3 })
-        };
+        let slower =
+            |quick: usize| move |index: usize| if index < LATE { quick } else { quick * 3 };
 
-        let burst = machine(slower(1), slower(200));
+        let burst = machine(slower(FRAME), slower(YARD));
 
         assert!(
             burst.sustained.rate / burst.opening.rate < SUSTAINED_FRACTION,
@@ -392,8 +415,8 @@ mod tests {
         // Here the machine held its speed and only the frames got dearer, which
         // is exactly what the ratio is for.
         let burst = machine(
-            |index| Duration::from_micros(if index < LATE { 1 } else { 3 }),
-            |_| Duration::from_micros(200),
+            |index| if index < LATE { FRAME } else { FRAME * 3 },
+            |_| YARD,
         );
 
         assert!(
