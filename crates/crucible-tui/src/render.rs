@@ -16,6 +16,7 @@ use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
+use crate::width;
 
 mod frame;
 mod plain;
@@ -57,9 +58,17 @@ pub struct Renderer<T: Terminal> {
     /// duplicating the wrap. Its bound is one, so every row it is given
     /// overflows immediately instead of staying live.
     finished: Tail,
-    /// Rows currently on screen. What the next frame must move back over, and
-    /// one of the two pieces of screen state this process tracks.
-    drawn: usize,
+    /// How wide each row currently on screen is, in the order it was drawn.
+    ///
+    /// How many there are is what the next frame must move back over, and one
+    /// of the two pieces of screen state this process tracks. How wide each one
+    /// is, is what makes that count survive a resize: a terminal re-wraps what
+    /// is on screen when the window narrows, so a row drawn at the old width is
+    /// two rows at the new one and a rewind counted in rows drawn stops short of
+    /// the top. What it fails to reach stays on the screen -- once per step of
+    /// the drag that resized the window. [`Renderer::region`] counts these
+    /// against the width the window has now.
+    widths: Vec<usize>,
     /// How many of those rows sit *below* the cursor.
     ///
     /// Zero for everything streamed, where the cursor is left at the end of the
@@ -155,7 +164,7 @@ impl<T: Terminal> Renderer<T> {
             tail: Tail::new(size.columns, LIVE),
             finished: Tail::new(size.columns, 1),
             terminal,
-            drawn: 0,
+            widths: Vec::new(),
             parked: 0,
             size,
             frame: Frame::new(),
@@ -354,7 +363,9 @@ impl<T: Terminal> Renderer<T> {
 
         let region = self.region();
         self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
-        self.drawn = self.painted.len();
+        self.widths.clear();
+        self.widths
+            .extend(self.painted.iter().map(|row| width::columns(row)));
 
         self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
@@ -449,7 +460,7 @@ impl<T: Terminal> Renderer<T> {
             // frame and settle into the record as blank lines nobody wrote.
             self.tail.clear();
 
-            if self.drawn > 0 {
+            if self.drawn() > 0 {
                 self.erase()?;
                 self.terminal.flush()?;
             }
@@ -465,7 +476,7 @@ impl<T: Terminal> Renderer<T> {
         self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()?;
 
-        self.drawn = 0;
+        self.widths.clear();
         self.parked = 0;
         Ok(())
     }
@@ -506,7 +517,7 @@ impl<T: Terminal> Renderer<T> {
             // over. A question waiting to be answered is exactly that state,
             // and erasing it takes the offer off the screen while somebody is
             // still reading it.
-            if self.drawn > 0 {
+            if self.drawn() > 0 {
                 self.erase()?;
                 self.terminal.flush()?;
             }
@@ -521,7 +532,7 @@ impl<T: Terminal> Renderer<T> {
         // the terminal wraps itself. The caller lays out the next one.
         self.footing.clear();
         self.footed = None;
-        self.drawn = 0;
+        self.widths.clear();
         self.parked = 0;
         Ok(())
     }
@@ -642,7 +653,7 @@ impl<T: Terminal> Renderer<T> {
     #[must_use]
     pub fn within(&self, at: usize, cursor: usize) -> Option<usize> {
         at.checked_sub(self.top(cursor)?)
-            .filter(|row| *row < self.drawn)
+            .filter(|row| *row < self.drawn())
     }
 
     /// Which row of the record is on screen row `at`, with the cursor on
@@ -681,7 +692,7 @@ impl<T: Terminal> Renderer<T> {
         // it is on. Nothing drawn leaves it on the row after the record, which
         // is where a settle steps it to, and the arithmetic holds there
         // unchanged.
-        cursor.checked_sub(self.drawn.saturating_sub(self.parked + 1))
+        cursor.checked_sub(self.drawn().saturating_sub(self.parked + 1))
     }
 
     /// One frame, assembled by [`screen`].
@@ -700,7 +711,10 @@ impl<T: Terminal> Renderer<T> {
             (&self.footing, self.footed),
         );
 
-        self.drawn = self.tail.len() + self.footing.len();
+        self.widths.clear();
+        self.widths.extend(self.tail.widths());
+        self.widths
+            .extend(self.footing.iter().map(|row| width::columns(row)));
         self.terminal.write(self.frame.sealed())?;
         self.terminal.flush()
     }
@@ -734,7 +748,7 @@ impl<T: Terminal> Renderer<T> {
     /// Wipes the live region without drawing anything back.
     fn erase(&mut self) -> Result<(), TerminalError> {
         self.frame.rewind(self.region());
-        self.drawn = 0;
+        self.widths.clear();
         self.parked = 0;
         self.terminal.write(self.frame.sealed())
     }
@@ -755,7 +769,32 @@ impl<T: Terminal> Renderer<T> {
     /// is the whole of the answer to how far back a frame may reach, and a
     /// second answer beside it is one that would go on being right by accident.
     fn region(&self) -> usize {
-        self.drawn.saturating_sub(self.parked).min(self.size.rows)
+        // Against the width the window has now rather than the one each row was
+        // drawn at, which is the whole of what a resize changes here: a row too
+        // wide for the screen it is on is however many rows the terminal broke
+        // it into. Where nothing has resized, every row still fits and this
+        // counts one apiece -- the same answer as counting the rows themselves,
+        // arrived at the one way that goes on being right.
+        //
+        // A terminal that narrows without re-wrapping is over-counted here, and
+        // takes back rows of record along with its own. That is the trade this
+        // makes deliberately: such a terminal has already truncated every row
+        // above at the same moment, so what the over-count reaches is a screen
+        // the resize damaged either way -- while under-counting strands rows on
+        // a terminal that did re-wrap, which is every terminal a window is
+        // dragged in.
+        let columns = self.size.columns.max(1);
+        self.widths
+            .iter()
+            .take(self.drawn().saturating_sub(self.parked))
+            .map(|width| width.div_ceil(columns).max(1))
+            .sum::<usize>()
+            .min(self.size.rows)
+    }
+
+    /// How many rows this renderer has on screen.
+    fn drawn(&self) -> usize {
+        self.widths.len()
     }
 }
 

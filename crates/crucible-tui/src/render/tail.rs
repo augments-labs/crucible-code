@@ -223,10 +223,13 @@ impl Tail {
         self.rows.range(..rows).map(|row| row.text.as_str())
     }
 
-    /// How many rows are live. This is what the renderer moves back over.
-    #[must_use]
-    pub(crate) fn len(&self) -> usize {
-        self.rows.len()
+    /// How wide each of [`Self::rows`] is, in the same order.
+    ///
+    /// Kept here rather than measured again by the caller: every row already
+    /// carries its width, and two walks of the same string are two answers
+    /// waiting to differ.
+    pub(crate) fn widths(&self) -> impl ExactSizeIterator<Item = usize> + '_ {
+        self.rows.iter().map(|row| row.width)
     }
 
     /// Whether the tail holds nothing but empty rows.

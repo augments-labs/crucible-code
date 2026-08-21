@@ -165,7 +165,11 @@ fn the_tail_never_grows_past_its_bound() {
     for turn in 0..10_000 {
         tail.push(&format!("line {turn}\n"), &mut overflow);
         overflow.clear();
-        assert!(tail.len() <= 3, "tail grew to {} rows", tail.len());
+        assert!(
+            tail.rows().len() <= 3,
+            "tail grew to {} rows",
+            tail.rows().len()
+        );
     }
 }
 
@@ -305,7 +309,7 @@ fn a_slot_costs_the_row_it_is_worn_on_no_column_at_all() {
     push(&mut plain, "one two three four");
     push(&mut worn, "one two three four");
 
-    assert_eq!(plain.len(), worn.len());
+    assert_eq!(plain.rows().len(), worn.rows().len());
     assert_eq!(plain.column(), worn.column());
     assert_eq!(
         rows(&plain),
@@ -327,7 +331,7 @@ fn a_row_that_wrapped_opens_the_slot_again_rather_than_carrying_it_over() {
     tail.wear(Slot::Quiet, &colourful());
     push(&mut tail, "abcdefgh");
 
-    assert_eq!(tail.len(), 2);
+    assert_eq!(tail.rows().len(), 2);
     assert!(unbalanced(&tail).is_empty(), "{:?}", rows(&tail));
     for row in rows(&tail) {
         assert!(

@@ -387,7 +387,14 @@ fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
 fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // The size changes under a line that was laid out for the old one. What was
     // committed stays where the terminal put it; what is live is drawn again,
-    // and the row count it rewinds over is the count from before the resize.
+    // and how far back that reaches is counted against the width the window has
+    // now. A terminal that re-wraps has made two rows out of each row of the
+    // region by then, and a rewind counted in rows drawn strands the top of it.
+    //
+    // This screen clips rather than re-wrapping, so the same count reaches a
+    // row or two of record above the region. That is the trade, written down
+    // beside `Renderer::region` and priced here: the picture below is what it
+    // costs on the terminal that pays it.
     let mut window = Watched::open("resized", 80, 24);
 
     window.types("the quick brown fox jumps over the lazy dog");

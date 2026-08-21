@@ -17,6 +17,12 @@ anybody who has used a shell.
 
 ### Fixed
 
+**A window dragged narrower leaves nothing of the box behind.** The rows on
+screen are re-wrapped by the terminal as the window shrinks, so a rewind counted
+in rows drawn stopped short of the top and stranded what it did not reach — one
+more trail of half a prompt box and half a status row per step of the drag. How
+far a rewind reaches is now measured against the width the window has.
+
 **A terminal that spells a break in full no longer opens two lines for it.** The
 second byte of a carriage return and line feed is the byte Ctrl+J is, and Ctrl+J
 opens a line here in its own right — so one key bound to send the pair left a
