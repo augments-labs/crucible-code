@@ -63,6 +63,7 @@ mod mode;
 mod picking;
 mod planning;
 mod putting;
+mod queueing;
 mod region;
 mod replaying;
 mod resuming;
@@ -316,6 +317,28 @@ pub(crate) fn converse<T: Terminal>(
         // view whichever press put it up.
         expanding::stand(renderer, style, &held.kept, &mut held.opened)?;
 
+        // And a queue opened during it, for the same reason and one of its own:
+        // the lines in it are the reader's until they close it, and the loop
+        // below would otherwise commit the first of them while they were still
+        // going over the rest.
+        queueing::stand(
+            renderer,
+            style,
+            queueing::Reading {
+                queue: &mut held.queued,
+                editor: &mut held.editor,
+                steer: &terms.steer,
+            },
+            &mut held.viewing,
+        )?;
+
+        // Whatever the turn that just ended never reached is the queue's alone
+        // now. The two hold the same lines while a turn runs — one to steer it,
+        // one to answer once it is over — and a line left here is worked into
+        // the *next* turn as well as being that turn's own prompt. After the
+        // view above, because a queue still open is a queue still held.
+        drop(terms.steer.take());
+
         // Before the queue, because a prompt typed while room was being made is
         // a prompt about a session that has had room made: sending it first
         // would spend the whole window this is here to free.
@@ -329,11 +352,12 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        // A line queued during the last turn is the prompt, and nothing is
-        // asked. It is committed here rather than where it was typed: at that
-        // moment the answer above it was still arriving, and a line written
-        // into the middle of one is a line in the wrong place.
-        if let Some(said) = held.queued.pop() {
+        // The lines queued during the last turn are the next turn, all of them
+        // at once: the oldest is its prompt and the rest are offered to it. They
+        // are committed here rather than where they were typed: at that moment
+        // the answer above them was still arriving, and a line written into the
+        // middle of one is a line in the wrong place.
+        if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
             let (back, leaving) = ran(runner, renderer, terms, Work::Turn(said), &mut held)?;
@@ -603,9 +627,10 @@ fn take<T: Terminal>(
     // spends its first ten seconds connecting has spent them.
     let mut turning = Turning::started();
 
-    // A turn can start with prompts already behind it: the loop above took one
-    // of them and left the rest. Read before the first frame, so the row naming
-    // what is coming is right on the frame it first appears in.
+    // A turn can start with prompts already behind it: room is made before the
+    // queue is read, so a line typed during the last turn is still waiting when
+    // this one is about making room for it. Read before the first frame, so the
+    // panel naming what is coming is right on the frame it first appears in.
     turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
 
     let working = sent(runner, work, asking, relay, running, terms.steer.clone())?;
@@ -739,6 +764,7 @@ fn take<T: Terminal>(
                     planning: &mut held.planning,
                     kept: &mut held.kept,
                     opened: &mut held.opened,
+                    viewing: &mut held.viewing,
                     says: &says,
                     style: terms.style(),
                     cancel: &terms.cancel,
@@ -981,126 +1007,32 @@ impl Prompts {
         self.bytes = self.bytes.saturating_sub(prompt.len());
         Some(prompt)
     }
+}
 
-    /// Stands the whole queue where the box was, and answers whether it changed.
-    ///
-    /// The panel names what fits and counts the rest; this is the list the count
-    /// is about. Up and down walk it, `x` takes the marked line back into the
-    /// box to be edited or sent sooner, and `esc` — or the key that opened it —
-    /// closes it. `true` where a line was dropped, since that is a frame owed.
-    ///
-    /// # Errors
-    ///
-    /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
-    fn viewing<T: Terminal>(
-        &mut self,
-        renderer: &mut Renderer<T>,
-        editor: &mut Editor,
-        style: Style,
-    ) -> Result<bool, Fatal> {
-        use region::Moved;
+/// Takes the whole queue for one turn: the oldest line is the prompt, and every
+/// line behind it is offered to that same turn.
+///
+/// A burst typed behind a turn is one thing the reader wanted said. Taken a line
+/// per turn, the first was answered before the model had read the second, so the
+/// agent worked to a question the reader had already added to — and three turns
+/// went by answering what was asked once. Handed over together, the runner
+/// records the batch at the first boundary of the turn this starts, which is
+/// before it asks anything: the model reads all of it and then answers all of
+/// it.
+///
+/// The lines behind the prompt go through the steer rather than into it,
+/// because joining them would put a message in the transcript nobody wrote.
+/// Each reaches it as the line it was typed as; what they share is the turn.
+///
+/// `None` where nothing is waiting, which is the ordinary case.
+fn batched(queued: &mut Prompts, steer: &crucible_core::Steer) -> Option<String> {
+    let said = queued.pop()?;
 
-        /// What the view is looking at and may change, held together so the two
-        /// closures `region::stand` drives can each borrow the whole of it.
-        struct Reading<'a> {
-            /// Which line a key acts on.
-            at: usize,
-            /// Whether a line was taken back, which is the frame the box is owed.
-            dropped: bool,
-            /// The queue being read.
-            queue: &'a mut Prompts,
-            /// The box a taken-back line returns to.
-            editor: &'a mut Editor,
-        }
-
-        let mut reading = Reading {
-            at: 0,
-            dropped: false,
-            queue: self,
-            editor,
-        };
-
-        let ended = region::stand(
-            renderer,
-            |_| style,
-            &mut reading,
-            |reading, columns, rows| reading.queue.laid(reading.at, columns, rows, style),
-            |arrived, reading| {
-                let at = reading.at;
-                match arrived {
-                    Pressed::Up => region::step(&mut reading.at, at.checked_sub(1)),
-                    Pressed::Down => region::step(
-                        &mut reading.at,
-                        (at + 1 < reading.queue.waiting_count()).then(|| at + 1),
-                    ),
-                    // The one key that changes the queue: the marked line is taken
-                    // back into the box, where it can be edited or sent ahead of
-                    // the rest. With one line it is also the way out, since the
-                    // list it was read from is then empty.
-                    Pressed::Key(Key::Char('x')) => match reading.queue.drop(at) {
-                        Some(line) => {
-                            reading.editor.paste(&line);
-                            reading.dropped = true;
-                            reading.at = at.min(reading.queue.waiting_count().saturating_sub(1));
-                            if reading.queue.waiting_count() == 0 {
-                                Moved::Left
-                            } else {
-                                Moved::Redraw
-                            }
-                        }
-                        None => Moved::Still,
-                    },
-                    Pressed::Escape | Pressed::Queue => Moved::Left,
-                    _ => Moved::Still,
-                }
-            },
-        )?;
-
-        let _ = ended;
-        Ok(reading.dropped)
+    while let Some(behind) = queued.pop() {
+        steer.say(behind);
     }
 
-    /// Lays the queue out as a titled list, with the marked line standing out.
-    ///
-    /// Read by [`Prompts::viewing`] a frame at a time. Each line is led by the
-    /// mark a line is typed after, and the one the mark is on is drawn in the
-    /// accent so a key's target is never a guess.
-    fn laid(
-        &self,
-        at: usize,
-        columns: usize,
-        rows: usize,
-        style: Style,
-    ) -> (Vec<crucible_tui::Row>, Option<crucible_tui::Caret>) {
-        use crucible_tui::{Row, Slot};
-        let glyphs = style.glyphs();
-        let mark = glyphs.caret();
-
-        let caption = format!(
-            "{} queued — x to take back, esc to close",
-            self.waiting_count()
-        );
-        let title = Row::new().then(Slot::Strong, draw::clipped(&caption, columns, glyphs));
-
-        let mut laid = vec![title, Row::new()];
-
-        for (place, said) in self.waiting_all().enumerate().take(rows.saturating_sub(3)) {
-            let tone = if place == at {
-                Slot::Accent
-            } else {
-                Slot::Plain
-            };
-            laid.push(
-                Row::new()
-                    .then(Slot::Accent, mark)
-                    .then(Slot::Plain, " ")
-                    .then(tone, draw::clipped(said, columns.saturating_sub(2), glyphs)),
-            );
-        }
-
-        laid.push(Row::new());
-        (laid, None)
-    }
+    Some(said)
 }
 
 /// What the session holds between turns and lends to each one, beyond the
@@ -1120,8 +1052,9 @@ struct Held<'a> {
     /// starts in.
     editor: Editor,
     /// The prompts waiting behind a turn, which the turn adds to as lines are
-    /// finished in the box under it. They are the next prompts, in the order
-    /// they were typed, and each is taken without asking for another.
+    /// finished in the box under it. They are the next turn, in the order they
+    /// were typed: the whole of the queue goes to one turn rather than a turn
+    /// each, which is what [`batched`] does with it.
     queued: Prompts,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read
@@ -1132,6 +1065,14 @@ struct Held<'a> {
     /// view opened while a turn ran is still open when the turn ends, in the
     /// region the box comes back to, and the reader who opened it is reading.
     opened: Standing,
+    /// Whether the queue above is standing open to be gone over, and where the
+    /// mark is down it.
+    ///
+    /// Held here for the reason beside it, and for one more: while it stands
+    /// the turn takes none of the lines it names, so a view outliving the turn
+    /// that was under it is what keeps the queue from being committed out from
+    /// under a reader who was halfway through it.
+    viewing: queueing::Standing,
     /// The plan above the box. A turn is when it changes — the tool that writes
     /// it runs on the worker thread — and what this holds is a copy of the plan
     /// and the setting of the key that opens it, both of which outlive it.
@@ -1156,6 +1097,7 @@ impl<'a> Held<'a> {
             queued: Prompts::default(),
             kept: Kept::default(),
             opened: Standing::default(),
+            viewing: queueing::Standing::default(),
             planning: Planning::new(plan),
             told: false,
             answers,

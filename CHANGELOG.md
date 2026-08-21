@@ -8,6 +8,18 @@ Notable changes to crucible. Format follows
 
 ### Changed
 
+**The whole queue goes to one turn rather than a turn each.** Lines typed behind
+a turn are one thing you wanted said, and answering the first before the model
+had read the third meant working to a question you had already added to. The
+oldest is now the turn's prompt and the rest are handed to the same turn before
+it asks anything; each stays its own message, in the order it was typed.
+
+**A queue stood open with Ctrl+Q is nobody's but yours until you close it.** The
+turn above goes on writing and takes none of those lines, so a prompt you are
+part-way through editing cannot land in the transcript where it can no longer be
+taken back. Closing the view releases the batch at once, and Esc while it stands
+closes it rather than interrupting the turn.
+
 **The prompt box is framed in one colour, whatever permission mode is in
 force.** The mode's own sentence under the box keeps its ramp, so the screen
 still says which one you are in — but the border is the largest thing on it and
