@@ -149,6 +149,7 @@ mod tests {
             putting: crate::cli::seen::Putting::new(),
             leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
+            settings: crucible_config::Settings::default(),
             choosing: sample.root().join("unwritten-home.json"),
             logins: Store::in_home(&sample.root()),
             subscriptions: crate::cli::subscription::Subscriptions::production(),

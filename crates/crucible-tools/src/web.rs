@@ -291,8 +291,12 @@ fn failed(
         // and what a tool returns goes into the next request whole, so an
         // unbounded failure grows the transcript that rule 6 budgets.
         problem => {
-            let (said, _) =
-                bound::within(problem.to_string().lines().map(|line| format!("{line}\n")));
+            // The concrete service is useful diagnostic context, but it is not
+            // the provider or model answering the conversation. Say which role
+            // the name has before saying the name, so `moonshot` here cannot
+            // read as a silent model switch.
+            let explained = format!("web source error: {problem}");
+            let (said, _) = bound::within(explained.lines().map(|line| format!("{line}\n")));
             Ok(ToolOutput::failed(if said.is_empty() {
                 format!("{tool} could not answer.")
             } else {

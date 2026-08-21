@@ -350,6 +350,22 @@ fn what_a_response_cost_arrives_under_the_response_that_finished() {
 }
 
 #[test]
+fn cached_openai_input_is_not_added_to_the_total_a_second_time() {
+    // Responses API `input_tokens` is already the complete request. Its cached
+    // detail is a subset explaining that total, not another bucket beside it.
+    let done = r#"{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":900,"input_tokens_details":{"cached_tokens":700},"output_tokens":58}}}"#;
+
+    assert_eq!(
+        out(done),
+        vec![
+            Delta::Carried(Carried::new(900)),
+            Delta::Spent(Spend::new(58)),
+            Delta::Stopped(StopReason::Yielded),
+        ]
+    );
+}
+
+#[test]
 fn a_response_cut_short_still_says_what_it_cost() {
     // Tokens produced before a ceiling stopped the answer are tokens produced.
     // Read only off a clean finish, the truncated turn is the one that reports

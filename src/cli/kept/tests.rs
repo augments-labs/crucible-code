@@ -8,8 +8,9 @@ use super::*;
 fn kept(cut: &mut Kept, called: &str, bytes: usize) {
     let at = cut.cut();
 
-    cut.calling(called.to_owned());
-    cut.finished("x".repeat(bytes).into_boxed_str(), at);
+    let call = crucible_core::ToolId::new(format!("call-{at}"));
+    cut.calling(call.clone(), called.to_owned());
+    cut.finished(&call, "x".repeat(bytes).into_boxed_str(), at);
 }
 
 #[test]
@@ -47,7 +48,7 @@ fn a_result_that_arrived_without_a_call_line_is_still_held() {
     // is a result with nothing in front of it. Holding it without a name beats
     // dropping the text somebody asked for.
     let mut cut = Kept::default();
-    cut.finished("orphaned".into(), 0);
+    cut.finished(&crucible_core::ToolId::new("orphan"), "orphaned".into(), 0);
 
     let held: Vec<_> = cut.newest().collect();
     assert_eq!(held.len(), 1);
@@ -63,10 +64,81 @@ fn a_call_line_is_spent_by_the_result_that_follows_it() {
     // name with nothing on screen to say so.
     let mut cut = Kept::default();
     kept(&mut cut, "Bash(ls)", 1);
-    cut.finished("second".into(), 1);
+    cut.finished(&crucible_core::ToolId::new("second"), "second".into(), 1);
 
     let lines: Vec<_> = cut.newest().map(Whole::called).collect();
     assert_eq!(lines, ["", "Bash(ls)"]);
+}
+
+#[test]
+fn interleaved_results_keep_their_own_call_lines_and_live_output() {
+    // One provider response can announce every call before the runner starts
+    // the first. Results and output identify themselves; their order must not
+    // turn the last announced tool into the heading for all of them.
+    let mut cut = Kept::default();
+    let read = crucible_core::ToolId::new("read");
+    let fetch = crucible_core::ToolId::new("fetch");
+    let grep = crucible_core::ToolId::new("grep");
+
+    cut.calling(read.clone(), "Read(src/main.rs)".to_owned());
+    cut.calling(fetch.clone(), "WebFetch(https://example.com)".to_owned());
+    cut.calling(grep.clone(), "Grep(needle)".to_owned());
+
+    // Live text may arrive while several headings are pending too.
+    cut.wrote(&read, "ordinary output\n");
+    cut.wrote(&fetch, "HTTP 500\n");
+
+    // Finish out of request order to prove identity, not adjacency, pairs them.
+    cut.finished(&grep, "nothing matched needle".into(), 1);
+    cut.finished(&fetch, "web source moonshot: HTTP 500".into(), 2);
+    cut.finished(&read, "ordinary output".into(), 3);
+
+    let held: Vec<_> = cut
+        .newest()
+        .map(|whole| (whole.called(), whole.text()))
+        .collect();
+    assert_eq!(
+        held,
+        [
+            ("Read(src/main.rs)", "ordinary output"),
+            (
+                "WebFetch(https://example.com)",
+                "web source moonshot: HTTP 500"
+            ),
+            ("Grep(needle)", "nothing matched needle"),
+        ]
+    );
+    assert!(cut.writing().next().is_none());
+}
+
+#[test]
+fn live_outputs_keep_request_order_rather_than_tool_id_order() {
+    let mut cut = Kept::default();
+    for (id, called) in [
+        ("z", "Read(first)"),
+        ("a", "Read(second)"),
+        ("m", "Read(third)"),
+    ] {
+        let call = ToolId::new(id);
+        cut.calling(call.clone(), called.to_owned());
+        cut.wrote(&call, &format!("{called} output\n"));
+    }
+
+    let called: Vec<_> = cut.writing().map(Whole::called).collect();
+    assert_eq!(called, ["Read(first)", "Read(second)", "Read(third)"]);
+}
+
+#[test]
+fn unknown_live_output_creates_no_state_and_steals_no_heading() {
+    let mut cut = Kept::default();
+    let known = ToolId::new("known");
+    cut.calling(known.clone(), "Read(known)".to_owned());
+
+    cut.wrote(&ToolId::new("unknown"), "orphaned output\n");
+
+    assert!(cut.writing().next().is_none());
+    cut.finished(&known, "known result".into(), 0);
+    assert_eq!(cut.newest().next().map(Whole::called), Some("Read(known)"));
 }
 
 #[test]
@@ -128,8 +200,9 @@ fn a_result_is_found_by_the_record_row_that_offered_it() {
     // the renderer turns that into a row of the record, and this is the other
     // end of it: the row the offer was written on, and the result behind it.
     let mut cut = Kept::default();
-    cut.calling("Bash(cargo test)".to_owned());
-    cut.finished("what it said".into(), 41);
+    let call = crucible_core::ToolId::new("cargo-test");
+    cut.calling(call.clone(), "Bash(cargo test)".to_owned());
+    cut.finished(&call, "what it said".into(), 41);
 
     assert!(cut.offered(41));
     assert_eq!(
@@ -170,10 +243,11 @@ fn nothing_cut_is_nothing_to_offer() {
 
     // A call whose result has not arrived is not one either. What is held is
     // text, and half a pair is none of it.
-    cut.calling("Read(half)".to_owned());
+    let call = crucible_core::ToolId::new("half");
+    cut.calling(call.clone(), "Read(half)".to_owned());
     assert!(cut.is_empty());
 
-    cut.finished("here".into(), 0);
+    cut.finished(&call, "here".into(), 0);
     assert!(!cut.is_empty());
 }
 
@@ -184,11 +258,12 @@ fn a_call_that_has_not_answered_is_reachable_under_the_line_it_is_running_on() {
     let mut cut = Kept::default();
     assert!(cut.is_empty());
 
-    cut.calling("Bash(cargo build --release)".to_owned());
-    cut.wrote("   Compiling crucible-core v0.5.0\n");
-    cut.wrote("   Compiling crucible-tui v0.5.0\n");
+    let call = crucible_core::ToolId::new("release");
+    cut.calling(call.clone(), "Bash(cargo build --release)".to_owned());
+    cut.wrote(&call, "   Compiling crucible-core v0.5.0\n");
+    cut.wrote(&call, "   Compiling crucible-tui v0.5.0\n");
 
-    let writing = cut.writing().expect("the running call was not held");
+    let writing = cut.writing().next().expect("the running call was not held");
     assert_eq!(writing.called(), "Bash(cargo build --release)");
     assert_eq!(
         writing.text(),
@@ -207,11 +282,12 @@ fn the_result_replaces_what_was_held_while_the_call_ran() {
     // tail somebody watched and once as the answer, which reads as two calls.
     let mut cut = Kept::default();
 
-    cut.calling("Bash(cargo build)".to_owned());
-    cut.wrote("Compiling\n");
-    cut.finished("Compiling\nFinished in 1m 52s".into(), 4);
+    let call = crucible_core::ToolId::new("build");
+    cut.calling(call.clone(), "Bash(cargo build)".to_owned());
+    cut.wrote(&call, "Compiling\n");
+    cut.finished(&call, "Compiling\nFinished in 1m 52s".into(), 4);
 
-    assert!(cut.writing().is_none());
+    assert!(cut.writing().next().is_none());
     assert_eq!(cut.newest().count(), 1);
 }
 
@@ -221,13 +297,14 @@ fn what_is_held_of_a_running_call_is_its_end_and_is_bounded() {
     // so this is the bound — and it keeps the end, because where a build has got
     // to is the question and its first lines are the part already watched.
     let mut cut = Kept::default();
-    cut.calling("Bash(yes)".to_owned());
+    let call = crucible_core::ToolId::new("yes");
+    cut.calling(call.clone(), "Bash(yes)".to_owned());
 
     for line in 0..40_000 {
-        cut.wrote(&format!("line {line}\n"));
+        cut.wrote(&call, &format!("line {line}\n"));
     }
 
-    let writing = cut.writing().expect("the running call was not held");
+    let writing = cut.writing().next().expect("the running call was not held");
     assert!(writing.text().len() <= WRITING, "{}", writing.text().len());
     assert!(
         writing.text().ends_with("line 39999\n"),

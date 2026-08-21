@@ -130,7 +130,7 @@ fn asking(provider: &'static str, model: &str, typed: &str) -> String {
     };
 
     let mut runner = scripted(Script::new(vec![]), Tools::new());
-    runner.ask(model);
+    runner.ask(model, 8192, None);
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());

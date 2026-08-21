@@ -109,7 +109,10 @@ pub(super) fn asked<T: Terminal>(
     // Nothing is asked down a pipe: there is nobody to answer, and a question
     // with no reader is a session that carries on whole having pretended to
     // offer a choice.
-    if !keys || !worth_asking(carrying, runner.compaction().ask_on_resume) {
+    if !keys
+        || runner.transcript().is_empty()
+        || !worth_asking(carrying, runner.compaction().ask_on_resume)
+    {
         return Ok(None);
     }
 

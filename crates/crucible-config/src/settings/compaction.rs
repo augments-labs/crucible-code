@@ -31,6 +31,7 @@ impl Settings {
                 .unwrap_or_default(),
             reserve: count("reserve"),
             keep: count("keep"),
+            recap: count("recap").and_then(|tokens| u32::try_from(tokens).ok()),
             ask_on_resume: count("askOnResume"),
             spend_ceiling: count("spendCeiling"),
         }
@@ -81,6 +82,11 @@ pub struct Compaction {
     /// window's own unit can promise that. The newest turn is always kept whole
     /// whatever it has cost; this bounds the turns before it.
     pub keep: Option<u64>,
+    /// Maximum output tokens for the structured recap, where a layer said.
+    ///
+    /// `None` uses the runner's default. This is a ceiling, not a requested
+    /// length: concise checkpoints normally stop well before it.
+    pub recap: Option<u32>,
     /// How large a session must be before picking it up asks about it.
     ///
     /// `None` where nobody said, and the wiring's own figure applies. Zero is
@@ -141,6 +147,7 @@ mod tests {
                 when: When::Full,
                 reserve: None,
                 keep: None,
+                recap: None,
                 ask_on_resume: None,
                 spend_ceiling: None,
             }
@@ -150,7 +157,7 @@ mod tests {
     #[test]
     fn every_answer_is_read_back_as_the_value_it_becomes() {
         let said = r#"{"compaction": {"when": "never", "reserve": 25000,
-            "keep": 40000, "spendCeiling": 500000}}"#;
+            "keep": 40000, "recap": 12000, "spendCeiling": 500000}}"#;
         let settings = Settings::resolve(vec![Document::sample(said, Origin::User)]);
 
         assert_eq!(
@@ -159,6 +166,7 @@ mod tests {
                 when: When::Never,
                 reserve: Some(25_000),
                 keep: Some(40_000),
+                recap: Some(12_000),
                 ask_on_resume: None,
                 spend_ceiling: Some(500_000),
             }

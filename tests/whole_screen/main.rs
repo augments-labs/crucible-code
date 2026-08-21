@@ -425,7 +425,15 @@ fn choosing_notes_makes_room_and_says_what_it_took() {
     // Three turns, because a recap stands in place of what is behind the two
     // this keeps whole: a shorter session has no middle to replace, and the
     // choice would spend nothing.
-    let vendor = Vendor::answering("Notes on everything that came before.");
+    let vendor = Vendor::recapping_after(
+        &[
+            "Notes on everything that came before.",
+            "Notes on everything that came before.",
+            "Notes on everything that came before.",
+        ],
+        "Notes on everything that came before.",
+        None,
+    );
     let mut window = Watched::compacting("resume-notes", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "Notes on");
@@ -451,7 +459,8 @@ fn escape_while_room_is_being_made_stops_it_and_replaces_nothing() {
     // vendor writes a word every few milliseconds, which is what makes the
     // middle of a stream somewhere a test can press a key.
     let notes = "notes to self about everything that has happened so far ".repeat(24);
-    let vendor = Vendor::answering_each(&["one answer", "two answer", "three answer", &notes]);
+    let vendor =
+        Vendor::recapping_after(&["one answer", "two answer", "three answer"], &notes, None);
     let mut window = Watched::compacting("compact-stopped", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "one answer");
@@ -475,13 +484,11 @@ fn a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room() {
     // without reaching it leaves it in both places: sent as its own prompt here
     // and worked into this turn as well, so the record said it twice.
     let notes = "notes to self about everything that has happened so far ".repeat(24);
-    let vendor = Vendor::answering_each(&[
-        "one answer",
-        "two answer",
-        "three answer",
+    let vendor = Vendor::recapping_after(
+        &["one answer", "two answer", "three answer"],
         &notes,
-        "the answer to what was queued",
-    ]);
+        Some("the answer to what was queued"),
+    );
     let mut window = Watched::compacting("compact-typing", 80, 24, &vendor);
 
     window.types_until("the first thing\r", "one answer");

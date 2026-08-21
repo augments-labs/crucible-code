@@ -170,6 +170,10 @@ pub(crate) struct Terms {
     /// by reference, and taking them mutably for the one that changes this
     /// would put a `&mut` through every arm that does not.
     pub(crate) provider: Cell<Option<&'static str>>,
+    /// The settled configuration model limits are read from. Kept in memory so
+    /// `/model` resolves a new name exactly as startup did without touching a
+    /// file on the command path.
+    pub(crate) settings: crucible_config::Settings,
     /// The file at home that `/model` writes its answer into. A model is a fact
     /// about who is running crucible rather than about the checkout, so it is
     /// not a project configuration file.
@@ -697,8 +701,10 @@ fn take<T: Terminal>(
                 // Before it is drawn, because drawing consumes it. The row
                 // above the box says what the turn is doing, and this is the
                 // only place that can be read off.
-                let mut returned = None;
+                let mut returned = Vec::new();
+                let mut terminal = false;
                 if let Seen::Turn(event) = &one {
+                    terminal = matches!(event, Event::TurnFinished { .. } | Event::Failed { .. });
                     returned = turning.saw(event);
                 }
 
@@ -718,18 +724,19 @@ fn take<T: Terminal>(
                 // hangs under the call it answers. It goes out through its own
                 // door rather than through `shown`, which is already at the
                 // arguments this project allows one function.
-                if drawn.is_ok()
-                    && let Some(said) = returned
-                {
-                    drawn = stop_if_failed(
-                        draw::returned(renderer, &said, terms.style()).map_err(Fatal::from),
-                        &terms.cancel,
-                    );
-
-                    // And the same line is what a result too long for its row
-                    // is held under, since that is how the reader knows which
-                    // call the text they asked for answers.
-                    held.kept.calling(said);
+                for (call, said) in returned {
+                    if terminal {
+                        // No result follows a terminal event. Remove the exact
+                        // retained live call after committing its heading so it
+                        // cannot leak into a later expansion.
+                        held.kept.abandoned(&call);
+                    }
+                    if drawn.is_ok() {
+                        drawn = stop_if_failed(
+                            draw::returned(renderer, &said, terms.style()).map_err(Fatal::from),
+                            &terms.cancel,
+                        );
+                    }
                 }
 
                 if drawn.is_ok() {

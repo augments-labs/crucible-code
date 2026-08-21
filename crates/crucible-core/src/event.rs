@@ -42,6 +42,12 @@ pub enum TurnError {
         ceiling: u64,
     },
 
+    /// The model stopped before a complete structured recap was available.
+    #[error(
+        "compaction did not produce a complete structured recap; the original context was kept"
+    )]
+    RecapIncomplete,
+
     /// Making room did not make enough of it.
     #[error("there is no room left in the model's window, and compacting it freed none")]
     NoRoom,

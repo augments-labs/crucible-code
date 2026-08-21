@@ -1021,7 +1021,8 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
     // the result that follows it.
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
     let mut kept = Kept::default();
-    kept.calling("Bash(cargo build)".to_owned());
+    let call = ToolId::new("a");
+    kept.calling(call, "Bash(cargo build)".to_owned());
 
     event(
         &mut renderer,
@@ -1035,7 +1036,7 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
     .expect("the piece to be taken");
 
     assert_eq!(
-        kept.writing().map(Whole::text),
+        kept.writing().next().map(Whole::text),
         Some("   Compiling crucible-core v0.5.0\n")
     );
     assert_eq!(
@@ -1043,6 +1044,25 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
         0,
         "a running command's output was committed to the transcript"
     );
+}
+
+#[test]
+fn prune_only_compaction_does_not_claim_a_recap_was_written() {
+    let rows = compacted_rows(
+        crucible_core::Compacted {
+            why: crucible_core::Compacting::Full,
+            replaced: 0,
+            before: 90_000,
+            after: 30_000,
+            kept: 1,
+        },
+        WIDE,
+        unicode(),
+    );
+    let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+
+    assert!(said.contains("old tool output was cleared"), "{said}");
+    assert!(!said.contains("became a recap"), "{said}");
 }
 
 /// The question and its answers, as a window `columns` wide receives them.
