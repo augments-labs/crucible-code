@@ -41,7 +41,7 @@ crates/
   crucible-session/    session logs and bounded replay.  -> core, privacy
   crucible-tools/      read write edit bash grep glob.          -> core
   crucible-runner/     the turn loop, over traits only.  -> core, session
-  crucible-tui/        inline renderer, prompt, transcript. Depends on nothing.
+  crucible-tui/        the screen, prompt, transcript. Depends on nothing.
 schema/         the configuration schema, generated from the shape the parser
                 walks and checked in beside it
 scripts/        gates and benchmarks
