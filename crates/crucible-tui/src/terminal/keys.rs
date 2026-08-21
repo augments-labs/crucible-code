@@ -93,6 +93,14 @@ pub enum Pressed {
     /// is the list the count is about, and the only place a queued line can be
     /// dropped before its turn sends it.
     Queue,
+    /// Ctrl+Y: put the line in the box on the reader's clipboard.
+    ///
+    /// A key rather than the terminal's own selection because what a drag over
+    /// the box takes is the box: the border down each side, and the ground
+    /// padded out to the last column between them. There is no asking a
+    /// terminal to select something else, so the copy is made here, from the
+    /// line rather than from the picture of it.
+    Copy,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -357,6 +365,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // panel of waiting prompts is spelled with.
         KeyCode::Char('q') if control => Pressed::Queue,
 
+        // And one more of the same kind. Ctrl+Y is readline's yank, which puts
+        // back what a rub took out -- this editor keeps nothing it rubs, so the
+        // letter is free, and yank is the word the other direction of this has
+        // always been spelled with.
+        KeyCode::Char('y') if control => Pressed::Copy,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -532,11 +546,16 @@ mod tests {
             Pressed::Background,
             "the key that moves a command across the line was read as an edit"
         );
+        assert_eq!(
+            meaning(control(KeyCode::Char('y'))),
+            Pressed::Copy,
+            "the key that copies the line was read as an edit"
+        );
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is
         // not what was pressed.
-        for letter in ['r', 'x', 'y'] {
+        for letter in ['r', 'x'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),
                 Pressed::Ignored,

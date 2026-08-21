@@ -20,6 +20,7 @@
 mod asked;
 mod asking;
 mod clear;
+mod clipboard;
 mod color;
 #[cfg(test)]
 mod dump;

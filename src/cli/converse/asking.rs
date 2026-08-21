@@ -421,7 +421,8 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         // region too and is not on screen while this question is.
         // The key about what is already running among them: this question is what
         // decides whether the command runs at all, so there is nothing here for it
-        // to act on.
+        // to act on. And the key that copies the line, because the line it copies
+        // is in a box nobody is typing into while this is on screen.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
@@ -430,6 +431,7 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         | Pressed::Clicked { .. }
         | Pressed::Pasted(_)
         | Pressed::Queue
+        | Pressed::Copy
         | Pressed::Ignored => Moved::Still,
     }
 }

@@ -77,6 +77,14 @@ const QUEUED_LIMITED: &str = "typed-ahead prompts are limited to 64 lines and 1 
 /// What the row under the box says when an edit would retain too much input.
 const LIMITED: &str = "prompt is limited to 1 MiB";
 
+/// What the row under the box says once the line has gone to the clipboard.
+const COPIED: &str = "line copied";
+
+/// And what it says when the terminal would not take it. A line long enough to
+/// reach that is one nobody typed by hand, so the number is not worth naming:
+/// what a reader can act on is that the clipboard does not have it.
+const UNCOPIED: &str = "the line is too long for the terminal to copy";
+
 /// What the row under the box says while a turn is running.
 ///
 /// Two keys, both of which do something at that moment. The one that steps the
@@ -166,6 +174,28 @@ fn pasted(editor: &mut Editor, text: &str, says: &mut Says) -> bool {
         }
         _ => false,
     }
+}
+
+/// Puts the line on the reader's clipboard, and says what the row owes for it.
+///
+/// One place for the two loops that read a prompt, because the key means the
+/// same thing in both. The line is what goes, rather than what a drag over the
+/// box would have taken: that selection is the picture — a border down each
+/// side, and ground padded out to the last column between them — and there is
+/// no asking a terminal to select something else.
+///
+/// Nothing to say about a line with nothing on it: a reader who pressed the key
+/// over an empty box has already been answered by the box.
+fn copy<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    editor: &Editor,
+) -> Result<Option<&'static str>, Fatal> {
+    if editor.text().is_empty() {
+        return Ok(None);
+    }
+
+    let took = renderer.copied(editor.text())?;
+    Ok(Some(if took { COPIED } else { UNCOPIED }))
 }
 
 /// What inserting one immediately ready character run changed.
@@ -404,6 +434,12 @@ pub(crate) fn ask<T: Terminal>(
             // cut is the transcript's, this module is the box's, and the two
             // meet where the loop that owns both of them is.
             Pressed::Expand => return Ok(Asked::Expand),
+
+            // The line, out to wherever the reader is going to paste it.
+            Pressed::Copy => {
+                says.asking = copy(renderer, editor)?;
+                says.asking.is_some() || offered.is_some()
+            }
 
             // And the key that says the same word about the other thing that
             // was cut down to fit. Answered here rather than handed back,
@@ -767,6 +803,13 @@ pub(super) fn during<T: Terminal>(
                 moved |= viewing.is_open();
             }
 
+            Meant::Copy => {
+                if let Some(said) = copy(renderer, editor)? {
+                    notice = Some(said);
+                    moved = true;
+                }
+            }
+
             Meant::Typing(first) => {
                 let inserted = insert(editor, first)?;
                 following = inserted.following;
@@ -991,6 +1034,9 @@ enum Meant {
     Background,
     /// Ctrl+T: the whole of the plan above the box, or the bounded list again.
     Plan,
+    /// Ctrl+Y: the line on the clipboard. The line is the reader's whether or
+    /// not a turn is running above it, so the key is the same on both sides.
+    Copy,
     /// A click, which lands on a result the transcript cut short, on the line
     /// being typed, or on nothing.
     ///
@@ -1031,6 +1077,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Expand => Meant::Expand,
         Pressed::Plan => Meant::Plan,
         Pressed::Background => Meant::Background,
+        Pressed::Copy => Meant::Copy,
 
         // The panel of what is waiting behind the turn, opened whole. Its own
         // meaning rather than the queue's: Return adds to the queue, and this

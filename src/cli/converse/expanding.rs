@@ -351,7 +351,8 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // view is standing over, so the key would move a panel nobody can see.
         // The key about what is running among them: those have their own list,
         // opened from the row under the box, and reached from in here it would be
-        // two things standing in one region.
+        // two things standing in one region. The key that copies the line for the
+        // plainest reason of all — the line is under this view, not in it.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
@@ -360,6 +361,7 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Clicked { .. }
         | Pressed::Pasted(_)
         | Pressed::Queue
+        | Pressed::Copy
         | Pressed::Ignored => Moved::Still,
     }
 }

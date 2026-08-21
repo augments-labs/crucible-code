@@ -1257,6 +1257,9 @@ fn heard(arrived: Pressed) -> Heard {
         //
         // Ctrl+T for the same reason as Ctrl+E: the question took the rows the
         // plan stands in, so there is no panel on screen for the key to open.
+        //
+        // And Ctrl+Y, which copies the line in the box: this question is what
+        // the reader is answering, and no line is being typed behind it.
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
@@ -1268,6 +1271,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
         | Pressed::Queue
+        | Pressed::Copy
         | Pressed::Ignored => Heard::Ignored,
     }
 }

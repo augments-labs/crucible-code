@@ -8,6 +8,12 @@ Notable changes to crucible. Format follows
 
 ### Added
 
+**Ctrl+Y copies the line in the box.** Dragging over a prompt takes the picture
+of it — a border down each side and blank ground out to the last column — which
+is not something a terminal can be asked to do better. The key sends the text
+itself, exactly as typed and with its breaks intact, and the row under the box
+says it went.
+
 **A backslash on the end of a line opens the next one.** Press Return after it
 and the backslash goes, the box grows a row, and the prompt is still yours to
 finish. Shift+Return needs a terminal that agreed to spell a modified key apart,

@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+base64.workspace = true
 crossterm.workspace = true
 syntect.workspace = true
 terminal-colorsaurus.workspace = true

@@ -831,3 +831,43 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
     assert!(tasks(beside) < tasks(alone), "{beside:?} against {alone:?}");
     assert!(beside.contains("/model"), "{beside:?}");
 }
+
+#[test]
+fn the_key_that_copies_takes_the_line_and_not_the_picture_of_it() {
+    // What a drag over the box takes is the border, the padding and the ground
+    // between them, which is why the key exists. So what goes out is the text
+    // the editor holds -- no box, no mode row, no trailing spaces, and the
+    // break between two rows of one line still a break.
+    let mut renderer = roomy();
+    let mut editor = Editor::new().multiline();
+    assert_eq!(
+        editor.paste("cargo test --all\nand a second line"),
+        Typed::Changed
+    );
+
+    assert_eq!(
+        copy(&mut renderer, &editor).expect("the line to go"),
+        Some(COPIED)
+    );
+
+    // The line, encoded, and nothing around it. Written out rather than encoded
+    // here, so that what this asserts is what a terminal will read.
+    assert_eq!(
+        renderer.terminal().written(),
+        "\x1b]52;c;Y2FyZ28gdGVzdCAtLWFsbAphbmQgYSBzZWNvbmQgbGluZQ==\x07"
+    );
+}
+
+#[test]
+fn a_box_with_nothing_in_it_says_nothing_and_leaves_the_clipboard_alone() {
+    // A reader who pressed the key over an empty box has been answered by the
+    // box; a row saying so would be noise. And emptying the clipboard is the
+    // one thing a copy must never be mistaken for.
+    let mut renderer = roomy();
+
+    assert_eq!(
+        copy(&mut renderer, &Editor::new()).expect("no request"),
+        None
+    );
+    assert_eq!(renderer.terminal().written(), "");
+}

@@ -185,6 +185,13 @@ scrollback. Every terminal has a modifier that hands the mouse back for one
 drag — <kbd>Shift</kbd> in most, <kbd>Fn</kbd> or <kbd>Option</kbd> on macOS —
 and that is how you scroll or select while crucible is running.
 
+Selecting the box itself is the one thing that drag does badly, and no terminal
+can be asked to do it better: what it takes is the picture — a border down each
+side, and blank ground out to the last column of every row. So <kbd>Ctrl+Y</kbd>
+puts the line itself on your clipboard, exactly as you typed it and with nothing
+around it, and the row under the box says it went. It works while a turn is
+running too, since the line is yours either way.
+
 Under the box is the mode in force, every time — `ask mode on` is the one
 nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
 you type, and the row and the colour of the box both follow it.
@@ -532,7 +539,9 @@ word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
 rather than a shell. <kbd>Delete</kbd> takes the character in front of the
 cursor, which stays where it is. A word goes on being a word across a break, so
 rubbing one out at the start of a line joins it to the line above — the same as
-<kbd>Backspace</kbd> does.
+<kbd>Backspace</kbd> does. <kbd>Ctrl+Y</kbd> goes the other way and copies the
+whole line out to your clipboard; a line longer than a terminal will take says so
+instead.
 
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
