@@ -120,17 +120,11 @@ impl Standing {
 /// What the row at the top of the window says, in its own words.
 ///
 /// Held rather than the row it becomes, because the row is laid out against a
-/// window that changes size and these four facts do not. Owned rather than
+/// window that changes size and what it says does not. Owned rather than
 /// borrowed for the same reason: it outlives every call that sets it, and what
 /// it names belongs to the session rather than to a frame.
 #[derive(Debug)]
 struct Heading {
-    /// The vendor the model is asked of.
-    provider: String,
-    /// Which model the next turn goes to.
-    model: String,
-    /// How hard it is being asked to think, where a rung is in force.
-    effort: Option<String>,
     /// The directory the session is bound to.
     root: String,
 }
@@ -409,9 +403,6 @@ impl<T: Terminal> Renderer<T> {
         }
 
         self.heading = Some(Heading {
-            provider: head.provider.to_owned(),
-            model: head.model.to_owned(),
-            effort: head.effort.map(str::to_owned),
             root: head.root.to_owned(),
         });
         self.crown();
@@ -428,9 +419,6 @@ impl<T: Terminal> Renderer<T> {
 
         self.crowned = self.heading.as_ref().map(|heading| {
             Head {
-                provider: &heading.provider,
-                model: &heading.model,
-                effort: heading.effort.as_deref(),
                 root: &heading.root,
             }
             .row(columns, glyphs)

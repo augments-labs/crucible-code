@@ -37,8 +37,8 @@ use std::time::Duration;
 
 use crucible_auth::Store;
 use crucible_core::{
-    Answer as Chosen, Answered, Cancel, Compacting, Effort, Event, Post as _, Question, Remember,
-    Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
+    Answer as Chosen, Answered, Cancel, Compacting, Event, Post as _, Question, Remember, Revealed,
+    Room, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -383,15 +383,12 @@ pub(crate) fn converse<T: Terminal>(
         // here instead.
         renderer.resized()?;
 
-        // The row at the top of the window, said again because a command may
-        // have changed what it says: `/model`, `/effort` and `/login` all end
-        // here, and the directory is the one part of it that cannot. Once per
-        // turn rather than per frame — the renderer keeps the row it lays out
-        // and re-lays it only when the window changes under it.
+        // The row at the top of the window. Said here rather than once at
+        // startup because the renderer is handed the row and not a place to
+        // read it from, and a session that reopens the screen — a view, a
+        // resize — is one that has to be told again. What it says cannot
+        // change: the directory is fixed for as long as the session is.
         renderer.heads(Head {
-            provider: runner.serving(),
-            model: runner.model(),
-            effort: runner.effort().map(Effort::as_str),
             root: opening.root(),
         })?;
 

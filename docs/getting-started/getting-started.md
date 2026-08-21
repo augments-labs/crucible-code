@@ -131,11 +131,9 @@ cd ~/code/my-project
 crucible
 ```
 
-The row along the top of the window says where the session is and what it is
-talking to: the working directory at the left, and at the right the provider,
-the model and the rung it is being asked on where one has been chosen. It stands
-for as long as the session does, so those facts are still there after a long
-scroll back.
+The row along the top of the window says where the session is: the working
+directory, and nothing else on it. It stands for as long as the session does,
+so that is still there after a long scroll back.
 
 Under it, it opens with a card naming the release and the root it is standing
 on, beside the last few sessions started in this directory. A separate row
@@ -148,12 +146,12 @@ that, and under forty-six there is no frame at all — just what it is and where
 Under the card is the box:
 
 ```
-/home/you/code/my-project                       anthropic/claude-sonnet-5 · high
+/home/you/code/my-project
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ›                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)
+ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
@@ -166,20 +164,21 @@ stood for, so a snippet written with tabs is still indented -- on screen and in
 the prompt that is sent. Anything else a terminal can hide in a paste is left
 out, since drawn it would move a cursor this process had already placed.
 
-The row under the box is about the next key: the permission mode in force, the
-key that steps it, and how many commands are still running behind the box. It is
-redrawn on every keystroke, and each of those changes while a session runs.
+The row under the box has two ends. At the left is the next key: the permission
+mode in force, the key that steps it, and how many commands are still running
+behind the box. At the right is what the session is talking to — the provider,
+the model, and the rung it is being asked on where one has been chosen. It sits
+beside the box because every key that changes it is typed into that box.
 
-What the session is talking to is the row at the top instead. The model is
-written there the way `--model` takes it back, so what the row says is what you
-would type to ask for it again, and the vendor is named because a model name
-says which model and never whose — a machine holding keys for two of them is a
-machine where that is a real question. Where the window is too narrow to hold
-the directory beside all three, the model gives way and the directory keeps the
-end of itself.
+The model is written the way `--model` takes it back, so what the row says is
+what you would type to ask for it again, and the vendor is named because a model
+name says which model and never whose — a machine holding keys for two of them
+is a machine where that is a real question.
 
-`/model`, `/effort` and `/login` all change what that row says, and it is redrawn
-when they do.
+The row is redrawn on every keystroke, and both ends move while a session runs:
+<kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort` and `/login` change the
+right. Where the window is too narrow for both, the right end gives way whole
+rather than being cut, and the mode keeps its place.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
 moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</kbd>
@@ -665,9 +664,9 @@ from.
 A key that is written lands on the session that took it: the provider is set up
 there and then, from the next turn on. Logging in chooses neither a model nor a
 rung — `/model` is the explicit next step where nothing has chosen one. A run
-started with no key for anything is one command away from a turn, and the row at
-the top of the window says which model it will be asking — or sends you to
-`/model` where the files name none.
+started with no key for anything is one command away from a turn, and the row
+under the box says which model it will be asking — or sends you to `/model`
+where the files name none.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one
