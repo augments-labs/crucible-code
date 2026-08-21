@@ -167,6 +167,9 @@ that regresses the budget is a defect regardless of what it adds:
 
 The grep probe pairs each tool run with `rg` over representative workloads. Its
 worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
+The startup probes cut their runs into nine windows and take the middle window's
+tail, so a stretch of wall clock this program did not own is not read as this
+program having got slower.
 
 If your change moves one of these, say so in the pull request and explain the
 trade. A budget change is a decision, not a side effect.
