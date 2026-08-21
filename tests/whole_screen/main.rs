@@ -2,21 +2,21 @@
 //!
 //! Every other test in this tree sees rows. That is the right shape for a
 //! component — a row is what it returns — but it means nothing above them ever
-//! sees the arithmetic that turns rows into a screen: how far a frame rewinds,
-//! where the cursor parks, how tall the live region is allowed to be. crucible
-//! writes escape sequences inline into the terminal's own scrollback and owns no
-//! cell buffer, so that arithmetic is the renderer, and it has been wrong in a
-//! shipped release: the live tail was bounded by the whole window while rows
-//! stood under it, so once an answer filled the screen every frame erased rows
-//! the terminal had already taken, and the box was eaten away from the top as
-//! the answer got longer. No component test could have caught it. This one can.
+//! sees the arithmetic that turns rows into a screen: which band a frame writes
+//! into, where the cursor parks, how tall the box is allowed to grow. crucible
+//! shares the window out into bands and addresses every position in them
+//! outright, so that arithmetic is the renderer, and it has been wrong in a
+//! shipped release: what a turn was saying was bounded by the whole window
+//! while rows stood under it, so once an answer filled the screen the box was
+//! eaten away from the top as the answer got longer. No component test could
+//! have caught it. This one can.
 //!
 //! So: a real pseudo terminal, the real binary, real keystrokes, and a
 //! [`screen`] that understands exactly what the renderer promises to write and
 //! reports anything else by name. Each case snapshots the picture, and every
-//! frame on the way to it is checked for the two guarantees crucible makes
-//! about the screen rather than about a row — that no row is ever wider than
-//! the terminal, and that nothing ever moves the cursor above the top of it.
+//! frame on the way to it is checked for the guarantees crucible makes about
+//! the screen rather than about a row — that no row is ever wider than the
+//! terminal, and that no cell outside the window is ever addressed.
 //!
 //! Linux only, and the reason is in [`window`]: the child needs this pty as its
 //! controlling terminal or it reads the developer's window size instead of this
@@ -50,10 +50,10 @@ fn overlong() -> String {
 /// An answer with more rows in it than the whole window has.
 ///
 /// Past the window rather than merely past the box, and the difference is the
-/// test: the tail may hold what the footing leaves it, so an answer that fits on
-/// screen never reaches the bound and never exercises the arithmetic that was
-/// wrong. This is long enough that rows leave the tail for the terminal's
-/// scrollback while the box goes on standing under them.
+/// test: the transcript band holds what the bands under it leave it, so an
+/// answer that fits on screen never reaches the bound and never exercises the
+/// arithmetic that was wrong. This is long enough that rows go off the top of
+/// that band while the box goes on standing under them.
 fn taller_than_the_window() -> String {
     "the quick brown fox jumps over the lazy dog. ".repeat(40)
 }
@@ -61,8 +61,8 @@ fn taller_than_the_window() -> String {
 #[test]
 fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
     // Nothing typed: this is the whole of what crucible puts on screen before
-    // it asks for anything, and the first frame is the one with no committed
-    // row above it to rewind over.
+    // it asks for anything, and the first frame is the one with nothing above
+    // the box to share the window with.
     //
     // It is also the screen a first run meets, and the reason this case is the
     // gate on that: nothing holds a key here, so the warning is the one naming
@@ -96,9 +96,9 @@ fn the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width() {
 
 #[test]
 fn a_typed_line_that_reaches_the_edge_wraps_and_grows_the_box() {
-    // The box grows on the keystroke that fills a row, which pushes everything
-    // above it up the screen. The rewind on the next frame has to stop at the
-    // top of the taller box and not at the top of the shorter one it replaced.
+    // The box grows on the keystroke that fills a row, which takes a row from
+    // the transcript above it. The next frame has to lay the transcript out
+    // against the band the taller box left and not the one the shorter one did.
     let mut window = Watched::open("wrapped", 80, 24);
 
     window.types(&"the quick brown fox jumps over the lazy dog. ".repeat(3));
@@ -149,8 +149,8 @@ fn a_line_past_what_the_box_has_room_for_scrolls_inside_it() {
 
 #[test]
 fn a_slash_opens_the_command_list_above_the_box() {
-    // A live region that is suddenly much taller than the box on its own, drawn
-    // over rows the terminal has already been given.
+    // Something standing that is suddenly much taller than the box on its own,
+    // drawn over rows of the transcript that were on screen a frame ago.
     let mut window = Watched::open("commands", 80, 24);
 
     window.types("/");
@@ -161,10 +161,10 @@ fn a_slash_opens_the_command_list_above_the_box() {
 #[test]
 fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     // The first case here that takes a turn. What it watches is the handover:
-    // the answer becomes rows the terminal owns, and the box and its footing
-    // are drawn again underneath, once. The blank rows below them are the three
-    // the running turn had and has handed back: a live region that grew scrolled
-    // the terminal to make room, and shrinking it again cannot scroll back.
+    // the answer joins the transcript, and the box is drawn again underneath in
+    // the band it had before. The blank row between them is where a running
+    // turn says what it is doing, empty now it is over — an empty band is still
+    // a band, which is the whole of why the box did not move.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::answering("answered", 80, 24, &vendor);
 
@@ -176,10 +176,10 @@ fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
 #[test]
 fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     // The defect this whole file was written for, and the one no component test
-    // could reach: the live tail was bounded by the window rather than by the
-    // rows left under it, so an answer this long ate the box from the top as it
-    // grew. A short window, because what decides it is how much of the screen
-    // the answer fills.
+    // could reach: what a turn was saying was bounded by the window rather than
+    // by the rows left under it, so an answer this long ate the box from the
+    // top as it grew. A short window, because what decides it is how much of
+    // the screen the answer fills.
     let vendor = Vendor::answering(&taller_than_the_window());
     let mut window = Watched::answering("answered-long", 80, 16, &vendor);
 
@@ -372,7 +372,7 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
 fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
     // Escape is an answer, and the answer is "the screen I had". `/login` left
     // this way used to fall through to the list of every provider and the
-    // variable each reads from — three rows into the scrollback, for somebody
+    // variable each reads from — three rows into the transcript, for somebody
     // who had just said they did not want to be asked. One line is what it owes:
     // enough that the record says the question was asked, and no more.
     let mut window = Watched::open("login-left", 80, 24);
@@ -385,16 +385,15 @@ fn a_panel_that_was_left_writes_one_line_and_not_the_list_under_it() {
 
 #[test]
 fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
-    // The size changes under a line that was laid out for the old one. What was
-    // committed stays where the terminal put it; what is live is drawn again,
-    // and how far back that reaches is counted against the width the window has
-    // now. A terminal that re-wraps has made two rows out of each row of the
-    // region by then, and a rewind counted in rows drawn strands the top of it.
+    // The size changes under a screen laid out for the old one, and every row
+    // of it is drawn again at the new width — the box, what stands over it, and
+    // the transcript above them both, since this process owns all three now.
     //
-    // Nothing of the opening is stranded, because none of it was committed
-    // while the window still had room for it: the card below is the one laid
-    // out for fifty-two columns, written down on the frame that found it no
-    // longer fit beside the box.
+    // What is drawn again is not the same as what is laid out again. Text is
+    // folded at whatever the window is now, so the line being typed re-wraps
+    // inside a narrower box. A card is not: it was arranged into columns by
+    // something that is no longer here to arrange them differently, so it is
+    // clipped, and the opening below shows the half of itself that fits.
     let mut window = Watched::open("resized", 80, 24);
 
     window.types("the quick brown fox jumps over the lazy dog");

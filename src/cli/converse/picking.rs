@@ -1,11 +1,11 @@
 //! Something standing where the prompt box was, until one of its entries is
 //! taken or it is left.
 //!
-//! The box and the row under it are what the live region holds while a line is
-//! being typed; this puts a panel or a ladder there instead and reads keys
-//! against it. That is the whole of what "it replaces the prompt" means —
-//! nothing is drawn over anything, the region is simply given different rows,
-//! and the next frame after this returns is the box again.
+//! The box and the row under it are what the bands at the foot of the window
+//! hold while a line is being typed; this puts a panel or a ladder there instead
+//! and reads keys against it. That is the whole of what "it replaces the prompt"
+//! means — nothing is drawn over anything, those bands are simply given
+//! different rows, and the next frame after this returns is the box again.
 //!
 //! Nothing about the *contents* is decided here. What is being chosen, what
 //! each entry says and what the footer names are the caller's, which is what

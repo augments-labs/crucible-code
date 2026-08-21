@@ -26,11 +26,18 @@
 //! what a key does is a function of the key, and it is testable where it is
 //! written rather than here.
 //!
+//! The wheel is the one press this loop answers on a component's behalf. A
+//! component that is a window over more text than it has rows for walks it like
+//! an arrow and says so by moving; every other one stands over a transcript
+//! that is still on screen above it, and that is what the wheel moves. Which of
+//! the two a component is, is the component's answer and arrives the same way
+//! every other key's does.
+//!
 //! Nothing that stands is written down. A component is a question, and what
 //! belongs in the record is the answer to it, in the words of whatever asked —
 //! which is the caller's to commit after this returns.
 
-use crucible_tui::{Caret, Pressed, Renderer, Reporting, Row, Terminal, caret, pressed};
+use crucible_tui::{Aimed, Caret, Pressed, Renderer, Row, Terminal, pressed};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -86,14 +93,6 @@ pub(super) fn stand<T: Terminal, S>(
     mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
-    // The mouse, for as long as the list stands and no longer. A list is where
-    // the wheel walking rows is what a wheel would have been reached for
-    // anyway, and there is no scrollback under one to lose — so this is the
-    // one place the pointer is taken without anybody asking for it. Held by a
-    // guard rather than handed back at each `return`, because there are four
-    // of them and one is a `?`.
-    let _pointer = Reporting::on()?;
-
     let mut changed = true;
 
     loop {
@@ -119,40 +118,59 @@ pub(super) fn stand<T: Terminal, S>(
             renderer.resized()?;
         }
 
-        // A click is reported against the whole screen, and a component thinks
-        // in the rows it drew. This is the one place both are known — the
-        // region's origin from where the cursor is parked, the click's row from
-        // the press — so the click is rewritten to a row of the region here,
-        // and one that landed outside it is nothing the component is asked
-        // about. Asked of the terminal per click and never per frame, for the
-        // reason typing.rs's `cursor` gives: it costs a round trip.
+        // A click is reported against the whole window, and a component thinks
+        // in the rows it drew. The renderer is what knows both, so the click is
+        // rewritten to a row of the region here, and one that landed anywhere
+        // else — the transcript above, a band nothing is standing in — is
+        // nothing this component is asked about.
         let arrived = match arrived {
-            Pressed::Clicked { row, column } => {
-                let Some(cursor) = caret().ok().map(|(row, _)| row) else {
-                    continue;
-                };
-                match renderer.within(row, cursor) {
-                    Some(row) => Pressed::Clicked { row, column },
-                    None => continue,
-                }
-            }
+            Pressed::Clicked { row, column } => match renderer.aimed(row) {
+                Some(Aimed::Stood(row)) => Pressed::Clicked { row, column },
+                _ => continue,
+            },
             other => other,
+        };
+
+        // Read before the key is handed over, because it is handed over: a
+        // component takes the press, and this loop still has to know what it
+        // was to answer for it below.
+        let wheel = match arrived {
+            Pressed::Scrolled { back } => Some(back),
+            _ => None,
         };
 
         match keys(arrived, state) {
             Moved::Redraw => changed = true,
-            Moved::Still => changed = false,
+            Moved::Still => {
+                changed = false;
+
+                // The wheel, where the component did nothing with it. A
+                // component the wheel ought to walk — a view over more text
+                // than its rows hold — says so by moving; everything else is
+                // standing over a transcript, and the transcript is what a
+                // reader reaching for a wheel meant to move. The renderer draws
+                // its own frame and the rows this loop put down are in a band
+                // it is not touching, so nothing is laid out again for it.
+                if let Some(back) = wheel {
+                    renderer.notched(back)?;
+                }
+            }
             Moved::Took => return over(renderer, Ended::Took),
             Moved::Left => return over(renderer, Ended::Left),
         }
     }
 }
 
-/// Draws `rows` in the live region, and says whether there was room for them.
+/// Draws `rows` where the box was, and says whether there was room for them.
 ///
 /// A component gives up rows rather than overflowing the width, and its last
-/// rung is nothing at all; the height is checked here, since a live region
-/// taller than the window is a frame that cannot be rewound over.
+/// rung is nothing at all; the height is checked here, since a component
+/// taller than the window is one the reader would only see part of.
+///
+/// The box is taken off first and the rows stand in the band above it. A
+/// component here is not a prompt, so the share a prompt is held to is not
+/// its — a list of themes may take the window it needs, and there is nothing
+/// underneath it for that to push off the screen.
 ///
 /// The cursor is parked where `caret` says, and on the last row it drew where
 /// that is `None`. Nothing here hides it — this program never does — and the
@@ -177,11 +195,12 @@ fn drawn<T: Terminal>(
         column: 0,
     });
 
-    renderer.live(rows, caret, style.palette())?;
+    renderer.live(&[], Caret::default(), style.palette())?;
+    renderer.under(rows, Some(caret), style.palette())?;
     Ok(true)
 }
 
-/// Takes the live region back and answers with `ended`.
+/// Takes back the rows this was standing in and answers with `ended`.
 fn over<T: Terminal>(renderer: &mut Renderer<T>, ended: Ended) -> Result<Ended, Fatal> {
     renderer.settle()?;
     Ok(ended)

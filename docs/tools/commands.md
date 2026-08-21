@@ -66,8 +66,8 @@ again while the command carries on.
 The sample is the first thing a short window gives up: the call line, the row
 saying the turn is running, and the box all keep their rooms before it does,
 because what it shows is one keypress away either way. It is drawn and taken
-back rather than written down, so what ends up in your scrollback is the result
-below and not a second copy of the build log.
+back rather than written down, so what the transcript keeps is the result below
+and not a second copy of the build log.
 
 A command writing over one line rather than adding lines — a progress bar — stays
 one row. A command printing faster than the screen can be read has rows skipped:

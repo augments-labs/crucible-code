@@ -9,7 +9,7 @@
 //!
 //! An answer is committed rows, the same as everything else that has happened
 //! here. Nothing is entered and there is nothing to dismiss: what a command
-//! said stays in the scrollback above the box, in the order it was asked.
+//! said stays in the transcript above the box, in the order it was asked.
 //!
 //! Which of the two ways to draw one uses is decided by where the words came
 //! from. Rows this module composed go through [`Renderer::present`], which
@@ -274,7 +274,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Help,
             ..
-        } => renderer.present(&listing(columns, glyphs), style.palette())?,
+        } => renderer.present(&listing(columns, glyphs))?,
 
         // Nothing is drawn for it here. What it asks for is run above, where a
         // request is run, and everything a reader sees of one comes from there.
@@ -329,7 +329,7 @@ fn answer<T: Terminal>(
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;
             renderer.commit("")?;
-            renderer.present(&listing(columns, glyphs), style.palette())?;
+            renderer.present(&listing(columns, glyphs))?;
         }
     }
 
@@ -354,7 +354,7 @@ fn moded<T: Terminal>(
 
     if said.is_empty() {
         let rows = [sentence(runner.mode(), columns), ring];
-        renderer.present(&rows, style.palette())?;
+        renderer.present(&rows)?;
         return Ok(());
     }
 
@@ -363,12 +363,12 @@ fn moded<T: Terminal>(
         // out. Unlike the word an unknown command is named by, this one was
         // never shape-checked: anything at all can follow `/mode `.
         renderer.commit(&format!("! {said} is not a mode"))?;
-        renderer.present(&[ring], style.palette())?;
+        renderer.present(&[ring])?;
         return Ok(());
     };
 
     runner.switch(asked);
-    renderer.present(&[sentence(asked, columns)], style.palette())?;
+    renderer.present(&[sentence(asked, columns)])?;
     Ok(())
 }
 
@@ -376,10 +376,10 @@ fn moded<T: Terminal>(
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
 /// credential was stored, removed, or left alone with the reason why.
-fn say<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms, said: &str) -> Result<(), Fatal> {
+fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
     let row = Row::new().then(Slot::Quiet, clip(said, renderer.columns()));
 
-    Ok(renderer.present(&[row], terms.style().palette())?)
+    Ok(renderer.present(&[row])?)
 }
 
 /// A thing and what is said about it, parted by the mark that says they are two.

@@ -165,25 +165,28 @@ is, and how hard it is being asked to think — written the way `--model` takes 
 back, so what the row says is what you would type to ask for it again. A vendor
 is named there because a model name says which model and never whose, and a
 machine holding keys for two of them is a machine where that is a real question.
-Both ends change while a session runs, and that
-row is redrawn on every keystroke — which the card above it is not, since what
-crucible has already written belongs to the terminal's scrollback.
+Both ends change while a session runs, and that row is redrawn on every
+keystroke — which the card above it is not, since a frame writes only the rows
+whose text is not already on screen.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
 moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</kbd>
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
-The mouse is the terminal's, which is where selecting and scrolling already
-live: drag to select and turn the wheel to scroll, with nothing held and nothing
-configured. A terminal forwarding buttons to a program is not using them itself,
-so the two cannot both have it — and while you are reading and typing it is
-yours.
+The wheel scrolls the transcript, and goes on scrolling it while a list or a
+panel stands over it — except where what is standing is itself a window over
+more text than fits, which the wheel walks instead. How far one notch goes is
+[`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed),
+six rows unless you say otherwise. Text arriving below while you read back does
+not take you away from it.
 
-A list or a panel is the exception, and takes it for as long as it stands. The
-wheel walks its rows and a click marks one, which is what a wheel and a click
-were going to be reached for there anyway, and there is no scrollback under a
-panel to give up. It goes back to the terminal when the panel does.
+A click puts the cursor where you point in the box, marks a row of a list, or
+opens a result the transcript cut short.
+
+The price of all that is a drag that no longer selects, because a terminal
+forwarding buttons to a program is not using them itself. Hold <kbd>Shift</kbd>
+while you drag and the selection is your terminal's again.
 
 Selecting the box itself is the one thing that drag does badly, and no terminal
 can be asked to do it better: what it takes is the picture — a border down each
@@ -326,9 +329,8 @@ Seven tasks are shown and the rest are counted — `… +4 more · ctrl+t to exp
 <kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds arrives
 underneath the rows already on screen, so nothing you were reading moves. On a
 window with no room for all of this, the panel is measured before the rows around
-it: the call line and the queued prompt give way first, since a call reaches your
-scrollback the moment its tool answers and a queued prompt has its own turn
-coming, while what the agent is working to is on screen nowhere else.
+it: the call line and the queued prompt give way first, since a call joins the transcript the moment its tool answers and a queued
+prompt has its own turn coming, while what the agent is working to is on screen nowhere else.
 
 The panel does not come down when the turn does. What the agent was working to
 is what the next prompt is typed against, so it stands over the box between
@@ -365,13 +367,13 @@ the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
 That line is written when the tool answers rather than when the model asks for
-it, so it and the result under it reach your scrollback one after the other and
+it, so it and the result under it join the transcript one after the other and
 nothing the turn did in between comes to stand between the two. While the tool
 is out it stands above the working row instead, with its mark pulsing on the
 beat the mark below it turns on, and it commits the moment the tool answers —
 the same words in the same columns, with the motion gone. So a call still
-waiting is told from one that has finished at a glance, and what reaches your
-scrollback is the still line. On a window with room for one of the two, the call
+waiting is told from one that has finished at a glance, and what the transcript
+keeps is the still line. On a window with room for one of the two, the call
 gives way to the row that says the turn is running at all.
 
 A tool's output is summarised to its first line and a count of the rest; `read`
@@ -391,7 +393,7 @@ every result that was cut this way where the box was, newest first, each under
 the line of the call it answers. The arrow keys walk it where there is more of
 it than the window holds, and <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
 it — the box comes back with the line you were typing still in it, and nothing
-is written into your scrollback on either side of it.
+is written into the transcript on either side of it.
 
 The key works whether or not a turn is running. While one is, the view stands in
 the rows the box has and the turn goes on writing above it, so what you are
@@ -601,9 +603,9 @@ touched carry a ground, and that is the interface theme's; the rows it did not
 are free to be read, and that is the code theme's. Move either mark and the half
 it decides changes.
 
-What is already in your scrollback keeps the colours it was drawn in. crucible
-draws into the terminal's own buffer and never goes back over what it has
-written, so a theme changes what comes next. See
+The whole transcript changes with it, not only what comes next: crucible holds
+what was said rather than what it looked like, so the rows on screen are painted
+again from the theme now in force. See
 [Configuration](../configuration/configuration.md#output).
 
 `/effort` asks the same question over the rungs the model in force serves, and
@@ -619,8 +621,8 @@ of being offered a ladder that cannot be answered. A session with no model
 chosen is sent to `/model` first, since a rung is asked of a model.
 
 `/login <provider>` opens a box for the key — never the command line, which
-would put it in your shell's history, in the process listing and in the
-scrollback. Escape leaves it without writing anything.
+would put it in your shell's history and in the process listing. Escape leaves
+it without writing anything.
 
 `/login` on its own asks how crucible should sign its requests, which is a
 different question from which vendor: somebody paying for a ChatGPT plan and
@@ -660,8 +662,9 @@ itself, the record of which files it read, or the plan standing over the box,
 all three of which belonged to it — a plan that outlived its session would
 describe work the agent has no memory of. The panel comes down with it; the
 mode does not move, because it is where you are running crucible rather than
-something a session decided. The screen is left alone, because what is above the
-box is the terminal's scrollback rather than crucible's.
+something a session decided. What is on screen stays there and stays scrollable:
+the command empties the agent's memory, and reading back through what you have
+already done is the reason you would want it emptied.
 
 `/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
 newest first, each numbered and shown with when it started and what it was first

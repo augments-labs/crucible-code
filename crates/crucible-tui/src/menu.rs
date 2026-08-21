@@ -289,9 +289,9 @@ mod tests {
 
     #[test]
     fn what_does_not_fit_is_cut_rather_than_wrapped() {
-        // Every row of a live region is one row. A row that wrapped would leave
-        // the cursor one row below where the next frame expects it, and the
-        // frame after that would erase the wrong lines.
+        // Every row of a band is one row. A row that wrapped would take a
+        // second, and the band below it would be drawn a row down the screen
+        // from where the frame put everything else.
         for columns in 1..=60 {
             for chosen in [None, Some(0), Some(2)] {
                 let rows = Menu {

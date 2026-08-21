@@ -57,13 +57,17 @@ fn one_of_crucibles_own_settings_is_refused_where_it_was_written() {
         local,
         shared,
     ] {
-        let err = read(r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "sometimes"}}"#).unwrap_err();
+        let err =
+            read(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "sometimes"}}"#).unwrap_err();
 
         let said = err.to_string();
         assert!(matches!(err, ConfigError::Answer { .. }), "got {err:?}");
-        assert!(said.contains("CRUCIBLE_CODE_CLEAR_SCREEN"), "got {said}");
+        assert!(
+            said.contains("CRUCIBLE_CODE_MOUSE_SCROLL_SPEED"),
+            "got {said}"
+        );
         assert!(said.contains("line 1"), "got {said}");
-        assert!(said.contains("true"), "got {said}");
+        assert!(said.contains("1 to 30"), "got {said}");
 
         // The name and where it is, never what was set beside it. This block is
         // the environment, so the next value to go wrong could be a token.
@@ -78,7 +82,7 @@ fn an_answer_crucible_takes_passes_in_every_layer() {
         local,
         shared,
     ] {
-        read(r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "true"}}"#).unwrap();
+        read(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "6"}}"#).unwrap();
     }
 }
 

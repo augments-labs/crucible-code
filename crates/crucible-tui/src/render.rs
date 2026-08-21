@@ -1,207 +1,236 @@
-//! Inline rendering: draw the live tail, commit everything above it.
+//! Full-screen rendering: crucible owns the window and every row in it.
 //!
-//! There is no alternate screen. Output goes into the terminal's own scrollback,
-//! so the scroll buffer, the find bar and the scrollbar are the terminal's --
-//! already written, already fast, already familiar. What this process keeps is
-//! only the tail it is still changing.
+//! This process takes the alternate screen, so the terminal's scroll buffer is
+//! not where the session lives. What replaces it is [`Record`] — a bounded
+//! window of the lines that have been said, folded to the width the terminal
+//! has now, with a viewport over it that the reader moves. Nothing here is
+//! proportional to how long the session has run: the record drops its oldest
+//! lines at a ceiling it owns, and a frame folds only the lines the transcript
+//! band happens to cover.
 //!
-//! The redraw is the whole design in three sequences: return to the start of the
-//! tail, erase from the cursor *down*, and write the tail again. Erasing
-//! downward cannot reach scrollback, so committed output is unreachable by
-//! construction rather than by care. The sequences themselves live in
-//! [`frame`]; this module decides when a frame happens.
+//! The window is shared out by [`crate::bands`] and every row of it belongs to
+//! exactly one band, which is what makes the whole design absolute: a frame
+//! names the row it writes and never counts how far to move or how much to
+//! erase. There is no rewind, no live region, and no arithmetic about how tall
+//! the last frame turned out to be — the class of defect this crate has spent
+//! the most on cannot be expressed here.
+//!
+//! What a frame costs is bounded by the window and not by the delta: the rows
+//! whose painted bytes are the same as last time are not written at all, which
+//! [`painted`] decides, and a frame that changed nothing costs no write and no
+//! flush.
+//!
+//! A run whose output is redirected has no screen to own, and no frame either:
+//! text goes straight through at the moment it arrives, stripped of the escape
+//! bytes an untrusted string put in it. It keeps the same record all the same,
+//! so what separates one block from the next is decided once rather than twice.
+//! Nothing on that path can write an escape sequence, because nothing on it
+//! goes near one.
 
+use crate::bands::{Bands, Wants};
 use crate::clipboard;
-use crate::color::Palette;
+use crate::color::{Palette, Slot};
+use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
+use crate::record::Record;
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
-use crate::width;
 
 mod frame;
-mod plain;
-mod region;
-mod screen;
-mod tail;
+mod painted;
 
-use frame::Frame;
-pub use region::Caret;
-use tail::Tail;
+use painted::Painted;
 
-/// How many rows of the transcript are still this process's to change.
+/// How far one notch of the wheel moves the transcript, until told otherwise.
 ///
-/// One: streamed text only ever grows at the end, so the row being written to is
-/// the only one a later delta can alter. Every row above it was final the moment
-/// the wrap broke it, and holding it live would mean writing it again on every
-/// frame for the rest of the answer — a frame costing the height of the window
-/// rather than the size of the delta, on the one path the burst budget bounds.
-///
-/// It is also what keeps the live region on screen. A frame is taken back by
-/// moving the cursor up over it, so the tail and whatever stands under it have
-/// to fit together: one taller than the window is one whose top has already
-/// scrolled out of reach. A tail of a single row leaves the rest of the window
-/// to the component standing under it, so there is nothing to negotiate.
-///
-/// What it costs is re-wrapping: [`Renderer::resized`] can only re-wrap the row
-/// still being written to. Everything above it was committed at the width it was
-/// written at, and reflowing scrollback is the terminal's job — which it was for
-/// most of the answer regardless, since a taller tail would still have committed
-/// everything that scrolled out of it.
-const LIVE: usize = 1;
+/// A renderer nobody configured still has to answer the wheel, and the answer
+/// that is wrong here is nought: it looks like a terminal that has stopped
+/// reporting rather than like a setting waiting to be made. Three rows is a
+/// short paragraph, which is enough to see the picture move.
+const NOTCH: i32 = 3;
 
-/// Draws the transcript into the terminal's scrollback.
+/// Where the cursor rests inside a band.
+///
+/// Counted from the top left of the rows the caller handed over rather than
+/// from the window's origin, because which band those rows end up in is this
+/// module's answer and not the caller's: a component knows only which of its
+/// own rows the cursor belongs on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Caret {
+    /// Which row of the rows, from the top.
+    pub row: usize,
+    /// How many columns from the left of it.
+    pub column: usize,
+}
+
+/// What is under a row of the window.
+///
+/// The answer to a click, and the only thing that turns a row the terminal
+/// reported into something the session can act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aimed {
+    /// A line of the transcript, counted from the first of the session.
+    Line(usize),
+    /// A row of what is standing over the box, counted from the top of it.
+    ///
+    /// A running turn's rows, or a list a line has opened. Told apart from the
+    /// box because the two are laid out by different components and a click is
+    /// answered by whichever drew the row — the same row number means a
+    /// different thing in each, and nothing further down could tell.
+    Stood(usize),
+    /// A row of the box, counted from the top of it.
+    Boxed(usize),
+}
+
+/// The rows standing at the foot of the window, painted.
+///
+/// Painted when they are set rather than once per frame: what they say changes
+/// when the session changes, and a turn is a great many frames.
+///
+/// Two slots, in the order they are drawn down the screen, and either may be
+/// full without the other: a turn stands in the first while it runs, a list a
+/// line opened stands there between turns, and the box holds the second
+/// whenever there is one to type into.
+#[derive(Debug, Default)]
+struct Standing {
+    /// What a running turn is showing, and anything else standing over the box.
+    turn: Vec<String>,
+    /// Where the cursor belongs in it, where anything is typing into it.
+    turned: Option<Caret>,
+    /// The box.
+    prompt: Vec<String>,
+    /// Where the cursor belongs in the box.
+    prompted: Option<Caret>,
+}
+
+impl Standing {
+    /// Forget both, for a window whose size has changed underneath them.
+    fn clear(&mut self) {
+        self.turn.clear();
+        self.turned = None;
+        self.prompt.clear();
+        self.prompted = None;
+    }
+}
+
+/// Draws the session onto a screen this process owns.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
     terminal: T,
-    tail: Tail,
-    /// Wraps committed lines by the same rules as streamed output without
-    /// duplicating the wrap. Its bound is one, so every row it is given
-    /// overflows immediately instead of staying live.
-    finished: Tail,
-    /// How wide each row currently on screen is, in the order it was drawn.
+    /// Everything that has been said, and where in it the reader is looking.
+    record: Record,
+    /// The rows at the foot of the window that are not the transcript.
+    standing: Standing,
+    /// The size the record is folded for and the bands are shared out over.
     ///
-    /// How many there are is what the next frame must move back over, and one
-    /// of the two pieces of screen state this process tracks. How wide each one
-    /// is, is what makes that count survive a resize: a terminal re-wraps what
-    /// is on screen when the window narrows, so a row drawn at the old width is
-    /// two rows at the new one and a rewind counted in rows drawn stops short of
-    /// the top. What it fails to reach stays on the screen -- once per step of
-    /// the drag that resized the window. [`Renderer::region`] counts these
-    /// against the width the window has now.
-    widths: Vec<usize>,
-    /// How many of those rows sit *below* the cursor.
-    ///
-    /// Zero for everything streamed, where the cursor is left at the end of the
-    /// last row written. A prompt parks it on the row being typed instead, so
-    /// the way back to the top of the region is that many rows shorter than the
-    /// region is tall.
-    parked: usize,
-    /// The size the tail is currently wrapped for.
-    ///
-    /// Rows as much as columns, though the tail's own height is [`LIVE`] and
-    /// does not move: a rewind reaching further than the window is tall reaches
-    /// above the top, which is what [`Renderer::region`] clamps against, and the
-    /// components standing under the tail lay themselves out against it.
+    /// Held rather than asked for per frame: a read costs a syscall, and
+    /// [`Renderer::resized`] is what keeps it true.
     size: Size,
-    /// Reused across frames: a frame is one string, so it is one write.
-    frame: Frame,
-    /// Reused across frames: rows leaving the tail on their way to scrollback.
-    overflow: Vec<String>,
-    /// Reused across frames: the rows of a live region, painted by [`region`].
-    painted: Vec<String>,
-    /// The rows standing under the tail, painted by [`region`] as well.
+    /// What each row of the window is currently showing, and the frame that
+    /// changes it.
+    painted: Painted,
+    /// Reused across deltas: one run of text with its escape bytes taken out.
+    free: String,
+    /// How far into an escape sequence streamed text is.
     ///
-    /// Painted when they are set rather than once per frame. What they say
-    /// changes when the session changes, and a turn is a great many frames.
-    footing: Vec<String>,
-    /// Where the cursor belongs inside [`Self::footing`], where somebody is
-    /// typing into it. `None` parks the cursor at the end of the tail, which is
-    /// where the next delta lands.
-    footed: Option<Caret>,
+    /// Held across deltas because a sequence arrives split across two of them
+    /// as often as not. What it is for: colour in a tool result is bytes an
+    /// untrusted string put there, and a row of the record is spans this
+    /// program painted from a palette rather than bytes it forwarded.
+    escapes: Escapes,
     /// Reads the markers out of the model's markdown and says what each run is.
     ///
-    /// Held here rather than made fresh per delta, for the reason the tail holds
-    /// its escape state: a delta is a piece of the wire, so a fence arrives
-    /// split across two of them as often as not.
+    /// Held here rather than made fresh per delta, for the reason the escapes
+    /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
-    /// The palette this run resolved, for the slots the scan above hands back.
+    /// The palette this run resolved.
     ///
-    /// Plain until [`Renderer::wears`] says otherwise, which is what leaves a
-    /// renderer nobody told showing the answer exactly as it arrived.
+    /// Read at the moment a row is drawn rather than at the moment it was said,
+    /// which is what lets a theme chosen mid-session repaint what is already on
+    /// screen. Plain until [`Renderer::wears`] says otherwise, which is what
+    /// leaves a renderer nobody told showing the answer as it arrived.
     palette: Palette,
-    /// Which characters the scan above draws a bullet and a quote bar with.
+    /// Which characters the markdown reader draws a bullet and a quote bar
+    /// with.
     ///
-    /// Held beside the palette and settled the same way: a marker that is read
-    /// out of an answer has to be replaced by something the reader's font
-    /// actually has, and what that is is a fact about the terminal rather than
-    /// about the answer. Unicode until [`Renderer::draws`] says otherwise.
+    /// Settled the same way the palette is: what a reader's font has is a fact
+    /// about the terminal rather than about the answer. Unicode until
+    /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
-    /// How many rows the record has grown by this session.
+    /// How many rows of the transcript one notch of the wheel moves.
     ///
-    /// Never read for its own sake — what it is for is the difference between
-    /// two readings of it, which is how far a row written at the first has
-    /// travelled up the screen by the second. That is the whole of what an
-    /// inline renderer can know about a row it has let go of: this process
-    /// draws into the terminal's own buffer and never learns where the top of
-    /// the screen is, so a row's place is counted from the live region
-    /// downwards rather than from an origin.
-    ///
-    /// One `usize` and no more: what is counted is rows, not rows kept.
-    record: usize,
-    /// Whether the record already ends in a blank row.
-    ///
-    /// What [`Renderer::apart`] reads, and the reason the rhythm is one
-    /// decision rather than one per caller: the thing that knows whether a
-    /// blank is owed is the thing that knows what was last written. True to
-    /// start with, because the top of a session is already a boundary and a
-    /// transcript that opens on an empty row has spent one for nothing.
-    ///
-    /// A committed line and a presented row each say for themselves. Streamed
-    /// output cannot: a delta is a piece of the wire, so whether the answer has
-    /// just ended a paragraph is a question about the rows the tail has written
-    /// and not about the bytes that happened to arrive together. [`Tail::parted`]
-    /// is what answers it.
-    parted: bool,
+    /// Held here for the reason the palette and the glyphs are: it is settled
+    /// where configuration is read, and asked about on a path that may not open
+    /// a file. What number it should be is not this crate's to decide — a wheel
+    /// is a piece of hardware whose notch means whatever its owner has told
+    /// their system it means. Three rows until [`Renderer::rolls`] says
+    /// otherwise, which is a notch that moves something for a reader nobody
+    /// configured.
+    notch: i32,
 }
 
 impl<T: Terminal> Renderer<T> {
     /// A renderer drawing on `terminal`.
     ///
-    /// The tail holds [`LIVE`] rows. Everything else a frame draws has already
-    /// overflowed into scrollback and is the terminal's to keep.
-    ///
     /// Nothing here can fail, and the signature says so. A terminal that will
     /// not report a size is still a terminal worth drawing on, so the size is
-    /// guessed rather than refused — and a width that turns out wrong is
-    /// corrected by [`Renderer::resized`] at the next prompt, once the terminal
-    /// will say what it is. Somewhere that never answers keeps the guess for the
-    /// whole session, which is the right trade for a pipe.
+    /// guessed rather than refused — and a guess that turns out wrong is
+    /// corrected by [`Renderer::resized`] at the next prompt. Somewhere that
+    /// never answers keeps the guess for the whole session, which is the right
+    /// trade for a pipe.
     #[must_use]
     pub fn new(terminal: T) -> Self {
         let size = terminal.size().unwrap_or(Size::FALLBACK);
 
         Self {
-            tail: Tail::new(size.columns, LIVE),
-            finished: Tail::new(size.columns, 1),
+            record: Record::new(size.columns),
             terminal,
-            widths: Vec::new(),
-            parked: 0,
+            standing: Standing::default(),
             size,
-            frame: Frame::new(),
-            overflow: Vec::new(),
-            painted: Vec::new(),
-            footing: Vec::new(),
-            footed: None,
+            painted: Painted::new(),
+            free: String::new(),
+            escapes: Escapes::default(),
             markdown: Markdown::default(),
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
-            record: 0,
-            parted: true,
+            notch: NOTCH,
         }
     }
 
     /// Tells this renderer which palette the run resolved.
     ///
-    /// Said once, at startup, because it is settled once: the configuration,
-    /// the environment and `is_terminal` have already agreed between them. It
-    /// is what decides whether the model's markdown is read at all — a run with
-    /// no colour in it keeps every marker the model wrote, since dropping one
-    /// there would take the emphasis away and put nothing in its place.
+    /// Said at startup and again whenever the theme changes, because it is what
+    /// every row on screen is painted from: the record holds what was said, and
+    /// the palette decides what it looks like at the moment it is drawn.
+    ///
+    /// It is also what decides whether the model's markdown is read at all — a
+    /// run with no colour in it keeps every marker the model wrote, since
+    /// dropping one there would take the emphasis away and put nothing in its
+    /// place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
+        self.painted.forget();
     }
 
     /// Tells this renderer which characters it may draw with.
     ///
-    /// Said once, at startup, beside [`Renderer::wears`] and for the same
-    /// reason: which set a font has is settled before the first frame and no
-    /// command changes it. It reaches the transcript through the markdown
-    /// reader, which is the one thing here that puts a character of its own in
-    /// place of one the model wrote.
+    /// Said once, at startup, because which set a font has is settled before
+    /// the first frame and no command changes it. It reaches the transcript
+    /// through the markdown reader, which is the one thing here that puts a
+    /// character of its own in place of one the model wrote.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown = Markdown::new(glyphs);
+    }
+
+    /// Tells this renderer how far one notch of the wheel moves the transcript.
+    ///
+    /// Said once, at startup. The wheel arrives as a count of notches and
+    /// nothing more — how far one is worth is the reader's, and this is where
+    /// their answer lands.
+    pub fn rolls(&mut self, rows: i32) {
+        self.notch = rows;
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -210,7 +239,7 @@ impl<T: Terminal> Renderer<T> {
     /// heading, a run of code or a phrase under emphasis is recognised, its
     /// marker is dropped, and the run it covered is written wearing a slot. The
     /// tone belongs to the row rather than to the text, so it costs no column
-    /// and the answer wraps where the same answer would have wrapped plain.
+    /// and the answer folds where the same answer would have folded plain.
     ///
     /// One frame per delta however many slots it turned out to hold. A slot
     /// changes between two pieces of one delta, and a frame per change would be
@@ -225,118 +254,133 @@ impl<T: Terminal> Renderer<T> {
         // wrote it, which is markdown, and a file of markdown is worth more
         // than a file it has been taken out of.
         if !self.palette.writes_color() {
-            self.tail.push(delta, &mut self.overflow);
-            self.parted = self.tail.parted();
+            self.take(Slot::Plain, delta)?;
             return self.draw();
         }
 
         let columns = self.size.columns;
+        let redirected = !self.terminal.is_terminal();
         let Self {
             markdown,
-            tail,
-            overflow,
-            palette,
+            record,
+            escapes,
+            free,
+            terminal,
             ..
         } = self;
-        let palette = *palette;
 
+        let mut taking = Taking {
+            record,
+            escapes,
+            free,
+            out: redirected.then_some(terminal),
+        };
+
+        // The first failure is kept and the rest of the delta is still read:
+        // the markdown state has to walk every byte of it either way, or the
+        // next delta is read against a state that skipped part of one.
+        let mut wrote = Ok(());
         markdown.read(delta, columns, &mut |slot, text| {
-            tail.wear(slot, &palette);
-            tail.push(text, overflow);
+            let said = taking.take(slot, text);
+            if wrote.is_ok() {
+                wrote = said;
+            }
         });
+        wrote?;
 
-        self.parted = self.tail.parted();
         self.draw()
     }
 
-    /// Writes a line that is finished and will never be redrawn.
+    /// Writes a line that is finished and will never be re-read.
     ///
-    /// Used for a completed message, a tool result, or anything else that
-    /// belongs to the record rather than to the live region.
+    /// Used for a completed message, a tool result, or anything else that came
+    /// from somewhere other than this program. It is folded and stripped of
+    /// escape bytes by the same rules streamed output is, because it arrived
+    /// the same way.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
-        self.parted = line.trim().is_empty();
-        self.finished.push(line, &mut self.overflow);
-        // The newline is what makes the last row complete, and only complete
-        // rows leave a tail.
-        self.finished.push("\n", &mut self.overflow);
+        self.take(Slot::Plain, line)?;
+        // The newline is what ends the line; without it the next thing written
+        // would continue this one.
+        self.take(Slot::Plain, "\n")?;
         self.draw()
     }
 
-    /// Writes rows crucible composed itself, in colour, above everything after
-    /// them.
+    /// Writes rows crucible composed itself, above everything after them.
     ///
     /// The counterpart to [`Renderer::commit`], and separate from it for one
     /// reason: a committed line is text that came from somewhere else, so it
-    /// goes through the same wrap and the same escape-dropping as streamed
-    /// output — a colour code in a tool result is bytes an untrusted string put
-    /// there. A [`Row`] is not text that arrived; it is spans this program
-    /// built, whose colour the palette decides here, at the last moment.
+    /// goes through the same fold and the same escape-dropping as streamed
+    /// output. A [`Row`] is not text that arrived; it is spans this program
+    /// built, whose colour the palette decides at the moment it is drawn — so
+    /// a theme chosen later repaints it along with everything else.
     ///
-    /// Not wrapped either, and it does not need to be: a component is given the
-    /// width and returns rows that fit it. Nothing is ever redrawn over these,
-    /// so no frame is counting the columns they cost.
-    ///
-    /// Whatever stands under the tail is put back afterwards. Ending the live
-    /// region is what makes room to write above it and takes that row off the
-    /// screen with everything else, and a presented row is the one frame with
-    /// nothing after it to draw it again — so this one draws it, and a result
-    /// arriving mid-turn lands above the box rather than in place of it.
+    /// Not folded either, and it does not need to be: a component is given the
+    /// width and returns rows that fit it. A window that narrows clips them
+    /// rather than folding them, because rows a component laid out against each
+    /// other are not prose and re-flowing one of them would break the column
+    /// the others are aligned in.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn present(&mut self, rows: &[Row], palette: Palette) -> Result<(), TerminalError> {
-        self.settle()?;
+    pub fn present(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            // The line still open has already gone out without its ending, so
+            // the ending is owed before anything is written under it.
+            if self.record.writing() {
+                self.terminal.write("\n")?;
+            }
 
-        if let Some(last) = rows.last() {
-            self.parted = last.text().trim().is_empty();
+            // Plain, and structurally so: there is no palette to paint from
+            // where nothing resolved one, and an escape written into a file is
+            // bytes in the middle of it.
+            for row in rows {
+                self.terminal.write(&row.text())?;
+                self.terminal.write("\n")?;
+            }
         }
 
-        let terminal = self.terminal.is_terminal();
-        let mut painted = String::new();
-
-        self.record = self.record.saturating_add(rows.len());
-        self.frame.plain();
-        for row in rows {
-            painted.clear();
-            row.paint_into(&palette, &mut painted);
-            self.frame.settled(&painted, terminal);
-        }
-
-        self.terminal.write(self.frame.sealed())?;
-
-        // Between turns there is nothing standing, and a frame drawn to put
-        // nothing back is a write and a flush on every row of a transcript that
-        // only gets longer.
-        if self.footing.is_empty() {
-            return self.terminal.flush();
-        }
-
+        // A row of a component is a line of its own, so whatever was still open
+        // ends here rather than having the first of them appended to it.
+        self.record.end();
+        self.record.lay(rows.iter().cloned());
         self.draw()
     }
 
-    /// Draws rows crucible composed itself and leaves them live, with the
-    /// cursor where `caret` says it goes.
+    /// Draws the box and leaves it standing, with the cursor where `caret`
+    /// says it goes.
     ///
     /// The counterpart to [`Renderer::present`] for a component that is still
     /// being changed: the same rows and the same palette, but redrawn where
-    /// they stand instead of being written once and forgotten. What a keystroke
-    /// costs is therefore one frame — the region is erased and put back — and
-    /// the caller redraws only when something moved.
+    /// they stand instead of joining the transcript. What a keystroke costs is
+    /// therefore the rows that changed, and the caller redraws only when
+    /// something moved.
+    ///
+    /// The box alone. Anything a line has opened over it — a list, a plan, a
+    /// count of what is left — is [`Renderer::under`]'s, because the band this
+    /// fills is held to a share of the window and that share is a rule about a
+    /// long prompt rather than about what is standing above one. A caller that
+    /// sends both through here has the box thrown off the bottom of the screen
+    /// by whatever it opened.
+    ///
+    /// An empty slice takes the box off, and the caret goes unread — which is
+    /// what a component standing where the box was does on its way in, so that
+    /// the share the box was held to is not still being held against the thing
+    /// that replaced it.
     ///
     /// The cursor is left on the row the caret named rather than at the end of
     /// what was written, so the terminal's own cursor is the one the reader
     /// sees, in whatever shape and blink they chose. Nothing is drawn to stand
     /// in for it.
     ///
-    /// Nothing at all happens where output is redirected. A live region is a
-    /// thing only a terminal has, and a run whose output is a file has no
-    /// keystrokes arriving to redraw for either — the same condition [`Raw`]
-    /// refuses to enter under.
+    /// Nothing at all happens where output is redirected. A band is a thing
+    /// only a screen has, and a run whose output is a file has no keystrokes
+    /// arriving to redraw for either — the same condition [`Raw`] refuses to
+    /// enter under.
     ///
     /// [`Raw`]: crate::Raw
     ///
@@ -353,40 +397,31 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        // Anything the last turn left live belongs above the prompt rather than
-        // underneath it, and a rewind that reached over it would take it off
-        // the screen without it ever having been written down.
-        if !self.tail.is_empty() {
-            self.settle()?;
-        }
-
-        region::paint(rows, &palette, &mut self.painted);
-
-        let region = self.region();
-        self.parked = region::draw(&mut self.frame, region, &self.painted, caret);
-        self.widths.clear();
-        self.widths
-            .extend(self.painted.iter().map(|row| width::columns(row)));
-
-        self.terminal.write(self.frame.sealed())?;
-        self.terminal.flush()
+        paint(rows, &palette, self.size.columns, &mut self.standing.prompt);
+        self.standing.prompted = Some(caret);
+        self.draw()
     }
 
-    /// Keeps `rows` under the tail until something takes them back.
+    /// Keeps `rows` directly over the box until something takes them back.
     ///
-    /// The counterpart to [`Renderer::live`] for rows nobody is typing into.
-    /// Streamed output goes on arriving above them and every frame draws them
-    /// again underneath it, so they stay on screen through a turn instead of
-    /// being the first thing it scrolls away. An empty slice takes them back.
+    /// The counterpart to [`Renderer::live`] for everything at the foot of the
+    /// window that is not the box: what a turn is showing while it runs, and
+    /// between turns whatever a line has opened. Streamed output goes on
+    /// arriving in the transcript above them and every frame draws them again
+    /// underneath it, so they stay on screen through a turn instead of being
+    /// the first thing it scrolls away. An empty slice takes them back.
     ///
-    /// They never settle. What stands here is a fact about the session rather
-    /// than something that was said, so the record reads afterwards as though
-    /// it had never been there — and the alternative, a row committed once a
-    /// frame, is a session's worth of scrollback repeating itself.
+    /// This band gives up its rows before the head and the foot and after the
+    /// transcript, so a list opened over a session takes the room it asks for
+    /// and the transcript is what gives way — which is the right way round, a
+    /// list being the thing the reader is looking at while it is open.
+    ///
+    /// They never join the transcript. What stands here is a fact about the
+    /// session rather than something that was said, so the record reads
+    /// afterwards as though it had never been there.
     ///
     /// Nothing happens where output is redirected, for the reason
-    /// [`Renderer::live`] draws nothing there: a file has no bottom row to hold
-    /// anything at.
+    /// [`Renderer::live`] draws nothing there.
     ///
     /// # Errors
     ///
@@ -401,18 +436,16 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        region::paint(rows, &palette, &mut self.footing);
-        self.footed = caret;
+        paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        self.standing.turned = caret;
         self.draw()
     }
 
-    /// Ends the live region, leaving what it held in scrollback.
+    /// Ends the line the transcript is still writing to.
     ///
-    /// Called between turns. After this the cursor sits on a fresh row and the
-    /// next frame starts a new tail. Whatever was standing under the tail is
-    /// erased with it and is not written down, but it is not forgotten: the
-    /// next frame draws it again, so a question asked in the middle of a turn
-    /// costs it nothing.
+    /// Called between turns. After this the next delta starts a line of its
+    /// own, and anything a reader held back for a shape that never arrived has
+    /// been put down.
     ///
     /// # Errors
     ///
@@ -422,64 +455,43 @@ impl<T: Terminal> Renderer<T> {
         // the last moment it can be written: the reader below is about to be
         // dropped, and with it anything it was still holding.
         let columns = self.size.columns;
+        let redirected = !self.terminal.is_terminal();
         let Self {
             markdown,
-            tail,
-            overflow,
-            palette,
+            record,
+            escapes,
+            free,
+            terminal,
             ..
         } = self;
-        let palette = *palette;
-        let mut spilled = false;
-        markdown.finish(columns, &mut |slot, text| {
-            spilled = true;
-            tail.wear(slot, &palette);
-            tail.push(text, overflow);
-        });
 
-        // Only where something was put back, and always to false: what a
-        // reader gives up on is a bracket and the words after it, never a line
-        // break -- a break is what made it give up.
-        if spilled {
-            self.parted = false;
-        }
+        let mut taking = Taking {
+            record,
+            escapes,
+            free,
+            out: redirected.then_some(terminal),
+        };
+
+        let mut wrote = Ok(());
+        markdown.finish(columns, &mut |slot, text| {
+            let said = taking.take(slot, text);
+            if wrote.is_ok() {
+                wrote = said;
+            }
+        });
+        wrote?;
 
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
         self.markdown = Markdown::new(self.glyphs);
 
-        if !self.terminal.is_terminal() {
-            return self.settle_plain();
+        if redirected && self.record.writing() {
+            self.terminal.write("\n")?;
         }
 
-        if self.tail.is_empty() {
-            // Nothing live is worth keeping, but the region may still be on
-            // screen from a frame that only committed rows. The tail is emptied
-            // whichever way this ends, so both paths leave the same thing
-            // behind: empty rows kept here would be drawn again by the next
-            // frame and settle into the record as blank lines nobody wrote.
-            self.tail.clear();
-
-            if self.drawn() > 0 {
-                self.erase()?;
-                self.terminal.flush()?;
-            }
-            return Ok(());
-        }
-
-        let region = self.region();
-        self.record = self
-            .record
-            .saturating_add(self.overflow.len() + self.tail.content().len());
-        screen::settle(&mut self.frame, region, &mut self.overflow, &mut self.tail);
-
-        self.terminal.write(self.frame.sealed())?;
-        self.terminal.flush()?;
-
-        self.widths.clear();
-        self.parked = 0;
-        Ok(())
+        self.record.end();
+        self.draw()
     }
 
     /// Asks the terminal to put `text` on the reader's clipboard.
@@ -495,8 +507,8 @@ impl<T: Terminal> Renderer<T> {
     /// paste, and nothing this process can ask changes that.
     ///
     /// Outside the frame, deliberately. This is not a row and never becomes
-    /// one: it goes down between frames, moves no cursor, and leaves the live
-    /// region exactly as tall as it was.
+    /// one: it goes down between frames and changes nothing about what the
+    /// window is showing.
     ///
     /// # Errors
     ///
@@ -515,12 +527,13 @@ impl<T: Terminal> Renderer<T> {
         Ok(true)
     }
 
-    /// Re-wraps for a terminal the user resized.
+    /// Re-folds for a terminal the user resized.
     ///
-    /// The rows already on screen were wrapped for the old width, so on a
-    /// terminal what is live is dropped rather than redrawn wrongly: it is at
-    /// most one screen, and the model is still streaming into it. Height counts
-    /// as much as width, because the height is what bounds the tail.
+    /// The record is folded again at the new width, which is what keeps the
+    /// reader on the line they were reading rather than on a row number that
+    /// meant something else. What was standing is dropped rather than redrawn
+    /// wrongly: it was laid out against a window that has gone, and the caller
+    /// lays out the next one.
     ///
     /// # Errors
     ///
@@ -531,67 +544,33 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        // Before the erase rather than after it. An erase is counted in rows of
-        // the screen it is written to, and by now that is the new one: the
-        // region below has to be measured against the window the cursor is
-        // sitting in, not the one it was drawn on.
         self.size = size;
+        self.record.resized(size.columns);
+        self.standing.clear();
 
-        // The size comes from the terminal, not from the stream, so a run whose
-        // output is redirected still sees the window change. There is no live
-        // region in a pipe to wipe, and an erase sequence written into one ends
-        // up in whatever kept the output -- but neither can a pipe take a row
-        // back, so what is live there is written out instead of dropped. The
-        // rewrap below applies either way.
-        if self.terminal.is_terminal() {
-            // Only ever what this renderer drew, which is what `drawn` counts.
-            // With nothing counted there is nothing of its own on screen to
-            // drop, and the row the cursor is on is one a prompt was written
-            // verbatim onto -- a row this promised no frame would move back
-            // over. A question waiting to be answered is exactly that state,
-            // and erasing it takes the offer off the screen while somebody is
-            // still reading it.
-            if self.drawn() > 0 {
-                self.erase()?;
-                self.terminal.flush()?;
-            }
-        } else {
-            self.settle_plain()?;
-        }
+        // Every row of the window is now showing something drawn for a size it
+        // no longer has, so the next frame may not skip any of them.
+        self.painted.forget();
 
-        self.tail = Tail::new(size.columns, LIVE);
-        self.finished = Tail::new(size.columns, 1);
-        // Dropped for the reason the live rows are: it was laid out for a width
-        // the window no longer has, and a row too wide for the screen is one
-        // the terminal wraps itself. The caller lays out the next one.
-        self.footing.clear();
-        self.footed = None;
-        self.widths.clear();
-        self.parked = 0;
-        Ok(())
+        self.draw()
     }
 
-    /// Ends the live region and writes `text` exactly as given.
+    /// Writes something the reader is expected to type after.
     ///
-    /// Nothing is added: a prompt mark the user types after wants no line
-    /// ending, and a caller that wants the row to end puts one in `text`. The
-    /// bytes are not counted either, which is safe because the settle above has
-    /// just left nothing live -- no frame will ever move back over this row.
-    /// That is also what makes colour the caller's to decide and to put into
-    /// `text`: escape bytes in a row that is never redrawn cannot cost a column
-    /// this renderer is counting.
+    /// The one thing here with two answers. On a screen this process owns, it
+    /// is a line of the transcript like any other and the cursor is the one the
+    /// box parks — nothing is echoed onto it, because there is no box and no
+    /// raw mode on the path that asks. Redirected, it is written through
+    /// immediately and unterminated: whatever is reading the output has to see
+    /// the question before it can answer, and the record only lets go of a line
+    /// once that line can no longer change.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn prompt(&mut self, text: &str) -> Result<(), TerminalError> {
-        if !text.trim().is_empty() {
-            self.parted = false;
-        }
-
-        self.settle()?;
-        self.terminal.write(text)?;
-        self.terminal.flush()
+    pub fn prompt(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+        self.take(slot, text)?;
+        self.draw()
     }
 
     /// Leaves one blank row between what has been written and what comes next.
@@ -601,27 +580,79 @@ impl<T: Terminal> Renderer<T> {
     /// the next is a row of nothing. Every block asks for that row on its way
     /// in rather than leaving one behind, because a block cannot know it was
     /// the last: a session that parted on the way out would end on a blank row
-    /// under the final answer, and the shell's own prompt would come back one
-    /// row lower than it left.
+    /// under the final answer.
     ///
     /// Blank rows do not accumulate, and none is owed once an answer has begun
     /// arriving: what comes next is then the rest of that answer rather than a
     /// block after it, and a caller that asks on every piece of a streamed
     /// answer — which is the only way it can ask on the first — must get a row
-    /// before the answer and none inside it. The tail holding something is not
-    /// that question: a row is complete the moment its newline arrives and is
-    /// gone by the next delta, so an answer between one row and the next holds
-    /// nothing at all.
+    /// before the answer and none inside it. That is what the record's own
+    /// open line answers.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn apart(&mut self) -> Result<(), TerminalError> {
-        if self.parted || self.tail.live() {
+        if self.record.parted() || self.record.writing() {
             return Ok(());
         }
 
         self.commit("")
+    }
+
+    /// Moves the transcript's viewport one notch of the wheel, and says whether
+    /// it moved.
+    ///
+    /// `back` is towards the top of the session. Its own call rather than
+    /// arithmetic at each of the loops that read the wheel, because how far a
+    /// notch goes is one answer for the session and every one of them would
+    /// otherwise have to be handed it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn notched(&mut self, back: bool) -> Result<bool, TerminalError> {
+        self.scrolled(if back { -self.notch } else { self.notch })
+    }
+
+    /// Moves the transcript's viewport by `by` display rows, and says whether
+    /// it moved.
+    ///
+    /// Negative is towards the top of the session. Nothing moves where output
+    /// is redirected: a file has no viewport, and a reader of one scrolls it
+    /// with whatever they opened it in.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn scrolled(&mut self, by: i32) -> Result<bool, TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(false);
+        }
+
+        let rows = self.bands().transcript.len();
+        if !self.record.scroll(by, rows) {
+            return Ok(false);
+        }
+
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// Puts the transcript's viewport back at the foot of the record.
+    ///
+    /// What a reader who scrolled up is taken to be done doing the moment they
+    /// send something: they were reading back, and what they sent is about to
+    /// be answered at the bottom. Everything else leaves the viewport where
+    /// they put it — text arriving while somebody reads back through the
+    /// transcript is exactly what must not move it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn follows(&mut self) -> Result<(), TerminalError> {
+        self.record.follow();
+        self.draw()
     }
 
     /// Whether output is going to a terminal rather than a pipe or a file.
@@ -633,14 +664,13 @@ impl<T: Terminal> Renderer<T> {
     /// The terminal underneath, to read rather than to write on.
     ///
     /// Shared and not exclusive: a write made through here would land in the
-    /// middle of the live region, and the count of what is on screen would be
-    /// wrong with nothing in this crate able to notice. [`Renderer::prompt`] is
-    /// how a caller puts bytes down; this is how it asks what came back.
+    /// middle of a frame, and what the window is showing would be wrong with
+    /// nothing in this crate able to notice.
     pub fn terminal(&self) -> &T {
         &self.terminal
     }
 
-    /// How wide the terminal was when this last looked.
+    /// How wide the window was when this last looked.
     ///
     /// Held rather than asked for, because a caller that decides how much of a
     /// line to show does so once per event and asking the operating system each
@@ -653,187 +683,225 @@ impl<T: Terminal> Renderer<T> {
 
     /// How tall it was when this last looked.
     ///
-    /// Held for the same reason the width is, and read for one thing: a live
-    /// region taller than the screen is one whose top has scrolled out of
-    /// reach, so the next rewind would move back over rows the terminal has
-    /// already taken. A component that can grow asks how much room there is
-    /// before it does.
+    /// Read by a component that can grow, which asks how much room there is
+    /// before it does. How much of that room it may actually have is
+    /// [`crate::bands`]'s answer and not the component's.
     #[must_use]
     pub fn rows(&self) -> usize {
         self.size.rows
     }
 
-    /// How many rows have gone into the record.
+    /// How many lines the transcript has taken this session.
     ///
     /// Read straight after writing something, to learn where it went: a caller
-    /// that means to point at a row later keeps this number and asks
-    /// [`Renderer::recorded`] about it, and the difference between the two
-    /// readings is how far the row has travelled.
+    /// that means to point at a line later keeps this number, and
+    /// [`Renderer::aimed`] hands back the same numbering.
     ///
-    /// It counts rows written rather than rows kept, so it goes on rising for
-    /// the length of a session and says nothing about what is still on screen.
-    /// That is [`Renderer::recorded`]'s half of the question.
+    /// It counts lines written rather than lines kept, so it goes on rising for
+    /// the length of a session and a number kept from an hour ago still names
+    /// the line it named then — whether or not that line is still held.
     #[must_use]
-    pub fn record(&self) -> usize {
-        self.record
+    pub fn lines(&self) -> usize {
+        self.record.lines()
     }
 
-    /// Which row of the live region is on screen row `at`, with the cursor on
-    /// screen row `cursor`.
+    /// What is under window row `at`.
     ///
-    /// The half of [`Renderer::top`] that looks downwards. `None` above the
-    /// region and `None` below the last row of it, which are the two ways a
-    /// pointer lands on something this renderer is not currently drawing.
+    /// The whole of what a click means. On a screen this process owns, the
+    /// answer needs nothing from the terminal: the bands say which region the
+    /// row is in and the record says which line is on it, so there is no round
+    /// trip to ask where the cursor happens to be.
+    ///
+    /// `None` for a row in a band nothing is drawn in, and for one below the
+    /// last line the transcript is showing.
     #[must_use]
-    pub fn within(&self, at: usize, cursor: usize) -> Option<usize> {
-        at.checked_sub(self.top(cursor)?)
-            .filter(|row| *row < self.drawn())
+    pub fn aimed(&self, at: usize) -> Option<Aimed> {
+        let bands = self.bands();
+
+        if bands.transcript.contains(&at) {
+            let into = at - bands.transcript.start;
+            return self
+                .record
+                .at(into, bands.transcript.len())
+                .map(Aimed::Line);
+        }
+
+        if bands.turn.contains(&at) {
+            return Some(Aimed::Stood(at - bands.turn.start));
+        }
+
+        if bands.prompt.contains(&at) {
+            return Some(Aimed::Boxed(at - bands.prompt.start));
+        }
+
+        None
     }
 
-    /// Which row of the record is on screen row `at`, with the cursor on
-    /// screen row `cursor`.
-    ///
-    /// The half that looks upwards. Directly above the region is the last row
-    /// of the record, so a row that many back from the end of it is the answer.
-    ///
-    /// `None` where that would be a guess: a row inside the live region or
-    /// below it, which the record does not hold, and a row above everything
-    /// this renderer has written, which belongs to whatever ran before it.
-    #[must_use]
-    pub fn recorded(&self, at: usize, cursor: usize) -> Option<usize> {
-        // Zero is the region's own first row rather than the record's last,
-        // which is why this is filtered rather than saturated.
-        let above = self
-            .top(cursor)?
-            .checked_sub(at)
-            .filter(|above| *above > 0)?;
-
-        self.record.checked_sub(above)
+    /// How the window is shared out, given what is standing in it.
+    fn bands(&self) -> Bands {
+        Bands::share(
+            self.size.rows,
+            Wants {
+                head: 0,
+                turn: self.standing.turn.len(),
+                prompt: self.standing.prompt.len(),
+                foot: 0,
+            },
+        )
     }
 
-    /// Which screen row the live region starts on, with the cursor on screen
-    /// row `cursor`.
-    ///
-    /// An inline renderer never learns where the top of the screen is: what it
-    /// draws starts wherever the shell left off, and the terminal scrolls it
-    /// without saying so. What it does know is the shape of its own live
-    /// region — how tall it is and how far up the cursor was parked in it — so
-    /// a caller that has asked the terminal where its cursor is has given this
-    /// the one fact it was missing, and both directions follow from here.
-    fn top(&self, cursor: usize) -> Option<usize> {
-        // Where the cursor sits inside the region, which is what its own two
-        // counts come to: the rows drawn, less the ones below it, less the one
-        // it is on. Nothing drawn leaves it on the row after the record, which
-        // is where a settle steps it to, and the arithmetic holds there
-        // unchanged.
-        cursor.checked_sub(self.drawn().saturating_sub(self.parked + 1))
+    /// Add `text` to the record, and to a redirected run's output.
+    fn take(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+        let redirected = !self.terminal.is_terminal();
+        let Self {
+            record,
+            escapes,
+            free,
+            terminal,
+            ..
+        } = self;
+
+        Taking {
+            record,
+            escapes,
+            free,
+            out: redirected.then_some(terminal),
+        }
+        .take(slot, text)
     }
 
-    /// One frame, assembled by [`screen`].
+    /// One frame.
     fn draw(&mut self) -> Result<(), TerminalError> {
+        // A redirected run has already been given every byte, at the moment
+        // each arrived. What is left is to make sure it has them.
         if !self.terminal.is_terminal() {
-            return self.draw_plain();
+            return self.terminal.flush();
         }
 
-        let region = self.region();
-        self.record = self.record.saturating_add(self.overflow.len());
-        self.parked = screen::draw(
-            &mut self.frame,
-            region,
-            &mut self.overflow,
-            &self.tail,
-            (&self.footing, self.footed),
-        );
+        let bands = self.bands();
+        self.painted.open(self.size.rows);
 
-        self.widths.clear();
-        self.widths.extend(self.tail.widths());
-        self.widths
-            .extend(self.footing.iter().map(|row| width::columns(row)));
-        self.terminal.write(self.frame.sealed())?;
-        self.terminal.flush()
-    }
+        let showing = self.record.view(bands.transcript.len());
+        for at in bands.transcript.start..bands.transcript.end {
+            match showing.get(at - bands.transcript.start) {
+                Some(row) => self.painted.paint(at, row, &self.palette),
+                // Below what there is to show. A session that has just started
+                // reads from the top of the window down, as a terminal's own
+                // scrollback would.
+                None => self.painted.blank(at),
+            }
+        }
 
-    /// A frame for a pipe, assembled by [`plain`].
-    fn draw_plain(&mut self) -> Result<(), TerminalError> {
-        self.record = self.record.saturating_add(self.overflow.len());
+        // Taken out and put back, because a painted row is borrowed from the
+        // same `self` the frame is written into.
+        let turn = std::mem::take(&mut self.standing.turn);
+        for (at, row) in (bands.turn.start..bands.turn.end).zip(&turn) {
+            self.painted.put(at, row);
+        }
+        self.standing.turn = turn;
 
-        if !plain::draw(&mut self.frame, &mut self.overflow) {
+        let prompt = std::mem::take(&mut self.standing.prompt);
+        for (at, row) in (bands.prompt.start..bands.prompt.end).zip(&prompt) {
+            self.painted.put(at, row);
+        }
+        self.standing.prompt = prompt;
+
+        let (row, column) = self.parked(&bands);
+        self.painted.park(row, column);
+
+        // A frame that changed nothing costs nothing. The bracket that holds
+        // the screen and the sequences that hide the cursor are bytes too, and
+        // a turn is a great many frames in which only the clock moved.
+        if !self.painted.moved() {
             return Ok(());
         }
 
-        self.terminal.write(self.frame.sealed())?;
+        self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
     }
 
-    /// Ending a turn into a pipe, assembled by [`plain`].
-    fn settle_plain(&mut self) -> Result<(), TerminalError> {
-        self.record = self
-            .record
-            .saturating_add(self.overflow.len() + self.tail.content().len());
+    /// Where the cursor goes, in window rows and columns.
+    ///
+    /// The box first, because between turns it is the only thing anybody is
+    /// typing into. Then whatever a turn is holding, which is where a question
+    /// asked mid-turn puts it. With neither, the top of the prompt band — the
+    /// row the box would be on, which is where the next thing to be typed will
+    /// appear.
+    fn parked(&self, bands: &Bands) -> (usize, usize) {
+        let foot = self.size.rows.saturating_sub(1);
 
-        if !plain::settle(&mut self.frame, &mut self.overflow, &mut self.tail) {
-            return Ok(());
+        let at = self
+            .standing
+            .prompted
+            .filter(|_| !self.standing.prompt.is_empty())
+            .map(|caret| (bands.prompt.start + caret.row, caret.column))
+            .or_else(|| {
+                self.standing
+                    .turned
+                    .filter(|_| !self.standing.turn.is_empty())
+                    .map(|caret| (bands.turn.start + caret.row, caret.column))
+            })
+            .unwrap_or((bands.prompt.start, 0));
+
+        (
+            at.0.min(foot),
+            at.1.min(self.size.columns.saturating_sub(1)),
+        )
+    }
+}
+
+/// Where arriving text goes.
+///
+/// Three pieces of one renderer, borrowed together because the markdown reader
+/// holds the fourth while it walks a delta: the record the text lands in, the
+/// escape state it is read against, and — where output is redirected — the
+/// reader it goes straight out to.
+struct Taking<'a, T: Terminal> {
+    record: &'a mut Record,
+    escapes: &'a mut Escapes,
+    /// Reused: one run of text with its escape bytes taken out.
+    free: &'a mut String,
+    /// `None` on a screen, where a frame decides when a row is written.
+    out: Option<&'a mut T>,
+}
+
+impl<T: Terminal> Taking<'_, T> {
+    /// Add one run of text wearing `slot`.
+    ///
+    /// The escape bytes go here and nowhere else. Colour in a tool result is
+    /// bytes an untrusted string put there: a row of the record is spans this
+    /// program painted from a palette, and a byte of a redirected run's output
+    /// is one this program meant to write.
+    fn take(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+        let escapes = &mut *self.escapes;
+        self.free.clear();
+        self.free
+            .extend(text.chars().filter(|character| !escapes.holds(*character)));
+
+        self.record.write(slot, self.free);
+
+        match &mut self.out {
+            Some(out) => out.write(self.free),
+            None => Ok(()),
         }
-
-        self.terminal.write(self.frame.sealed())?;
-        self.terminal.flush()
     }
+}
 
-    /// Wipes the live region without drawing anything back.
-    fn erase(&mut self) -> Result<(), TerminalError> {
-        self.frame.rewind(self.region());
-        self.widths.clear();
-        self.parked = 0;
-        self.terminal.write(self.frame.sealed())
-    }
+/// Paints `rows` into buffers the caller keeps between frames.
+///
+/// Kept rather than built per frame because what stands at the foot is redrawn
+/// on every keystroke, and a `String` per row per key is an allocation the
+/// render path does not have to make.
+///
+/// Clipped here rather than at the frame, because this is where the width is
+/// known and the row still is: a row wider than the window would otherwise be
+/// wrapped by the terminal onto a row belonging to another band.
+fn paint(rows: &[Row], palette: &Palette, columns: usize, into: &mut Vec<String>) {
+    into.resize_with(rows.len(), String::new);
 
-    /// How many rows a rewind has to move back over to reach the top of the
-    /// live region.
-    ///
-    /// The rows on screen, less the ones below wherever the cursor was parked,
-    /// and never further than the top of the screen. A rewind moves the cursor
-    /// through rows of the screen it is written to; above that screen's first
-    /// row there is no live region left to reach, only scrollback that has been
-    /// committed and is still being read.
-    ///
-    /// The two counts come apart when the window gets shorter: the rows were
-    /// drawn on the taller one, the terminal has already scrolled the top of
-    /// them away, and what is left to take back is whatever is still above the
-    /// cursor. Which is the window, less the row the cursor is on and the rows
-    /// parked below it -- the furthest down the screen the cursor can be, and
-    /// so the furthest back a rewind can reach from it. Clamping here rather
-    /// than at the one caller that resizes, because this is the whole of the
-    /// answer to how far back a frame may reach, and a second answer beside it
-    /// is one that would go on being right by accident.
-    fn region(&self) -> usize {
-        // Against the width the window has now rather than the one each row was
-        // drawn at, which is the whole of what a resize changes here: a row too
-        // wide for the screen it is on is however many rows the terminal broke
-        // it into. Where nothing has resized, every row still fits and this
-        // counts one apiece -- the same answer as counting the rows themselves,
-        // arrived at the one way that goes on being right.
-        //
-        // A terminal that narrows without re-wrapping is over-counted here, and
-        // takes back rows of record along with its own. That is the trade this
-        // makes deliberately: such a terminal has already truncated every row
-        // above at the same moment, so what the over-count reaches is a screen
-        // the resize damaged either way -- while under-counting strands rows on
-        // a terminal that did re-wrap, which is every terminal a window is
-        // dragged in.
-        let columns = self.size.columns.max(1);
-        let rows = |widths: &mut dyn Iterator<Item = &usize>| {
-            widths.map(|width| width.div_ceil(columns).max(1)).sum()
-        };
-
-        let above = self.drawn().saturating_sub(self.parked);
-        let below: usize = rows(&mut self.widths.iter().skip(above));
-
-        rows(&mut self.widths.iter().take(above)).min(self.size.rows.saturating_sub(below))
-    }
-
-    /// How many rows this renderer has on screen.
-    fn drawn(&self) -> usize {
-        self.widths.len()
+    for (row, painted) in rows.iter().zip(into.iter_mut()) {
+        painted.clear();
+        row.clipped(columns).paint_into(palette, painted);
     }
 }
 

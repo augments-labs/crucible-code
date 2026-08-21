@@ -41,7 +41,9 @@ use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Reveal
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tools::{Background, Ledger, Plan};
-use crucible_tui::{RawError, Renderer, SystemTerminal, TerminalError, Title, TitleError, Welcome};
+use crucible_tui::{
+    RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
+};
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
@@ -465,6 +467,10 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Raw(#[from] RawError),
 
+    /// The terminal would not hand over a screen to draw on.
+    #[error(transparent)]
+    Screen(#[from] ScreenError),
+
     /// Sensitive local state could not be made owner-only.
     #[error("{file} could not be protected: {source}")]
     Private {
@@ -668,16 +674,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set()?;
 
-    // Before the renderer exists, which is the only moment this is reachable:
-    // `Renderer` takes the terminal by value, so a clear cannot be mistaken for
-    // a frame later and the rules about what a frame may write stay as strict
-    // as they are. Off unless asked for — crucible draws inline, so the rows
-    // already on screen are somebody's own work.
-    let mut terminal = SystemTerminal::stdout();
-    if settings.clear_screen(&from)?.wanted() {
-        crucible_tui::clear(&mut terminal)?;
-    }
-    let mut renderer = Renderer::new(terminal);
+    let mut renderer = Renderer::new(SystemTerminal::stdout());
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
@@ -759,6 +756,13 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // and mark on screen, so a font missing one is missing all of them.
     renderer.draws(terms.style().glyphs());
 
+    // And how far one notch of the wheel moves the transcript. Read here rather
+    // than where the wheel is answered, because it is answered on the render
+    // path and the render path opens no file — and because a wheel is hardware
+    // whose notch means whatever its owner's system has been told it means,
+    // which is a thing only its owner can say.
+    renderer.rolls(settings.scroll_speed(&from)?.rows());
+
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
     // component says how many rows it can use, and the scan reads names to
@@ -821,7 +825,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         runner,
         &mut renderer,
         &terms,
-        opening,
+        &opening,
         &mut io::stdin().lock(),
     );
 

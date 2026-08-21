@@ -5,32 +5,34 @@
 //! rather than what to emit -- and it means the buffer is reused across frames,
 //! so a redraw allocates nothing.
 //!
-//! Erasing from the cursor *down* is the whole inline design: it cannot touch a
-//! line that has scrolled off, so committed output is unreachable by
-//! construction.
+//! Every row this frame writes says where it goes. That is the whole design: on
+//! a screen this process owns, the position of each of its rows is known before
+//! a byte is written, so nothing here counts how far to move or how much to
+//! erase. A frame cannot wipe a row it did not name, and a frame that drew the
+//! wrong number of rows cannot leave the next one erasing somebody else's.
 //!
-//! That erase is also why a frame says where it begins and ends. Every redraw
-//! wipes the live region and writes it again, and a terminal is free to paint
-//! whenever bytes arrive — so between the erase and the rows there is a picture
-//! with a hole in it, and at a delta a second that hole is what the reader sees
-//! instead of the text. The frame is bracketed as a synchronized update, which
-//! asks the terminal to hold what it has until the closing sequence arrives and
-//! then swap the two pictures at once. A terminal that does not know the mode
-//! ignores both sequences and is exactly where it was; one that does applies a
-//! timeout of its own, so a process dying mid-frame cannot leave a screen
-//! frozen.
+//! A frame also says where it begins and ends. A terminal is free to paint
+//! whenever bytes arrive, so between the row a frame clears and the row it
+//! writes in its place there is a picture with a hole in it -- and at a delta a
+//! second, that hole is what the reader sees instead of the text. The frame is
+//! bracketed as a synchronized update, which asks the terminal to hold what it
+//! has until the closing sequence arrives and then swap the two pictures at
+//! once. A terminal that does not know the mode ignores both sequences and is
+//! exactly where it was; one that does applies a timeout of its own, so a
+//! process dying mid-frame cannot leave a screen frozen.
 
 use std::fmt::Write as _;
 
-/// Return to column one. Written explicitly because raw mode stops a newline
-/// from doing it, and the renderer must behave the same either way.
-const COLUMN_ONE: &str = "\r";
+/// Erase from the cursor to the end of the row.
+const ERASE_ROW: &str = "\x1b[K";
 
-/// Erase from the cursor to the end of the screen.
-const ERASE_DOWN: &str = "\x1b[J";
-
-/// End of a row, on a terminal that may be in raw mode.
-const NEW_ROW: &str = "\r\n";
+/// Forget any colour still set.
+///
+/// Written before the erase and not after it: erasing with a background still
+/// in force paints that background across the rest of the row on every terminal
+/// that honours it, so a row whose colour ran to the edge would lend it to the
+/// row replacing it.
+const PLAIN: &str = "\x1b[m";
 
 /// Hold the screen: what follows is one picture, not a sequence of them.
 const BEGIN_SYNC: &str = "\x1b[?2026h";
@@ -39,131 +41,96 @@ const BEGIN_SYNC: &str = "\x1b[?2026h";
 /// way bytes leave this type.
 const END_SYNC: &str = "\x1b[?2026l";
 
+/// Take the cursor off the screen while the frame is assembled.
+///
+/// Not decoration. A terminal that does not know [`BEGIN_SYNC`] paints as the
+/// bytes arrive, and a cursor stepping through every row of a redraw is visible
+/// on exactly those terminals.
+const HIDE: &str = "\x1b[?25l";
+
+/// Put it back. Paired with [`HIDE`] by [`Frame::sealed`], for the same reason
+/// the sequences above it are.
+const SHOW: &str = "\x1b[?25h";
+
 /// The bytes of one frame, assembled into a buffer that outlives it.
 #[derive(Debug, Default)]
 pub(crate) struct Frame {
     buffer: String,
-    /// Whether this frame moves the cursor, and so owes a closing sequence.
+    /// Whether this frame took the screen, and so owes the sequences that give
+    /// it back.
     held: bool,
 }
 
 impl Frame {
-    /// An empty frame.
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Starts a frame by putting the cursor back at the top of the live region
-    /// and clearing from there down.
+    /// Starts a frame.
     ///
-    /// `drawn` is how many rows the last frame left on screen.
-    pub(crate) fn rewind(&mut self, drawn: usize) -> &mut Self {
+    /// Nothing is rewound and nothing is erased ahead of time, because nothing
+    /// here is relative: the rows this frame writes name where they go, and the
+    /// rows it does not write are the rows it means to leave alone.
+    pub(crate) fn open(&mut self) -> &mut Self {
         self.buffer.clear();
         self.held = true;
         self.buffer.push_str(BEGIN_SYNC);
-        self.buffer.push_str(COLUMN_ONE);
-
-        // The cursor sits at the end of the last row drawn, so getting back to
-        // the first is one fewer move than there are rows. `CUU 0` moves by one
-        // in some terminals, so zero has to mean writing nothing at all.
-        if let Some(up) = drawn.checked_sub(1).filter(|up| *up > 0) {
-            // Into the buffer that is already allocated. Writing to a `String`
-            // cannot fail; the `Result` is there for writers that can.
-            let _ = write!(self.buffer, "\x1b[{up}A");
-        }
-
-        self.buffer.push_str(ERASE_DOWN);
+        self.buffer.push_str(HIDE);
         self
     }
 
-    /// Starts a frame with no cursor movement, for output going to a pipe.
+    /// Draws `painted` on screen row `row`, replacing whatever was there.
+    pub(crate) fn row(&mut self, row: usize, painted: &str) -> &mut Self {
+        self.place(row, 0);
+        self.buffer.push_str(PLAIN);
+        self.buffer.push_str(ERASE_ROW);
+        self.buffer.push_str(painted);
+        self
+    }
+
+    /// Leaves the cursor where the reader is typing.
     ///
-    /// Escape bytes written to a pipe end up in whatever consumed the output,
-    /// so the redirected path emits none at all.
-    pub(crate) fn plain(&mut self) -> &mut Self {
-        self.buffer.clear();
-        self.held = false;
+    /// Absolute, and the last thing a frame writes, so it does not matter in
+    /// what order the rows above it were drawn — which is what lets a frame
+    /// write only the rows whose picture changed.
+    pub(crate) fn park(&mut self, row: usize, column: usize) -> &mut Self {
+        self.place(row, column);
         self
     }
 
-    /// Adds a row that is finished, followed by the line ending that makes the
-    /// cursor step past it. Nothing ever moves back above this point, which is
-    /// what makes the row permanent.
-    pub(crate) fn settled(&mut self, row: &str, terminal: bool) -> &mut Self {
-        self.buffer.push_str(row);
-        self.buffer.push_str(if terminal { NEW_ROW } else { "\n" });
-        self
-    }
-
-    /// Adds the rows that are still live, in order. These are redrawn by the
-    /// next frame, so they end without a line ending: the cursor stays where
-    /// the next rewind expects it.
-    pub(crate) fn live<'a>(&mut self, rows: impl Iterator<Item = &'a str>) -> &mut Self {
-        for (index, row) in rows.enumerate() {
-            if index > 0 {
-                self.buffer.push_str(NEW_ROW);
-            }
-            self.buffer.push_str(row);
-        }
-        self
-    }
-
-    /// Puts the cursor `up` rows above the last row written, at `column`.
-    ///
-    /// For a live region the reader is typing into: the rows below the one
-    /// being typed on are still drawn, and the cursor has to come back up over
-    /// them. The column is set absolutely rather than stepped to, because what
-    /// the caller knows is where the cursor belongs and not where it is.
-    ///
-    /// Only ever within the region this frame just wrote, so it cannot reach a
-    /// row that has already gone to scrollback.
-    pub(crate) fn park(&mut self, up: usize, column: usize) -> &mut Self {
-        if up > 0 {
-            let _ = write!(self.buffer, "\x1b[{up}A");
-        }
-
-        // One-based, as every column in the terminal's own counting is.
-        let _ = write!(self.buffer, "\x1b[{}G", column + 1);
-        self
-    }
-
-    /// Ends the live region, leaving what it held above the cursor.
-    pub(crate) fn break_row(&mut self) -> &mut Self {
-        self.buffer.push_str(NEW_ROW);
-        self
+    /// Both counted from one, as the terminal counts them.
+    fn place(&mut self, row: usize, column: usize) {
+        // Into the buffer that is already allocated. Writing to a `String`
+        // cannot fail; the `Result` is there for writers that can.
+        let _ = write!(self.buffer, "\x1b[{};{}H", row + 1, column + 1);
     }
 
     /// The assembled bytes, closed.
     ///
-    /// The one way out of this type, so a frame that opened a synchronized
-    /// update cannot be written without the sequence that ends it — and what a
-    /// test reads here is what the terminal receives. Sealing twice seals once:
-    /// the second call is the same bytes rather than a stray closing sequence.
+    /// The one way out of this type, so a frame that hid the cursor and opened a
+    /// synchronized update cannot be written without the sequences that undo
+    /// both — and what a test reads here is what the terminal receives. Sealing
+    /// twice seals once: the second call is the same bytes rather than a stray
+    /// closing sequence.
     pub(crate) fn sealed(&mut self) -> &str {
         if self.held {
             self.held = false;
+            self.buffer.push_str(SHOW);
             self.buffer.push_str(END_SYNC);
         }
         &self.buffer
     }
 
-    /// Whether there is anything to write.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
-
-    /// What the frame put between the two sequences that hold the screen.
+    /// What the frame put between the sequences that hold the screen.
     ///
-    /// For the tests about cursor arithmetic, which is the thing underneath
-    /// them: those two sequences are the same on every frame, and the pairing
-    /// is tested here rather than restated in each of them.
+    /// For the tests about placement, which is the thing underneath them: those
+    /// sequences are the same on every frame, and the pairing is tested here
+    /// rather than restated in each of them.
     #[cfg(test)]
     pub(crate) fn unheld(&mut self) -> &str {
         let sealed = self.sealed();
 
         sealed
             .strip_prefix(BEGIN_SYNC)
+            .and_then(|inside| inside.strip_prefix(HIDE))
             .and_then(|inside| inside.strip_suffix(END_SYNC))
+            .and_then(|inside| inside.strip_suffix(SHOW))
             .unwrap_or(sealed)
     }
 }
@@ -173,42 +140,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_first_frame_does_not_move_the_cursor_up() {
-        // There is nothing above it yet, and moving up would eat a line the
-        // shell printed.
-        let mut frame = Frame::new();
-        assert_eq!(frame.rewind(0).sealed(), "\x1b[?2026h\r\x1b[J\x1b[?2026l");
-    }
+    fn a_row_names_where_it_goes() {
+        // The whole of what replaced the rewind. Both counted from one, as the
+        // terminal counts them, so the first row of the screen is row zero here
+        // and row one on the wire.
+        let mut frame = Frame::default();
 
-    #[test]
-    fn one_drawn_row_needs_no_move_either() {
-        // The cursor is already on the only row there is.
-        let mut frame = Frame::new();
-        assert_eq!(frame.rewind(1).sealed(), "\x1b[?2026h\r\x1b[J\x1b[?2026l");
-    }
-
-    #[test]
-    fn moving_back_is_one_fewer_than_the_rows_drawn() {
-        let mut frame = Frame::new();
         assert_eq!(
-            frame.rewind(4).sealed(),
-            "\x1b[?2026h\r\x1b[3A\x1b[J\x1b[?2026l"
+            frame.open().row(0, "head").unheld(),
+            "\x1b[1;1H\x1b[m\x1b[Khead"
         );
     }
 
     #[test]
-    fn a_frame_that_moves_the_cursor_is_held_until_all_of_it_has_arrived() {
-        // The erase and the rows that replace it are one picture. Sent without
-        // this pair the terminal may paint between them, which is the region
-        // blinking once a delta while an answer streams into it.
-        let mut frame = Frame::new();
-        let written = frame
-            .rewind(3)
-            .live(["one", "two", "three"].into_iter())
-            .sealed();
+    fn a_row_far_down_the_screen_is_placed_rather_than_stepped_to() {
+        let mut frame = Frame::default();
 
-        assert!(written.starts_with("\x1b[?2026h"), "{written:?}");
-        assert!(written.ends_with("\x1b[?2026l"), "{written:?}");
+        assert_eq!(
+            frame.open().row(23, "foot").unheld(),
+            "\x1b[24;1H\x1b[m\x1b[Kfoot"
+        );
+    }
+
+    #[test]
+    fn a_row_is_cleared_before_it_is_written() {
+        // A shorter row drawn over a longer one would otherwise keep the tail
+        // of the one it replaced.
+        let mut frame = Frame::default();
+        let written = frame.open().row(4, "short").unheld();
+
+        let erased = written.find(ERASE_ROW).expect("the row is erased");
+        let wrote = written.find("short").expect("the row is written");
+        assert!(erased < wrote, "{written:?}");
+    }
+
+    #[test]
+    fn a_row_forgets_the_colour_above_it_before_it_erases_and_not_after() {
+        // Erasing with a background still set paints that background across the
+        // rest of the row, so the reset has to come first. The order is the
+        // whole of the test: both sequences are present either way.
+        let mut frame = Frame::default();
+        let written = frame.open().row(1, "text").unheld();
+
+        let forgot = written.find(PLAIN).expect("the colour is forgotten");
+        let erased = written.find(ERASE_ROW).expect("the row is erased");
+        assert!(forgot < erased, "{written:?}");
+    }
+
+    #[test]
+    fn the_caret_is_parked_after_every_row_so_their_order_does_not_matter() {
+        // What lets a frame write only the rows that changed: wherever the last
+        // of them left the cursor, the park puts it where the reader is typing.
+        let mut frame = Frame::default();
+
+        assert_eq!(
+            frame.open().row(9, "prompt").park(9, 4).unheld(),
+            "\x1b[10;1H\x1b[m\x1b[Kprompt\x1b[10;5H"
+        );
+    }
+
+    #[test]
+    fn a_frame_takes_the_cursor_off_the_screen_and_gives_it_back() {
+        // On a terminal that does not know the synchronized update, a cursor
+        // stepping through every row of a redraw is the thing the reader sees.
+        let mut frame = Frame::default();
+        let written = frame.open().row(0, "one").row(1, "two").sealed();
+
+        assert!(written.starts_with("\x1b[?2026h\x1b[?25l"), "{written:?}");
+        assert!(written.ends_with("\x1b[?25h\x1b[?2026l"), "{written:?}");
     }
 
     #[test]
@@ -216,61 +215,21 @@ mod tests {
         // Every write goes through the seal, and a renderer that wrote a frame
         // and then looked at it again would otherwise send a closing sequence
         // for an update nothing had opened.
-        let mut frame = Frame::new();
-        frame.rewind(0);
+        let mut frame = Frame::default();
+        frame.open();
 
         let once = frame.sealed().to_owned();
         assert_eq!(frame.sealed(), once);
     }
 
     #[test]
-    fn a_pipe_is_never_asked_to_hold_a_frame() {
-        // The sequences are escape bytes like any other, and the redirected
-        // path emits none.
-        let mut frame = Frame::new();
-        frame.rewind(2);
-
-        assert!(
-            !frame
-                .plain()
-                .settled("done", false)
-                .sealed()
-                .contains('\x1b')
-        );
-    }
-
-    #[test]
-    fn a_frame_never_emits_a_sequence_that_reaches_scrollback() {
-        // The property the inline design rests on. If one of these can appear,
-        // committed output is reachable and the design is gone.
-        let mut frame = Frame::new();
-        frame
-            .rewind(9)
-            .settled("done", true)
-            .live(["one", "two"].into_iter())
-            .break_row();
-
-        let written = frame.sealed();
-        for upward in ["\x1b[2J", "\x1b[1J", "\x1b[3J", "\x1b[H", "\x1b[0J"] {
-            assert!(
-                !written.contains(upward),
-                "a frame contained {upward:?}: {written:?}"
-            );
-        }
-    }
-
-    #[test]
     fn a_frame_never_paints_a_ground_of_its_own() {
-        // The ground behind every row belongs to the terminal, and it stays
-        // that way by nothing here ever setting one -- not by this process
-        // working out what theirs is. A fill added to make a row line up would
-        // be the edit this test is here to stop.
-        let mut frame = Frame::new();
-        frame
-            .rewind(3)
-            .settled("done", true)
-            .live(["one", "two"].into_iter())
-            .break_row();
+        // The ground behind every row belongs to the theme the rows were
+        // painted with, and it stays that way by nothing here ever setting one.
+        // A fill added to make a row line up would be the edit this test is
+        // here to stop.
+        let mut frame = Frame::default();
+        frame.open().row(0, "one").row(1, "two").park(1, 0);
 
         let written = frame.sealed();
         for painted in ["\x1b[48;", "\x1b[40m", "\x1b[47m", "\x1b[107m"] {
@@ -282,45 +241,29 @@ mod tests {
     }
 
     #[test]
-    fn live_rows_end_without_a_line_ending() {
-        // A trailing newline would leave the cursor one row below the tail, and
-        // the next rewind would erase the wrong lines.
-        let mut frame = Frame::new();
-        let written = frame.plain().live(["one", "two"].into_iter()).sealed();
+    fn a_frame_erases_by_the_row_and_never_by_the_screen() {
+        // What keeps a redraw proportional to what changed. An erase of the
+        // whole screen would be correct and would also repaint every row of the
+        // window on every delta, which is the budget gone.
+        let mut frame = Frame::default();
+        frame.open().row(3, "one").row(4, "two").park(4, 2);
 
-        assert_eq!(written, "one\r\ntwo");
-    }
-
-    #[test]
-    fn a_settled_row_ends_with_a_carriage_return_on_a_terminal() {
-        // Raw mode does not return the carriage on a bare newline, so a row
-        // written without one would stair-step across the screen.
-        let mut frame = Frame::new();
-        assert_eq!(frame.plain().settled("done", true).sealed(), "done\r\n");
-    }
-
-    #[test]
-    fn a_settled_row_is_a_plain_newline_for_a_pipe() {
-        let mut frame = Frame::new();
-        assert_eq!(frame.plain().settled("done", false).sealed(), "done\n");
+        let written = frame.sealed();
+        for wholesale in ["\x1b[2J", "\x1b[J", "\x1b[0J", "\x1b[1J", "\x1b[3J"] {
+            assert!(
+                !written.contains(wholesale),
+                "a frame contained {wholesale:?}: {written:?}"
+            );
+        }
     }
 
     #[test]
     fn starting_a_frame_forgets_the_last_one() {
-        let mut frame = Frame::new();
-        frame.plain().settled("old", true);
-        frame.rewind(0);
+        let mut frame = Frame::default();
+        frame.open().row(0, "old");
+        frame.sealed();
+        frame.open();
 
-        assert_eq!(frame.sealed(), "\x1b[?2026h\r\x1b[J\x1b[?2026l");
-    }
-
-    #[test]
-    fn a_plain_frame_carries_no_escape_bytes() {
-        let mut frame = Frame::new();
-        frame.plain().settled("alpha", false).settled("beta", false);
-
-        let written = frame.sealed();
-        assert!(!written.contains('\x1b'));
-        assert_eq!(written, "alpha\nbeta\n");
+        assert_eq!(frame.sealed(), "\x1b[?2026h\x1b[?25l\x1b[?25h\x1b[?2026l");
     }
 }

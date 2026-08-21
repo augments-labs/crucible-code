@@ -24,8 +24,8 @@
 //! the writing and keeps what was typed; it is only the whole ask that a second
 //! escape leaves.
 //!
-//! Nothing here is written down. The panel stood in the live region and the
-//! region was given back; what is left behind is the call's own result on the
+//! Nothing here is written down. The panel stood over the transcript and the
+//! rows it covered are back; what is left behind is the call's own result on the
 //! row under it, which is the bargain the permission panel already makes.
 
 use crucible_core::{Answer, Answered, Question};
@@ -524,6 +524,10 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
 
+        // The wheel among them: an ask is walked with the arrows, and the
+        // transcript it stands over is what a reader reaching for a wheel meant
+        // to move. Answering `Still` is what hands it there.
+        //
         // Ctrl+O, ctrl+T and the rest open things that stand in this same
         // region, which would leave a question on screen with nothing left to
         // answer it with. The key that copies the line is here for the other
@@ -539,6 +543,7 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Clicked { .. }
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::Scrolled { .. }
         | Pressed::Ignored => Moved::Still,
     }
 }

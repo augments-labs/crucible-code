@@ -428,8 +428,8 @@ fn a_hint_is_drawn_only_where_the_whole_of_it_fits() {
 #[test]
 fn the_model_being_asked_stands_against_the_right_edge_of_the_status_row() {
     // The one fact the welcome card cannot keep. `/model` and `/effort` both
-    // change it, and by then the card is scrollback -- which this process
-    // draws inline and can never go back over. So it lives on the one row that
+    // change it, and by then the card is something already said -- and what was
+    // said does not stop being what was said. So it lives on the one row that
     // is redrawn every keystroke, at the end away from the mode: the mode is
     // what the next tool call costs and this is what the next turn is asked
     // of, and run together they read as one sentence.

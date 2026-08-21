@@ -22,8 +22,8 @@
 //! the thing asking for the permission. The panel says so above them, once, in
 //! its own voice.
 //!
-//! **Nothing here is written down, the answer included.** The panel stood in
-//! the live region and the region was given back, and what a yes leaves behind
+//! **Nothing here is written down, the answer included.** The panel stood over
+//! the transcript and the rows it covered are back, and what a yes leaves behind
 //! is the call's own result on the row under it — which is on screen anyway, and
 //! is the thing the reader is looking for. A row saying the answer sits between
 //! that result and the one before it, in a column of calls that is read by its
@@ -414,6 +414,11 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
 
+        // The wheel among them: three answers are reached with an arrow, and
+        // what a reader turning a wheel at a permission question is doing is
+        // reading back through what was said above it to decide. Answering
+        // `Still` is what hands the wheel to the transcript.
+        //
         // Ctrl+O among them. What it opens is the transcript's, and the panel
         // stands over the transcript: the view would take the region this panel
         // is in, leaving a question on screen with nothing left to answer it
@@ -432,6 +437,7 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         | Pressed::Pasted(_)
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::Scrolled { .. }
         | Pressed::Ignored => Moved::Still,
     }
 }

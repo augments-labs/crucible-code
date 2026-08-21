@@ -1,12 +1,13 @@
-//! Live-region throughput while a command is printing.
+//! Turn-band throughput while a command is printing.
 //!
 //! A running command hands over what it has printed every twenty milliseconds
-//! and the footing above the box is laid out and drawn again for it: the sample
-//! rows change, the count row changes, and the whole region is rewound and
-//! rewritten. That is a different operation from the one `bench-render-burst`
-//! measures — that one counts `stream` calls, which append to a tail; this one
-//! counts whole-region redraws, which rewind over rows already on screen and
-//! write them all again.
+//! and the footing over the box is laid out and drawn again for it: the sample
+//! rows change, the count row changes, and the band they stand in is written
+//! again. That is a different operation from the one `bench-render-burst`
+//! measures — that one counts `stream` calls, which fold arriving text into the
+//! record the transcript band is drawn from; this one counts `under` calls,
+//! which stand a component's rows in a band of their own and leave the record
+//! alone.
 //!
 //! Both are held to the same floor, because the reason for the floor is the same:
 //! below thirty a second a picture that is meant to be moving reads as stalled.
@@ -19,14 +20,20 @@
 //! Measured against a bounded kernel pipe rather than a buffer, so writes and
 //! flushes are real syscalls and a producer that outruns its consumer meets
 //! kernel backpressure instead of growing a heap buffer. The sink reports itself
-//! as a terminal, since a region is a thing only a terminal has and the escape
-//! assembly is part of what is being measured.
+//! as a terminal because `under` does nothing at all where output is redirected
+//! — a band is a thing only a screen has — so against anything else there would
+//! be no frame to time.
 //!
-//! Twice, and the two must be close, for the reason the other probe gives: the
-//! way this gets slow is not a constant factor but a redraw whose cost grows with
-//! what is above it, and that is fast in the first second and hopeless in the
-//! hundredth. How each of those two rates is arrived at is `burst`'s, beside
-//! this file, and is shared with the probe that gives the reason.
+//! Twice, and the two must be close. How each of those two rates is arrived at
+//! is `burst`'s, beside this file, and is shared with the probe that streams.
+//! What the ratio catches here is not what it catches there, because nothing is
+//! streaming and the record stays empty for the whole burst: it is a frame that
+//! keeps something. These rows stand over the transcript and never join it, so a
+//! burst of them has to leave the renderer holding what one frame left it
+//! holding. A frame that accumulated — rows appended where they should have
+//! replaced, anything growing with the count of frames rather than with the
+//! window — is fast in the first second and hopeless in the hundredth, and the
+//! ratio is the only place it shows.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -57,7 +64,7 @@ use rustix::pipe::{PipeFlags, pipe_with};
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
 
-/// A terminal-sized window, so the region is the height a real one is bounded to.
+/// A terminal-sized window, so the turn band is as tall as a real one leaves it.
 #[cfg(target_os = "linux")]
 const COLUMNS: usize = 80;
 #[cfg(target_os = "linux")]

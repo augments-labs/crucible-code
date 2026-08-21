@@ -65,13 +65,11 @@ pub(super) fn run<T: Terminal>(
         if let Some(remaining) = remaining {
             return say(
                 renderer,
-                terms,
                 &not_stored(terms.provider.get().unwrap_or_default(), &remaining.source),
             );
         }
         return say(
             renderer,
-            terms,
             "nothing is stored by Crucible; unset any environment keys in the shell",
         );
     }
@@ -87,7 +85,7 @@ pub(super) fn run<T: Terminal>(
             Taken::Took(taken) => return forgetting(taken, renderer, runner, terms),
             // Escape asked for the screen that was there before the panel. The
             // rows under it would be the same question put a second time.
-            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Left => return say(renderer, LEFT),
             Taken::Cramped => {}
         }
     }
@@ -115,7 +113,7 @@ pub(super) fn run<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// The providers this build serves that `stored` holds a credential for.
@@ -187,7 +185,7 @@ fn forgetting<T: Terminal>(
     // answered. Another crucible having taken it between the read above and
     // this line leaves the key gone, which is what was asked for.
     if let Err(problem) = terms.logins.forget(named.name) {
-        return say(renderer, terms, &format!("! {problem}"));
+        return say(renderer, &format!("! {problem}"));
     }
 
     let columns = renderer.columns();
@@ -219,7 +217,7 @@ fn forgetting<T: Terminal>(
         Row::new().then(Slot::Quiet, clip(&status, columns)),
     ];
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// What remains after the stored credential moved, without ever carrying the

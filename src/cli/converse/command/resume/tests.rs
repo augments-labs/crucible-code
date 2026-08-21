@@ -120,7 +120,8 @@ fn at(sample: &Sample, wanted: &str, of: usize) -> String {
     }
 }
 
-/// Runs `/resume {said}` against `runner`, and says what reached the terminal.
+/// Runs `/resume {said}` against `runner`, and says what the window ends up
+/// showing — one row a line, the blank ones left out.
 fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
 
@@ -128,7 +129,7 @@ fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
     // and the question a large session asks has nobody to answer it.
     run(said, &mut renderer, runner, &terms(sample), false).expect("the terminal to be written");
 
-    renderer.terminal().written().to_string()
+    renderer.terminal().picture().said().join("\n")
 }
 
 #[test]

@@ -161,8 +161,9 @@ is the model's.
   skill, and build the thing. Quietly scoping a feature down to avoid a
   dependency is under-delivery, and it is worse than the dependency because
   nothing records that it happened.
-- **Rendering is inline today, and that is a mechanism rather than a law.**
-  Scrollback belongs to the terminal, which is what keeps rendering free as a
-  transcript grows. A full-screen renderer would move that job into this
-  process; what it may not move is the budget, so it would owe a virtualized
-  viewport in exchange. The budget is the rule; inline is how 0.x meets it.
+- **crucible owns the screen, and with it the job the terminal used to do.**
+  Scrollback is this process's, so the budget it used to be free under is now
+  something the code has to keep on purpose: only the lines the viewport covers
+  are folded and painted, the record is bounded, and a frame writes only the
+  rows whose text is not already there. The budget is the rule; that is how it
+  is met.

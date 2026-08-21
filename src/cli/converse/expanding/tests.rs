@@ -51,11 +51,9 @@ fn overflowing() -> Kept {
 
 #[test]
 fn the_view_under_a_turn_leaves_the_tail_a_row_to_go_on_writing_into() {
-    // The live region is the tail plus whatever stands under it, and the tail
-    // keeps a row whatever is asked of it — so a view as tall as the window
-    // would leave a region a row taller than the screen, and the top of that
-    // has already scrolled out of reach of the next rewind. The row it gives up
-    // is the one the turn goes on writing into.
+    // The view stands over the transcript, and the transcript keeps a row
+    // whatever is asked of it — so a view as tall as the window would leave the
+    // turn nowhere to go on writing. The row it gives up is that one.
     //
     // Asserted against the same picture drawn by hand at that height rather
     // than against a count of rows, so the caret is pinned with it: it parks on
@@ -260,6 +258,44 @@ fn an_arrow_against_an_end_costs_no_frame() {
     let mut bottom = standing(20, 20);
     assert_eq!(moving(Pressed::Down, &mut bottom), Moved::Still);
     assert_eq!(bottom, standing(20, 20));
+}
+
+#[test]
+fn the_wheel_walks_this_view_rather_than_the_transcript_under_it() {
+    // The one component the wheel does not fall through: it is a window over
+    // more text than its rows hold, which is the thing somebody turning a wheel
+    // is pointing at.
+    let mut open = standing(4, 20);
+
+    assert_eq!(
+        moving(Pressed::Scrolled { back: false }, &mut open),
+        Moved::Redraw
+    );
+    assert_eq!(open, standing(5, 20));
+
+    assert_eq!(
+        moving(Pressed::Scrolled { back: true }, &mut open),
+        Moved::Redraw
+    );
+    assert_eq!(open, standing(4, 20));
+}
+
+#[test]
+fn a_wheel_against_an_end_leaves_it_for_the_transcript() {
+    // `Still` is not "nothing happened" here — it is what the loop reading this
+    // takes as the transcript's turn, so a reader who walked to the top of a
+    // view goes on reading back past it.
+    let mut top = standing(0, 20);
+    assert_eq!(
+        moving(Pressed::Scrolled { back: true }, &mut top),
+        Moved::Still
+    );
+
+    let mut bottom = standing(20, 20);
+    assert_eq!(
+        moving(Pressed::Scrolled { back: false }, &mut bottom),
+        Moved::Still
+    );
 }
 
 #[test]

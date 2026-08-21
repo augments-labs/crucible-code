@@ -2,8 +2,8 @@
 //!
 //! The one place in the wiring that composes components rather than lines. Its
 //! job is to hand them the facts they cannot know — the release, the directory
-//! and recent sessions — and to keep the answer, because the opening is drawn
-//! again every time the window changes size until the first prompt is read.
+//! and recent sessions — and to keep the answer, because the facts are read
+//! where the wiring has them and the rows are drawn where the renderer is.
 
 use std::time::SystemTime;
 
@@ -51,14 +51,14 @@ pub(crate) struct Opening<'a> {
     pub(crate) style: Style,
 }
 
-/// The opening, laid out again whenever the window it is drawn in changes size.
+/// The opening, read off the wiring and not yet laid out.
 ///
 /// Owned rather than borrowed from whatever composed it, because it outlives
-/// that call: it stands in the live region until the first prompt is answered,
-/// and every frame of that draws it again for the width the window has at that
-/// moment. A card that was committed the instant it was drawn could only be
-/// re-wrapped by the terminal, and a frame is not text — a box re-wrapped is a
-/// box in pieces.
+/// that call: what the card says is known where the session's files and logins
+/// were opened, and the width it is drawn against is only known one call
+/// further on, in the loop that owns the renderer. Between the two it is
+/// facts — a clock read once, so four recent sessions are four ages measured
+/// from one now.
 pub(crate) struct Standing {
     /// The directory being worked in, already shortened for drawing.
     root: String,
@@ -206,10 +206,11 @@ impl Standing {
     /// Writes the opening into the record, where it stops being this
     /// renderer's to draw again.
     ///
-    /// Called once the first prompt has been read, which is the moment the
-    /// screen stops being nothing but the opening: from here on there is a
-    /// transcript above it that no rewind may reach, so the last width it was
-    /// drawn at is the width it keeps.
+    /// Called before the session asks for anything, because the opening is the
+    /// first thing in the transcript rather than something standing over the
+    /// box: it scrolls with whatever is said after it, and a reader who has
+    /// scrolled back to find it is reading rows laid out at the width the
+    /// window had when it was written.
     ///
     /// # Errors
     ///
@@ -219,7 +220,7 @@ impl Standing {
         renderer: &mut Renderer<T>,
     ) -> Result<(), TerminalError> {
         let rows = self.rows(renderer.columns());
-        renderer.present(&rows, self.style.palette())
+        renderer.present(&rows)
     }
 }
 
@@ -396,9 +397,9 @@ mod tests {
 
     #[test]
     fn the_opening_never_reaches_a_row_it_did_not_write() {
-        // `present` writes above whatever comes after it and is never redrawn
-        // over, so a sequence that moves the cursor up or erases upward would
-        // take a row belonging to the terminal's own scrollback.
+        // A presented row is put down at a position the frame names, so a
+        // sequence that moves the cursor or erases would write somewhere the
+        // frame is not accounting for — a band that is not this one.
         for columns in [40, 46, 80, 200] {
             let screen = opened(columns, true);
 
@@ -519,7 +520,7 @@ mod tests {
     #[test]
     fn the_card_says_nothing_about_the_live_turn_selection() {
         // All three facts are on the row under the prompt box. `/model` and
-        // `/effort` change them after this card has become terminal scrollback.
+        // `/effort` change them long after this card has joined the transcript.
         // The provider may still be named by the separate authentication row.
         let screen = opened(80, false);
 

@@ -211,8 +211,8 @@ fn how_far_down_it_may_go_is_answered_at_the_size_it_was_asked_about() {
 
 #[test]
 fn a_window_with_no_room_for_the_view_is_given_nothing() {
-    // Rather than as much as fits. A live region drawn short is one the next
-    // frame rewinds over rows the terminal has already taken.
+    // Rather than as much as fits. A view drawn short reads as the whole of what
+    // was cut, which is the thing it was opened to say it was not.
     let shown = [Shown {
         called: "Read(one)",
         text: "one",

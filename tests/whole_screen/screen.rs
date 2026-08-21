@@ -11,10 +11,17 @@
 //!
 //! Three of crucible's own guarantees are checked as the bytes arrive rather
 //! than at the end, so the frame that broke one is the frame that reports it:
-//! no row is ever wider than the terminal, nothing ever moves the cursor above
-//! the top of the screen, and a frame that asked the screen to be held asks for
-//! it to be shown again. All three are cheap enough to hold continuously, and
-//! none is visible to a component test, which sees rows and never a screen.
+//! no row is ever wider than the terminal, no cell outside the window is ever
+//! addressed, and a frame that asked the screen to be held asks for it to be
+//! shown again. All three are cheap enough to hold continuously, and none is
+//! visible to a component test, which sees rows and never a screen.
+//!
+//! The second of those is what replaced a rewind that could reach above the top
+//! of the screen. Every position crucible writes at is now named outright, so
+//! the way that guarantee fails is an address off the window rather than a
+//! count of rows that was one too many — and `scrolled` staying at zero for the
+//! whole of a session is the other half of it, since a process that owns its
+//! screen has no reason to push a row off the top of one.
 //!
 //! Holding is only recorded here rather than acted on. What a real terminal
 //! does with it is show one picture instead of two, which is invisible to a
@@ -54,9 +61,12 @@ pub(crate) struct Screen {
     row: usize,
     /// How many columns across it is.
     column: usize,
-    /// How many rows have left the top of the window for the terminal's own
-    /// scrollback, which is the one thing that happened that the picture below
-    /// cannot show.
+    /// How many rows have been pushed off the top of the window, which is the
+    /// one thing that happened that the picture below cannot show.
+    ///
+    /// It is expected to stay at nought: a process that owns its screen writes
+    /// at the position it means and has no reason to make the window move under
+    /// what it drew.
     scrolled: usize,
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
@@ -110,8 +120,12 @@ impl Screen {
     /// and what leaves the picture rectangular; a row drawn legally at the old
     /// width is not charged for the new one, because the check that matters
     /// happens where the row is written. A window that lost rows loses them off
-    /// the top, so the live region at the bottom — the only part crucible will
-    /// draw again — stays where it stands.
+    /// the top, so what was at the foot of it stays at the foot.
+    ///
+    /// None of that is scrolling. A window that got shorter has fewer rows to
+    /// show, which is the reader's doing and says nothing about what crucible
+    /// wrote — and the count exists to catch a frame reaching past the bottom
+    /// of a screen this process owns.
     pub(crate) fn resize(&mut self, columns: usize, rows: usize) {
         for row in &mut self.grid {
             row.truncate(columns);
@@ -120,7 +134,6 @@ impl Screen {
         while self.grid.len() > rows {
             self.grid.remove(0);
             self.row = self.row.saturating_sub(1);
-            self.scrolled += 1;
         }
         self.grid.resize(rows, Vec::new());
 
@@ -264,24 +277,10 @@ impl Screen {
         }
     }
 
-    /// Steps the cursor up, which is the move that has to stay on the screen.
-    fn up(&mut self, count: usize) {
-        if count > self.row {
-            self.refuse(format!(
-                "moved {count} rows up from row {}, above the top of the screen",
-                self.row
-            ));
-        }
-        self.row = self.row.saturating_sub(count);
-    }
-
-    /// Erases from the cursor to the end of the screen.
-    fn erase_down(&mut self) {
+    /// Erases from the cursor to the end of the row it is on.
+    fn erase_row(&mut self) {
         if let Some(row) = self.grid.get_mut(self.row) {
             row.truncate(self.column);
-        }
-        for row in self.grid.iter_mut().skip(self.row + 1) {
-            row.clear();
         }
     }
 
@@ -320,13 +319,11 @@ impl Screen {
 
     /// Acts on one control sequence, or refuses it by name.
     ///
-    /// The whole set the renderer promises: move up, set the column, erase
-    /// down, colour, the two that hold a frame until all of it has arrived, the
-    /// modes crucible borrows from the terminal, and the one question it asks.
+    /// The whole set the renderer promises: park at a named cell, erase the
+    /// rest of a row, colour, the two that hold a frame until all of it has
+    /// arrived, the modes crucible borrows from the terminal — the screen it
+    /// draws on among them — and the one question it asks.
     fn act(&mut self, params: &str, ends: char) {
-        // Every one of these defaults to one where the parameter is left out.
-        let count = params.parse::<usize>().unwrap_or(1);
-
         match (params, ends) {
             // Colour, the modes crucible borrows from the terminal, and the
             // device-attributes question it asks once at startup. None of them
@@ -344,11 +341,12 @@ impl Screen {
             // a terminal replies in the order it was asked — without it, a
             // terminal implementing neither would be waited on for the whole
             // patience rather than answered at once.
-            (_, 'm') | ("?1000" | "?1006" | "?2004", 'h' | 'l') | (">1" | "<", 'u') | ("", 'c') => {
-            }
-            (_, 'A') => self.up(count),
-            (_, 'G') => self.park(count),
-            ("" | "0", 'J') => self.erase_down(),
+            (_, 'm')
+            | ("?1000" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
+            | (">1" | "<", 'u')
+            | ("", 'c') => {}
+            (_, 'H') => self.park(params),
+            ("" | "0", 'K') => self.erase_row(),
             ("?2026", 'h') => self.hold(),
             ("?2026", 'l') => self.show(),
             _ => self.refuse(format!("wrote ESC[{params}{ends}")),
@@ -371,9 +369,27 @@ impl Screen {
         self.holding = false;
     }
 
-    /// Puts the cursor at a column, counted the way the terminal counts them.
-    fn park(&mut self, column: usize) {
-        let column = column.saturating_sub(1);
+    /// Puts the cursor at a named cell, counted the way the terminal counts
+    /// them: row and then column, both from one, and either left out meaning
+    /// the first.
+    ///
+    /// This is the whole of how the renderer moves, which is what makes the
+    /// check on it worth carrying. A cell off the window is a frame drawn
+    /// somewhere the reader cannot see, and on a real terminal it is clamped
+    /// rather than refused — so nothing about the picture would say it had
+    /// happened.
+    fn park(&mut self, params: &str) {
+        let mut at = params.split(';');
+        let row = at.next().and_then(|one| one.parse().ok()).unwrap_or(1);
+        let column = at.next().and_then(|one| one.parse().ok()).unwrap_or(1);
+        let (row, column): (usize, usize) = (usize::max(row, 1) - 1, usize::max(column, 1) - 1);
+
+        if row >= self.rows {
+            self.refuse(format!(
+                "parked the cursor on row {row} of a screen {} rows tall",
+                self.rows
+            ));
+        }
 
         // One past the last column is where a cursor rests at the end of a full
         // row; anything beyond that is a column this window does not have.
@@ -383,6 +399,8 @@ impl Screen {
                 self.columns
             ));
         }
+
+        self.row = row.min(self.rows.saturating_sub(1));
         self.column = column.min(self.columns);
     }
 
@@ -475,10 +493,15 @@ mod tests {
     const WRITTEN: &str = concat!(
         "\x1b]0;▽ crucible\x07",
         "\x1b[?1000h\x1b[?1006h",
-        "\x1b[?2026h\r\x1b[Jcrucible v0.0.9\r\n",
-        "\x1b[36m│ › ───\x1b[0m\r\n\x1b[?2026l",
-        "\x1b[?2026h\r\x1b[2A\x1b[J╭──╮\r\n│  │\r\n╰──╯",
-        "\x1b[1A\x1b[3G\x1b[?2026l",
+        "\x1b[?2026h\x1b[?25l",
+        "\x1b[1;1H\x1b[m\x1b[Kcrucible v0.0.9",
+        "\x1b[2;1H\x1b[m\x1b[K\x1b[36m│ › ───\x1b[0m",
+        "\x1b[2;1H\x1b[?25h\x1b[?2026l",
+        "\x1b[?2026h\x1b[?25l",
+        "\x1b[6;1H\x1b[m\x1b[K╭──╮",
+        "\x1b[7;1H\x1b[m\x1b[K│  │",
+        "\x1b[8;1H\x1b[m\x1b[K╰──╯",
+        "\x1b[7;3H\x1b[?25h\x1b[?2026l",
     );
 
     /// The same bytes one at a time, which is every cut point at once.
@@ -524,17 +547,19 @@ mod tests {
     }
 
     #[test]
-    fn moving_the_cursor_above_the_top_of_the_screen_is_reported() {
-        // The second, and the one the shipped bug tripped: a frame that
-        // rewinds further than the rows it drew erases somebody's scrollback.
+    fn parking_the_cursor_off_the_window_is_reported() {
+        // The second. A real terminal clamps an address it does not have,
+        // which is what makes this worth watching for: the row is drawn
+        // somewhere the reader can see and nothing about the picture says the
+        // frame meant it to be anywhere else.
         let mut screen = Screen::new(8, 4);
-        screen.feed(b"one\r\n\x1b[3A");
+        screen.feed(b"\x1b[9;1H");
 
         assert!(
             screen
                 .refusals()
                 .iter()
-                .any(|said| said.contains("above the top")),
+                .any(|said| said.contains("of a screen 4 rows tall")),
             "{:?}",
             screen.refusals()
         );
@@ -542,8 +567,9 @@ mod tests {
 
     #[test]
     fn a_sequence_the_renderer_does_not_promise_is_reported_by_name() {
-        // Erasing the whole screen reaches rows that have scrolled off it,
-        // which is the one thing the inline design rests on never happening.
+        // Erasing the whole screen at once is not how a frame gets there: a
+        // row is erased by the frame that is about to write it, so a screen
+        // cleared out from under one is a sequence nothing here composed.
         let mut screen = Screen::new(8, 4);
         screen.feed(b"\x1b[2J");
 
@@ -557,7 +583,7 @@ mod tests {
         // closed it is a screen that has stopped changing — which is invisible
         // to a picture assembled from every byte, and is the point of asking.
         let mut screen = Screen::new(8, 4);
-        screen.feed(b"\x1b[?2026h\r\x1b[Jone");
+        screen.feed(b"\x1b[?2026h\x1b[1;1H\x1b[Kone");
 
         assert!(screen.is_holding());
         assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
@@ -579,7 +605,8 @@ mod tests {
     #[test]
     fn a_row_ended_with_a_bare_newline_is_reported() {
         // Raw mode does not return the carriage on one, so rows stair-step
-        // across the screen and every frame after rewinds over the wrong ones.
+        // across the screen — and the picture assembled from them is not the
+        // one the reader saw.
         let mut screen = Screen::new(8, 4);
         screen.feed(b"one\ntwo");
 

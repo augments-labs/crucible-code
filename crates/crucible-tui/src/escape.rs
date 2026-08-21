@@ -3,15 +3,15 @@
 //! A terminal reads `ESC` and what follows it as a single instruction. Anything
 //! walking characters one at a time sees the parameters instead: it draws `[2J`
 //! and counts three columns for it. Both halves of that are wrong, and the
-//! second half is the one that does damage — the count is what the next frame
-//! rewinds by, so a row measured three columns too wide wraps on its own and
-//! the frame after it erases the wrong lines.
+//! second half is the one that does damage — the count is what decides whether
+//! a row fits its band, so a row measured three columns too wide wraps on its
+//! own and pushes everything below it a row down the screen.
 //!
 //! What arrives here is text this process did not write: streamed model output
 //! and tool results. So a sequence is recognised in order to be *dropped* —
 //! left undrawn and uncounted — because an instruction from there could move
-//! the cursor out of the live region or leave an attribute set for everything
-//! after it. Colour crucible writes for itself never travels as bytes inside a
+//! the cursor into a band it was not aimed at, or leave an attribute set for
+//! everything after it. Colour crucible writes for itself never travels as bytes inside a
 //! string; it belongs to a row and is applied as the row is drawn.
 
 /// The byte that opens a sequence.

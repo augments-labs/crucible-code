@@ -1,21 +1,22 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 188
 expression: window.picture()
 ---
-80x16 cursor 11,4 scrolled 33
+80x16 cursor 13,4 scrolled 0
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy|
+|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
+|the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
 |brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
 |the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
-|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox      |
-|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
-|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
-|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
-|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox      |
-|jumps over the lazy dog. the quick brown fox jumps over the lazy dog.           |
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps|
+|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog.                                        |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |

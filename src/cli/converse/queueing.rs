@@ -187,9 +187,9 @@ pub(super) fn under<T: Terminal>(
         return Ok(false);
     };
 
-    // One row of tail is kept whatever stands under it, so a list as tall as the
-    // window would leave a live region a row taller than the screen. The row it
-    // gives up is the one the turn goes on writing into.
+    // One row is left to the transcript whatever stands here, and it is the row
+    // the turn goes on writing into: a list that asked for the whole window
+    // would leave what is being said now nowhere at all to appear.
     let room = renderer.rows().saturating_sub(1);
     let rows = rows(queue, at, renderer.columns(), room, style);
 

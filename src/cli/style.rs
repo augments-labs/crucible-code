@@ -71,8 +71,6 @@ pub(crate) fn writes_colour(
 /// What the terminal is written with.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Style {
-    /// Whether an escape sequence is written at all.
-    color: bool,
     /// What a slot is worth on this terminal, once colour is on at all.
     palette: Palette,
     /// Which characters crucible's own interface is drawn with.
@@ -158,7 +156,6 @@ impl Style {
             .flatten();
 
         Self {
-            color,
             // Whether, then how much: the answer above is the veto, and the
             // ladder below it only decides how far up a terminal that is having
             // colour at all can go.
@@ -224,11 +221,6 @@ impl Style {
             palette: self.palette.wearing(theme),
             ..self
         }
-    }
-
-    /// Whether the prompt mark is dimmed.
-    pub(crate) fn color(self) -> bool {
-        self.color
     }
 
     /// What a component's slots are worth here.
@@ -500,24 +492,20 @@ mod tests {
 
     #[test]
     fn a_run_that_configured_nothing_writes_colour_only_to_a_terminal() {
-        assert!(plain(true).color());
+        // The veto rather than the ladder. Whether a terminal is worth writing
+        // hues at is the palette's question, and this one is asked before it —
+        // which is why it has a function of its own that the resolve below
+        // calls into rather than a flag either of them keeps.
+        assert!(writes_colour(None, true, &environment(&[])));
 
         // Redirected. The escape bytes would end up in whatever kept the
         // output rather than colouring anything.
-        assert!(!plain(false).color());
+        assert!(!writes_colour(None, false, &environment(&[])));
     }
 
     #[test]
     fn no_color_turns_it_off_on_a_terminal_that_would_otherwise_have_it() {
-        let style = Style::resolve(
-            Output::default(),
-            true,
-            None,
-            None,
-            &environment(&[(NO_COLOR, "1")]),
-        );
-
-        assert!(!style.color());
+        assert!(!writes_colour(None, true, &environment(&[(NO_COLOR, "1")])));
     }
 
     #[test]
@@ -525,15 +513,7 @@ mod tests {
         // The convention is that the variable's presence is the signal, but an
         // empty value is what a shell leaves behind when somebody unsets it the
         // wrong way, and reading that as "no colour" surprises them.
-        let style = Style::resolve(
-            Output::default(),
-            true,
-            None,
-            None,
-            &environment(&[(NO_COLOR, "")]),
-        );
-
-        assert!(style.color());
+        assert!(writes_colour(None, true, &environment(&[(NO_COLOR, "")])));
     }
 
     #[test]
@@ -542,34 +522,10 @@ mod tests {
 
         // `always` on a pipe, with NO_COLOR set: the file said colour, and both
         // of the things it overrides are saying no.
-        assert!(
-            Style::resolve(
-                Output {
-                    color: Some(Color::Always),
-                    ..Output::default()
-                },
-                false,
-                None,
-                None,
-                &shouting
-            )
-            .color()
-        );
+        assert!(writes_colour(Some(Color::Always), false, &shouting));
 
         // `never` on a terminal with nothing else objecting.
-        assert!(
-            !Style::resolve(
-                Output {
-                    color: Some(Color::Never),
-                    ..Output::default()
-                },
-                true,
-                None,
-                None,
-                &environment(&[])
-            )
-            .color()
-        );
+        assert!(!writes_colour(Some(Color::Never), true, &environment(&[])));
     }
 
     #[test]

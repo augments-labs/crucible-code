@@ -107,9 +107,9 @@ all. The panel is measured before the rows the turn draws around it, so what a
 short window drops first is the call line and the queued prompt rather than what
 the agent is working to.
 
-The panel is not written into your scrollback. It joins the rows redrawn in
-place above the box, so a plan rewritten twenty times in one turn costs twenty
-rewrites of the same rows rather than twenty copies down the transcript — and it
+The panel is not written into the transcript. It stands in the rows above the
+box, so a plan rewritten twenty times in one turn costs twenty redraws of the
+same rows rather than twenty copies down the transcript — and it
 stays there when the turn ends, because what the agent was working to is what
 the next prompt is typed against.
 

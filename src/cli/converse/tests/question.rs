@@ -49,8 +49,8 @@ fn a_window_that_changed_while_a_question_stood_is_news_rather_than_nothing() {
     // The one read in the session with no clock on it: the question stands
     // until somebody decides, which makes it the longest stretch a window can
     // change over without anybody noticing. Passed over with the arrows, the
-    // renderer keeps a size the screen no longer has and every frame for the
-    // rest of the turn rewinds by that many rows -- over rows it never drew.
+    // renderer keeps a size the screen no longer has, and every frame for the
+    // rest of the turn shares out a window that is not the one on screen.
     assert!(matches!(heard(Pressed::Resized), Heard::Resized));
 }
 

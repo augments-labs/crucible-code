@@ -16,8 +16,9 @@ A terminal coding agent in Rust — fast to start, light on memory, and yours to
 ## What it is
 
 A coding agent you drive from a terminal. It reads and edits files, runs
-commands, searches a tree, and streams a model's reasoning inline — in the
-scrollback you already have, not in a full-screen buffer that replaces it.
+commands, searches a tree, and streams a model's reasoning onto a screen of its
+own — one you scroll, select and click in, and that is handed back whole when
+you leave.
 
 It is provider agnostic. A provider is a wire protocol; how you authenticate is
 a separate axis, so the two are independent choices rather than one coupled
@@ -40,10 +41,10 @@ and the release procedure blocks on them:
 The grep probe pairs each tool run with `rg` over representative workloads. Its
 worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
 
-Rendering costs nothing as a transcript grows, because it is inline: scrollback
-belongs to the terminal, not to this process. The transcript itself is held in
-memory for the life of the session and lent to each provider request rather than
-cloned. Provider request bodies are written directly into their outbound
+Rendering costs nothing as a transcript grows: a frame folds and paints only
+the rows the window covers, and writes only the ones whose text is not already
+there. The transcript itself is held in memory for the life of the session and
+lent to each provider request rather than cloned. Provider request bodies are written directly into their outbound
 allocation; the transcript is what the peak-RSS figure bounds.
 
 ## Installing

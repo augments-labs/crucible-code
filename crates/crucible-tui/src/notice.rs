@@ -143,8 +143,8 @@ mod tests {
 
     #[test]
     fn nothing_is_ever_drawn_past_the_last_column() {
-        // A row wider than the terminal is wrapped by the terminal, and the
-        // frame after it then rewinds over a row it did not write.
+        // A row wider than the terminal is wrapped by the terminal, into a
+        // second row of a band that was given room for one.
         for columns in [1, 2, 8, 20, 40, 79, 80, 200] {
             for row in drawn(&update(), columns) {
                 assert!(crate::width::columns(&row) <= columns, "{columns}: {row:?}");

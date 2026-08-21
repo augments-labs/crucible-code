@@ -114,8 +114,8 @@ impl Expanded<'_> {
     ///
     /// Empty rather than as-much-as-fits, for the reason every component here
     /// gives nothing back rather than something short: a caller with no room
-    /// draws no live region at all, and one drawn at as-much-as-fits is a frame
-    /// whose next rewind reaches over rows the terminal has already taken.
+    /// stands nothing at all, and a window drawn at as-much-as-fits reads as the
+    /// whole of what was cut short while hiding that it was cut twice.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
         let Some(held) = room.checked_sub(CHROME).filter(|held| *held > 0) else {

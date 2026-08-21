@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 94
 expression: window.picture()
 ---
-40x24 cursor 10,4 scrolled 0
+40x24 cursor 21,4 scrolled 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -12,18 +13,18 @@ expression: window.picture()
 |Then use /model to select a model.      |
 |                                        |
 |                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
 |╭──────────────────────────────────────╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |

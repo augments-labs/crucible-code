@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn no_row_is_ever_drawn_past_the_last_column_of_the_window() {
         // The rule the whole crate is on: a row wider than the terminal is a row
-        // the terminal wraps, and a wrapped row is a frame that rewinds over the
-        // wrong number of lines.
+        // the terminal wraps, and a wrapped row takes two of a band that was
+        // given one.
         // Both glyph sets, because what keeps the mark inside the track is that
         // it is one column wide whichever character it is drawn with.
         for columns in TIGHT..=200 {

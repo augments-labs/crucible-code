@@ -1,9 +1,9 @@
 //! How a burst is timed, shared by the two probes that time one.
 //!
-//! Both ask the same question in different words — one counts deltas appended to
-//! a tail, the other whole-region redraws — and both are held to the same pair of
-//! budgets: a floor in frames per second, and a closing rate that has not fallen
-//! far behind the opening one. The floor catches a renderer that is slow. The
+//! Both ask the same question in different words — one counts deltas folded into
+//! the record, the other redraws of the band over the box — and both are held to
+//! the same pair of budgets: a floor in frames per second, and a closing rate
+//! that has not fallen far behind the opening one. The floor catches a renderer that is slow. The
 //! ratio catches the failure that matters more here and that a floor cannot see:
 //! a redraw whose cost grows with what came before it, which is fast in the first
 //! second and hopeless in the hundredth.

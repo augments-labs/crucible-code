@@ -307,13 +307,14 @@ crucible draws comes out of the same set as the border:
 The name at the top of a session goes the same way: `unicode` draws it from half
 blocks and `ascii` writes it as letters.
 
-The mouse is not among these keys, and it is not a setting either. It is the
-terminal's, so selecting and scrolling work as they always did — a terminal
-forwarding buttons to a program is not using them itself, and while you are
-reading and typing they are worth more to you than a click would be.
+The mouse is not among these keys. crucible holds it for the whole session: the
+wheel scrolls the transcript, and a click puts the cursor where you point or
+opens a result the transcript cut short.
 
-A list or a panel takes it for as long as it stands, where the wheel walking
-rows is what a wheel is for and there is no scrollback underneath to give up.
+The price is that a drag no longer selects, because a terminal forwarding
+buttons to a program is not using them itself. Hold **Shift** while you drag and
+the selection is your terminal's again — every terminal keeps Shift as the way
+past a program holding the pointer.
 
 ### `updates`
 
@@ -428,15 +429,13 @@ line 3, column 5 — crucible reads it before it opens any configuration file,
 because it is what says where the files are. Set it in your shell instead
 ```
 
-## `CRUCIBLE_CODE_CLEAR_SCREEN`
+## `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`
 
-Empties the terminal — the screen and the scrollback above it — before crucible
-draws its first row. Off unless you ask for it, because crucible draws inline:
-what is already on the screen is your own work, and the terminal's scrollback is
-yours to keep.
+How many rows one notch of the wheel moves the transcript. `6` unless you say
+otherwise, which is about three lines of prose per notch.
 
 ```json
-{ "env": { "CRUCIBLE_CODE_CLEAR_SCREEN": "true" } }
+{ "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12" } }
 ```
 
 Written in `env` like any other variable, so it layers like one: a project can
@@ -444,20 +443,24 @@ set it for everybody who clones the repository, your home directory can set it
 for every project, and the environment you start crucible in beats both.
 
 ```console
-$ CRUCIBLE_CODE_CLEAR_SCREEN=0 crucible
+$ CRUCIBLE_CODE_MOUSE_SCROLL_SPEED=3 crucible
 ```
 
-`1` and `true` mean yes, `0` and `false` mean no, in any capitalisation.
-Anything else is refused rather than read as `false`:
+A whole number from `1` to `30`. Anything else is refused rather than rounded
+into range or ignored:
 
 ```
-crucible: .crucible/config.json: env CRUCIBLE_CODE_CLEAR_SCREEN at line 3,
-column 5 is not set to an answer crucible takes — accepted here: 1, true, 0,
-false
+crucible: .crucible/config.json: env CRUCIBLE_CODE_MOUSE_SCROLL_SPEED at line 3,
+column 5 is not set to an answer crucible takes — accepted here: a whole number
+of rows from 1 to 30
 ```
 
-A run whose output is redirected is never cleared. A pipe has no screen, so the
-sequence would be escape bytes at the top of your file.
+The floor is `1` because a wheel set to move nothing is a setting that looks
+applied and does nothing. The ceiling is `30` because that is a screenful on
+most terminals, and past it the wheel stops being a scroll and becomes a jump.
+
+A run whose output is redirected has no wheel to answer, so the setting is read
+and never used.
 
 ## How layers combine
 

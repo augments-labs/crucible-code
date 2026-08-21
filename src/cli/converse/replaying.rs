@@ -1,10 +1,9 @@
 //! Putting a session picked up back on the screen.
 //!
 //! A resumed session is one the model can see and the reader cannot: the
-//! transcript goes back into every request, and the terminal it is being read
-//! in is either empty or holds somebody else's scrollback. Nothing here changes
-//! what is sent — this is the screen catching up with what the session already
-//! is.
+//! transcript goes back into every request, and the screen it is being read on
+//! was opened empty a moment ago. Nothing here changes what is sent — this is
+//! the screen catching up with what the session already is.
 //!
 //! **It is not a re-run.** No tool is called again, nothing is asked of a
 //! provider, and no file is read. What goes down is what the log recorded, in
@@ -50,7 +49,8 @@ const NOTES: &str = "notes on everything before this";
 /// Puts what a session already said back on the screen.
 ///
 /// Committed rather than drawn live: this is the record of what happened, which
-/// is exactly what scrollback is for, and the terminal owns it from here.
+/// is exactly what the transcript holds, and it is scrolled back to like
+/// anything else said this session.
 ///
 /// # Errors
 ///
@@ -65,7 +65,7 @@ pub(super) fn replayed<T: Terminal>(
     }
 
     renderer.commit("")?;
-    renderer.present(&opened(renderer.columns(), style), style.palette())?;
+    renderer.present(&opened(renderer.columns(), style))?;
 
     for message in runner.transcript().messages() {
         said(renderer, runner, message, style)?;
@@ -76,7 +76,7 @@ pub(super) fn replayed<T: Terminal>(
     // rule below belongs under it rather than over it.
     renderer.settle()?;
     renderer.apart()?;
-    renderer.present(&[rule(renderer.columns(), style)], style.palette())?;
+    renderer.present(&[rule(renderer.columns(), style)])?;
     renderer.commit("")?;
 
     Ok(())
@@ -114,10 +114,7 @@ fn said<T: Terminal>(
         // because that is what they are.
         Message::User(said) if said.starts_with(RECAP) => {
             renderer.apart()?;
-            renderer.present(
-                &[Row::new().then(Slot::Quiet, clip(NOTES, columns))],
-                style.palette(),
-            )?;
+            renderer.present(&[Row::new().then(Slot::Quiet, clip(NOTES, columns))])?;
             renderer.stream(said.strip_prefix(RECAP).unwrap_or(said))?;
             renderer.settle()?;
         }
@@ -134,12 +131,12 @@ fn said<T: Terminal>(
             }
 
             // Settled whether or not anything was said, because what follows is
-            // presented, and presenting over a live region is the one thing the
-            // renderer will not do.
+            // presented, and a line still open is one the row under it would be
+            // written into the middle of.
             renderer.settle()?;
 
             // The line the footing was drawing while the tool was out, with the
-            // motion gone — which is the line that went to scrollback when it
+            // motion gone — which is the line that joined the transcript when it
             // answered. What the call was about is asked of the tool that owns
             // the arguments, the same way it was asked the first time.
             for call in calls {
@@ -159,10 +156,7 @@ fn said<T: Terminal>(
         // call did is already looking.
         Message::ToolResults(results) => {
             for result in results {
-                renderer.present(
-                    &draw::finished_rows(&result.output, columns, style),
-                    style.palette(),
-                )?;
+                renderer.present(&draw::finished_rows(&result.output, columns, style))?;
             }
         }
     }
@@ -177,7 +171,7 @@ mod tests {
         Workspace,
     };
     use crucible_runner::{Model, Session, Tools};
-    use crucible_tui::{Recording, Renderer};
+    use crucible_tui::{Picture, Recording, Renderer};
 
     use crate::cli::fake::Script;
 
@@ -233,34 +227,6 @@ mod tests {
             stop: Some(StopReason::Yielded),
         });
         transcript
-    }
-
-    /// What the recording put on the screen, a row at a time.
-    ///
-    /// The escape sequences come out, because a row is measured in the columns a
-    /// reader sees and every one of those bytes is none. What is left is split
-    /// where the cursor went back to the first column, which is where one row
-    /// ends and the next begins however the renderer got there — a newline under
-    /// a committed line, a return at the head of a frame.
-    fn rows(written: &str) -> Vec<String> {
-        let mut rows = vec![String::new()];
-        let mut rest = written.chars().peekable();
-
-        while let Some(letter) = rest.next() {
-            match letter {
-                // A control sequence: the bracket, then its parameters, ended by
-                // the first byte in the final range.
-                '\u{1b}' => {
-                    if rest.next_if_eq(&'[').is_some() {
-                        while rest.next().is_some_and(|byte| !matches!(byte, '@'..='~')) {}
-                    }
-                }
-                '\n' | '\r' => rows.push(String::new()),
-                letter => rows.last_mut().expect("a row").push(letter),
-            }
-        }
-
-        rows
     }
 
     /// What a terminal `columns` wide is left holding, having replayed it.
@@ -445,10 +411,11 @@ mod tests {
     #[test]
     fn no_row_of_it_is_wider_than_the_terminal_it_was_drawn_for() {
         // The failure `responsive-components.md` is about: a row past the last
-        // column is one the terminal wraps itself, and every frame after it
-        // rewinds over the wrong number of rows.
+        // column is one the terminal wraps itself, so a band given one row is
+        // written two and the band under it loses the first of its own.
         for columns in [40, 60, 80, 120] {
-            for row in rows(&screen(everything(), columns)) {
+            let shown = Picture::of(&screen(everything(), columns), columns, 24);
+            for row in shown.rows() {
                 assert!(crucible_tui::columns(&row) <= columns, "{columns}: {row:?}");
             }
         }

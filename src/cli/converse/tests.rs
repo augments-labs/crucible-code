@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_core::{Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId};
 use crucible_runner::{Model, Session, Tools};
-use crucible_tui::{Recording, Size, Terminal, TerminalError};
+use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
 use super::*;
 use crate::cli::fake::{Fixed, Script, Stalling, changing, running};
@@ -132,7 +132,7 @@ fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -193,7 +193,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
 
     let worn = |style: Style| {
         style
@@ -227,12 +227,15 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
     let mut renderer = Renderer::new(Narrowing::new());
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
-    let written = renderer.terminal().written();
+    let shown = Picture::of(renderer.terminal().written(), NARROW, 24);
+    let said = shown.said();
     assert!(
-        written.contains("abcdefghij\r\nkl"),
-        "expected a wrap at the new width, got {written:?}"
+        said.windows(2)
+            .any(|pair| pair.first().is_some_and(|row| row == "abcdefghij")
+                && pair.get(1).is_some_and(|row| row == "kl")),
+        "expected a wrap at the new width, got {said:?}"
     );
 }
 
@@ -440,9 +443,9 @@ fn typed_ahead_prompt_bytes_are_bounded_without_losing_the_refused_line() {
 #[test]
 fn a_blank_line_is_not_a_turn() {
     // Otherwise the return key alone sends an empty prompt and costs a
-    // request. Counted at the provider rather than in what was drawn: the
-    // renderer writes a line once live and again on its way to scrollback,
-    // so counting appearances would count frames.
+    // request. Counted at the provider rather than in what was drawn: a line on
+    // screen is written again in every frame it is on screen for, so counting
+    // appearances would count frames.
     let (written, asked) = over(
         Script::new(vec![saying("answered")]),
         Tools::new(),
@@ -522,7 +525,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -567,7 +570,7 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), opening(), &mut input)
+    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
         .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
@@ -603,7 +606,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &terms, opening(), &mut input)
+    let problem = converse(runner, &mut renderer, &terms, &opening(), &mut input)
         .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
@@ -615,14 +618,19 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
 }
 
 #[test]
-fn the_prompt_the_loop_ended_at_is_a_row_of_its_own() {
-    // The mark is written straight through the terminal so it can be left
-    // without a line ending while the user types after it, which leaves the
-    // renderer no row to settle. Unless the loop ends that row, the next thing
-    // drawn lands on top of it — a report below, or the shell's own prompt
-    // once crucible is gone.
-    let written = conversing(vec![], Tools::new(), "");
+fn a_piped_run_ends_the_row_its_prompt_was_left_on() {
+    // The mark carries no line ending while a line is being typed after it. On
+    // a screen this process owns that costs nothing — the frame after it draws
+    // the whole window again. Down a pipe there is no frame and no screen to
+    // give back: what crucible wrote is the last thing in the file, and a row
+    // left unended is one the next thing written lands on.
+    let runner = scripted(Script::new(vec![]), Tools::new());
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+    let mut input = Cursor::new(Vec::new());
 
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
+
+    let written = renderer.terminal().written();
     assert!(written.ends_with('\n'), "{written:?}");
 }
 
@@ -637,7 +645,7 @@ fn the_prompt_line_names_the_mode_in_force() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(Vec::new());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("fullAccess › "), "{written}");
@@ -662,7 +670,8 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
             ..plain()
         };
 
-        converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
+        converse(runner, &mut renderer, &terms, &opening(), &mut input)
+            .expect("the loop to finish");
 
         let written = renderer.terminal().written();
         assert!(written.contains(said), "{glyphs:?}: {written}");
@@ -674,9 +683,10 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     // A turn is the longest a session goes without a prompt on screen, and it
     // is the stretch the mode is deciding things over -- both used to leave
     // with the box and come back only once there was nothing left to decide.
-    // Pinned to the escape that parks the cursor as well as to the words: rows
-    // drawn under the tail and not counted are rows the next frame rewinds
-    // over, which would corrupt the turn rather than merely mislead about it.
+    // Pinned to the escape that parks the cursor as well as to the words: where
+    // the cursor is left is what a reader takes for the place their typing goes,
+    // so a turn that parked it on the answer would mislead about the box as
+    // much as an absent box would.
     // The cursor comes back into the box rather than onto the answer, because
     // the box is what takes typing while the turn runs — two rows up from the
     // last of the four, and at the column the line starts on.
@@ -685,32 +695,62 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
-    let written = renderer.terminal().written();
-    assert!(written.contains("full access mode on"), "{written}");
+    let shown = moment(renderer.terminal().written(), "thinking");
+    let rows = shown.rows();
+    let at = rows
+        .iter()
+        .position(|row| row.contains("thinking"))
+        .unwrap_or_else(|| panic!("the row did not say what the turn was doing: {rows:?}"));
 
-    // The rhythm above the box: the answer, a blank, the row that says the turn
-    // is running, a blank, the box. The blanks are the whole of what stops that
-    // row reading as the last line of the answer or the first line of the box,
-    // and they are asserted here rather than in the component because neither
-    // of the two things they separate is the component's to know about.
+    // The rhythm around the row: a blank above it and a blank below. The blanks
+    // are the whole of what stops it reading as the last line of the answer or
+    // the first line of the box, and they are asserted here rather than in the
+    // component because neither of the two things they separate is the
+    // component's to know about.
     assert!(
-        written.contains("hello\r\n\r\n"),
-        "the row did not stand clear of the answer: {written}"
+        rows.get(at - 1).is_some_and(String::is_empty),
+        "the row did not stand clear of the transcript: {rows:?}"
     );
     assert!(
-        written.contains("thinking"),
-        "the row did not say what the turn was doing: {written}"
+        rows.get(at + 1).is_some_and(String::is_empty),
+        "the row did not stand clear of the box: {rows:?}"
     );
     assert!(
-        written.contains("esc to interrupt)\r\n\r\n\u{256d}"),
-        "the box did not stand clear under the row: {written}"
+        rows.get(at + 2)
+            .is_some_and(|row| row.starts_with('\u{256d}')),
+        "the box was not under the row: {rows:?}"
     );
+
+    // The mode has the last row to itself, for the whole of the stretch it is
+    // deciding things over -- which used to leave with the box and come back
+    // only once there was nothing left to decide.
     assert!(
-        written.contains("\x1b[2A\x1b[5G"),
-        "the cursor was not parked in the box: {written}"
+        rows.last()
+            .is_some_and(|row| row.contains("full access mode on")),
+        "the foot did not say the mode: {rows:?}"
     );
+
+    // And the cursor comes back into the box rather than onto the answer,
+    // because the box is what takes typing while the turn runs.
+    assert_eq!(shown.caret(), (at + 3, 4), "{rows:?}");
+}
+
+/// The window as it stood at the end of the first frame that said `said`.
+///
+/// A frame draws over the one before it rather than replacing it, so the
+/// picture at a moment is the whole log up to that moment: rows that frame did
+/// not name are still showing whatever put them there.
+fn moment(written: &str, said: &str) -> Picture {
+    const OPENS: &str = "\x1b[?2026h";
+
+    let at = written.find(said).expect("a frame that said it");
+    let ends = written[at..]
+        .find(OPENS)
+        .map_or(written.len(), |from| at + from);
+
+    Picture::of(&written[..ends], 80, 24)
 }
 
 /// The moment in the middle of a turn, where the loop draws and waits at once.
@@ -722,7 +762,7 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, terms, opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, terms, &opening(), &mut input).expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -778,7 +818,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(runner, &mut renderer, &terms, opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &terms, &opening(), &mut input).expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("carried on"), "{written}");
@@ -809,7 +849,7 @@ fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) ->
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(runner, &mut renderer, &plain(), opening(), &mut input).expect("the loop to finish");
+    converse(runner, &mut renderer, &plain(), &opening(), &mut input).expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -928,6 +968,9 @@ fn the_mode_a_command_named_is_the_mode_the_next_turn_is_decided_under() {
 // disk, so each of these is one thing going wrong, on purpose, at a moment a
 // test chose.
 
+/// How wide [`Narrowing`] leaves the window once it has been read once.
+pub(super) const NARROW: usize = 10;
+
 /// A terminal that narrows to ten columns once the renderer has read the size
 /// it starts with.
 ///
@@ -957,7 +1000,7 @@ impl Terminal for Narrowing {
         self.asked.set(asked + 1);
 
         Ok(Size {
-            columns: if asked == 0 { 80 } else { 10 },
+            columns: if asked == 0 { 80 } else { NARROW },
             rows: 24,
         })
     }
@@ -1112,7 +1155,7 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     let mut renderer = Renderer::new(Recording::redirected(80, 24));
     let mut input = Cursor::new(b"what is 2+2\n".to_vec());
 
-    let problem = converse(runner, &mut renderer, &plain(), opening(), &mut input)
+    let problem = converse(runner, &mut renderer, &plain(), &opening(), &mut input)
         .expect_err("a run that answered nothing to fail");
 
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");

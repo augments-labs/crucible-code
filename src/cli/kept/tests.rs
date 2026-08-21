@@ -146,7 +146,8 @@ fn a_result_is_found_by_the_record_row_that_offered_it() {
 
 #[test]
 fn a_row_whose_result_was_dropped_under_the_ceiling_offers_nothing() {
-    // The offer is still on screen — the row said so and scrollback keeps it —
+    // The offer is still on screen — the row said so and the transcript keeps
+    // it —
     // and the text behind it has gone. Answering the click with the newest
     // result instead would be showing somebody a different call's output under
     // the row they pointed at, which reads as this call having said it.

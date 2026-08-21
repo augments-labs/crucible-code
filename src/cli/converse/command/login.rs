@@ -7,8 +7,8 @@
 //! cancellation. Console credentials reach the provider panel and a key box.
 //! A vendor named directly keeps the existing API-key shortcut.
 //!
-//! A key typed after a command is a key in the shell's history file,
-//! in the process listing while the command runs, and in the scrollback
+//! A key typed after a command is a key in the shell's history file, in the
+//! process listing while the command runs, and in that shell's own scrollback
 //! afterwards — three places it was never meant to be, none of which this
 //! program could clear. So the two halves are asked for separately: who the key
 //! is for, out loud, and the key itself into a box.
@@ -28,9 +28,9 @@
 //! Naming somebody this build has never heard of, a panel that was left, and a
 //! window with no room to stand one in all come out the same way: which names
 //! crucible knows and which variable each of them signs a request from, written
-//! into the scrollback where it can be scrolled. Every one of those halves comes
-//! off [`PROVIDERS`], so a vendor this build serves and cannot be logged in to
-//! is not a state that exists.
+//! into the transcript where it can be scrolled back to. Every one of those
+//! halves comes off [`PROVIDERS`], so a vendor this build serves and cannot be
+//! logged in to is not a state that exists.
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -134,7 +134,7 @@ pub(super) fn run<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// Walks the account route, then only the provider question that route needs.
@@ -153,7 +153,7 @@ fn walked<T: Terminal>(
     let way = match asked(renderer, terms, &ways)?.of(&ways) {
         Taken::Took(way) => way,
         Taken::Left => {
-            say(renderer, terms, LEFT)?;
+            say(renderer, LEFT)?;
             return Ok(true);
         }
         Taken::Cramped => return Ok(false),
@@ -167,7 +167,7 @@ fn walked<T: Terminal>(
                 _ => match method(renderer, terms, account, &routes)?.of(&routes) {
                     Taken::Took(route) => route,
                     Taken::Left => {
-                        say(renderer, terms, LEFT)?;
+                        say(renderer, LEFT)?;
                         return Ok(true);
                     }
                     Taken::Cramped => return Ok(false),
@@ -182,7 +182,7 @@ fn walked<T: Terminal>(
     let named = match chosen(renderer, terms)?.of(&PROVIDERS) {
         Taken::Took(named) => named,
         Taken::Left => {
-            say(renderer, terms, LEFT)?;
+            say(renderer, LEFT)?;
             return Ok(true);
         }
         Taken::Cramped => return Ok(false),
@@ -320,15 +320,11 @@ fn subscribed<T: Terminal>(
 ) -> Result<(), Fatal> {
     let provider = route.provider();
     if !terms.subscriptions.supports(provider) {
-        return say(
-            renderer,
-            terms,
-            &format!("! no subscription login for {provider}"),
-        );
+        return say(renderer, &format!("! no subscription login for {provider}"));
     }
     let attempt = match terms.subscriptions.start(route, terms.logins.clone()) {
         Ok(attempt) => attempt,
-        Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+        Err(problem) => return say(renderer, &format!("! {problem}")),
     };
 
     let mut view = LoginView::new(terms.style().glyphs());
@@ -338,14 +334,14 @@ fn subscribed<T: Terminal>(
             Ok(Some(update)) => {
                 if view.apply(update) {
                     let Some(named) = PROVIDERS.into_iter().find(|one| one.name == provider) else {
-                        return say(renderer, terms, "! the signed-in provider is unavailable");
+                        return say(renderer, "! the signed-in provider is unavailable");
                     };
                     return taken(named, renderer, runner, terms);
                 }
                 view.show(renderer, terms, route.title())?;
             }
             Ok(None) => {}
-            Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+            Err(problem) => return say(renderer, &format!("! {problem}")),
         }
 
         let Some(arrived) = view.key()? else {
@@ -354,7 +350,7 @@ fn subscribed<T: Terminal>(
         match arrived {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
                 attempt.cancel();
-                return say(renderer, terms, LEFT);
+                return say(renderer, LEFT);
             }
             Pressed::Resized => renderer.resized()?,
             pressed => {
@@ -532,7 +528,7 @@ fn given<T: Terminal>(
 ) -> Result<(), Fatal> {
     let Some(key) = secret::ask(renderer, terms.style(), &format!("{} api key", named.name))?
     else {
-        return say(renderer, terms, "nothing was written");
+        return say(renderer, "nothing was written");
     };
 
     match terms.logins.keep(named.name, &key) {
@@ -541,7 +537,7 @@ fn given<T: Terminal>(
         // The key is still in hand and the box is gone, so there is nothing to
         // retry from — which is why this says what stopped rather than only
         // that something did.
-        Err(problem) => say(renderer, terms, &format!("! {problem}")),
+        Err(problem) => say(renderer, &format!("! {problem}")),
     }
 }
 
@@ -569,7 +565,7 @@ fn taken<T: Terminal>(
         // Written and unusable, which is exactly what the next run would meet.
         // Said now rather than left for it: a session that looked configured and
         // refused every turn is the state this whole command exists to end.
-        Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+        Err(problem) => return say(renderer, &format!("! {problem}")),
     };
 
     let changed = terms.provider.get() != Some(named.name);
@@ -583,7 +579,7 @@ fn taken<T: Terminal>(
     // outlives the process and not the session in front of the reader, which is
     // the bargain `/model` is on.
     if let Err(problem) = remember::asking(&terms.choosing, named.name) {
-        say(renderer, terms, &format!("! {problem}"))?;
+        say(renderer, &format!("! {problem}"))?;
     }
 
     // A model belongs to the vendor serving it, so a switch of provider retires
@@ -599,7 +595,7 @@ fn taken<T: Terminal>(
         format!("logged in to {}, asking {}", named.name, runner.model())
     };
 
-    say(renderer, terms, &said)
+    say(renderer, &said)
 }
 
 #[cfg(test)]

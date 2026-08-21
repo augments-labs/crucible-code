@@ -126,7 +126,8 @@ on — usually by asking you the same thing in its own words, where you can repl
 however you like.
 
 The same is true where the window is too short to stand the panel in. The
-questions are put into the scrollback a row at a time instead, one key each.
+questions are written into the transcript a row at a time instead, one key
+each.
 
 ## Where it is not there
 

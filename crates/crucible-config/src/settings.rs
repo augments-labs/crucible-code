@@ -30,7 +30,7 @@ pub use input::Sending;
 pub use layers::{local, user};
 pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
 pub use updates::Updates;
-pub use variables::ClearScreen;
+pub use variables::ScrollSpeed;
 
 pub(crate) use variables::refused;
 

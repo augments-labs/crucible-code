@@ -7,8 +7,10 @@
 //! year while a platform moves underneath it.
 //!
 //! It is also what makes the renderer testable: [`Recording`] is a terminal
-//! that keeps the bytes, so a test can assert on the exact escape sequences
-//! written rather than on a screenshot.
+//! that keeps the bytes, and [`Picture`] replays them back into the picture they
+//! would have drawn — which is what almost every test asks about, since a frame
+//! names the row it writes and the sequences that carry it are asserted once,
+//! beside the type that writes them.
 //!
 //! This module is where `crossterm` is named, and the files below are the whole
 //! of it: [`system`] for the size and the handle, [`raw`] for the mode,
@@ -24,6 +26,7 @@ pub(crate) mod keyboard;
 pub(crate) mod keys;
 pub(crate) mod mouse;
 pub(crate) mod raw;
+pub(crate) mod screen;
 pub(crate) mod system;
 
 use std::io;
@@ -91,7 +94,8 @@ pub trait Terminal {
 
 /// A terminal that keeps what was written instead of showing it.
 ///
-/// Tests use this to assert on the bytes a frame is made of.
+/// Tests use this to assert on the bytes a frame is made of, and — through
+/// [`Recording::picture`] — on the picture those bytes would have left.
 #[derive(Debug)]
 pub struct Recording {
     written: String,
@@ -142,6 +146,165 @@ impl Recording {
     /// Changes the reported size, standing in for a window the user resized.
     pub fn resize(&mut self, columns: usize, rows: usize) {
         self.size = Size { columns, rows };
+    }
+
+    /// The picture everything written so far would have left on this size.
+    ///
+    /// What a test wants to know almost always. Bytes say how a frame said
+    /// something; this says what it said, and goes on being readable when the
+    /// sequences underneath it change.
+    #[must_use]
+    pub fn picture(&self) -> Picture {
+        Picture::of(&self.written, self.size.columns, self.size.rows)
+    }
+}
+
+/// The window as the bytes written to it would leave it.
+///
+/// Every frame names the row it writes and erases only that row, so a screen is
+/// rebuilt by replaying the writes in order: a row nothing named keeps what the
+/// frame before left on it. Everything that moves no character — colour, the
+/// brackets that hold a frame, the cursor being hidden — is read past, and what
+/// is left is where each character ended up.
+#[derive(Debug)]
+pub struct Picture {
+    /// One string a row, in window order.
+    rows: Vec<String>,
+    /// Where the cursor was left, in rows and columns from the top left.
+    caret: (usize, usize),
+}
+
+impl Picture {
+    /// Replays `written` onto a window `columns` by `rows`.
+    ///
+    /// Public so a test holding one frame's bytes rather than a whole session's
+    /// can ask the same question of them.
+    #[must_use]
+    pub fn of(written: &str, columns: usize, rows: usize) -> Self {
+        let mut picture = Self {
+            rows: vec![String::new(); rows],
+            caret: (0, 0),
+        };
+        let mut left = written.chars().peekable();
+        let mut text = String::new();
+
+        while let Some(character) = left.next() {
+            if character != '\x1b' {
+                text.push(character);
+                continue;
+            }
+
+            picture.put(&text, columns);
+            text.clear();
+
+            match left.next() {
+                // A control sequence: parameters, then one byte saying what it
+                // does. Only two of them move a character.
+                Some('[') => {
+                    let mut parameters = String::new();
+                    let ending = loop {
+                        match left.next() {
+                            Some(byte @ '@'..='~') => break byte,
+                            Some(byte) => parameters.push(byte),
+                            None => return picture,
+                        }
+                    };
+                    picture.does(ending, &parameters);
+                }
+                // An operating-system command — the clipboard request is one —
+                // runs until a bell or a string terminator and draws nothing.
+                Some(']') => {
+                    while let Some(byte) = left.next() {
+                        if byte == '\x07' {
+                            break;
+                        }
+                        if byte == '\x1b' && left.peek() == Some(&'\\') {
+                            left.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        picture.put(&text, columns);
+        picture
+    }
+
+    /// Acts on one control sequence, where it is one of the two that matter.
+    fn does(&mut self, ending: char, parameters: &str) {
+        match ending {
+            // Park: row and column, both counted from one on the wire.
+            'H' => {
+                let mut at = parameters.split(';');
+                let row = at.next().and_then(|one| one.parse().ok()).unwrap_or(1);
+                let column = at.next().and_then(|one| one.parse().ok()).unwrap_or(1);
+                self.caret = (usize::max(row, 1) - 1, usize::max(column, 1) - 1);
+            }
+            // Erase from the cursor to the end of its row.
+            'K' => {
+                let (row, column) = self.caret;
+                if let Some(line) = self.rows.get_mut(row) {
+                    line.truncate(
+                        line.char_indices()
+                            .nth(column)
+                            .map_or(line.len(), |(at, _)| at),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Writes `text` where the cursor is, advancing it.
+    fn put(&mut self, text: &str, columns: usize) {
+        if text.is_empty() {
+            return;
+        }
+
+        let (row, column) = self.caret;
+        if let Some(line) = self.rows.get_mut(row) {
+            while line.chars().count() < column {
+                line.push(' ');
+            }
+            let head: String = line.chars().take(column).collect();
+            let tail: String = line.chars().skip(column + text.chars().count()).collect();
+            *line = format!("{head}{text}{tail}");
+        }
+
+        self.caret = (row, usize::min(column + text.chars().count(), columns));
+    }
+
+    /// One row, without the padding a frame may have left on it.
+    #[must_use]
+    pub fn row(&self, at: usize) -> &str {
+        self.rows.get(at).map_or("", |row| row.trim_end())
+    }
+
+    /// Every row that has anything on it, in window order.
+    #[must_use]
+    pub fn said(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .map(|row| row.trim_end().to_owned())
+            .filter(|row| !row.is_empty())
+            .collect()
+    }
+
+    /// Every row, blank ones included, in window order.
+    #[must_use]
+    pub fn rows(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    }
+
+    /// Where the cursor was left, in rows and columns from the top left.
+    #[must_use]
+    pub fn caret(&self) -> (usize, usize) {
+        self.caret
     }
 }
 

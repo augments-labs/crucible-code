@@ -102,8 +102,8 @@ fn nothing_running_draws_nothing_at_all() {
 #[test]
 fn a_window_too_short_for_the_whole_list_draws_none_of_it() {
     // Half a list of processes is worse than the count that was already on the
-    // row below, and a region taller than the window is one the renderer cannot
-    // rewind over.
+    // row below, and a list taller than the window is one the window cannot
+    // show whole however it is shared out.
     let shown = [one(1, "Bash(one)", 1, 1, 1), one(2, "Bash(two)", 1, 1, 1)];
     let panel = Running {
         shown: &shown,

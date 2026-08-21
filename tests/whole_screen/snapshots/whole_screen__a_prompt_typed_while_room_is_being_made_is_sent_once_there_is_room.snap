@@ -1,8 +1,13 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 492
 expression: window.picture()
 ---
-80x24 cursor 17,4 scrolled 25
+80x24 cursor 21,4 scrolled 0
+|› the second thing                                                              |
+|                                                                                |
+|two answer                                                                      |
+|                                                                                |
 |› the third thing                                                               |
 |                                                                                |
 |three answer                                                                    |
@@ -23,7 +28,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
