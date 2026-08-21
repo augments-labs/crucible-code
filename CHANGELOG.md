@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+**The model is back under the box, at the right of the row that was already
+there.** It sits beside the keys that change it rather than a screen away from
+them, and the row along the top keeps the working directory alone. Where the
+window is too narrow for both ends, the model gives way whole and the mode keeps
+its place.
+
 ### Fixed
 
 - **The schema a strict validator will compile.** The blocks a user keys said

@@ -58,10 +58,10 @@ active provider, model or effort so `/login` and `/model` remain available; it
 does not silently fall through to a different provider whose credential happens
 to be present.
 
-Whichever rung settled it, the answer is on the row along the top of the window,
-which names the vendor before the model in the `provider/model` shape `--model`
-takes back. That row stands for the whole session and is said again whenever one
-of the three changes, so it keeps up when `/login` hands the session to another
+Whichever rung settled it, the answer is at the right of the row under the
+prompt box, which names the vendor before the model in the `provider/model`
+shape `--model` takes back. That row stands for the whole session and is said
+again whenever one of the three changes, so it keeps up when `/login` hands the session to another
 vendor mid-way. The welcome card deliberately carries no provider, model or
 effort because it is the first thing in the transcript and is scrolled away from
 rather than kept up to date.
@@ -149,8 +149,7 @@ A word that is not a rung is refused before anything is drawn:
 crucible: no effort called maximum; crucible takes low, medium, high, xhigh, max
 ```
 
-Where a rung was chosen, the row at the top of the window says so after the
-model.
+Where a rung was chosen, the row under the prompt box says so after the model.
 Where none was, nothing is drawn in its place: the rung in force is then the
 vendor's, and crucible is never told which it picked.
 

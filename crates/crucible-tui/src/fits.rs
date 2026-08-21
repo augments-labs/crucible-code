@@ -221,12 +221,7 @@ fn a_ladder_fits_the_window_its_rungs_are_chosen_in() {
 
 #[test]
 fn the_row_at_the_top_fits_the_window_it_stands_in() {
-    let head = Head {
-        provider: "anthropic",
-        model: "claude-opus-5",
-        effort: Some("high"),
-        root: LONG,
-    };
+    let head = Head { root: LONG };
     across("the head row", |columns, glyphs| {
         vec![head.row(columns, glyphs)]
     });
@@ -236,7 +231,6 @@ fn the_row_at_the_top_fits_the_window_it_stands_in() {
     // here where a column is counted twice if it is counted wrong.
     let unbroken = Head {
         root: "an-unbroken-directory-name-nobody-should-have-typed",
-        ..head
     };
     across("the head row on one segment", |columns, glyphs| {
         vec![unbroken.row(columns, glyphs)]
@@ -252,6 +246,9 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
         mode: "ask before edits",
         tone: Slot::Quiet,
         hint: "ctrl+j for a new line",
+        model: "claude-opus-5",
+        provider: "anthropic",
+        effort: Some("high"),
         asking: Some("queued"),
         running: Some(2),
         room: 6,

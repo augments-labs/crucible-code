@@ -5,4 +5,4 @@ expression: "dump(&prompt.rows(columns, glyphs), columns)"
 <Quiet>╭──────────────────────────────────────────────────────────────────────────────╮</>
 <Quiet>│</> <Accent>›</>                                                                            <Quiet>│</>
 <Quiet>╰──────────────────────────────────────────────────────────────────────────────╯</>
-<Accent>ask before edits</><Quiet> (shift+tab to cycle)</><Quiet> · </><Accent>2 commands</>
+<Accent>ask before edits</><Quiet> (shift+tab to cycle)</>           <Quiet>anthropic/claude-sonnet-5 · high</>

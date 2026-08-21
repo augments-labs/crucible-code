@@ -1,10 +1,9 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 492
 expression: window.picture()
 ---
 80x24 cursor 21,4 scrolled 0
-|…/and-something-below-that-again/workspace               anthropic/claude-test-1|
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
 |                                                                                |
 |two answer                                                                      |
 |                                                                                |
@@ -27,4 +26,4 @@ expression: window.picture()
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                                                |
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
