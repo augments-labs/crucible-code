@@ -31,6 +31,14 @@ any name, but `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now arrives with the `6` it
 falls back to and the range it accepts, so an editor completes it and marks one
 out of range as you type.
 
+### Fixed
+
+**A background command that ends on its own still says how it ended.** The line
+used to be clipped whole, so a long command took every column and the words
+after it — whether it finished, and how much it had printed — were the part cut
+off. The command gives up the room now, and the row keeps what nobody can go
+back and ask for.
+
 ## [0.16.0] - 2026-08-21
 
 ### Changed
