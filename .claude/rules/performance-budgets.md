@@ -37,3 +37,8 @@ The floor is against the clock. The ratio is not, and may not be: a probe runs a
 fixed yardstick beside the frames of every timed window and compares what a frame
 cost in *those*. A machine that is not the same speed at the start of a run and
 the end of one therefore says nothing, and only a frame that got dearer does.
+
+A machine that stops being the machine at all — a thread taken away for a while,
+which no yardstick is small enough to be running when it happens — is answered
+by reading the ratio from the quickest window of a phase rather than the middle
+one, because being interrupted can only ever make a window worse.
