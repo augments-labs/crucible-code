@@ -660,7 +660,14 @@ fn a_command_that_fails_on_the_spot_is_reported_rather_than_left_running() {
     // rather than in a panel it has no way to open.
     let sample = Sample::new("bash-background-failed");
     let left = Background::new();
-    let tool = Bash::new(sample.workspace(), Cancel::new()).leaving(left.clone());
+    // A window this test can be sure of. The default is a judgement about a
+    // reader, and a host busy enough can take longer than it to start a shell
+    // at all — which would leave this asserting how quickly the machine
+    // running it happened to be able to spawn `sh`, rather than what the tool
+    // does about a command that is already over.
+    let tool = Bash::new(sample.workspace(), Cancel::new())
+        .leaving(left.clone())
+        .watching(Duration::from_secs(20));
 
     let output = tool
         .run(
