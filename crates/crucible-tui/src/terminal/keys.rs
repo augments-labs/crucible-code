@@ -355,47 +355,60 @@ fn key_pressed(key: KeyEvent) -> Pressed {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
 
+    // Every letter below is bound to Control *alone*, so the guard on it is
+    // not "was Control held" — it is "was Control the only thing held". Held
+    // with Shift as well the letter is a different key, and one this release
+    // has given no meaning to, so it falls through to the arm that ignores it.
+    //
+    // Ctrl+Shift+C is why that distinction is not academic. It is the copy
+    // every desktop has, and a terminal asked for the distinct spelling
+    // forwards it here instead of answering it itself — where the older
+    // guard read it as Ctrl+C, interrupting the turn and then ending the
+    // session. The older encoding cannot spell it at all, so nothing about a
+    // terminal that declined the ask changes.
+    let bound = control && !key.modifiers.contains(KeyModifiers::SHIFT);
+
     match key.code {
         // The two the terminal used to answer itself. In raw mode they are keys
         // like any other, and what they mean is the editor's to decide.
-        KeyCode::Char('c') if control => Pressed::Key(Key::Interrupt),
-        KeyCode::Char('d') if control => Pressed::Key(Key::Eof),
+        KeyCode::Char('c') if bound => Pressed::Key(Key::Interrupt),
+        KeyCode::Char('d') if bound => Pressed::Key(Key::Eof),
 
         // Named above the arm that ignores every other modified letter, which
         // is where it would otherwise land. Ctrl+E is readline's end-of-line
         // and this is not a line: nothing here reads a modified letter as
         // editing, so the binding is free and the mnemonic is the one worth
         // having.
-        KeyCode::Char('e') if control => Pressed::Explain,
+        KeyCode::Char('e') if bound => Pressed::Explain,
 
         // Above the same arm and free for the same reason. Ctrl+O is readline's
         // operate-and-get-next, which needs a history this prompt does not keep
         // — so the letter is available and it is the letter the want is spelled
         // with.
-        KeyCode::Char('o') if control => Pressed::Expand,
+        KeyCode::Char('o') if bound => Pressed::Expand,
 
         // And above it again. Ctrl+T is readline's transpose-chars, which is an
         // edit to a line — this prompt has no such key and the letter is the
         // one the panel it opens is spelled with.
-        KeyCode::Char('t') if control => Pressed::Plan,
+        KeyCode::Char('t') if bound => Pressed::Plan,
 
         // And once more. Ctrl+B is readline's backward-char, which is what the
         // left arrow does here and what nothing else needs a letter for — so the
         // letter is free and it is the letter the two things it moves between are
         // both spelled with.
-        KeyCode::Char('b') if control => Pressed::Background,
+        KeyCode::Char('b') if bound => Pressed::Background,
 
         // And last of these. Ctrl+Q is readline's quoted-insert, which is how a
         // control character reaches a line — this editor takes one as paste and
         // has no use for the key, so the letter is free and it is the one the
         // panel of waiting prompts is spelled with.
-        KeyCode::Char('q') if control => Pressed::Queue,
+        KeyCode::Char('q') if bound => Pressed::Queue,
 
         // And one more of the same kind. Ctrl+Y is readline's yank, which puts
         // back what a rub took out -- this editor keeps nothing it rubs, so the
         // letter is free, and yank is the word the other direction of this has
         // always been spelled with.
-        KeyCode::Char('y') if control => Pressed::Copy,
+        KeyCode::Char('y') if bound => Pressed::Copy,
 
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
@@ -418,15 +431,15 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // still what the line discipline does when nothing has taken it off.
         // Somebody who has never learned a binding here has already learned
         // these two.
-        KeyCode::Char('w') if control => Pressed::Key(Key::RubWord),
-        KeyCode::Char('u') if control => Pressed::Key(Key::RubToStart),
-        KeyCode::Char('k') if control => Pressed::Key(Key::RubToEnd),
+        KeyCode::Char('w') if bound => Pressed::Key(Key::RubWord),
+        KeyCode::Char('u') if bound => Pressed::Key(Key::RubToStart),
+        KeyCode::Char('k') if bound => Pressed::Key(Key::RubToEnd),
 
         // A newline, and the spelling of one that needs nothing asked for and
         // no modifier a terminal has to have room for: Ctrl+J is a byte of its
         // own and always has been. Here rather than beside the other two
         // because the arm below would otherwise swallow it.
-        KeyCode::Char('j') if control => Pressed::Key(Key::Newline),
+        KeyCode::Char('j') if bound => Pressed::Key(Key::Newline),
 
         // Anything else held with either modifier is a binding this release has
         // not given a meaning to. Typed as a bare character it would be the
@@ -509,6 +522,14 @@ mod tests {
         Event::Key(KeyEvent::new(code, KeyModifiers::ALT))
     }
 
+    /// The same, held with control and shift together.
+    fn control_shift(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(
+            code,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ))
+    }
+
     #[test]
     fn a_character_is_the_character_that_was_typed() {
         assert_eq!(
@@ -544,6 +565,27 @@ mod tests {
             Pressed::Key(Key::Interrupt)
         );
         assert_eq!(meaning(control(KeyCode::Char('d'))), Pressed::Key(Key::Eof));
+    }
+
+    #[test]
+    fn a_letter_held_with_shift_as_well_is_not_the_binding_control_alone_is() {
+        // Ctrl+Shift+C is the copy every desktop has, and a terminal asked to
+        // spell modified keys distinctly forwards it rather than answering it
+        // itself. Read as Ctrl+C it interrupts the turn and then ends the
+        // session, which is the worst possible reading of a key somebody
+        // pressed to take a copy.
+        for letter in ['c', 'd', 'e', 'o', 't', 'b', 'q', 'y', 'w', 'u', 'k', 'j'] {
+            assert_eq!(
+                meaning(control_shift(KeyCode::Char(letter))),
+                Pressed::Ignored,
+                "ctrl+shift+{letter}"
+            );
+        }
+
+        // The shifted spelling of the same key, which is what a terminal
+        // sends when it reports the letter as it was printed rather than as
+        // it is engraved.
+        assert_eq!(meaning(control_shift(KeyCode::Char('C'))), Pressed::Ignored);
     }
 
     #[test]

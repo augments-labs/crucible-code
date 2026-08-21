@@ -29,6 +29,11 @@ its place.
 
 ### Fixed
 
+- **A letter held with Shift as well is a different key.** Every binding here
+  is Control and one letter, and asking your terminal to spell modified keys
+  distinctly is what let a shifted one through: `ctrl+shift+c` reached the
+  prompt as `ctrl+c`, throwing away the line and offering to leave.
+
 - **A session picked up comes back as the session it was.** Every result the
   replay had to cut is lit and opens on the key over it, the same way it did
   live — the rows were drawn through the live builder and never held, so none of

@@ -571,6 +571,11 @@ again to leave`, under the mode — and a second press within two seconds takes 
 offer. Any other key first takes it back, so a session is never ended by one
 stray keystroke. <kbd>Ctrl+D</kbd> on an empty box leaves at once.
 
+None of the bindings on this page answers a letter held with <kbd>Shift</kbd> as
+well. <kbd>Ctrl+Shift+C</kbd> is a different key from <kbd>Ctrl+C</kbd>, and
+where your terminal forwards it rather than taking a copy with it, crucible
+leaves it alone.
+
 A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them
 instead.
