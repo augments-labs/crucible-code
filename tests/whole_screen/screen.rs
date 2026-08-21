@@ -331,8 +331,8 @@ impl Screen {
             // back by a guard, and the last is a question.
             //
             // The modes are the mouse switched on at the prompt — buttons,
-            // motion while one is held, and coordinates that survive a wide
-            // window — bracketed
+            // motion while one is held and motion while none is, and
+            // coordinates that survive a wide window — bracketed
             // paste so a pasted newline is not a submission, and the level of
             // the newer key encoding that says which modifier was held — that
             // last one pushed with `>1u` and popped with `<u`, which is a stack
@@ -344,7 +344,7 @@ impl Screen {
             // terminal implementing neither would be waited on for the whole
             // patience rather than answered at once.
             (_, 'm')
-            | ("?1000" | "?1002" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
+            | ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
             | (">1" | "<", 'u')
             | ("", 'c') => {}
             (_, 'H') => self.park(params),
@@ -494,7 +494,7 @@ mod tests {
     /// this screen has to survive rather than a case invented for the test.
     const WRITTEN: &str = concat!(
         "\x1b]0;▽ crucible\x07",
-        "\x1b[?1000h\x1b[?1002h\x1b[?1006h",
+        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h",
         "\x1b[?2026h\x1b[?25l",
         "\x1b[1;1H\x1b[m\x1b[Kcrucible v0.0.9",
         "\x1b[2;1H\x1b[m\x1b[K\x1b[36m│ › ───\x1b[0m",

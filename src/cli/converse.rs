@@ -409,6 +409,7 @@ pub(crate) fn converse<T: Terminal>(
             editor: &mut held.editor,
             planning: &mut held.planning,
             left,
+            kept: &held.kept,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -1303,6 +1304,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Copy
         | Pressed::Dragged { .. }
         | Pressed::Released { .. }
+        | Pressed::Hovered { .. }
         | Pressed::Ignored => Heard::Ignored,
     }
 }

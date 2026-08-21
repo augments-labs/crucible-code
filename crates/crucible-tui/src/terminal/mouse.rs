@@ -39,15 +39,22 @@ use std::io::{self, IsTerminal, Write as _};
 use super::raw::RawError;
 
 /// Report a button going down and coming up, report the pointer moving while
-/// one is held, and report all of it in the form that carries a column past 223.
+/// one is held and while none is, and report all of it in the form that carries
+/// a column past 223.
 ///
-/// The middle one is what a selection is made of: without it a drag arrives as
-/// a press and a release with the whole of the reader's gesture missing from
-/// between them.
-const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+/// Motion under a held button is what a selection is made of: without it a drag
+/// arrives as a press and a release with the whole of the reader's gesture
+/// missing from between them. Motion under no button is what a row can be lit
+/// by, which is how a screen says what would happen if the button went down
+/// where the pointer already is.
+///
+/// The last two overlap — a terminal doing all-motion is already doing the
+/// held kind — and both are asked for anyway, because one that implements only
+/// the narrower mode still owes a drag.
+const REPORTING: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
 
-/// The same three, off, innermost first.
-const QUIET: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+/// The same four, off, innermost first.
+const QUIET: &str = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 
 thread_local! {
     /// How many holders are alive, so that the inner one of two does not hand
@@ -217,7 +224,7 @@ mod tests {
     fn the_sequences_turn_the_same_two_modes_on_and_off() {
         // Off in the reverse order they went on, and neither list longer than
         // the other: a mode left on outlives this process.
-        for mode in ["?1000", "?1002", "?1006"] {
+        for mode in ["?1000", "?1002", "?1003", "?1006"] {
             assert!(
                 REPORTING.contains(&format!("{mode}h")),
                 "{mode} never went on"
