@@ -37,8 +37,11 @@ use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
 use crate::select::Taken;
-use crate::terminal::keys::Pressed;
+use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::{Size, Terminal, TerminalError};
+use crate::transcript_map::{self, TranscriptMap};
+
+use std::time::{Duration, Instant};
 
 mod frame;
 mod painted;
@@ -148,6 +151,11 @@ pub struct Renderer<T: Terminal> {
     /// of the record rather than a band, and [`Self::opens`] says how.
     heading: Option<Heading>,
     crowned: Option<Row>,
+    /// Whether the pointer is over the transcript-map door in the fixed foot.
+    ///
+    /// One bit rather than its column, because every motion on the same side of
+    /// either edge should cost no layout and no frame.
+    map_pointed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
     /// Held rather than asked for per frame: a read costs a syscall, and
@@ -184,6 +192,8 @@ pub struct Renderer<T: Terminal> {
     /// about the terminal rather than about the answer. Unicode until
     /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
+    /// Absolute travel over the retained transcript in the fixed bottom row.
+    map: TranscriptMap,
     /// How many rows of the transcript one notch of the wheel moves.
     ///
     /// Held here for the reason the palette and the glyphs are: it is settled
@@ -230,6 +240,7 @@ impl<T: Terminal> Renderer<T> {
             standing: Standing::default(),
             heading: None,
             crowned: None,
+            map_pointed: false,
             size,
             painted: Painted::new(),
             free: String::new(),
@@ -237,10 +248,52 @@ impl<T: Terminal> Renderer<T> {
             markdown: Markdown::default(),
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
+            map: TranscriptMap::default(),
             notch: NOTCH,
             taken: None,
             pointing: None,
         }
+    }
+
+    /// Waits for one press, while still restoring an idle transcript map.
+    ///
+    /// `None` where the map or selection consumed the press. A map deadline
+    /// wakes this wait, redraws the identity row, and waits again; it never
+    /// becomes a key the caller could mistake for input.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
+        loop {
+            if let Some(patience) = self.rests_in()
+                && !waiting(patience)?
+            {
+                self.repose()?;
+                continue;
+            }
+            return self.took(pressed()?);
+        }
+    }
+
+    /// Whether a press is ready within `patience`, shortening that wait to an
+    /// open map's idle deadline when necessary.
+    ///
+    /// The caller already has something else to watch — a running turn or a
+    /// login attempt — so a map that returned to rest answers `false` and lets
+    /// that caller make its ordinary pass before polling again.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
+        self.repose()?;
+        let patience = self.rests_in().map_or(patience, |map| map.min(patience));
+        let ready = waiting(patience)?;
+        if !ready {
+            self.repose()?;
+        }
+        Ok(ready)
     }
 
     /// What a press means once the selection has had it.
@@ -261,6 +314,59 @@ impl<T: Terminal> Renderer<T> {
     pub fn took(&mut self, arrived: Pressed) -> Result<Option<Pressed>, TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(Some(arrived));
+        }
+
+        let bands = self.bands();
+        let on_map = |row| bands.foot.end.checked_sub(1) == Some(row);
+        if let Pressed::Hovered { row, column } = arrived {
+            let over = !self.map.open()
+                && on_map(row)
+                && transcript_map::door(self.size.columns)
+                    .is_some_and(|door| door.contains(&column));
+            let moved = self.pointing != Some(row);
+            let crossed = over != self.map_pointed;
+            self.pointing = Some(row);
+            self.map_pointed = over;
+            if moved || crossed {
+                // One frame for both answers: main's cut-result offer is a fact
+                // about the row, while the map chip is a fact about crossing
+                // either horizontal edge inside its row.
+                self.draw()?;
+            }
+            return Ok(None);
+        }
+        if self.map.open() {
+            match arrived {
+                Pressed::Clicked { row, column }
+                    if on_map(row)
+                        && transcript_map::track(self.size.columns)
+                            .is_some_and(|track| track.contains(&column)) =>
+                {
+                    self.map.press(column);
+                    return Ok(None);
+                }
+                Pressed::Dragged { column, .. } if self.map.drag() => {
+                    self.seek_map(column, false)?;
+                    return Ok(None);
+                }
+                Pressed::Released { column, .. } => {
+                    if let Some((column, dragged)) = self.map.release(column, Instant::now()) {
+                        self.seek_map(column, !dragged)?;
+                        return Ok(None);
+                    }
+                }
+                Pressed::Scrolled { back } => {
+                    self.notched(back)?;
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        } else if let Pressed::Clicked { row, column } = arrived
+            && on_map(row)
+            && transcript_map::door(self.size.columns).is_some_and(|door| door.contains(&column))
+        {
+            self.open_map()?;
+            return Ok(None);
         }
 
         match arrived {
@@ -288,18 +394,6 @@ impl<T: Terminal> Renderer<T> {
                 if self.taken.is_some_and(|taken| !taken.empty()) {
                     let said = self.painted.read();
                     self.copied(&said)?;
-                }
-                Ok(None)
-            }
-            // Nothing is being held, so nothing here is the selection's. What
-            // it can change is the picture — a cut result lights while the
-            // pointer is over one — and that is worked out inside the frame, so
-            // all this owes is a frame. One per row crossed rather than one per
-            // cell, and a frame that changed no row writes nothing.
-            Pressed::Hovered { row, .. } => {
-                if self.pointing != Some(row) {
-                    self.pointing = Some(row);
-                    self.draw()?;
                 }
                 Ok(None)
             }
@@ -363,6 +457,52 @@ impl<T: Terminal> Renderer<T> {
         self.crown();
     }
 
+    /// Marks the next record line as the start of a prompt.
+    ///
+    /// Called after the blank parting it from the previous block and before the
+    /// prompt rows themselves, so a map landmark lands on the words it names.
+    pub fn landmark(&mut self) {
+        self.record.landmark();
+    }
+
+    /// How long an input wait may sleep before the map restores the identity
+    /// row. `None` where no map is standing or a drag is still held.
+    #[must_use]
+    fn rests_in(&self) -> Option<Duration> {
+        self.map.remaining(Instant::now())
+    }
+
+    /// Restores the bottom-row control if the map has been idle long enough.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the restored row could not be drawn.
+    fn repose(&mut self) -> Result<bool, TerminalError> {
+        if !self.map.repose(Instant::now()) {
+            return Ok(false);
+        }
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// Restores the bottom-row control now.
+    ///
+    /// Used before a secret box takes the keyboard, where no pointer action is
+    /// offered to the renderer and an open map would otherwise have no clock.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the restored row could not be drawn.
+    pub fn identifies(&mut self) -> Result<bool, TerminalError> {
+        let changed = self.map.close() || self.map_pointed;
+        if !changed {
+            return Ok(false);
+        }
+        self.map_pointed = false;
+        self.draw()?;
+        Ok(true)
+    }
+
     /// Tells this renderer how far one notch of the wheel moves the transcript.
     ///
     /// Said once, at startup. The wheel arrives as a count of notches and
@@ -375,15 +515,12 @@ impl<T: Terminal> Renderer<T> {
     /// Puts the row at the top of the window and keeps it there.
     ///
     /// The one thing on screen that is neither the transcript nor something
-    /// standing over the box: it says which model the next turn goes to and
-    /// which directory the session is bound to, and it is held against the top
-    /// of the window while everything under it moves.
+    /// standing over the box: it says which directory the session is bound to
+    /// and is held against the top while everything under it moves.
     ///
-    /// Said when one of those facts changes rather than per frame — `/model`,
-    /// `/effort` and `/login` are the whole of what changes them, and all three
-    /// are lines typed between turns. A window that resizes under it is not one
-    /// of those: what it says has not changed, so it is laid out again here
-    /// rather than being dropped for the caller to put back.
+    /// Said at each prompt because that is where a resize is first known. What
+    /// it says cannot change during a session, so the renderer owns the laid-out
+    /// row and restores it at the new width itself.
     ///
     /// Nothing at all happens where output is redirected, for the reason
     /// [`Renderer::live`] draws nothing there.
@@ -785,6 +922,8 @@ impl<T: Terminal> Renderer<T> {
         self.record.resized(size.columns);
         self.standing.clear();
         self.unselects();
+        self.map.close();
+        self.map_pointed = false;
         self.crown();
 
         // Every row of the window is now showing something drawn for a size it
@@ -877,7 +1016,9 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn notched(&mut self, back: bool) -> Result<bool, TerminalError> {
-        self.scrolled(if back { -self.notch } else { self.notch })
+        let moved = self.scrolled(if back { -self.notch } else { self.notch })?;
+        self.map.touch(Instant::now());
+        Ok(moved)
     }
 
     /// Moves the transcript's viewport by `by` display rows, and says whether
@@ -901,6 +1042,7 @@ impl<T: Terminal> Renderer<T> {
         }
 
         self.unselects();
+        self.refresh_map();
         self.draw()?;
         Ok(true)
     }
@@ -918,6 +1060,7 @@ impl<T: Terminal> Renderer<T> {
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn follows(&mut self) -> Result<(), TerminalError> {
         self.record.follow();
+        self.refresh_map();
         self.draw()
     }
 
@@ -1003,6 +1146,51 @@ impl<T: Terminal> Renderer<T> {
         None
     }
 
+    /// Opens the map over the retained range the transcript band can reach.
+    fn open_map(&mut self) -> Result<bool, TerminalError> {
+        let rows = self.bands().transcript.len();
+        let Some(span) = self.record.map_span(rows) else {
+            return Ok(false);
+        };
+        let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
+        self.unselects();
+        self.map_pointed = false;
+        self.map.show(span, row, Instant::now());
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// Moves the map to `column`, snapping to a prompt landmark for a click and
+    /// travelling exactly for a drag.
+    fn seek_map(&mut self, column: usize, landmark: bool) -> Result<bool, TerminalError> {
+        let Some(span) = self.map.span() else {
+            return Ok(false);
+        };
+        let Some(track) = transcript_map::track(self.size.columns) else {
+            return Ok(false);
+        };
+        let at = column.clamp(track.start, track.end.saturating_sub(1)) - track.start;
+        let rows = self.bands().transcript.len();
+        let moved = if landmark {
+            self.record.map_seek_landmark(span, at, track.len(), rows)
+        } else {
+            self.record.map_seek(span, at, track.len(), rows)
+        };
+        self.unselects();
+        self.refresh_map();
+        self.draw()?;
+        Ok(moved)
+    }
+
+    /// Lays the open map out again after its mark or the window moved.
+    fn refresh_map(&mut self) {
+        let Some(span) = self.map.span() else {
+            return;
+        };
+        let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
+        self.map.replace(row);
+    }
+
     /// How the window is shared out, given what is standing in it.
     fn bands(&self) -> Bands {
         Bands::share(
@@ -1011,7 +1199,10 @@ impl<T: Terminal> Renderer<T> {
                 head: self.crowned.as_ref().map_or(0, |_| Head::ROWS),
                 turn: self.standing.turn.len(),
                 prompt: self.standing.prompt.len(),
-                foot: 0,
+                // The bottom control belongs to a session, the same as the
+                // fixed head. Before a session has named itself there is no
+                // transcript-map door to offer.
+                foot: self.crowned.as_ref().map_or(0, |_| 1),
             },
         )
     }
@@ -1082,6 +1273,13 @@ impl<T: Terminal> Renderer<T> {
             self.painted.put(at, row);
         }
         self.standing.prompt = prompt;
+
+        let map = self.map.row().cloned().unwrap_or_else(|| {
+            transcript_map::resting(self.size.columns, self.glyphs, self.map_pointed)
+        });
+        if let Some(at) = (!bands.foot.is_empty()).then(|| bands.foot.end - 1) {
+            self.painted.paint(at, &map, &self.palette);
+        }
 
         let (row, column) = self.parked(&bands);
         self.painted.park(row, column);

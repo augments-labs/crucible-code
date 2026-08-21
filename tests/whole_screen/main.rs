@@ -188,6 +188,23 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     insta::assert_snapshot!(window.picture());
 }
 
+#[test]
+fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
+    // A real SGR mouse click opens the control at the bottom right, then a
+    // second gesture drags its current place to the first cell. The
+    // transcript jumps from the answer's foot to the opening while the box
+    // stays on the same rows underneath it.
+    let vendor = Vendor::answering(&taller_than_the_window());
+    let mut window = Watched::answering("transcript-map", 80, 16, &vendor);
+    window.types("say something long\r");
+
+    // The padded control begins at column 62; the open map track begins at 6.
+    window.clicks(15, 62);
+    window.drags((15, 69), (15, 6));
+
+    insta::assert_snapshot!(window.picture());
+}
+
 /// An answer with something of every shape the reader knows in it.
 ///
 /// Written as one string rather than assembled, because what it is here to

@@ -51,6 +51,7 @@ mod select;
 pub mod syntax;
 mod terminal;
 mod title;
+mod transcript_map;
 mod welcome;
 mod width;
 mod working;

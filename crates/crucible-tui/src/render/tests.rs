@@ -986,3 +986,256 @@ fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
     let frame = drawn.take();
     assert!(frame.contains(&quietly("alpha")), "{frame:?}");
 }
+
+// The transcript map.
+
+/// A renderer with a fixed head and enough numbered transcript to seek.
+fn mapped() -> Drawn {
+    let mut drawn = Drawn::new(60, 10);
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    for line in 0..80 {
+        if line % 20 == 0 {
+            drawn.landmark();
+        }
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn
+}
+
+/// The screen row carrying the fixed transcript-map control.
+fn map_row(drawn: &Drawn) -> usize {
+    drawn.bands().foot.end.saturating_sub(1)
+}
+
+#[test]
+fn pointing_at_the_transcript_map_uses_the_accent_as_a_background() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    drawn.wears(colourful());
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    let door = transcript_map::door(drawn.columns()).expect("the transcript-map door");
+    let resting = transcript_map::resting(drawn.columns(), Glyphs::Unicode, false);
+    assert_eq!(resting.kinds().last(), Some(Slot::Accent));
+    drawn.take();
+
+    assert_eq!(
+        drawn
+            .took(Pressed::Hovered {
+                row: at,
+                column: door.start,
+            })
+            .unwrap(),
+        None
+    );
+    let pointed = transcript_map::resting(drawn.columns(), Glyphs::Unicode, true);
+    assert_eq!(pointed.kinds().last(), Some(Slot::Pointed));
+    assert!(
+        drawn.take().contains("48;"),
+        "pointing added no accent ground"
+    );
+
+    // All-motion reporting sends one event per cell. A second cell inside the
+    // same door is the same one-bit state and must cost no frame.
+    drawn
+        .took(Pressed::Hovered {
+            row: at,
+            column: door.start + 1,
+        })
+        .unwrap();
+    assert_eq!(drawn.take(), "");
+
+    drawn
+        .took(Pressed::Hovered {
+            row: at.saturating_sub(1),
+            column: door.start + 1,
+        })
+        .unwrap();
+    assert!(!drawn.take().is_empty(), "leaving the door drew no frame");
+}
+
+#[test]
+fn clicking_the_bottom_transcript_map_label_opens_the_whole_row() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+
+    assert_eq!(
+        drawn
+            .took(Pressed::Clicked {
+                row: at,
+                column: door.start,
+            })
+            .unwrap(),
+        None
+    );
+
+    let foot = drawn.screen().row(map_row(&drawn)).to_owned();
+    assert!(foot.starts_with("first "), "{foot:?}");
+    assert!(foot.ends_with(" now"), "{foot:?}");
+    assert!(foot.contains('■'), "{foot:?}");
+}
+
+#[test]
+fn dragging_the_map_crosses_the_transcript_without_moving_the_box() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let (box_rows, caret) = boxed();
+    drawn.live(&box_rows, caret, Palette::plain()).unwrap();
+    let prompt = drawn.bands().prompt;
+    let box_before: Vec<String> = prompt
+        .clone()
+        .map(|row| drawn.screen().row(row).to_owned())
+        .collect();
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    let track = transcript_map::track(drawn.columns()).expect("the map track");
+
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: track.end - 1,
+        })
+        .unwrap();
+    drawn
+        .took(Pressed::Dragged {
+            row: at,
+            column: track.start,
+        })
+        .unwrap();
+    drawn
+        .took(Pressed::Released {
+            row: at,
+            column: track.start,
+        })
+        .unwrap();
+
+    assert_eq!(drawn.screen().row(1), "line 0");
+    let box_after: Vec<String> = prompt
+        .map(|row| drawn.screen().row(row).to_owned())
+        .collect();
+    assert_eq!(box_after, box_before);
+}
+
+#[test]
+fn a_landmark_click_lands_on_the_prompt_boundary() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    let track = transcript_map::track(drawn.columns()).expect("the map track");
+    let cell = drawn
+        .record
+        .map_landmarks(drawn.map.span().expect("an open map"), track.len())
+        .iter()
+        .rposition(|marked| *marked)
+        .expect("a prompt landmark");
+
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: track.start + cell,
+        })
+        .unwrap();
+    drawn
+        .took(Pressed::Released {
+            row: at,
+            column: track.start + cell,
+        })
+        .unwrap();
+
+    assert_eq!(drawn.screen().row(1), "line 60");
+}
+
+#[test]
+fn an_open_map_consumes_the_wheel_before_a_standing_component_can() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    let before_map = drawn.screen().row(map_row(&drawn)).to_owned();
+    let before_line = drawn.screen().row(1).to_owned();
+
+    assert_eq!(drawn.took(Pressed::Scrolled { back: true }).unwrap(), None);
+
+    assert_ne!(drawn.screen().row(map_row(&drawn)), before_map);
+    assert_ne!(drawn.screen().row(1), before_line);
+}
+
+#[test]
+fn a_key_keeps_its_meaning_while_the_map_is_open() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    let key = Pressed::Key(crate::editor::Key::Char('x'));
+
+    assert_eq!(drawn.took(key.clone()).unwrap(), Some(key));
+    assert!(drawn.screen().row(map_row(&drawn)).starts_with("first "));
+}
+
+#[test]
+fn the_wheel_moves_the_transcript_and_the_open_maps_mark_together() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    let before_map = drawn.screen().row(map_row(&drawn)).to_owned();
+    let before_line = drawn.screen().row(1).to_owned();
+
+    assert!(drawn.notched(true).unwrap());
+
+    assert_ne!(drawn.screen().row(map_row(&drawn)), before_map);
+    assert_ne!(drawn.screen().row(1), before_line);
+}
+
+#[test]
+fn a_map_put_to_rest_restores_the_identity_row() {
+    let mut drawn = mapped();
+    let at = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
+    drawn
+        .took(Pressed::Clicked {
+            row: at,
+            column: door.start,
+        })
+        .unwrap();
+    drawn.map.due();
+
+    assert!(drawn.repose().unwrap());
+    let foot = drawn.screen().row(map_row(&drawn)).to_owned();
+    assert!(foot.ends_with(" transcript map →"), "{foot:?}");
+    assert_eq!(drawn.screen().row(0), "/work/crucible");
+}

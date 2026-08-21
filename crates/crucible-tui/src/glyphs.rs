@@ -270,6 +270,18 @@ impl Glyphs {
         }
     }
 
+    /// A semantic place on the transcript map.
+    ///
+    /// Hollow so the filled mark showing the current place remains distinct,
+    /// and unlike the horizontal rail in both sets. One column because it
+    /// replaces one cell of that rail rather than widening it.
+    pub(crate) fn landmark(self) -> &'static str {
+        match self {
+            Self::Unicode => "○",
+            Self::Ascii => "o",
+        }
+    }
+
     /// The mark on a task nobody has started.
     #[must_use]
     pub fn open(self) -> &'static str {

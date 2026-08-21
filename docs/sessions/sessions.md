@@ -34,6 +34,26 @@ Nothing is written where crucible had no screen to borrow, which is every run
 whose input or output is not a terminal. Nothing was hidden from you in one, so
 everything it drew is already in your own scrollback.
 
+## Moving through the transcript
+
+The wheel moves the transcript a few rows at a time. For a long jump, use
+`transcript map →` at the bottom right, directly below the permission mode,
+model and effort. The arrow says it opens. Pointing turns the theme's exact
+accent into a compact background rectangle and switches the text to contrasting
+black or white. Click it and the whole bottom row becomes a map from `first` to
+`now`; hollow
+marks are prompts, and the filled mark is the place currently on screen.
+
+Drag anywhere along the map for an absolute jump, or click a hollow prompt mark
+to land on that prompt. The prompt box and everything standing over it stay where
+they are. The wheel still makes precise adjustments while the map is open, moving
+the transcript and its mark together. Three seconds after the last drag, click or
+wheel turn, the map becomes the bottom-right control again. It takes no keyboard
+binding: Escape, Return, Space and the arrows keep their existing meanings.
+
+The open map uses the theme's quiet and accent colours and the terminal's own
+background. With colour off, the same shapes carry the distinction.
+
 ## Continuing
 
 ```bash

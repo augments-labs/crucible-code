@@ -3,9 +3,8 @@ source: tests/whole_screen/main.rs
 assertion_line: 349
 expression: window.picture()
 ---
-80x24 cursor 23,0 scrolled 0
+80x24 cursor 22,0 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|│                                  │ · shift+tab  steps the permission mode    │|
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
@@ -28,3 +27,4 @@ expression: window.picture()
 |  sign in to ChatGPT from another device                                        |
 |                                                                                |
 |esc to cancel                                                                   |
+|                                                               transcript map → |

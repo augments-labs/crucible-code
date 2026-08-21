@@ -3,9 +3,8 @@ source: tests/whole_screen/main.rs
 assertion_line: 106
 expression: window.picture()
 ---
-80x24 cursor 21,65 scrolled 0
+80x24 cursor 20,65 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
@@ -28,3 +27,4 @@ expression: window.picture()
 |│   r the lazy dog. the quick brown fox jumps over the lazy dog.               │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
+|                                                               transcript map → |

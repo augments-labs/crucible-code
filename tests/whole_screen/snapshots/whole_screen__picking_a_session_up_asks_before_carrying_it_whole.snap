@@ -2,9 +2,8 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 23,0 scrolled 0
+80x24 cursor 22,0 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|› say something                                                                 |
 |                                                                                |
 |The first thing this session said.                                              |
 |                                                                                |
@@ -27,3 +26,4 @@ expression: window.picture()
 |  written down; sessions are carried whole from now on                          |
 |                                                                                |
 |enter to choose · esc to carry it whole                                         |
+|                                                               transcript map → |

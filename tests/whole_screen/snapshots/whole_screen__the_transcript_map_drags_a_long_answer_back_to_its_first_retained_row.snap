@@ -1,10 +1,11 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 84
 expression: window.picture()
 ---
-80x24 cursor 20,4 scrolled 0
+80x16 cursor 12,4 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|╭─ crucible v0.18.0 ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -12,19 +13,9 @@ expression: window.picture()
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle)                                                |
-|                                                               transcript map → |
+|ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
+|first ■──────────────────────────────────○────────────────────────────────── now|

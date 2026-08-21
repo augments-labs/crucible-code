@@ -3,9 +3,8 @@ source: tests/whole_screen/main.rs
 assertion_line: 147
 expression: window.picture()
 ---
-80x16 cursor 13,26 scrolled 0
+80x16 cursor 12,26 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
@@ -20,3 +19,4 @@ expression: window.picture()
 |│   ps over the lazy dog.                                                      │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
+|                                                               transcript map → |

@@ -281,6 +281,23 @@ impl Watched {
         window
     }
 
+    /// Clicks one zero-based cell and waits for the screen to settle.
+    pub(crate) fn clicks(&mut self, row: usize, column: usize) {
+        let x = column + 1;
+        let y = row + 1;
+        self.types(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
+    }
+
+    /// Drags the left button between two zero-based cells and waits for the
+    /// screen to settle.
+    pub(crate) fn drags(&mut self, from: (usize, usize), to: (usize, usize)) {
+        let (from_y, from_x) = (from.0 + 1, from.1 + 1);
+        let (to_y, to_x) = (to.0 + 1, to.1 + 1);
+        self.types(&format!(
+            "\x1b[<0;{from_x};{from_y}M\x1b[<32;{to_x};{to_y}M\x1b[<0;{to_x};{to_y}m"
+        ));
+    }
+
     /// Types `keys` and waits for the screen to stop changing.
     pub(crate) fn types(&mut self, keys: &str) {
         self.terminal

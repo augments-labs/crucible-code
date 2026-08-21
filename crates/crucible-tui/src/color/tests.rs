@@ -59,36 +59,37 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 26] {
+fn all() -> [Slot; 27] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
             Slot::Plain => 0,
             Slot::Accent => 1,
             Slot::Strong => 2,
-            Slot::Quiet => 3,
-            Slot::Cut => 4,
-            Slot::Link => 5,
-            Slot::Emphasis => 6,
-            Slot::Struck => 7,
-            Slot::AllowEdits => 8,
-            Slot::FullAccess => 9,
-            Slot::Doing => 10,
-            Slot::DoingMark => 11,
-            Slot::Done => 12,
-            Slot::DoneMark => 13,
-            Slot::Removed => 14,
-            Slot::RemovedNumber => 15,
-            Slot::Added => 16,
-            Slot::AddedNumber => 17,
-            Slot::Prompt => 18,
-            Slot::PromptMark => 19,
-            Slot::Comment => 20,
-            Slot::Keyword => 21,
-            Slot::Str => 22,
-            Slot::Number => 23,
-            Slot::Name => 24,
-            Slot::Operator => 25,
+            Slot::Pointed => 3,
+            Slot::Quiet => 4,
+            Slot::Cut => 5,
+            Slot::Link => 6,
+            Slot::Emphasis => 7,
+            Slot::Struck => 8,
+            Slot::AllowEdits => 9,
+            Slot::FullAccess => 10,
+            Slot::Doing => 11,
+            Slot::DoingMark => 12,
+            Slot::Done => 13,
+            Slot::DoneMark => 14,
+            Slot::Removed => 15,
+            Slot::RemovedNumber => 16,
+            Slot::Added => 17,
+            Slot::AddedNumber => 18,
+            Slot::Prompt => 19,
+            Slot::PromptMark => 20,
+            Slot::Comment => 21,
+            Slot::Keyword => 22,
+            Slot::Str => 23,
+            Slot::Number => 24,
+            Slot::Name => 25,
+            Slot::Operator => 26,
         }
     }
 
@@ -96,6 +97,7 @@ fn all() -> [Slot; 26] {
         Slot::Plain,
         Slot::Accent,
         Slot::Strong,
+        Slot::Pointed,
         Slot::Quiet,
         Slot::Cut,
         Slot::Link,
@@ -287,6 +289,40 @@ fn contrast(one: (u8, u8, u8), other: (u8, u8, u8)) -> f64 {
     };
 
     (high + 0.05) / (low + 0.05)
+}
+
+#[test]
+fn the_pointed_slot_uses_the_exact_accent_as_ground_with_contrasting_text() {
+    for theme in THEMES {
+        let palette = wearing(Depth::Exact, theme, None);
+        let (accent, no_ground) = sets(palette.open(Slot::Accent).as_str());
+        let (ink, ground) = sets(palette.open(Slot::Pointed).as_str());
+
+        assert_eq!(
+            ground, accent,
+            "{theme:?}: hover ground drifted from accent"
+        );
+        assert_eq!(no_ground, Sets::Nothing, "{theme:?}");
+        let (contrast_ink, expected) = match theme {
+            Theme::Dark | Theme::ColourblindDark => ((0, 0, 0), Sets::Exact((0, 0, 0))),
+            Theme::Light | Theme::ColourblindLight => {
+                ((255, 255, 255), Sets::Exact((255, 255, 255)))
+            }
+            Theme::Ansi => {
+                assert_eq!(ink, Sets::Named, "ansi named no contrast ink");
+                continue;
+            }
+        };
+        assert_eq!(ink, expected, "{theme:?}: hover text is not exact");
+        let Sets::Exact(accent) = ground else {
+            panic!("{theme:?}: accent ground was not exact");
+        };
+        let ratio = contrast(contrast_ink, accent);
+        assert!(
+            ratio >= LEGIBLE,
+            "{theme:?}: hover contrast is {ratio:.2}:1"
+        );
+    }
 }
 
 #[test]
@@ -486,8 +522,9 @@ fn a_diff_takes_the_ground_only_where_it_writes_the_ink_for_it() {
     // same sequence. Half of the pair is the failure, at any rung -- a ground
     // over the reader's own foreground is a contrast nobody chose.
     //
-    // The band is not in this and is checked below instead. Its ground is not
-    // one this file chose, so there is no pair here to get half right.
+    // The band and pointed chip are not in this and are checked below instead.
+    // Their ground is not one this file chose, so there is no pair here to get
+    // half right.
     for theme in THEMES {
         for slot in all()
             .into_iter()
@@ -507,7 +544,7 @@ fn a_diff_takes_the_ground_only_where_it_writes_the_ink_for_it() {
 }
 
 #[test]
-fn nothing_but_a_diff_and_the_band_takes_the_ground_at_any_rung() {
+fn nothing_but_a_diff_the_band_and_the_pointed_chip_take_the_ground() {
     // And so the exception stays exactly as wide as it is argued for. A rung is
     // where it would go unnoticed -- the sixteen-colour ladder is the one
     // nobody is looking at, and it is the one where a ground is a single digit
@@ -517,7 +554,8 @@ fn nothing_but_a_diff_and_the_band_takes_the_ground_at_any_rung() {
             for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
                 let written = wearing(depth, theme, Some((13, 13, 16))).open(slot);
                 let takes = sets(written.as_str()).1 != Sets::Nothing;
-                let may = DIFF.contains(&slot) || matches!(slot, Slot::Prompt | Slot::PromptMark);
+                let may = DIFF.contains(&slot)
+                    || matches!(slot, Slot::Pointed | Slot::Prompt | Slot::PromptMark);
 
                 assert_eq!(takes, may, "{theme:?}: {slot:?} at {depth:?}: {written:?}");
             }
@@ -609,15 +647,17 @@ fn the_band_is_nothing_at_all_where_there_is_no_colour() {
 
 #[test]
 fn the_mark_on_the_band_carries_its_ground_and_its_accent_in_one_sequence() {
-    // The one ink the band does carry. It goes in the same sequence as the
+    // The inks the band carries. Each goes in the same sequence as the
     // ground for the reason every other ground-painting slot's does: two
     // sequences are two chances to write one and not the other.
     for theme in THEMES {
         let palette = wearing(Depth::Exact, theme, Some((13, 13, 16)));
-        let (ink, ground) = sets(palette.open(Slot::PromptMark).as_str());
+        let accent = sets(palette.open(Slot::Accent).as_str()).0;
+        let slot = Slot::PromptMark;
+        let (ink, ground) = sets(palette.open(slot).as_str());
 
-        assert_ne!(ground, Sets::Nothing, "{theme:?}: the mark took no ground");
-        assert_ne!(ink, Sets::Nothing, "{theme:?}: the mark carries no accent");
+        assert_ne!(ground, Sets::Nothing, "{theme:?}: {slot:?} took no ground");
+        assert_eq!(ink, accent, "{theme:?}: {slot:?} changed the accent");
     }
 }
 
@@ -744,7 +784,7 @@ fn ansi_spells_no_colour_the_sixteen_cannot_hold_not_even_the_band() {
     let truecolor = environment(&[("COLORTERM", "truecolor")]);
 
     for ground in [(0, 0, 0), (255, 255, 255), (40, 42, 54)] {
-        for slot in [Slot::Prompt, Slot::PromptMark] {
+        for slot in [Slot::Pointed, Slot::Prompt, Slot::PromptMark] {
             let written = Palette::resolve(true, Theme::Ansi, Some(ground), &truecolor).open(slot);
 
             assert!(

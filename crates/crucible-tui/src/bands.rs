@@ -1,13 +1,13 @@
 //! How a window's rows are shared out.
 //!
-//! Five bands, always in this order down the screen: the head names the model
-//! and where the session is; the transcript is everything that has been said
-//! and the only band that scrolls; the turn says what is happening while one
-//! runs and holds whatever else stands over the box between turns; the prompt
-//! is the box, where the reader is typing, and grows upwards as they do; the
-//! foot is one row of status. Bands do not overlap and together they are the
-//! window, which is what lets a frame place a row absolutely and never wonder
-//! what else is there.
+//! Five bands, always in this order down the screen: the head says where the
+//! session is; the transcript is everything that has been said and the only
+//! band that scrolls; the turn says what is happening while one runs and holds
+//! whatever else stands over the box between turns; the prompt is the box, where
+//! the reader is typing, and grows upwards as they do; the foot holds a blank
+//! spacer and the transcript map below the prompt's own status. Bands do not
+//! overlap and together they are the window, which is what lets a frame place a
+//! row absolutely and never wonder what else is there.
 //!
 //! Their sizes are not a layout so much as an order of surrender. Three of them
 //! want a fixed number of rows, one wants as many as it has, and one takes what
@@ -49,7 +49,7 @@ pub(crate) struct Wants {
     pub(crate) turn: usize,
     /// How tall the box has grown.
     pub(crate) prompt: usize,
-    /// One row of status, or none.
+    /// One transcript-map row below the prompt, or none.
     pub(crate) foot: usize,
 }
 
@@ -67,7 +67,7 @@ pub(crate) struct Bands {
     pub(crate) turn: Range<usize>,
     /// The box being typed into.
     pub(crate) prompt: Range<usize>,
-    /// One row of status.
+    /// The transcript-map row below the prompt.
     pub(crate) foot: Range<usize>,
 }
 

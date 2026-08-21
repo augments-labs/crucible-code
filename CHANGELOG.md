@@ -15,6 +15,13 @@ build running and yielded was waiting on the machine, and the ending only ever
 reached it at the top of a turn nobody was going to type. Everything that ended
 arrives in one turn, and the line half-written in the box is untouched.
 
+**A temporary map crosses a long transcript in one gesture.** The fixed bottom
+row offers `transcript map →` below the prompt status; under the pointer the
+exact theme accent becomes a compact background behind contrasting text. Click,
+then drag from the first retained row to now or land on a prompt mark. The wheel
+adjusts both transcript and map together, the control returns after three idle
+seconds, and the map takes no key.
+
 ### Changed
 
 **A result the transcript cut short lights when you point at one, and they all

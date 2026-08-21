@@ -37,7 +37,7 @@ use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
     Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot,
-    Terminal, Typed, characters, pressed, waiting,
+    Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -307,10 +307,10 @@ fn arriving<T: Terminal>(
         // Offered to the selection first, the same as every other read in this
         // session: a drag comes back as nothing, having already drawn itself.
         if left.count() == 0 && says.running == 0 {
-            return Ok(renderer.took(pressed()?)?);
+            return Ok(renderer.pressed()?);
         }
 
-        if waiting(BEAT)? {
+        if renderer.waiting(BEAT)? {
             return Ok(renderer.took(pressed()?)?);
         }
 
@@ -399,6 +399,9 @@ pub(crate) fn ask<T: Terminal>(
         // has moved and a line has been written above it, so what is owed is a
         // frame rather than a key to act on.
         let arrived = if let Some(arrived) = following.take() {
+            let Some(arrived) = renderer.took(arrived)? else {
+                continue;
+            };
             arrived
         } else {
             let Some(arrived) = arriving(renderer, left, &mut says, style)? else {
@@ -765,9 +768,12 @@ pub(super) fn during<T: Terminal>(
     let mut notice = None;
 
     let mut following = None;
-    while following.is_some() || waiting(Duration::ZERO)? {
+    while following.is_some() || renderer.waiting(Duration::ZERO)? {
         let arrived = match following.take() {
-            Some(arrived) => arrived,
+            Some(arrived) => match renderer.took(arrived)? {
+                Some(arrived) => arrived,
+                None => continue,
+            },
             None => match renderer.took(pressed()?)? {
                 Some(arrived) => arrived,
                 // The selection answered it, and drew whatever changed.
@@ -1605,6 +1611,7 @@ fn said<T: Terminal>(
     // parted afterwards would end on a blank row under the final answer, and the
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
+    renderer.landmark();
     renderer.present(&Prompt::committed(
         &said,
         columns,

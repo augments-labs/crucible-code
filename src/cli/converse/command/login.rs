@@ -39,7 +39,7 @@ use crucible_auth::{LoginAttempt, LoginUpdate};
 use crucible_runner::Runner;
 use crucible_tui::{
     Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
-    pressed, waiting,
+    pressed,
 };
 
 use crate::cli::converse::picking::{self, Picked, Taken};
@@ -344,7 +344,7 @@ fn subscribed<T: Terminal>(
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
 
-        let Some(arrived) = view.key()? else {
+        let Some(arrived) = view.key(renderer)? else {
             continue;
         };
         match arrived {
@@ -410,11 +410,14 @@ impl LoginView {
         }
     }
 
-    fn key(&mut self) -> Result<Option<Pressed>, Fatal> {
+    fn key<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<Option<Pressed>, Fatal> {
         if let Some(following) = self.following.take() {
-            return Ok(Some(following));
+            return Ok(renderer.took(following)?);
         }
-        Ok(waiting(Duration::ZERO)?.then(pressed).transpose()?)
+        if !renderer.waiting(Duration::ZERO)? {
+            return Ok(None);
+        }
+        Ok(renderer.took(pressed()?)?)
     }
 
     // An event token is handed over, not lent: the handler takes the one thing
