@@ -1376,6 +1376,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Queue
         | Pressed::Copy
         | Pressed::Dragged { .. }
+        | Pressed::Hovered { .. }
         | Pressed::Released { .. }
         | Pressed::Ignored => Heard::Ignored,
     }

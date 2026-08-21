@@ -275,12 +275,11 @@ fn output_shows_its_first_line_and_says_how_much_more_there_was() {
 }
 
 #[test]
-fn a_cut_result_comes_back_in_the_reader_s_own_foreground() {
-    // What the result said is the part of the row a reader is reading, and on a
-    // row that was cut it is also the part they can have more of. It is written
-    // in the foreground everything else on the screen is written in, so every
-    // result the transcript shortened stands out from the ones it did not —
-    // all of them, at once, whether or not a pointer is anywhere near.
+fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
+    // What the result said goes down in the slot that means *there is more of
+    // this*, rather than in a colour. What that is worth is settled a frame at
+    // a time and for the whole screen at once — this row's job is to say which
+    // run of it is the part a reader can have more of.
     let output = ToolOutput::ok("one\ntwo\nthree");
     let row = finished(&output, beyond(&output), WIDE, Style::plain());
 
@@ -292,7 +291,7 @@ fn a_cut_result_comes_back_in_the_reader_s_own_foreground() {
         [
             Slot::Plain,
             Slot::Quiet,
-            Slot::Plain,
+            Slot::Cut,
             Slot::Quiet,
             Slot::Accent,
             Slot::Quiet
@@ -302,19 +301,16 @@ fn a_cut_result_comes_back_in_the_reader_s_own_foreground() {
 }
 
 #[test]
-fn a_window_too_narrow_for_the_offer_still_lights_what_was_cut() {
+fn a_window_too_narrow_for_the_offer_still_says_the_result_was_cut() {
     // The offer comes off the row before the words do, so a narrow window keeps
     // the words and drops the key. What it may not drop is that the result was
-    // cut: the key still works, and a row gone quiet with it would say the
-    // whole result is there.
+    // cut: the key still works, and a row that dropped the slot with it would
+    // say the whole result is there.
     let output = ToolOutput::ok("one\ntwo\nthree");
     let row = finished(&output, beyond(&output), 24, Style::plain());
 
     assert!(!row.text().contains("ctrl+o"), "{row:?}");
-    assert!(
-        row.kinds().filter(|slot| *slot == Slot::Plain).count() > 1,
-        "{row:?}"
-    );
+    assert!(row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
 }
 
 #[test]
@@ -327,6 +323,7 @@ fn a_row_with_nothing_cut_lights_nothing() {
     let row = finished(&output, beyond(&output), WIDE, Style::plain());
 
     assert!(!row.kinds().any(|slot| slot == Slot::Accent), "{row:?}");
+    assert!(!row.kinds().any(|slot| slot == Slot::Cut), "{row:?}");
     assert_eq!(row.kinds().filter(|slot| *slot == Slot::Plain).count(), 1);
 }
 

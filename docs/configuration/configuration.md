@@ -315,8 +315,9 @@ blocks and `ascii` writes it as letters.
 
 The mouse is not among these keys. crucible holds it for the whole session: the
 wheel scrolls the transcript, a click puts the cursor where you point or opens a
-result the transcript cut short, and a drag selects what it covers and puts it
-on your clipboard when you let go.
+result the transcript cut short, resting the pointer on one of those results
+lights every one of them, and a drag selects what it covers and puts it on your
+clipboard when you let go.
 
 Hold **Shift** while you drag and the selection is your terminal's own again —
 every terminal keeps Shift as the way past a program holding the pointer, which

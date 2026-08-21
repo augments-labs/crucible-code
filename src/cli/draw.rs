@@ -658,17 +658,14 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
     // And where the window is too narrow for even that, the line is what the
     // row keeps: an offer alone says nothing about what came back, and the key
     // it names works whether or not the row had room to mention it. It keeps
-    // the foreground with it, because what that says is that the result was
+    // the cut slot with it, because what that slot says is that the result was
     // cut, and a narrow window did not make it whole.
     if tail >= room {
-        row.push(Slot::Plain, clipped(said, room, glyphs));
+        row.push(Slot::Cut, clipped(said, room, glyphs));
         return row;
     }
 
-    row.push(
-        Slot::Plain,
-        clipped(said, room.saturating_sub(tail), glyphs),
-    );
+    row.push(Slot::Cut, clipped(said, room.saturating_sub(tail), glyphs));
     row.push(Slot::Quiet, counted);
     row.push(Slot::Accent, opens);
     row.push(Slot::Quiet, shut);
@@ -684,11 +681,13 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
 /// the way the count of what is still running is lit under the box and the
 /// mark parting it from the mode is not.
 ///
-/// The words in front of both take the reader's own foreground rather than the
-/// quiet slot the rest of a result row is in. That is what a reader is reading,
-/// and on this row it is also what there is more of, so every result the
-/// transcript shortened is legible as one — all of them at once, and without a
-/// ground behind any of them.
+/// The words in front of both are in the cut slot rather than the quiet one the
+/// rest of this row is in. At rest the two look the same, which is right: a row
+/// of the transcript is a row of the transcript. With the pointer anywhere on a
+/// cut result the slot turns to the reader's own foreground on every one of
+/// them at once — the question a pointer asks is what here has more behind it,
+/// and the answer is the whole screen rather than the row under it. No ground
+/// on any of them, because a ground would answer which row instead.
 fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) {
     (
         format!(" (+{beyond} lines {} ", glyphs.dot()),

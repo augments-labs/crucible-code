@@ -15,11 +15,11 @@ arrives in one turn, and the line half-written in the box is untouched.
 
 ### Changed
 
-**Every result the transcript cut short is lit, and none of them wears a
-ground.** What the result said is drawn in your own foreground rather than the
-quiet one, so all of them stand out from the lines with nothing behind them at
-once instead of one at a time under a pointer. The pointer is no longer asked
-about: crucible stops turning on the mode that reports it crossing the window.
+**A result the transcript cut short lights when you point at one, and they all
+light together.** At rest they read as the quiet rows they are; with the pointer
+anywhere on one, every result with more behind it takes your own foreground at
+the same moment. None of them wears a ground, because the question a pointer
+asks is what here can be opened rather than which row it is on.
 
 **The model is back under the box, at the right of the row that was already
 there.** It sits beside the keys that change it rather than a screen away from
@@ -35,7 +35,7 @@ its place.
   prompt as `ctrl+c`, throwing away the line and offering to leave.
 
 - **A session picked up comes back as the session it was.** Every result the
-  replay had to cut is lit and opens on the key over it, the same way it did
+  replay had to cut lights and opens on the key over it, the same way it did
   live — the rows were drawn through the live builder and never held, so none of
   them was offering anything.
 
