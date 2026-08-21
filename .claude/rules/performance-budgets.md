@@ -32,3 +32,8 @@ Each rate is owned by a probe under `src/bin/` with a floor and a
 sustained-to-opening ratio, because the way this gets slow is not a constant
 factor — it is a redraw that grows with what came before, and that is fast in the
 first second and hopeless in the hundredth.
+
+The floor is against the clock. The ratio is not, and may not be: a probe runs a
+fixed yardstick beside the frames of every timed window and compares what a frame
+cost in *those*. A machine that is not the same speed at the start of a run and
+the end of one therefore says nothing, and only a frame that got dearer does.
