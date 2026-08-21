@@ -1,8 +1,12 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 349
 expression: window.picture()
 ---
-80x24 cursor 20,0 scrolled 13
+80x24 cursor 23,0 scrolled 0
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -24,6 +28,3 @@ expression: window.picture()
 |  sign in to ChatGPT from another device                                        |
 |                                                                                |
 |esc to cancel                                                                   |
-|                                                                                |
-|                                                                                |
-|                                                                                |

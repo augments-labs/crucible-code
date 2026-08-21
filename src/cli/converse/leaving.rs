@@ -143,11 +143,15 @@ impl Leaving {
         // The output of one command is standing. Its keys are that view's.
         if self.shown.is_some() {
             return match arrived {
-                Pressed::Up => {
+                // The wheel walks this the way the arrows do, which is why it
+                // arrives beside them: it is a window over more output than its
+                // rows hold, and that is what a reader reaching for a wheel is
+                // pointing at.
+                Pressed::Up | Pressed::Scrolled { back: true } => {
                     let back = self.from.checked_sub(1);
                     region::step(&mut self.from, back)
                 }
-                Pressed::Down => {
+                Pressed::Down | Pressed::Scrolled { back: false } => {
                     let on = (self.from < self.end).then(|| self.from + 1);
                     region::step(&mut self.from, on)
                 }
@@ -237,6 +241,10 @@ impl Leaving {
                 Moved::Left
             }
             Pressed::Resized => Moved::Redraw,
+
+            // The wheel among them, deliberately: what stands here is a list
+            // short enough to reach with an arrow, and the transcript it stands
+            // over is not. Answering `Still` is what hands the wheel to it.
             Pressed::Key(_)
             | Pressed::Cycle
             | Pressed::Explain
@@ -245,6 +253,7 @@ impl Leaving {
             | Pressed::Pasted(_)
             | Pressed::Queue
             | Pressed::Copy
+            | Pressed::Scrolled { .. }
             | Pressed::Ignored => Moved::Still,
         }
     }

@@ -4,6 +4,17 @@ Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+**crucible draws on a screen of its own.** The box and the row above it stay
+where they are while an answer arrives, the transcript scrolls under a wheel
+rather than under the terminal's, and an answer that fills the window no longer
+eats the box away from the top. The screen is handed back when the session ends
+and what was on it goes with it — the session log still holds every word, and
+`--continue` still opens it.
+
 ## [0.15.0] - 2026-08-21
 
 ### Added

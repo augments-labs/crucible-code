@@ -107,6 +107,22 @@ pub enum Pressed {
     Up,
     /// The down arrow: on one row through it.
     Down,
+    /// The wheel turned one notch. `back` is towards the top of the session.
+    ///
+    /// Its own variant rather than an arrow, because the two mean different
+    /// things to the same reader at the same moment: the arrows walk whatever
+    /// is standing over the box — a list, a plan, the line before this one —
+    /// and the wheel moves the transcript underneath it. A loop with something
+    /// standing that the wheel ought to walk says so where it reads this, which
+    /// is the only place that knows what is on screen.
+    ///
+    /// How far one notch goes is not decided here. A notch is what the terminal
+    /// reports; how many rows it is worth is a setting, and settings are the
+    /// wiring's.
+    Scrolled {
+        /// Whether the notch was towards the top of the session.
+        back: bool,
+    },
     /// A button went down somewhere on the screen, counted from its top left.
     ///
     /// Absolute, because that is what the terminal reports and this file is
@@ -263,10 +279,10 @@ fn meaning(event: Event) -> Pressed {
 
 /// The same for the mouse, once it is the mouse.
 ///
-/// A button going down and nothing else. Reporting is only ever on while a
-/// prompt is up, and what a prompt has for the pointer to do is put the cursor
-/// somewhere — a release and a drag have no answer here, and acting on the
-/// release as well would answer one click twice.
+/// A button going down and nothing else. What this program has for the pointer
+/// to do is land somewhere — a caret in the box, a row of the transcript — so a
+/// release and a drag have no answer here, and acting on the release as well
+/// would answer one click twice.
 ///
 /// Either button, because either is the one somebody reaches for: the left is
 /// what every editor places a caret with, and the right is what a terminal user
@@ -275,46 +291,20 @@ fn meaning(event: Event) -> Pressed {
 /// it is paste on this platform, and answering it would take that away and put
 /// a cursor move in its place. Bracketed, that paste arrives as a paste.
 ///
-/// The wheel is the exception to *no answer here*, and the reason is what
-/// holding the pointer costs. A terminal forwarding buttons is not scrolling
-/// with them, so the wheel stops moving the terminal's own scrollback for as
-/// long as reporting is held — and a wheel that then means nothing here is the
-/// one outcome nobody chose: the reader gave up their scrollback and got
-/// nothing back. It answers as the arrows do, so whatever the arrows walk the
-/// wheel walks.
+/// The wheel is reported as itself rather than as an arrow. A terminal
+/// forwarding buttons is not scrolling with them, so for as long as reporting
+/// is held the wheel is crucible's to answer — and what it is reached for is
+/// the transcript, which is a different thing from what the arrows walk.
 fn clicked(mouse: MouseEvent) -> Pressed {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => Pressed::Clicked {
             row: mouse.row as usize,
             column: mouse.column as usize,
         },
-        MouseEventKind::ScrollUp => Pressed::Up,
-        MouseEventKind::ScrollDown => Pressed::Down,
+        MouseEventKind::ScrollUp => Pressed::Scrolled { back: true },
+        MouseEventKind::ScrollDown => Pressed::Scrolled { back: false },
         _ => Pressed::Ignored,
     }
-}
-
-/// Where the terminal says its cursor is, counted from the top left of the
-/// screen.
-///
-/// A question rather than a read, and the one place this crate asks the
-/// terminal anything on the way *in*: the answer comes back as a sequence in
-/// the same stream keys arrive on. It is asked once per click and never per
-/// frame — a click is somebody's hand, and a round trip on the render path
-/// would be a round trip per keystroke.
-///
-/// It is what makes a click mean anything. crucible draws inline, so it does
-/// not know which row of the screen it is drawing on; the cursor is parked
-/// where the caret is at the moment a click arrives, so this and the caret
-/// together say where the component starts.
-///
-/// # Errors
-///
-/// [`TerminalError::Io`] if the terminal would not answer.
-pub fn caret() -> Result<(usize, usize), TerminalError> {
-    let (column, row) = crossterm::cursor::position()?;
-
-    Ok((row as usize, column as usize))
 }
 
 /// The same for a key, once it is one.
@@ -634,12 +624,19 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_walks_whatever_the_arrows_walk() {
-        // Holding the pointer takes the wheel away from the terminal's own
-        // scrollback. A wheel that then meant nothing here would be the one
-        // outcome nobody chose.
-        assert_eq!(meaning(pointer(MouseEventKind::ScrollUp)), Pressed::Up);
-        assert_eq!(meaning(pointer(MouseEventKind::ScrollDown)), Pressed::Down);
+    fn the_wheel_is_told_apart_from_the_arrows() {
+        // The same reader at the same moment means two things by them: the
+        // arrows walk what is standing over the box, and the wheel moves the
+        // transcript under it. Read as an arrow, a flick of the wheel would
+        // walk a list nobody was pointing at.
+        assert_eq!(
+            meaning(pointer(MouseEventKind::ScrollUp)),
+            Pressed::Scrolled { back: true }
+        );
+        assert_eq!(
+            meaning(pointer(MouseEventKind::ScrollDown)),
+            Pressed::Scrolled { back: false }
+        );
     }
 
     #[test]

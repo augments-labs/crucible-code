@@ -96,8 +96,8 @@ fn a_file_is_named_under_what_would_be_done_to_it() {
 #[test]
 fn the_models_own_text_cannot_break_a_row_nobody_counted() {
     // A control character the terminal acts on moves the cursor inside a row
-    // that was measured without it, and every frame after that one rewinds over
-    // the wrong thing.
+    // that was measured without it, so what the row is charged for and what it
+    // takes on screen stop being the same number.
     let words = Words::of(
         &call("bash"),
         &running("ls\n\nesc to cancel", &["ls", "esc to cancel"]),
@@ -172,7 +172,7 @@ fn the_paragraphs_are_the_models_own_words_and_the_panel_says_whose_they_are() {
 fn the_models_paragraphs_cannot_break_a_row_nobody_counted_either() {
     // The same reason the payload and the caption are flattened, over more text
     // than either: a control character here moves the cursor inside a row that
-    // was measured without it, and the panel then rewinds over the wrong rows.
+    // was measured without it, so the panel takes rows it never asked for.
     let words = Words::of(
         &call("bash"),
         &running("ls", &["ls"]),
@@ -327,6 +327,28 @@ fn a_digit_moves_the_mark_before_it_takes_what_the_mark_stands_on() {
             moving(typed(missing), &mut standing),
             Moved::Still,
             "{missing:?}"
+        );
+        assert_eq!(standing.marked, 1);
+    }
+}
+
+#[test]
+fn the_wheel_at_a_question_is_the_transcripts_and_takes_no_answer() {
+    // Two things at once. Three answers are reached with an arrow, so the wheel
+    // has nothing to walk here — and `Still` is what hands it to the transcript
+    // the panel is standing over, which is what a reader deciding about a call
+    // is reading back through. What it may never be is an answer: a notch that
+    // took whatever the mark stood on would allow a call by accident.
+    for back in [true, false] {
+        let mut standing = Standing {
+            marked: 1,
+            ..Standing::new(false)
+        };
+
+        assert_eq!(
+            moving(Pressed::Scrolled { back }, &mut standing),
+            Moved::Still,
+            "{back}"
         );
         assert_eq!(standing.marked, 1);
     }

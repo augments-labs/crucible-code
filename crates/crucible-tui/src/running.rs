@@ -87,8 +87,8 @@ impl Running<'_> {
     /// The list, in `room` rows, and empty where nothing fits.
     ///
     /// Empty rather than as-much-as-fits, for the reason every component here
-    /// answers that way: a panel taller than the window is a region the renderer
-    /// cannot rewind over, and half a list of processes is worse than the count
+    /// answers that way: a panel taller than the band it was handed writes into
+    /// the one below it, and half a list of processes is worse than the count
     /// that was already on screen.
     #[must_use]
     pub fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {

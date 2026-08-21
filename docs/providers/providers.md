@@ -62,7 +62,8 @@ Whichever rung settled it, the answer is on the live row under the prompt box,
 which names the vendor before the model in the `provider/model` shape `--model`
 takes back. It is redrawn on every keystroke, so it keeps up when `/login` hands
 the session to another vendor mid-way. The welcome card deliberately carries no
-provider, model or effort because it becomes terminal scrollback immediately.
+provider, model or effort because it is the first thing in the transcript and
+is scrolled away from rather than kept up to date.
 
 ## Which model
 

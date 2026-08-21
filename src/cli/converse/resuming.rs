@@ -210,8 +210,8 @@ mod tests {
     #[test]
     fn no_row_of_it_is_wider_than_the_terminal_it_was_drawn_for() {
         // The failure `responsive-components.md` is about: a row past the last
-        // column is one the terminal wraps itself, and every frame after it
-        // rewinds over the wrong number of rows.
+        // column is one the terminal wraps itself, so a band given one row is
+        // written two and the band under it loses the first of its own.
         for columns in [40, 60, 80, 120] {
             for row in drawn(columns).lines() {
                 assert!(crucible_tui::columns(row) <= columns, "{columns}: {row:?}");

@@ -52,12 +52,12 @@ pub(super) fn run<T: Terminal>(
             Slot::Quiet,
             clip("nothing has been worked on here yet", columns),
         )];
-        renderer.present(&rows, terms.style().palette())?;
+        renderer.present(&rows)?;
         return Ok(None);
     }
 
     if said.is_empty() {
-        renderer.present(&listing(&listed, now, columns), terms.style().palette())?;
+        renderer.present(&listing(&listed, now, columns))?;
         return Ok(None);
     }
 
@@ -65,7 +65,7 @@ pub(super) fn run<T: Terminal>(
         // The word came off the line and was never shape-checked — anything at
         // all can follow `/resume ` — so it goes out the way arrived text does.
         renderer.commit(&format!("! {said} is not on the list"))?;
-        renderer.present(&listing(&listed, now, columns), terms.style().palette())?;
+        renderer.present(&listing(&listed, now, columns))?;
         return Ok(None);
     };
 
@@ -88,7 +88,7 @@ fn picking<T: Terminal>(
     // something.
     if runner.session().id() == Some(picked.id()) {
         let rows = [Row::new().then(Slot::Quiet, clip("this is the session you are in", columns))];
-        renderer.present(&rows, terms.style().palette())?;
+        renderer.present(&rows)?;
         return Ok(None);
     }
 
@@ -130,7 +130,6 @@ fn picking<T: Terminal>(
             columns,
             terms.style().glyphs(),
         ),
-        terms.style().palette(),
     )?;
 
     // Both of these are what a session picked up on the command line gets, and

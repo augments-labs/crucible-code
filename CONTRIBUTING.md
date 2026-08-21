@@ -73,9 +73,9 @@ where learning what one of them does means opening all of them.
 
 `tests/whole_screen` starts the real binary on a real pseudo terminal, sends
 keystrokes and asserts on the screen it drew. It is the only test that sees the
-arithmetic turning rows into a screen — how far a frame rewinds, where the
-cursor parks, how tall the live region may be — because every other one is
-handed rows and never a terminal. `scripts/check.sh` runs it with the rest; on
+arithmetic turning rows into a screen — which band a row lands in, where the
+cursor parks, how tall the box may grow — because every other one is handed rows
+and never a terminal. `scripts/check.sh` runs it with the rest; on
 its own it is
 
 ```bash

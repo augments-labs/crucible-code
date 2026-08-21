@@ -12,6 +12,8 @@
 //! string has to ask both — a sequence is instruction, so it takes no columns
 //! and reaches no screen.
 
+use std::ops::Range;
+
 use unicode_width::UnicodeWidthChar;
 
 use crate::escape::Escapes;
@@ -107,30 +109,24 @@ pub fn clip(text: &str, columns: usize) -> &str {
     }
 }
 
-/// `text` broken into rows no wider than `columns`, at the spaces where it can
-/// be.
+/// Where in `text` the rows of [`fold`] are.
 ///
-/// For a sentence composed here rather than one that arrived: a component with a
-/// paragraph to draw has to know how many rows it drew, and this is where the
-/// walk that answers that already lives. The streamed tail wraps at the column
-/// instead, because it is fed a character at a time and cannot see the end of
-/// the word it is in.
-///
-/// A word too long for a row is cut rather than left to overflow, which is what
-/// keeps every row back no wider than asked for however narrow the terminal is.
-/// Borrowed rather than allocated: the rows are pieces of `text`.
-#[must_use]
-pub fn fold(text: &str, columns: usize) -> Vec<&str> {
+/// The same walk, answering in offsets rather than in slices, because a row of
+/// spans has to cut each span at the break and a `&str` cannot say where it was
+/// taken from. Whitespace at a break is dropped as [`fold`] drops it, so these
+/// ranges are the rows and not a partition of `text`.
+pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     let mut rows = Vec::new();
-    let mut rest = text.trim();
-
     if columns == 0 {
         return rows;
     }
 
+    let mut rest = text.trim();
+    let mut base = text.len() - text.trim_start().len();
+
     while !rest.is_empty() {
         let Some(over) = cut(rest, columns) else {
-            rows.push(rest);
+            rows.push(base..base + rest.len());
             break;
         };
 
@@ -153,11 +149,33 @@ pub fn fold(text: &str, columns: usize) -> Vec<&str> {
             }
         };
 
-        rows.push(rest[..at].trim_end());
-        rest = rest[at..].trim_start();
+        rows.push(base..base + rest[..at].trim_end().len());
+        let after = rest[at..].trim_start();
+        base += rest.len() - after.len();
+        rest = after;
     }
 
     rows
+}
+
+/// `text` broken into rows no wider than `columns`, at the spaces where it can
+/// be.
+///
+/// For a sentence composed here rather than one that arrived: a component with a
+/// paragraph to draw has to know how many rows it drew, and this is where the
+/// walk that answers that already lives. The streamed tail wraps at the column
+/// instead, because it is fed a character at a time and cannot see the end of
+/// the word it is in.
+///
+/// A word too long for a row is cut rather than left to overflow, which is what
+/// keeps every row back no wider than asked for however narrow the terminal is.
+/// Borrowed rather than allocated: the rows are pieces of `text`.
+#[must_use]
+pub fn fold(text: &str, columns: usize) -> Vec<&str> {
+    folds(text, columns)
+        .into_iter()
+        .map(|row| text.get(row).unwrap_or_default())
+        .collect()
 }
 
 /// The offset one character in, for the row too narrow to hold even that.
@@ -255,6 +273,18 @@ mod tests {
     #[test]
     fn a_cut_keeps_the_columns_asked_for_and_no_more() {
         assert_eq!(cut("hello", 4), Some(4));
+    }
+
+    #[test]
+    fn a_row_does_not_end_in_the_space_it_broke_at() {
+        // A run of spaces at a break has one of them ending the row and one
+        // starting the next, and neither belongs to either. It reads as
+        // correct at every width and is not: a trailing space is a column the
+        // row was padded to and painted, so a row that keeps one carries its
+        // colour a column further than the words did.
+        assert_eq!(fold("aa  bb", 4), ["aa", "bb"]);
+        assert_eq!(fold("aa   bb", 4), ["aa", "bb"]);
+        assert_eq!(fold("one  two  three", 5), ["one", "two", "three"]);
     }
 
     #[test]

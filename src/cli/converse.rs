@@ -38,7 +38,8 @@ use crucible_core::{
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Key, Pasting, Pressed, Raw, Renderer, Sending, Spelling, Terminal, pressed,
+    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
+    pressed,
 };
 
 use super::draw;
@@ -220,13 +221,24 @@ pub(crate) fn converse<T: Terminal>(
     mut runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    opening: draw::opening::Standing,
+    opening: &draw::opening::Standing,
     input: &mut dyn BufRead,
 ) -> Result<(), Fatal> {
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
     let left = &terms.leaving;
+
+    // First of the guards, so that it is the last of them given back: raw mode
+    // is left while this is still held, and the sequence that leaves it goes to
+    // the screen that is about to stop existing rather than to the reader's own.
+    //
+    // Taken here rather than where the renderer was built, because everything
+    // between the two can still refuse to start a session — an unreadable
+    // configuration, a provider nobody named, a home directory that would not
+    // be made private — and a refusal written to a screen that is handed back
+    // in the same breath is one nobody reads.
+    let _screen = Screen::take()?;
 
     // Held for the whole session and dropped on the way out however this
     // returns. Between turns it is what draws the box; during one it is what
@@ -251,32 +263,39 @@ pub(crate) fn converse<T: Terminal>(
     // arrives whole and its newlines stay newlines.
     let _pasting = Pasting::bracketed()?;
 
+    // And the pointer, for the whole session rather than for as long as
+    // something stands. The wheel is what scrolls the transcript, and the
+    // transcript is on screen the whole time — a pointer taken only while a
+    // list is up would be a wheel that works in the one place a reader is least
+    // likely to reach for it.
+    //
+    // What it costs is a drag that no longer selects, because a terminal
+    // forwarding buttons is not using them itself. Terminals all keep Shift as
+    // the way to reach their own pointer past a program holding it, which is
+    // what the documentation points at until this program has a selection of
+    // its own.
+    let _pointer = Reporting::on()?;
+
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no
     // room to say, the view over it, the plan, and where an answer comes from.
     // Held in one value for the reason its own prose gives.
     let mut held = Held::new(terms.plan.clone(), terms.sending, Answers { input, keys });
 
+    // The opening is the first thing in the transcript, which is where a
+    // reader scrolls back to find it. Written down rather than stood over the
+    // box: the band it lands in is the one that scrolls, so the card keeps its
+    // place under whatever is said next instead of being drawn again over it
+    // every frame until the first prompt goes.
+    opening.commit(renderer)?;
+
+    // What the session already said, before what it will be asked about it: a
+    // resumed session is one the model can see and the reader cannot, and the
+    // screen it is being read on was opened empty a moment ago.
+    //
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
-    // What the session already said, before what it will be asked about it: a
-    // resumed session is one the model can see and the reader cannot, and the
-    // terminal it is being read in is either empty or holds somebody else's
-    // scrollback.
-    // The opening stands in the live region so that a window dragged narrower
-    // has it laid out again at the new width. It can only stand where the
-    // screen is nothing but the opening: a resumed session writes what it
-    // already said above the box, and a row of the record is a row no rewind
-    // may reach -- so there the card is written down first and keeps whatever
-    // width it was drawn at.
-    let mut standing = Some(opening);
-    if !runner.transcript().is_empty()
-        && let Some(opening) = standing.take()
-    {
-        opening.commit(renderer)?;
-    }
-
     replaying::replayed(renderer, &runner, terms.style())?;
 
     // Answered rather than acted on. Making room is a request, and a request is
@@ -376,15 +395,7 @@ pub(crate) fn converse<T: Terminal>(
             left,
             keys,
         };
-        let asked = typing::ask(renderer, style, &mut standing, between)?;
-
-        // A line finished writes the opening down on its way past. What is
-        // left here is every other way the call can end -- and a session with
-        // no keyboard, which reaches this having drawn nothing at all and is
-        // about to read a line from a pipe instead.
-        if let Some(standing) = standing.take() {
-            standing.commit(renderer)?;
-        }
+        let asked = typing::ask(renderer, style, between)?;
 
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
@@ -442,7 +453,7 @@ pub(crate) fn converse<T: Terminal>(
                 return Err(Fatal::Unanswerable(said));
             }
 
-            draw::unconfigured(renderer, said, style)?;
+            draw::unconfigured(renderer, said)?;
             continue;
         }
 
@@ -515,7 +526,7 @@ fn unboxed<T: Terminal>(
     input: &mut dyn BufRead,
 ) -> Result<Option<String>, Fatal> {
     let mark = style.glyphs().caret();
-    draw::mark(renderer, &format!("{} {mark} ", runner.mode()), style)?;
+    draw::mark(renderer, &format!("{} {mark} ", runner.mode()))?;
 
     let Some(said) = read(input)? else {
         // The mark is still the last thing on its row, and nothing but this
@@ -555,8 +566,8 @@ fn ran<T: Terminal>(
     // appears to run and changes nothing is one somebody types again.
     match took.did {
         Did::Reported => {}
-        Did::Nothing => draw::unmade(renderer, style)?,
-        Did::Stopped => draw::stopped(renderer, style)?,
+        Did::Nothing => draw::unmade(renderer)?,
+        Did::Stopped => draw::stopped(renderer)?,
     }
 
     Ok((
@@ -1172,13 +1183,20 @@ fn answered<T: Terminal>(
             Heard::Said(said) => said,
 
             // The renderer is holding a size the screen no longer has, and
-            // everything it draws after this rewinds by the row count that size
-            // implies — for the rest of the turn, over rows it never drew.
-            // Nothing is redrawn here: the question is committed, so it is the
-            // terminal's to reflow, and the row the answer goes on is one the
-            // renderer counts none of and therefore leaves alone.
+            // every band it shares the window out into is measured against it.
+            // Taking the new one is the whole of the answer: the question is
+            // committed, so its rows are folded again at the width the window
+            // has now, and the frame that follows puts them back.
             Heard::Resized => {
                 renderer.resized()?;
+                continue;
+            }
+
+            // The question is committed too, which is what makes the wheel
+            // worth answering here: a reader deciding whether to allow a call
+            // is reading what was said above it to decide.
+            Heard::Scrolled { back } => {
+                renderer.notched(back)?;
                 continue;
             }
 
@@ -1201,6 +1219,12 @@ enum Heard {
     Said(String),
     /// The window changed under the question.
     Resized,
+    /// The wheel turned, so the transcript the question stands at the foot of
+    /// moves. `back` is towards the top of the session.
+    Scrolled {
+        /// Whether the notch was towards the top of the session.
+        back: bool,
+    },
     /// Not an answer and not news. Wait for the next key.
     Ignored,
 }
@@ -1226,6 +1250,7 @@ fn heard(arrived: Pressed) -> Heard {
         }
 
         Pressed::Resized => Heard::Resized,
+        Pressed::Scrolled { back } => Heard::Scrolled { back },
 
         // An arrow, a click, a mode step, a key that means nothing here — the key
         // about what is already running among them, since this question is what
@@ -1233,8 +1258,8 @@ fn heard(arrived: Pressed) -> Heard {
         // none of them may be read as one.
         //
         // Ctrl+E is here for now rather than because it belongs here: the
-        // question is committed to scrollback a row at a time, and there is no
-        // second shape of it to toggle into until the panel is what draws it.
+        // question joins the transcript a row at a time, and there is no second
+        // shape of it to toggle into until the panel is what draws it.
         //
         // Ctrl+O is here because this is the question with nowhere to stand: it
         // was put a row at a time precisely because there was no room for a
@@ -1361,9 +1386,9 @@ fn asked<T: Terminal>(
         // model's own sentence about them.
         let account = crucible_tools::account(&call.args);
 
-        // Nothing is drawn under it. The panel stood in the live region and the
-        // region was given back, so a call that was allowed reads exactly like
-        // one nothing asked about — which is what the reader is looking at
+        // Nothing is drawn under it. The panel stood over the transcript and
+        // the rows it covered are back, so a call that was allowed reads exactly
+        // like one nothing asked about — which is what the reader is looking at
         // anyway, since the result of the call is the row underneath.
         match asking::ask(renderer, style, call, sensitivity, &account)? {
             asking::Answered::Said(answer) => return Ok(answer),
@@ -1418,11 +1443,11 @@ fn took<T: Terminal>(
             Numbered::Left => return Ok(None),
 
             // The renderer is holding a size the screen no longer has, and the
-            // question after this one is drawn against it — a row wrapped for a
-            // window that has gone, and a rewind counted in rows of one. Nothing
-            // is redrawn: what is already down is committed, so it is the
-            // terminal's to reflow, which is the answer `answered` gives one
-            // question above.
+            // question after this one would be drawn against it — a row folded
+            // for a window that has gone. Taking the new size is the whole of
+            // the answer, the same as it is one question above: the rows already
+            // committed are folded again at the width the window has now, and
+            // the next frame puts them back.
             Numbered::Resized => renderer.resized()?,
         }
     }

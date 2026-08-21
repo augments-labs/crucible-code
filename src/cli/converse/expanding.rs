@@ -232,10 +232,10 @@ pub(super) fn under<T: Terminal>(
         return Ok(false);
     };
 
-    // One row of tail is kept whatever stands under it, so a view as tall as
-    // the window would leave a live region a row taller than the screen — and
-    // the top of that has already scrolled past the reach of the next rewind.
-    // The row it gives up is the one the turn goes on writing into.
+    // One row is left to the transcript whatever stands here, and it is the row
+    // the turn goes on writing into: a view that asked for the whole window
+    // would be a reader looking back through what was said while what is being
+    // said now has nowhere at all to appear.
     let room = renderer.rows().saturating_sub(1);
     let rows = laying(kept, view, style.glyphs(), renderer.columns(), room);
 
@@ -323,11 +323,16 @@ fn showing(whole: &Whole) -> Shown<'_> {
 #[allow(clippy::needless_pass_by_value)]
 fn moving(arrived: Pressed, view: &mut View) -> Moved {
     match arrived {
-        Pressed::Up => {
+        // The wheel walks this view rather than the transcript under it, which
+        // is why it arrives here beside the arrows: what is standing is a window
+        // over more text than its rows hold, and that is exactly the thing a
+        // reader turning a wheel is pointing at. At either end it moves nothing,
+        // and the loop that reads this takes that as the transcript's turn.
+        Pressed::Up | Pressed::Scrolled { back: true } => {
             let next = view.from.checked_sub(1);
             region::step(&mut view.from, next)
         }
-        Pressed::Down => {
+        Pressed::Down | Pressed::Scrolled { back: false } => {
             let next = Some(view.from.saturating_add(1)).filter(|next| *next <= view.end);
             region::step(&mut view.from, next)
         }

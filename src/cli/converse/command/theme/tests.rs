@@ -3,6 +3,9 @@ use crucible_tui::{Glyphs, Recording, Renderer};
 use super::*;
 use crate::cli::converse::tests::plain;
 
+/// A window tall enough to hold every theme this program offers at once.
+const ROOMY: usize = 200;
+
 /// The terms a `/theme` runs under, with nothing named yet.
 fn terms() -> Terms {
     plain()
@@ -31,33 +34,38 @@ fn a_theme_named_on_the_line_is_taken_without_a_panel() {
 
 #[test]
 fn a_word_that_names_no_theme_is_said_so_and_the_list_is_written() {
-    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // A window with room for the whole list. On a shorter one the reader sees
+    // its foot and scrolls back for the rest, which is the transcript doing its
+    // job rather than anything this test is about.
+    let mut renderer = Renderer::new(Recording::new(80, ROOMY));
     let terms = terms();
 
     run("chartreuse", &mut renderer, &terms, false).expect("the run to finish");
 
-    let written = renderer.terminal().written();
-    assert!(written.contains("no such theme: chartreuse"), "{written:?}");
-    assert!(written.contains("colourblind-dark"), "{written:?}");
+    let shown = renderer.terminal().picture();
+    let said = shown.said().join("\n");
+    assert!(said.contains("no such theme: chartreuse"), "{said}");
+    assert!(said.contains("colourblind-dark"), "{said}");
     // And nothing was taken on the way past.
     assert_eq!(terms.chosen.get(), None);
 }
 
 #[test]
 fn the_listing_marks_the_one_in_force_and_only_that_one() {
-    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut renderer = Renderer::new(Recording::new(80, ROOMY));
     let terms = terms();
     terms.chosen.set(Some(ThemeChoice::Ansi));
 
     listed(&mut renderer, &terms).expect("the list to be written");
 
-    let written = renderer.terminal().written();
-    let marked: Vec<&str> = written
-        .lines()
+    let shown = renderer.terminal().picture();
+    let said = shown.said();
+    let marked: Vec<&String> = said
+        .iter()
         .filter(|row| row.trim_start().starts_with(Glyphs::Unicode.done()))
         .collect();
 
-    assert_eq!(marked.len(), 1, "{written:?}");
+    assert_eq!(marked.len(), 1, "{said:?}");
     assert!(
         marked.first().is_some_and(|row| row.contains("ansi")),
         "{marked:?}"

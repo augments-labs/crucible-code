@@ -41,9 +41,8 @@
 //!
 //! **Every word here is somebody else's.** The questions and answers are the
 //! model's, and a model reads files other people wrote — so a terminal
-//! instruction carried through in one of them would move the cursor out of the
-//! live region this process is tracking, or leave an attribute set for every row
-//! after it. Nothing a caller handed over reaches a row without going through
+//! instruction carried through in one of them would move the cursor into a band
+//! it was not aimed at, or leave an attribute set for every row after it. Nothing a caller handed over reaches a row without going through
 //! [`spoken`] first, and the one place that is easy to get wrong is a string
 //! that is folded rather than clipped: it is made safe before it is folded, so
 //! the widths are measured on what will actually be drawn.
@@ -213,8 +212,8 @@ impl Asked<'_> {
             let (rows, caret) = self.laid(columns, glyphs, spacing);
             if !rows.is_empty() && rows.len() <= room {
                 // A caret on a row that was given up would park the cursor
-                // where the frame does not go, and the next frame would rewind
-                // over the wrong rows.
+                // outside the band this was drawn in, where nothing on screen
+                // is what the reader is being asked about.
                 return (rows, caret.filter(|caret| caret.row < room));
             }
         }

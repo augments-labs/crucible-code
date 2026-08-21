@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 416
 expression: window.picture()
 ---
-80x24 cursor 23,0 scrolled 34
+80x24 cursor 23,0 scrolled 0
 |                                                                                |
 |› say something                                                                 |
 |                                                                                |

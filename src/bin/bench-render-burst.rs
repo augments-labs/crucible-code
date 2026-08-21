@@ -1,13 +1,16 @@
 //! Render throughput under a token burst.
 //!
 //! A model streaming at full speed hands the renderer a delta every few
-//! milliseconds, and every delta is a frame: wrap, rewind, erase, redraw. The
-//! budget says at least thirty of those a second, which is the rate below which
-//! streamed text stops looking like typing and starts looking like stalling.
+//! milliseconds, and every delta is a frame: the text is folded into the record,
+//! the lines the transcript band covers are laid out, and the rows whose picture
+//! is not already on screen are written. The budget says at least thirty of
+//! those a second, which is the rate below which streamed text stops looking
+//! like typing and starts looking like stalling.
 //!
 //! Frames is what this counts and frames is what it reports. A frame is one
-//! `stream` call, and the renderer's other job -- writing a finished line to
-//! scrollback -- is a different operation that no part of this burst performs.
+//! `stream` call; the renderer's other ways in put a finished line or a
+//! component's rows into the same record, and no part of this burst performs
+//! either.
 //!
 //! Measured against a bounded kernel pipe rather than an in-memory buffer or
 //! `/dev/null`. A drain thread consumes the pipe in fixed-size reads, so writes
@@ -19,11 +22,15 @@
 //! would make this a benchmark that cannot fail. So the rate is measured twice:
 //! once at the start of the burst and once at the end, and the two must be
 //! close. What each of those two readings is made of is `burst`'s, beside this
-//! file, and is shared with the probe that measures whole-region redraws. That is the check that actually bites, because the way this gets slow
-//! is not a constant factor -- it is a redraw that grows with the transcript,
-//! and a redraw like that is fast in the first second and hopeless in the
-//! hundredth. The reported number is the *sustained* rate, since a session is
-//! long and the opening frames are not the ones a user is waiting on.
+//! file, and is shared with the probe that measures the turn band. That is the
+//! check that actually bites, and on this renderer it guards the property the
+//! whole design rests on: a frame folds only the lines the band covers, so its
+//! cost is the window's and not the session's. The record grows for the whole of
+//! this burst underneath it. A frame that reached past the band -- folding
+//! everything it holds, or searching from the top for where the foot is -- is
+//! fast in the first second and hopeless in the hundredth, and the ratio is
+//! where that shows. The reported number is the *sustained* rate, since a
+//! session is long and the opening frames are not the ones a user is waiting on.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -51,7 +58,7 @@ use std::thread::JoinHandle;
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
 
-/// A terminal-sized window, so wrapping and the bounded tail both engage.
+/// A terminal-sized window, so wrapping and a band that scrolls both engage.
 #[cfg(target_os = "linux")]
 const COLUMNS: usize = 80;
 #[cfg(target_os = "linux")]
@@ -196,8 +203,10 @@ fn streamed() -> Vec<String> {
         deltas.push((*word).to_owned());
 
         // A newline every dozen or so words, which is roughly one per wrapped
-        // row at this width -- the case where the tail overflows and a row is
-        // committed to scrollback.
+        // row at this width -- the frame where the band scrolls. Every row of it
+        // moves up one, so every row differs from what the last frame left and
+        // the diff saves nothing. It is the dearest frame there is, and a burst
+        // that never reached one would report the cheap frame as the rate.
         if index % 12 == 11 {
             deltas.push("\n".to_owned());
         }

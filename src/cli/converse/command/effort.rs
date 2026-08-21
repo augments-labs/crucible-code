@@ -114,12 +114,12 @@ pub(super) fn run<T: Terminal>(
     if !said.is_empty() {
         return match said.parse() {
             Ok(effort) => taken(effort, provider, renderer, runner, terms),
-            Err(refused) => mistyped(&refused, renderer, terms, rungs),
+            Err(refused) => mistyped(&refused, renderer, rungs),
         };
     }
 
     if rungs.is_empty() {
-        return say(renderer, terms, &format!("{} {NO_RUNG}", runner.model()));
+        return say(renderer, &format!("{} {NO_RUNG}", runner.model()));
     }
 
     if keys {
@@ -127,12 +127,12 @@ pub(super) fn run<T: Terminal>(
             Taken::Took(effort) => return taken(effort, provider, renderer, runner, terms),
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
-            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Left => return say(renderer, LEFT),
             Taken::Cramped => {}
         }
     }
 
-    listed(renderer, runner, terms, rungs)
+    listed(renderer, runner, rungs)
 }
 
 /// Stands the ladder where the prompt box was, and says which rung came off it.
@@ -197,7 +197,7 @@ fn taken<T: Terminal>(
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// A word that is not a rung, said back with the rungs that are.
@@ -209,21 +209,19 @@ fn taken<T: Terminal>(
 fn mistyped<T: Terminal>(
     refused: &EffortError,
     renderer: &mut Renderer<T>,
-    terms: &Terms,
     served: &[Effort],
 ) -> Result<(), Fatal> {
     // The word came off the line and was never shape-checked — anything at all
     // can follow `/effort ` — so it goes out the way arrived text goes out.
     renderer.commit(&format!("! {refused}"))?;
 
-    listing(renderer, terms, served)
+    listing(renderer, served)
 }
 
 /// What is being asked now, and the lines that would ask for something else.
 fn listed<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
-    terms: &Terms,
     served: &[Effort],
 ) -> Result<(), Fatal> {
     let saying = match runner.effort() {
@@ -234,9 +232,9 @@ fn listed<T: Terminal>(
     };
     let row = Row::new().then(Slot::Plain, clip(saying, renderer.columns()));
 
-    renderer.present(&[row], terms.style().palette())?;
+    renderer.present(&[row])?;
 
-    listing(renderer, terms, served)
+    listing(renderer, served)
 }
 
 /// The rungs the model serves, as the line that asks for each one.
@@ -244,11 +242,7 @@ fn listed<T: Terminal>(
 /// The same set the ladder would have stood over. A pipe gets the panel's
 /// answer written out, and two answers to one question that differ by which
 /// surface asked it are two answers.
-fn listing<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-    served: &[Effort],
-) -> Result<(), Fatal> {
+fn listing<T: Terminal>(renderer: &mut Renderer<T>, served: &[Effort]) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let rows: Vec<Row> = served
         .iter()
@@ -260,7 +254,7 @@ fn listing<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// Where on the ladder this rung stands.

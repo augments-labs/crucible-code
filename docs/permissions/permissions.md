@@ -86,8 +86,8 @@ the same question is asked a row at a time and the answer is typed:
 
 What each leaves in the transcript is what was on screen. The typed question
 was written there, so it stays there, and the letter typed under it stays with
-it. The panel stood in the live region and the region was given back, so it
-leaves nothing — not the question, and not the answer either. What a yes leaves
+it. The panel stood in the rows above the box and those rows were given back,
+so it leaves nothing — not the question, and not the answer either. What a yes leaves
 behind is the call's own result on the row beneath it, which is the row the
 reader was waiting for; a line saying "Yes, and don't ask again this session"
 between a call and its result says nothing the result does not.

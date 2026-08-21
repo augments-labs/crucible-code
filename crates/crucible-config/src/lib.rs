@@ -62,7 +62,7 @@ pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{allowing, asking, choosing, drawing, reading, thinking, unasked};
 pub use settings::{
-    ClearScreen, Color, Compaction, Glyphs, Sending, Settings, ThemeChoice, ToolDetail, Updates,
+    Color, Compaction, Glyphs, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail, Updates,
     When, local, user,
 };
 pub use shape::THEME;

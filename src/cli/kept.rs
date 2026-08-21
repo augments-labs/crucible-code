@@ -16,10 +16,10 @@
 //! the rule the whole renderer is built to keep.
 //!
 //! It outlives a session, and has to. `/clear` opens a new one and deletes
-//! nothing: the rows of the old one are still in the terminal's scrollback,
-//! still saying how many lines they could not fit and still naming the key that
-//! gives them back. Emptying this there would leave those offers on screen with
-//! nothing behind them, which is the one thing worse than not making them.
+//! nothing: the rows of the old one are still in the transcript, still saying
+//! how many lines they could not fit and still naming the key that gives them
+//! back. Emptying this there would leave those offers on screen with nothing
+//! behind them, which is the one thing worse than not making them.
 //!
 //! One kind of cut is not here and cannot be. A call that changed a file is
 //! shown as the change itself, and a change too long for the block is cut down

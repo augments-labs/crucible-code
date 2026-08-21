@@ -75,7 +75,7 @@ pub(super) fn run<T: Terminal>(
             }
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
-            Taken::Left => return say(renderer, terms, LEFT),
+            Taken::Left => return say(renderer, LEFT),
             Taken::Cramped => {}
         }
     }
@@ -92,20 +92,20 @@ fn named<T: Terminal>(
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let Some(choice) = Choice::parse(said) else {
-        return say(renderer, terms, "! a model cannot have an empty provider");
+        return say(renderer, "! a model cannot have an empty provider");
     };
     let Some(model) = choice.model else {
-        return say(renderer, terms, "! no model was named after the provider");
+        return say(renderer, "! no model was named after the provider");
     };
     let provider = if let Some(provider) = choice.provider {
         match served(&provider) {
             Ok(provider) => provider,
-            Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+            Err(problem) => return say(renderer, &format!("! {problem}")),
         }
     } else if let Some(provider) = terms.provider.get() {
         match served(provider) {
             Ok(provider) => provider,
-            Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+            Err(problem) => return say(renderer, &format!("! {problem}")),
         }
     } else {
         let mut matching = PROVIDERS.into_iter().filter(|provider| {
@@ -117,14 +117,12 @@ fn named<T: Terminal>(
         let Some(provider) = matching.next() else {
             return say(
                 renderer,
-                terms,
                 "! use provider/model for a model outside the picker",
             );
         };
         if matching.next().is_some() {
             return say(
                 renderer,
-                terms,
                 "! more than one provider serves that name; use provider/model",
             );
         }
@@ -237,7 +235,7 @@ fn taken<T: Terminal>(
     if terms.provider.get() != Some(provider) {
         let set = match (terms.serving)(selected, &terms.logins.read()) {
             Ok(set) => set,
-            Err(problem) => return say(renderer, terms, &format!("! {problem}")),
+            Err(problem) => return say(renderer, &format!("! {problem}")),
         };
         runner.serve(set.provider);
         terms.provider.set(Some(provider));
@@ -272,7 +270,7 @@ fn taken<T: Terminal>(
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// What is being asked now, and the lines that would ask for something else.
@@ -309,7 +307,7 @@ fn listed<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows, terms.style().palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 #[cfg(test)]

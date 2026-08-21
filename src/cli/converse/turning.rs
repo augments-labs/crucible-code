@@ -15,11 +15,11 @@
 //!
 //! A call standing above that row is the other thing held here. A tool that has
 //! been asked for and has not answered gets its line drawn with a mark that
-//! pulses, and it lives here rather than in scrollback because a line the
-//! renderer moves back over cannot also be committed. When the tool answers the
-//! line is handed back — [`Turning::saw`] returns it — and whoever drives this
-//! commits it still, so what reaches scrollback is the same words with the
-//! motion gone.
+//! pulses, and it lives here rather than in the transcript because a line drawn
+//! again every frame cannot also be one the record holds. When the tool answers
+//! the line is handed back — [`Turning::saw`] returns it — and whoever drives
+//! this commits it still, so what the transcript keeps is the same words with
+//! the motion gone.
 //!
 //! Under the row, where a prompt was finished while this turn was running, the
 //! line that will be sent once it ends. A line typed into the box mid-turn
@@ -95,7 +95,7 @@ const QUEUED: usize = ROWS + 1;
 ///
 /// The call line is what a narrow window gives up first, because it is the one
 /// of the four that a second look gets back anyway: the tool answers and the
-/// line is committed to scrollback either way. The prompt waiting goes next,
+/// line is written into the transcript either way. The prompt waiting goes next,
 /// since it is still in the queue and its own turn will say it. Then the plan,
 /// which gives up its own rows a state at a time before it goes entirely — and
 /// it is measured before either of the other two, so those are what a window
@@ -674,8 +674,8 @@ impl Turning {
     /// blank above it, because it is a second line of the row rather than a
     /// second thing beside it. `room` is what is left of the window once the
     /// box has taken its share: dropped whole rather than squeezed, because a
-    /// footing taller than the window is a region the renderer cannot rewind
-    /// over, and one row of turn output is worth more than a clock.
+    /// footing taller than the band it is drawn in writes into the band
+    /// underneath, and one row of turn output is worth more than a clock.
     ///
     /// The plan goes under all of it, directly over the box, and it is laid out
     /// here rather than by the caller so that the whole of that arithmetic is
@@ -1283,9 +1283,9 @@ mod tests {
 
     #[test]
     fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
-        // Here rather than in scrollback, because the mark on it moves: a line
-        // the renderer rewinds over every frame cannot also be a line it never
-        // rewinds over. It is committed when the tool answers and not before.
+        // Here rather than in the transcript, because the mark on it moves: a
+        // line redrawn every frame cannot also be one the record holds and
+        // never touches. It is committed when the tool answers and not before.
         let mut turning = Turning::started();
         let said = |turning: &Turning| {
             turning
@@ -1761,9 +1761,9 @@ mod tests {
 
     #[test]
     fn a_prompt_wider_than_the_panel_is_cut_at_the_right() {
-        // Cut rather than wrapped: the footing's height is what the renderer
-        // rewinds by, and a height that depended on how much somebody typed
-        // would be a rewind that depended on it too.
+        // Cut rather than wrapped: the footing's height is how much of the
+        // window it is given, and a height that depended on how much somebody
+        // typed would take that from the transcript a keystroke at a time.
         let long = "a".repeat(200);
         let said = queueing(&[&long], 40, 24);
 
@@ -1835,7 +1835,7 @@ mod tests {
     #[test]
     fn a_window_too_short_for_all_three_drops_the_call_before_the_waiting_prompt() {
         // In that order, because that is the order they stop being worth the
-        // room. The call reaches scrollback the moment its tool answers and
+        // room. The call joins the transcript the moment its tool answers and
         // the prompt is still in the queue with its own turn to come; the row
         // saying a turn is running exists nowhere else, so it goes last.
         let mut turning = Turning::started();
@@ -1858,7 +1858,7 @@ mod tests {
         assert!(whole.concat().contains("running"), "{whole:?}");
 
         // A window short of rows drops the call first — it is committed to
-        // scrollback the moment its tool answers — and keeps the panel, which
+        // the transcript the moment its tool answers — and keeps the panel, which
         // is still in the queue with its own turn to come.
         let shorter = said(ROWS + 6);
         assert!(!shorter.concat().contains("Read"), "{shorter:?}");
@@ -1873,7 +1873,7 @@ mod tests {
 
     #[test]
     fn a_window_too_short_for_both_drops_the_call_before_the_row() {
-        // The call is written to scrollback the moment its tool answers, so a
+        // The call is written to the transcript the moment its tool answers, so a
         // window that drops it loses nothing a second look does not return.
         // The row saying a turn is running exists nowhere else.
         let mut turning = Turning::started();
@@ -1912,7 +1912,7 @@ mod tests {
         // What measuring the panel first buys. The call line and the row naming
         // the prompt behind the turn are the two measured against what the plan
         // left, so they are the two a narrow window drops on its behalf: a call
-        // is committed to scrollback the moment its tool answers and a queued
+        // is committed to the transcript the moment its tool answers and a queued
         // prompt has its own turn coming, while what the agent is working to is
         // on screen nowhere else.
         let mut turning = Turning::started();
@@ -1937,7 +1937,7 @@ mod tests {
         assert!(whole.contains("Task 2"), "{whole:?}");
 
         // A window short of rows drops the call before the panel — the call is
-        // committed to scrollback the moment its tool answers — and keeps both
+        // committed to the transcript the moment its tool answers — and keeps both
         // the queue and the plan, which are on screen nowhere else.
         let shorter = said(panel + 8);
         assert!(!shorter.contains("Read"), "{shorter:?}");

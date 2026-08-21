@@ -234,7 +234,7 @@ fn below_the_floor_there_is_no_panel_rather_than_a_short_one() {
     let question = asking(&["cargo test --workspace --all-features"]);
 
     // A row short of the floor, and a window with no room to fold a command
-    // to. Both are the caller's cue to ask in the scrollback, where nothing
+    // to. Both are the caller's cue to ask in the transcript, where nothing
     // bounds the height of the question.
     assert!(question.within(WIDE, 8, Glyphs::Unicode).is_empty());
     assert!(

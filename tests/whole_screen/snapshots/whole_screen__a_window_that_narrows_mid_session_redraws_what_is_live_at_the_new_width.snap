@@ -1,22 +1,23 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 402
 expression: window.picture()
 ---
-52x20 cursor 17,47 scrolled 14
-|│ ──────────────────────────────────────────────── │|
-|│                                                  │|
-|│ Tips                                             │|
-|│                                                  │|
-|│ · /          opens the command list              │|
-|│ · \ enter    adds a line without sending         │|
-|│ · shift+tab  steps the permission mode           │|
-|│ · ctrl+c     clears the line typed so far        │|
-|╰──────────────────────────────────────────────────╯|
+52x20 cursor 17,47 scrolled 0
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                |
+|│                                  │ ───────────────|
+|│  /…/workspace                    │                |
+|│                                  │ Tips           |
+|│                                  │                |
+|│                                  │ · /          op|
+|│                                  │ · \ enter    ad|
+|│                                  │ · shift+tab  st|
+|│                                  │ · ctrl+c     cl|
+|╰───────────────────────────────────────────────────|
 |                                                    |
 |                                                    |
-|Warning: No models available. Use /login or set an  |
-|API key environment variable. Then use /model to    |
-|select a model.                                     |
+|Warning: No models available. Use /login or set an A|
+|Then use /model to select a model.                  |
 |                                                    |
 |                                                    |
 |╭──────────────────────────────────────────────────╮|

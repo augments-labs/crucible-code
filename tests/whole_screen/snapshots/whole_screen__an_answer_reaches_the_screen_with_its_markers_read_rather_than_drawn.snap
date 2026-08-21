@@ -1,8 +1,11 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 219
 expression: window.picture()
 ---
-80x32 cursor 26,4 scrolled 5
+80x32 cursor 29,4 scrolled 0
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
@@ -22,6 +25,7 @@ expression: window.picture()
 |The loud part, a span of code and a page (https://example.invalid) beside them. |
 |                                                                                |
 |· one                                                                           |
+|                                                                                |
 |· two                                                                           |
 |                                                                                |
 |│ and a line somebody else said                                                 |
@@ -32,6 +36,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |

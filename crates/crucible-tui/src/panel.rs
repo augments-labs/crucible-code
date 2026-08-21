@@ -132,10 +132,9 @@ impl Panel<'_> {
     /// view, then nothing at all.
     ///
     /// The last rung is the one that matters. A panel drawn at as-much-as-fits
-    /// reads as the whole panel, and the frame after it rewinds over rows the
-    /// terminal has already taken — so a caller with no room gets nothing back
-    /// and commits the list to the scrollback instead. Empty is the right
-    /// answer here, not a degraded one.
+    /// reads as the whole panel, and is a lie about what was on offer — so a
+    /// caller with no room gets nothing back and commits the list to the
+    /// transcript instead. Empty is the right answer here, not a degraded one.
     ///
     /// Two functions rather than a `room` field, so which rung was taken is
     /// visible where it was asked for and no caller can forget to pass a bound.
@@ -557,9 +556,9 @@ mod tests {
 
     #[test]
     fn nothing_is_ever_drawn_past_the_last_column() {
-        // A row wider than the terminal is one the terminal wraps itself, and
-        // the frame after it then rewinds over a row this process did not
-        // write.
+        // A row wider than the terminal is one the terminal wraps itself, so a
+        // band given one row is written two and the band under it loses the
+        // first of its own.
         let shown = offered();
 
         for columns in 1..=80 {
@@ -707,8 +706,7 @@ mod tests {
         #[test]
         fn no_room_for_the_shortest_rung_draws_nothing() {
             // Empty, not truncated. A panel drawn at as-much-as-fits reads as
-            // the whole panel, and the rewind after it moves over rows the
-            // terminal has already taken.
+            // the whole panel, which is a lie about what was on offer.
             let shown = many();
 
             for room in 0..=8 {

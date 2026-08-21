@@ -18,10 +18,11 @@
 //! leaves the theme in force for this session with one row saying so — the
 //! contract `/model` already keeps for the same reason.
 //!
-//! **Rows already in scrollback keep the colours they were drawn in.** This
-//! process draws inline and can never go back over what it has committed. A
-//! theme changes what is drawn from here on, and the transcript above the box
-//! is the record of what it looked like at the time.
+//! **The whole screen changes, not only what comes next.** The record holds
+//! what was said and the palette decides what it looks like at the moment it is
+//! drawn, so a theme taken repaints every row on screen — the transcript above
+//! the box along with the box itself. There is no session drawn half in one
+//! table of colours and half in another.
 
 use crucible_config::ThemeChoice;
 use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal};
@@ -205,7 +206,7 @@ pub(super) fn run<T: Terminal>(
             Picked::Took(Chose::Code(named)) => return reading(&named, renderer, terms),
             // Escape asked for the screen that was there before the panel, so a
             // listing under it would be the same question put a second time.
-            Picked::Left => return say(renderer, terms, LEFT),
+            Picked::Left => return say(renderer, LEFT),
             // No room to stand one: the listing below is the answer.
             Picked::Cramped => {}
         }
@@ -536,7 +537,7 @@ fn taken<T: Terminal>(
             .map(|row| Row::new().then(Slot::Quiet, row))
             .collect();
 
-    Ok(renderer.present(&rows, now.palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// Takes a syntax theme: on for this session, and written down for the next run.
@@ -566,7 +567,7 @@ fn reading<T: Terminal>(
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
 
-    Ok(renderer.present(&rows, now.palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 /// What a word that names no theme is answered with.
@@ -579,7 +580,7 @@ fn mistyped<T: Terminal>(
     listed(renderer, terms)
 }
 
-/// The themes, written into the scrollback where no panel could be stood.
+/// The themes, written into the transcript where no panel could be stood.
 fn listed<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(), Fatal> {
     let style = terms.style();
     let in_force = terms.chosen.get();
@@ -622,7 +623,7 @@ fn listed<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(), 
         );
     }
 
-    Ok(renderer.present(&rows, style.palette())?)
+    Ok(renderer.present(&rows)?)
 }
 
 #[cfg(test)]

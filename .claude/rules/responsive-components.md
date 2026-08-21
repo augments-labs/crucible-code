@@ -25,8 +25,8 @@ repeated here.
 What a component does with a window too small for it is its own business — give
 up spacing, then prose, then rows, and at the end draw nothing at all. What it
 may not do is draw something that does not fit and leave the terminal to wrap
-it: that row is one this process did not count, and every frame after it rewinds
-over the wrong number of rows.
+it: a band is a fixed rectangle of rows, so a row given one takes two, and the
+second comes out of the band drawn under it.
 
 The failure is always the same shape and never looks like one. A component folds
 its prose correctly at every width and then puts down a single sentence it built
@@ -53,5 +53,5 @@ refuses it.
 **A resize is news about the window, not a key aimed at whatever is standing.**
 So a loop acts on it before it offers the press to a view, a list or a box.
 Everything standing lays its rows out against the size the renderer holds; hand
-one the press first and it redraws itself for a window that has gone, and goes
-on being rewound over at that size until something else changes it.
+one the press first and it lays itself out for a window that has gone, and goes
+on being drawn at that size until something else changes it.

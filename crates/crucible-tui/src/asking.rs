@@ -16,7 +16,7 @@
 //! the right edge is approved by its leading columns and then does whatever the
 //! rest of it does. So the payload folds to the width, word for word and
 //! operators and all, and where even that will not fit the panel returns
-//! nothing and the caller asks the question in the scrollback instead, where
+//! nothing and the caller asks the question in the transcript instead, where
 //! nothing bounds it.
 //!
 //! **Three blanks, counted.** Under the subject, under the payload, under the
@@ -344,7 +344,7 @@ impl Question<'_> {
             // Clipped like every other single row here. It is the one row in
             // this panel built from a sentence rather than folded from one, and
             // a count that ran past the edge would be wrapped by the terminal
-            // into a row the rewind above it never counted.
+            // into a second row this panel never asked for.
             let counted = format!("{} {below} more rows of explanation", glyphs.dot());
             window.push(framed(
                 said(PAYLOAD, Slot::Quiet, clip(&counted, payload)),

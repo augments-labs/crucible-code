@@ -22,9 +22,9 @@
 //! first: it says what a tool call arriving now costs, and it stands where the
 //! eye starts. Whose model it is, which model, and the rung it is being asked
 //! on are the second, and they stand at the far end. It is also the row those
-//! facts live on at all — they used to be on the welcome card, which is
-//! scrollback by the time `/login`, `/model` or `/effort` changes them, and
-//! this process draws inline and can never go back over what it has committed.
+//! facts live on at all — they used to be on the welcome card, which is a thing
+//! already said by the time `/login`, `/model` or `/effort` changes any of them,
+//! and what was said does not stop being what was said.
 //!
 //! Like [`crate::Welcome`] this returns [`Row`]s and draws nothing, so every
 //! width is asserted with no terminal attached. Unlike it, the rows are live:
@@ -310,7 +310,7 @@ impl Prompt<'_> {
         row == first.saturating_add(typed).saturating_add(border)
     }
 
-    /// The line as it is left in scrollback once it has been typed.
+    /// The line as it is left in the transcript once it has been typed.
     ///
     /// The caret again, so the record reads the way the box did, and the rows
     /// under it indented to match — a line that wrapped reads as one line

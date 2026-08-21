@@ -1,16 +1,17 @@
 //! Events, turned into what a terminal shows.
 //!
-//! Text that arrived from somewhere else is committed without colour. The live
-//! tail measures what it holds in display columns to know where to move the
-//! cursor back to, and a colour code in a tool's output is bytes an untrusted
-//! string put there — bytes that would be counted as width.
+//! Text that arrived from somewhere else is committed without colour. The
+//! transcript measures what it holds in display columns to know how many rows
+//! of the window a line takes, and a colour code in a tool's output is bytes an
+//! untrusted string put there — bytes that would be counted as width.
 //!
 //! What this file composed itself is a different thing and goes out a different
 //! door. A call line and the line hanging under it are spans this program built,
 //! so they are handed to [`Renderer::present`] as rows and the palette decides
 //! their colour at the last moment: the mark and the tool's name in the accent,
-//! what the call was about and what came back in the quieter one. Nothing is
-//! ever redrawn over a presented row, so no frame is counting its columns.
+//! what the call was about and what came back in the quieter one. A row that
+//! arrives already laid out is clipped to the window rather than folded into
+//! it, so nothing here is counting its columns a second time.
 //!
 //! Every mark drawn into a line comes out of [`Glyphs`] rather than out of a
 //! literal here. A terminal whose font is missing a corner is missing the one a
@@ -38,7 +39,7 @@
 //! One line is drawn twice. A call stands in the footing with a mark that moves
 //! for as long as its tool is out, and commits through [`returned`] once it has
 //! answered — the same words, in the same columns, with the motion gone. So
-//! what reaches scrollback is still free of escape sequences, and a pipe and
+//! what joins the transcript is still free of escape sequences, and a pipe and
 //! the session file get the still line rather than a frame of a moving one.
 
 use std::fmt;
@@ -59,10 +60,6 @@ pub(crate) mod opening;
 pub(crate) mod when;
 
 pub(crate) use opening::{Opening, opening};
-
-/// Dim, then back. Only for text that is written once and never redrawn.
-const DIM: &str = "\x1b[2m";
-const PLAIN: &str = "\x1b[0m";
 
 /// What every row of a question after the first is written behind.
 ///
@@ -98,8 +95,8 @@ pub(crate) fn event<T: Terminal>(
         // for it.
         //
         // What a turn spent is on the row above the box, which is drawn from the
-        // footing rather than committed here — a running total committed to
-        // scrollback would be one line per reading, each of them wrong the
+        // footing rather than committed here — a running total committed to the
+        // transcript would be one line per reading, each of them wrong the
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
@@ -124,10 +121,7 @@ pub(crate) fn event<T: Terminal>(
         // record of the session is, under the turn it happened in.
         Event::Compacted { compacted } => {
             renderer.apart()?;
-            renderer.present(
-                &compacted_rows(compacted, columns, style.glyphs()),
-                style.palette(),
-            )
+            renderer.present(&compacted_rows(compacted, columns, style.glyphs()))
         }
 
         // Kept and not drawn. What a running command prints stands under the
@@ -154,8 +148,8 @@ pub(crate) fn event<T: Terminal>(
         // Whatever the model was saying is finished; it said it to explain the
         // call that follows. The line for the call itself is not written here:
         // it is live until the tool answers, standing in the footing with a
-        // mark that moves, and a line the renderer moves back over cannot also
-        // be in scrollback. It commits through [`returned`].
+        // mark that moves, and a line that is still moving is not one the
+        // transcript can hold. It commits through [`returned`].
         Event::ToolRequested { .. } => renderer.settle(),
 
         // A line steered into the running turn, committed as the reader's own
@@ -165,15 +159,12 @@ pub(crate) fn event<T: Terminal>(
         Event::Steered { line } => {
             renderer.settle()?;
             renderer.apart()?;
-            renderer.present(
-                &crucible_tui::Prompt::committed(
-                    line.as_str(),
-                    columns,
-                    style.glyphs(),
-                    style.palette().bands(),
-                ),
-                style.palette(),
-            )
+            renderer.present(&crucible_tui::Prompt::committed(
+                line.as_str(),
+                columns,
+                style.glyphs(),
+                style.palette().bands(),
+            ))
         }
 
         // One block: the row that says what came back, and under it the lines a
@@ -183,7 +174,7 @@ pub(crate) fn event<T: Terminal>(
             let beyond = beyond(&output);
             let rows = finished_rows(&output, columns, style);
 
-            renderer.present(&rows, style.palette())?;
+            renderer.present(&rows)?;
 
             // After the rows and not before them, because this is what the rows
             // could not say: a result the row said the whole of is a result
@@ -195,7 +186,7 @@ pub(crate) fn event<T: Terminal>(
             // is cut where it is built rather than here, so it offers nothing.
             // Counted back from the end because the rows have already gone.
             if beyond > 0 {
-                let at = renderer.record().saturating_sub(rows.len());
+                let at = renderer.lines().saturating_sub(rows.len());
                 kept.finished(output.into_text(), at);
             }
 
@@ -283,7 +274,6 @@ pub(crate) fn gone<T: Terminal>(
 pub(crate) fn unconfigured<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
-    style: Style,
 ) -> Result<(), TerminalError> {
     let columns = renderer.columns();
     let rows: Vec<Row> = fold(said, columns)
@@ -292,7 +282,7 @@ pub(crate) fn unconfigured<T: Terminal>(
         .collect();
 
     renderer.commit("")?;
-    renderer.present(&rows, style.palette())?;
+    renderer.present(&rows)?;
     renderer.commit("")
 }
 
@@ -314,10 +304,12 @@ pub(crate) fn queued<T: Terminal>(
     // a turn lands under the answer that turn produced, which is exactly where
     // the blank belongs.
     renderer.apart()?;
-    renderer.present(
-        &crucible_tui::Prompt::committed(said, columns, style.glyphs(), style.palette().bands()),
-        style.palette(),
-    )
+    renderer.present(&crucible_tui::Prompt::committed(
+        said,
+        columns,
+        style.glyphs(),
+        style.palette().bands(),
+    ))
 }
 
 /// Writes the letter that answered a question, and ends the row.
@@ -329,7 +321,7 @@ pub(crate) fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
 ) -> Result<(), TerminalError> {
-    renderer.prompt(&format!("{said}\r\n"))
+    renderer.prompt(Slot::Plain, &format!("{said}\n"))
 }
 
 /// Says that the session log stopped recording.
@@ -371,10 +363,10 @@ pub(crate) fn question<T: Terminal>(
         renderer.commit(&row)?;
     }
 
-    mark(renderer, &answers(style.glyphs()), style)
+    mark(renderer, &answers(style.glyphs()))
 }
 
-/// One question, written into the scrollback where there was no room to stand a
+/// One question, written into the transcript where there was no room to stand a
 /// panel in.
 ///
 /// Wrapped rather than clipped, for the reason the permission question above is:
@@ -421,50 +413,29 @@ pub(crate) fn asking<T: Terminal>(
         }
     }
 
-    mark(renderer, UNDER, style)
+    mark(renderer, UNDER)
 }
 
 /// Writes something the user is expected to type after.
 ///
 /// Through `prompt` rather than `commit`, because what is wanted here is a line
-/// with no newline on the end. `prompt` settles first and then writes verbatim,
-/// so the colour has to be in the text handed to it — which is the arrangement
-/// that makes it safe: escape bytes cost no column in a row no frame will move
-/// back over.
+/// with no ending on it: the answer goes on the same row. The tone is a slot
+/// rather than an escape sequence the caller wrote, so the palette decides it
+/// at the moment the row is drawn and a theme chosen later repaints it.
 pub(crate) fn mark<T: Terminal>(
     renderer: &mut Renderer<T>,
     text: &str,
-    style: Style,
 ) -> Result<(), TerminalError> {
-    if !style.color() {
-        return renderer.prompt(text);
-    }
-
-    let mut marked = String::with_capacity(DIM.len() + text.len() + PLAIN.len());
-    marked.push_str(DIM);
-    marked.push_str(text);
-    marked.push_str(PLAIN);
-
-    renderer.prompt(&marked)
+    renderer.prompt(Slot::Quiet, text)
 }
 
 /// Ends the row a prompt mark was left on.
 ///
-/// The mark carries no line ending while it is live, which is also what leaves
-/// the renderer no row to settle: nothing else can end it, so this does, the
-/// same way and for the same reason. A terminal gets the carriage return with
-/// it, as every other row written to one does; a pipe gets the byte on its own,
-/// because a pipe has no column to return to and the carriage return would end
-/// up in whatever kept the output.
-///
-/// Through the same door the mark went out of, since it is the same row: a
-/// verbatim write over a live region that has already been settled. The settle
-/// `prompt` does first has nothing left to do here, so the ending is all that
-/// reaches the terminal.
+/// The mark carries no line ending while it is live, and nothing else can end
+/// it: what comes next would otherwise be written on the same row, which is
+/// every ordinary exit as well as the next thing said.
 pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
-    let ending = if renderer.is_terminal() { "\r\n" } else { "\n" };
-
-    renderer.prompt(ending)
+    renderer.prompt(Slot::Plain, "\n")
 }
 
 /// What a call's line says: the tool, and what the call is about.
@@ -545,7 +516,7 @@ pub(crate) fn returned<T: Terminal>(
         row = row.join(words);
     }
 
-    renderer.present(&[row], style.palette())
+    renderer.present(&[row])
 }
 
 /// A call as a row spells it, from the tool's own name and what the call was
@@ -796,7 +767,7 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
         .collect()
 }
 
-/// The record of room having been made, as it goes to scrollback.
+/// The record of room having been made, as it joins the transcript.
 ///
 /// Ruled above and below, like anything else that is true of the session rather
 /// than of the row above it. It says what caused it before what it came to,
@@ -842,14 +813,11 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
 /// # Errors
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
-pub(crate) fn unmade<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    style: Style,
-) -> Result<(), TerminalError> {
+pub(crate) fn unmade<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
     let window = renderer.columns();
     let rows = [Row::new().then(Slot::Quiet, clip(NOTHING, window))];
 
-    renderer.present(&rows, style.palette())
+    renderer.present(&rows)
 }
 
 /// And what it says.
@@ -870,15 +838,12 @@ const NOTHING: &str = "there is nothing behind this turn worth replacing yet";
 /// # Errors
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
-pub(crate) fn stopped<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    style: Style,
-) -> Result<(), TerminalError> {
+pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
     let window = renderer.columns();
     let said = notice(StopReason::Cancelled).unwrap_or_default();
     let rows = [Row::new().then(Slot::Quiet, clip(said, window))];
 
-    renderer.present(&rows, style.palette())
+    renderer.present(&rows)
 }
 
 /// A token count, as a row says it.

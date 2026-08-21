@@ -283,9 +283,9 @@ fn a_row_of_names_too_wide_to_mean_anything_becomes_a_count_instead() {
 
 #[test]
 fn no_row_is_ever_wider_than_the_window() {
-    // Every row of a live region is one row. A row that wrapped would leave the
-    // cursor below where the next frame expects it, and the frame after that
-    // would erase the wrong lines.
+    // Every row a component answers with is one row of the window. A row that
+    // wrapped would take a second, and the second comes out of the band drawn
+    // under this one.
     let answers = languages();
     let several = supported();
     let stops = stops();
@@ -714,7 +714,7 @@ fn a_note_being_written_takes_the_cursor_rather_than_the_answer() {
 #[test]
 fn a_row_that_was_not_drawn_is_never_pointed_at() {
     // A caret on a row the ladder gave up would park the cursor somewhere the
-    // frame does not go, and the next frame would rewind over the wrong rows.
+    // frame never wrote, which is a caret the reader cannot find.
     let answers = languages();
     let stops = stops();
     let mut panel = asked(&answers, &stops);
@@ -770,9 +770,9 @@ fn the_whole_panel_with_a_note_on_the_question() {
 fn nothing_a_call_wrote_can_move_the_cursor_or_set_an_attribute() {
     // The words on this panel are the model's, and a model reads files somebody
     // else may have written. A terminal reads an escape as an instruction, so
-    // one carried through here could move the cursor out of the live region or
-    // leave an attribute set for every row after it — and the frame that rewinds
-    // over the region would erase the wrong lines.
+    // one carried through here could move the cursor out of the band this panel
+    // was given or leave an attribute set for every row after it — either way
+    // writing somewhere nothing asked it to.
     let hostile = "\x1b[2Jwiped\x1b[31m";
     let rows = "\x1b[Ainside".to_owned();
     let shows = [rows.as_str()];

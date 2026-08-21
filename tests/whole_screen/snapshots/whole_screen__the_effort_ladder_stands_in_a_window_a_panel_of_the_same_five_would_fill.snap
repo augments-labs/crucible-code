@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 368
 expression: window.picture()
 ---
-80x24 cursor 23,0 scrolled 14
+80x24 cursor 23,0 scrolled 0
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|

@@ -98,16 +98,6 @@ fn roomy() -> Renderer<Recording> {
     Renderer::new(Recording::new(60, 24))
 }
 
-/// What a frame drew, without the sequence that closes it.
-///
-/// The renderer brackets every frame it writes to a terminal, so where the
-/// cursor was left is the last thing it *drew* rather than the last thing it
-/// wrote. Spelled once here rather than at each assertion about the cursor,
-/// which is not what any of them is about.
-fn drawn(written: &str) -> &str {
-    written.strip_suffix("\x1b[?2026l").unwrap_or(written)
-}
-
 #[test]
 fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     // The keyboard is held by the loop above for the whole session now, so what
@@ -121,7 +111,6 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     let asked = ask(
         &mut renderer,
         Style::plain(),
-        &mut None,
         Between {
             runner: &mut runner,
             editor: &mut editor,
@@ -151,7 +140,6 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
@@ -173,7 +161,6 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
@@ -184,9 +171,10 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
 
 #[test]
 fn the_cursor_ends_up_where_the_line_was_typed_to() {
-    // Two rows below the row being typed on — the closing edge and the status
-    // row — and then the column outright. Without the move back up, the next
-    // character would be drawn under the box rather than in it.
+    // On the row the line is on and at the end of what has been typed, rather
+    // than wherever drawing the rows below it happened to leave the cursor.
+    // Parked anywhere else, the next character is drawn under the box rather
+    // than in it.
     let mut renderer = drawing();
 
     draw(
@@ -194,12 +182,24 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
-    let written = renderer.terminal().written();
-    assert!(drawn(written).ends_with("\x1b[2A\x1b[7G"), "{written:?}");
+    let shown = renderer.terminal().picture();
+    let rows = shown.rows();
+    let (row, column) = shown.caret();
+
+    assert!(
+        rows.get(row).is_some_and(|row| row.contains("› hi")),
+        "the cursor is not on the row being typed on: {rows:?}"
+    );
+    let before: Option<String> = rows.get(row).map(|row| row.chars().take(column).collect());
+
+    assert_eq!(
+        before.as_deref(),
+        Some("│ › hi"),
+        "the cursor is not at the end of the line: {rows:?}"
+    );
 }
 
 #[test]
@@ -212,7 +212,6 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &editor,
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
@@ -221,7 +220,6 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -256,19 +254,18 @@ fn a_blank_row_parts_the_prompt_from_the_answer_above_it() {
     renderer
         .commit("whatever the last turn said")
         .expect("a row to be committed");
-    let before = renderer.record();
+    let before = renderer.lines();
 
     said(
         &mut renderer,
         &mut editor,
         &Opened::default(),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
 
     assert_eq!(
-        renderer.record() - before,
+        renderer.lines() - before,
         2,
         "the blank and the prompt, in that order"
     );
@@ -291,12 +288,11 @@ fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
 
-    assert_eq!(renderer.record(), drawn);
+    assert_eq!(renderer.lines(), drawn);
 }
 
 #[test]
@@ -310,12 +306,11 @@ fn no_blank_row_is_spent_at_the_top_of_a_session() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
 
-    assert_eq!(renderer.record(), 1, "the prompt and nothing above it");
+    assert_eq!(renderer.lines(), 1, "the prompt and nothing above it");
 }
 
 #[test]
@@ -330,13 +325,12 @@ fn a_second_prompt_in_a_row_is_parted_from_the_first_by_one_blank_and_no_more() 
             &mut renderer,
             &mut editor,
             &Opened::default(),
-            &mut None,
             Style::plain(),
         )
         .expect("the line to be taken");
     }
 
-    assert_eq!(renderer.record(), 3, "prompt, blank, prompt");
+    assert_eq!(renderer.lines(), 3, "prompt, blank, prompt");
 }
 
 #[test]
@@ -350,7 +344,6 @@ fn the_editor_is_empty_afterwards_and_ready_for_the_next_line() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -420,40 +413,61 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
-    let written = renderer.terminal().written();
-    let listed = written.find("/model").expect("the list");
+    // Asked of the picture rather than of the bytes. The box and what stands
+    // over it are two frames now — they go into two bands and the box goes
+    // first — so the order they were written in is not the order they are read
+    // in, and only the window says where each of them ended up.
+    let shown = renderer.terminal().picture();
+    let rows = shown.rows();
+    let listed = at(&rows, "/model");
 
     // The wall is what says this is the box rather than the marked row of the
     // list, which now carries a caret of its own.
-    let boxed = written.find("│ › /m").expect("the box");
+    let boxed = at(&rows, "│ › /m");
 
-    assert!(listed < boxed, "the list is under the box: {written:?}");
+    assert!(listed < boxed, "the list is under the box: {rows:?}");
+}
+
+/// Which row of a window `looked` is on.
+///
+/// Panics where nothing on screen holds it, which is the failure every caller
+/// would otherwise have written for itself.
+fn at(rows: &[String], looked: &str) -> usize {
+    rows.iter()
+        .position(|row| row.contains(looked))
+        .unwrap_or_else(|| panic!("nothing on screen says {looked:?}: {rows:?}"))
 }
 
 #[test]
 fn the_box_stays_where_it_was_while_the_list_is_open() {
-    // The whole reason it opens upwards. The cursor is parked by counting back
-    // from the bottom of the region, so rows added above the box leave the same
-    // two below the line — the box and the row under it are exactly where they
-    // were on the keystroke before, and the mode is neither covered nor pushed
-    // down the screen.
-    let mut renderer = roomy();
+    // The whole reason it opens upwards. The box has the rows above the status
+    // row whether or not anything is standing over it, so a list arriving takes
+    // rows off the transcript rather than pushing the box down the screen: the
+    // box, the line in it and the mode are where they were on the keystroke
+    // before, and so is the cursor.
+    let shown = |opened: &Opened| {
+        let mut renderer = roomy();
 
-    draw(
-        &mut renderer,
-        &typed("/m"),
-        Style::plain(),
-        around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
-        None,
-    )
-    .expect("the box to be drawn");
+        draw(
+            &mut renderer,
+            &typed("/m"),
+            Style::plain(),
+            around(&nothing(), opened, &settled(Mode::Ask)),
+        )
+        .expect("the box to be drawn");
 
-    let written = renderer.terminal().written();
-    assert!(drawn(written).ends_with("\x1b[2A\x1b[7G"), "{written:?}");
+        let shown = renderer.terminal().picture();
+        (shown.rows().split_off(19), shown.caret())
+    };
+
+    let (was, parked) = shown(&Opened::default());
+    let (now, moved) = shown(&listing("/m"));
+
+    assert_eq!(now, was, "the box moved when the list opened");
+    assert_eq!(moved, parked, "the cursor moved when the list opened");
 }
 
 #[test]
@@ -465,7 +479,6 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
@@ -487,18 +500,20 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &Editor::new(),
         Style::plain(),
         around(&nothing(), &Opened::default(), &leaving(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
-    let written = renderer.terminal().written();
-    let mode = written.find("ask mode on").expect("the mode");
-    let offer = written.find(LEAVING).expect("the offer");
+    let shown = renderer.terminal().picture();
+    let rows = shown.rows();
+    let mode = rows
+        .iter()
+        .position(|row| row.contains("ask mode on"))
+        .expect("the mode");
 
-    assert!(mode < offer, "the offer went above the mode: {written:?}");
-    assert!(
-        written.contains(&format!("\r\n{LEAVING}")),
-        "the offer is indented: {written:?}"
+    assert_eq!(
+        rows.get(mode + 1).map(String::as_str),
+        Some(LEAVING),
+        "the offer is not the row under the mode: {rows:?}"
     );
 }
 
@@ -521,9 +536,8 @@ fn a_second_interrupt_leaves_only_while_the_first_is_still_recent() {
 
 #[test]
 fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
-    // Cut off at the top it would read as the whole list, and the rewind that
-    // takes the region back would reach over rows the terminal has already
-    // taken. Neither is worth the rows it would have shown.
+    // Cut off at the top it would read as the whole list, which is a worse
+    // answer than no list at all: nothing is what a reader can tell is nothing.
     let every = command::filtering("/", Glyphs::Unicode).len();
 
     for room in 0..every {
@@ -548,7 +562,6 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
         &mut renderer,
         &mut editor,
         &listing("/resu"),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -567,7 +580,6 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
         &mut renderer,
         &mut editor,
         &listing("what does /resume do"),
-        &mut None,
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -786,13 +798,12 @@ fn the_plan_stands_above_the_box_between_turns() {
         &typed("hi"),
         Style::plain(),
         around(&planned(3), &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
-    let written = renderer.terminal().written();
-    assert!(written.contains("3 tasks"), "{written:?}");
-    assert!(written.find("Task 0") < written.find("› hi"), "{written:?}");
+    let shown = renderer.terminal().picture();
+    let rows = shown.rows();
+    assert!(at(&rows, "3 tasks") < at(&rows, "› hi"), "{rows:?}");
 }
 
 #[test]
@@ -810,7 +821,6 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("hi"),
         Style::plain(),
         around(&plan, &Opened::default(), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 
@@ -820,7 +830,6 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("/m"),
         Style::plain(),
         around(&plan, &listing("/m"), &settled(Mode::Ask)),
-        None,
     )
     .expect("the box to be drawn");
 

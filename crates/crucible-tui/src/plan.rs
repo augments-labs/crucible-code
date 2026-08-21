@@ -1,10 +1,10 @@
 //! The plan the agent is working to, drawn above the prompt.
 //!
 //! A rule with air on both sides of it, a line of counts, a row per task, and a
-//! line saying what did not fit. It joins the rows that are redrawn in place
-//! rather than being written into scrollback, so a plan rewritten twenty times
-//! in one turn costs twenty rewrites of the same rows rather than twenty copies
-//! down the transcript.
+//! line saying what did not fit. It stands over the box rather than being
+//! written into the transcript, so a plan rewritten twenty times in one turn
+//! costs twenty redraws of the same rows rather than twenty copies down the
+//! transcript.
 //!
 //! The rule is what says *a different thing starts here*, and a rule with rows
 //! hard against it on both sides says it much less well: it reads as an
@@ -132,7 +132,7 @@ impl<'a> Plan<'a> {
     ///
     /// Never wider than that and never taller: a row past the last column is
     /// one the terminal wraps itself, and a row past the last the caller
-    /// offered is one drawn over something else in the live region.
+    /// offered is one drawn into the band underneath.
     ///
     /// Empty where there is no plan, and empty where what is left of the window
     /// cannot hold the rule, the counts and a task between them. Nothing is

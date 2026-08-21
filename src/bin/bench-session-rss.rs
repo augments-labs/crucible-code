@@ -13,6 +13,15 @@
 //! peak, including spikes between samples. Thread, descriptor and process-tree
 //! counts are emitted beside the budget so a flat total cannot hide a growing
 //! resource of another kind.
+//!
+//! Twenty turns is the budget's session and the reading it reports. It is not
+//! the longest session anybody has, and this process now keeps the transcript
+//! itself — so a second phase follows the sampled twenty: turns whose every
+//! delta ends a line, enough of them to push the record past the ceiling it
+//! keeps and out the other side. That ceiling is what the phase measures, and a
+//! record that grew with the session would show here and nowhere else, because
+//! twenty turns of prose never reach it. Its figures are reported beside the
+//! budget's and held to the same limit.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -59,9 +68,19 @@ const TURNS: usize = 20;
 #[cfg(target_os = "linux")]
 const PLANTED: usize = 2_000;
 
-/// Text deltas in every completed answer.
+/// Text deltas in every completed answer of a measured turn.
 #[cfg(target_os = "linux")]
 const DELTAS: usize = 400;
+
+/// Turns after the sampled twenty, each of them all line endings.
+#[cfg(target_os = "linux")]
+const FILL: usize = 10;
+
+/// Lines in each of those turns. Ten times this is more than the record holds,
+/// so the last fill turn is drawn over lines the first one has already had
+/// dropped, which is the state the budget has never otherwise been read in.
+#[cfg(target_os = "linux")]
+const LINES: usize = 2_500;
 
 #[cfg(target_os = "linux")]
 const COLUMNS: u16 = 80;
@@ -120,6 +139,8 @@ struct Measurement {
     one: f64,
     five: f64,
     twenty: f64,
+    filled: f64,
+    crest: f64,
     pss: f64,
     slope: f64,
     threads: usize,
@@ -152,6 +173,12 @@ fn measure() -> Result<Measurement, ProbeError> {
         }
     }
 
+    for turn in 1..=FILL {
+        running.send(&format!("fill {turn}: say it again at length\r"))?;
+        running.until(&marker(TURNS + turn))?;
+    }
+    let filled = Resource::read(running.id())?;
+
     drop(running);
     vendor.finish()?;
 
@@ -162,6 +189,8 @@ fn measure() -> Result<Measurement, ProbeError> {
         one: kibibytes(one.rss),
         five: kibibytes(five.rss),
         twenty: kibibytes(twenty.rss),
+        filled: kibibytes(filled.rss),
+        crest: kibibytes(filled.peak),
         pss: kibibytes(twenty.pss),
         slope: kibibytes(twenty.rss.saturating_sub(five.rss)) / turns,
         threads: twenty.threads,
@@ -293,10 +322,17 @@ fn serve(listener: &TcpListener, stopping: &AtomicBool) -> Result<(), io::Error>
                 connection.set_read_timeout(Some(CEILING))?;
                 request(&mut connection)?;
                 requests += 1;
-                let body = if requests % 2 == 1 {
-                    tool().to_owned()
-                } else {
-                    answer(requests / 2)
+                // A measured turn is two requests -- the tool call, then the
+                // answer that follows its result. A fill turn is one, because
+                // the planted file has been read twenty times already and
+                // reading it ten more would measure the tool rather than the
+                // record.
+                let body = match requests {
+                    request if request > TURNS * 2 => {
+                        answer(TURNS + request - TURNS * 2, LINES, true)
+                    }
+                    request if request % 2 == 1 => tool().to_owned(),
+                    request => answer(request / 2, DELTAS, false),
                 };
                 respond(&mut connection, &body)?;
             }
@@ -376,17 +412,28 @@ fn tool() -> &'static str {
     )
 }
 
+/// One completed answer: `deltas` pieces of text and the marker that ends them.
+///
+/// `lines` is what separates the two phases. A measured turn streams prose that
+/// wraps, and prose that wraps is one line of the record however many rows it
+/// takes; a fill turn ends every delta, so every delta is a line. Lines are what
+/// the record bounds, so filling it is a question of how many endings arrive
+/// rather than of how much text does.
 #[cfg(target_os = "linux")]
-fn answer(turn: usize) -> String {
-    let mut body = String::with_capacity(DELTAS * 112);
+fn answer(turn: usize, deltas: usize, lines: bool) -> String {
+    // Two bytes into the JSON, where they are the escape a line ending is
+    // written as -- not a line ending in this file, which would end the data
+    // line and truncate the event.
+    let ending = if lines { "\\n" } else { "" };
+    let mut body = String::with_capacity(deltas.saturating_mul(112).saturating_add(512));
     body.push_str(
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_answer\"}}\n\n\
          event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
     );
-    for word in 0..DELTAS {
+    for word in 0..deltas {
         let _ = write!(
             body,
-            "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"field {word} \"}}}}\n\n"
+            "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"field {word} {ending}\"}}}}\n\n"
         );
     }
     let _ = write!(
@@ -652,12 +699,15 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
     let _ = write!(
         line,
         "{:.1} MB {LIMIT:.0} start={:.1} turn1={:.1} turn5={:.1} turn20={:.1} \
-         pss20={:.1} slope={:.3} threads={} fds={} processes={}",
+         filled={:.1} crest={:.1} pss20={:.1} slope={:.3} \
+         threads={} fds={} processes={}",
         measured.peak,
         measured.start,
         measured.one,
         measured.five,
         measured.twenty,
+        measured.filled,
+        measured.crest,
         measured.pss,
         measured.slope,
         measured.threads,
@@ -667,6 +717,24 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
     line.push('\n');
     io::stdout().write_all(line.as_bytes())?;
     io::stdout().flush()
+}
+
+/// Says which of the two readings went over, on stderr, where
+/// `scripts/bench.sh` puts everything a human reads.
+///
+/// The one line on stdout carries the twenty-turn figure whichever reading
+/// failed, because that is the budget as it is written and the script reads it
+/// positionally. Without this line a full record that blew the limit would
+/// reach the operator as twenty ordinary turns having done it.
+fn over(measured: Measurement) -> Result<(), io::Error> {
+    let mut line = String::new();
+    let _ = writeln!(
+        line,
+        "    FAIL peak {:.1} MB over twenty turns, {:.1} MB once the record was \
+         full (limit {LIMIT:.0} MB)",
+        measured.peak, measured.crest,
+    );
+    io::stderr().write_all(line.as_bytes())
 }
 
 fn explain(problem: &ProbeError) -> Result<(), io::Error> {
@@ -684,7 +752,14 @@ fn main() -> ExitCode {
         }
     };
 
-    if report(measured).is_err() || measured.peak > LIMIT {
+    // Both readings, and the same limit for each. The first is the budget as
+    // it is written; the second says the record's ceiling is what holds it, by
+    // taking it in a session long enough to have gone over that ceiling.
+    if report(measured).is_err() {
+        return ExitCode::FAILURE;
+    }
+    if measured.peak > LIMIT || measured.crest > LIMIT {
+        let _ = over(measured);
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS

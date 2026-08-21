@@ -1,8 +1,11 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 459
 expression: window.picture()
 ---
-80x24 cursor 19,4 scrolled 16
+80x24 cursor 21,4 scrolled 0
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
 |                                                                                |
 |› the first thing                                                               |
 |                                                                                |
@@ -25,5 +28,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
-|                                                                                |
-|                                                                                |

@@ -38,7 +38,7 @@ pub(super) fn run<T: Terminal>(
     // that never happened, and `--continue` offers the newer of them.
     if held == 0 {
         let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
-        return Ok(renderer.present(&rows, terms.style().palette())?);
+        return Ok(renderer.present(&rows)?);
     }
 
     let session = match Session::start(&terms.sessions, &terms.workspace) {
@@ -74,10 +74,7 @@ pub(super) fn run<T: Terminal>(
         renderer.commit(&format!("! {problem}"))?;
     }
 
-    renderer.present(
-        &started(held, columns, terms.style().glyphs()),
-        terms.style().palette(),
-    )?;
+    renderer.present(&started(held, columns, terms.style().glyphs()))?;
     Ok(())
 }
 
@@ -86,9 +83,9 @@ pub(super) fn run<T: Terminal>(
 /// Three rows for three things a user would otherwise have to find out. The
 /// first is what happened. The second is that nothing was destroyed, and where
 /// it went — this command reads like a delete and is not one. The third is that
-/// what is above the box is the terminal's scrollback and stays exactly where
-/// it is: this program never took that screen and is not about to hand it back
-/// empty.
+/// the transcript above the box stays exactly where it is and stays scrollable:
+/// what a new session empties is what the model is sent, not what the reader
+/// can still read.
 fn started(held: usize, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let said = match held {
         1 => "1 message".to_owned(),

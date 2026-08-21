@@ -36,12 +36,11 @@ use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tools::Background;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot, Terminal,
-    Typed, caret, characters, pressed, waiting,
+    Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot,
+    Terminal, Typed, characters, pressed, waiting,
 };
 
 use crate::cli::Fatal;
-use crate::cli::draw::opening;
 use crate::cli::kept::Kept;
 use crate::cli::style::Style;
 
@@ -130,9 +129,9 @@ pub(crate) enum Asked {
     /// Ctrl+O: whatever the transcript cut down to a row is to be shown whole,
     /// and the box asked for again once it has been closed.
     ///
-    /// The box is not written down on the way out. It stands in the live region
-    /// and so does the view, so the one replaces the other and the line being
-    /// typed is still there underneath when this comes back.
+    /// The box is not written down on the way out. It stands in a band and so
+    /// does the view, so the one replaces the other and the line being typed is
+    /// still there underneath when this comes back.
     ///
     /// Reported rather than acted on here, because the same key pressed while a
     /// turn runs opens the same view a row further down the screen. Both go
@@ -320,7 +319,6 @@ fn arriving<T: Terminal>(
 pub(crate) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
-    opening: &mut Option<opening::Standing>,
     between: Between<'_>,
 ) -> Result<Asked, Fatal> {
     let Between {
@@ -360,13 +358,7 @@ pub(crate) fn ask<T: Terminal>(
     // Whatever was typed while the last turn ran is already here, so the list a
     // slash opens has to be worked out from it rather than assumed empty.
     let mut open = Opened::filtered(editor.text(), glyphs);
-    let mut above = framed(
-        renderer,
-        editor,
-        style,
-        around(planning, &open, &says),
-        opening,
-    )?;
+    draw(renderer, editor, style, around(planning, &open, &says))?;
 
     let mut following = None;
     loop {
@@ -377,13 +369,7 @@ pub(crate) fn ask<T: Terminal>(
             arrived
         } else {
             let Some(arrived) = arriving(renderer, left, &mut says, style)? else {
-                above = framed(
-                    renderer,
-                    editor,
-                    style,
-                    around(planning, &open, &says),
-                    opening,
-                )?;
+                draw(renderer, editor, style, around(planning, &open, &says))?;
                 continue;
             };
 
@@ -442,7 +428,7 @@ pub(crate) fn ask<T: Terminal>(
             // there. Anywhere else — the border, a blank row, the shell's own
             // output — it moves nothing, the same as a key that moved nothing.
             Pressed::Clicked { row, column } => {
-                match landed(renderer, editor, &says, above, Pointed { row, column }) {
+                match landed(renderer, editor, &says, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Line => true,
 
@@ -451,13 +437,22 @@ pub(crate) fn ask<T: Terminal>(
                 }
             }
 
-            // Through whatever the line has open above the box. With nothing
             // The arrows walk whatever is open above the box — unless the line
             // being typed is many rows, in which case they move within it. The
             // editor answers whether there is a row to reach, and a one-line
             // line has none, so the list keeps the key it has always had.
             Pressed::Up => vertical(editor, Key::Up) || open.up() || offered.is_some(),
             Pressed::Down => vertical(editor, Key::Down) || open.down() || offered.is_some(),
+
+            // And the wheel walks the transcript, which is the thing the arrows
+            // never reach. It draws its own frame, so what is left to say here
+            // is whether the offer above went with it — the box is repainted
+            // from what the renderer already had, and a second frame for it
+            // would cost nothing and change nothing.
+            Pressed::Scrolled { back } => {
+                renderer.notched(back)?;
+                offered.is_some()
+            }
 
             // Stepping the mode on. Every step takes effect on the press: the
             // row under the box says which mode that landed in, and the same
@@ -506,7 +501,7 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(LIMITED);
                     true
                 }
-                Typed::Submitted => return said(renderer, editor, &open, opening, style),
+                Typed::Submitted => return said(renderer, editor, &open, style),
 
                 // Ctrl-C against a line with nothing on it. The first press
                 // says what a second one would do; the second does it, so long
@@ -531,13 +526,7 @@ pub(crate) fn ask<T: Terminal>(
         };
 
         if moved {
-            above = framed(
-                renderer,
-                editor,
-                style,
-                around(planning, &open, &says),
-                opening,
-            )?;
+            draw(renderer, editor, style, around(planning, &open, &says))?;
         }
     }
 }
@@ -616,26 +605,41 @@ impl Says {
 /// to. Laid out after the box rather than before it, because the box takes its
 /// share of the window first and what is left is what decides how much of that
 /// footing is drawn at all.
-pub(super) fn working<T: Terminal>(
+fn working<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
     footing: Footing<'_>,
     says: &Says,
     style: Style,
-) -> (Vec<Row>, Caret, usize) {
+) -> Footed {
     let columns = renderer.columns();
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
 
-    let mut boxed = prompt.rows(columns, style.glyphs());
-    let mut caret = prompt.caret(columns);
+    let boxed = prompt.rows(columns, style.glyphs());
+    let caret = prompt.caret(columns);
     let room = renderer.rows().saturating_sub(boxed.len());
 
-    let mut rows = footing.turning.rows(footing.planning, columns, style, room);
-    let above = rows.len();
-    caret.row += above;
-    rows.append(&mut boxed);
+    Footed {
+        over: footing.turning.rows(footing.planning, columns, style, room),
+        boxed,
+        caret,
+    }
+}
 
-    (rows, caret, above)
+/// The foot of the window while a turn runs, in two parts because it is drawn
+/// in two.
+///
+/// They are not one region with the box at the end of it. The box is held to a
+/// share of the window and what stands over it is not, so the two are kept
+/// apart all the way to the renderer — a turn whose plan is open would
+/// otherwise push the box off the bottom of the screen.
+struct Footed {
+    /// The row saying the turn is running, and the plan above it.
+    over: Vec<Row>,
+    /// The box.
+    boxed: Vec<Row>,
+    /// Where the cursor sits in the box, counted from its own first row.
+    caret: Caret,
 }
 
 /// What stands between the transcript and the box while a turn runs.
@@ -740,7 +744,23 @@ pub(super) fn during<T: Terminal>(
         // line. The turn goes on writing above it either way, which is the
         // whole reason the view is worth standing there.
         if opened.is_open() {
-            moved |= opened.against(arrived);
+            // Read before the press is handed over, because it is handed over.
+            let wheel = match arrived {
+                Pressed::Scrolled { back } => Some(back),
+                _ => None,
+            };
+
+            let walked = opened.against(arrived);
+            moved |= walked;
+
+            // A wheel the view did nothing with is the transcript's, by the
+            // rule the region loop between turns reads one under: at either end
+            // of a view the reader is still reading back through what was said,
+            // and here it is still being added to above them.
+            if let (false, Some(back)) = (walked, wheel) {
+                renderer.notched(back)?;
+            }
+
             continue;
         }
 
@@ -750,7 +770,7 @@ pub(super) fn during<T: Terminal>(
         // nothing, and reading them in the order they are drawn in is what
         // keeps that visible.
         if viewing.is_open() {
-            moved |= viewing.against(
+            let walked = viewing.against(
                 &arrived,
                 queueing::Reading {
                     queue: queued,
@@ -758,6 +778,13 @@ pub(super) fn during<T: Terminal>(
                     steer,
                 },
             );
+            moved |= walked;
+
+            // And the same about the wheel, for the same reason.
+            if let (false, Pressed::Scrolled { back }) = (walked, arrived) {
+                renderer.notched(back)?;
+            }
+
             continue;
         }
 
@@ -881,18 +908,21 @@ pub(super) fn during<T: Terminal>(
             // being written while something else is on screen holding the
             // reader's attention. A click anywhere else is answered by the
             // screen the reader was already looking at.
-            Meant::Clicked(at) => {
-                let (_, _, above) =
-                    working(renderer, editor, Footing { turning, planning }, says, style);
-
-                match landed(renderer, editor, says, above, at) {
-                    Landed::Record(one) => {
-                        opened.one(kept, one);
-                        moved |= opened.is_open();
-                    }
-                    Landed::Line => moved = true,
-                    Landed::Counted | Landed::Nothing => {}
+            Meant::Clicked(at) => match landed(renderer, editor, says, at) {
+                Landed::Record(one) => {
+                    opened.one(kept, one);
+                    moved |= opened.is_open();
                 }
+                Landed::Line => moved = true,
+                Landed::Counted | Landed::Nothing => {}
+            },
+
+            // Answered even while something stands over the box, because what
+            // it moves is underneath that: the reader reads back through the
+            // turn while the turn goes on being written. The frame is the
+            // renderer's own, so nothing is owed here.
+            Meant::Scrolled { back } => {
+                renderer.notched(back)?;
             }
 
             Meant::Ignored => {}
@@ -1024,6 +1054,12 @@ enum Meant {
     /// its width, and in the box the column is which character the cursor goes
     /// before.
     Clicked(Pointed),
+    /// The wheel, moving the transcript. `back` is towards the top of the
+    /// session.
+    Scrolled {
+        /// Whether the notch was towards the top of the session.
+        back: bool,
+    },
     /// An arrow through a list there is none of, a mode step. Neither has
     /// anything to act on while a turn is running.
     Ignored,
@@ -1064,6 +1100,11 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Queue => Meant::QueueView,
 
         Pressed::Clicked { row, column } => Meant::Clicked(Pointed { row, column }),
+
+        // The wheel, which means the same mid-turn as it does between turns:
+        // the reader is looking back through what has already been said. That
+        // it is being added to above them is the reason they would reach for it.
+        Pressed::Scrolled { back } => Meant::Scrolled { back },
 
         // Ctrl+E among them: what it opens is an explanation of something
         // waiting to be decided about, and a running turn has decided already.
@@ -1146,6 +1187,9 @@ fn rewrap<T: Terminal>(
 }
 
 /// Puts the box under the turn, with the cursor in it.
+///
+/// The box first and the footing after, for the reason [`draw`] draws them in
+/// that order between turns.
 pub(super) fn stand<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
@@ -1153,9 +1197,10 @@ pub(super) fn stand<T: Terminal>(
     says: &Says,
     style: Style,
 ) -> Result<(), Fatal> {
-    let (rows, caret, _) = working(renderer, editor, footing, says, style);
+    let footed = working(renderer, editor, footing, says, style);
 
-    renderer.under(&rows, Some(caret), style.palette())?;
+    renderer.live(&footed.boxed, footed.caret, style.palette())?;
+    renderer.under(&footed.over, None, style.palette())?;
     Ok(())
 }
 
@@ -1207,37 +1252,36 @@ fn around<'a>(planning: &'a Planning, open: &'a Opened, says: &'a Says) -> Aroun
 }
 
 /// Puts the box on screen with the cursor where the line was typed to, and
-/// answers how many rows of the region ended up above the box.
+/// whatever the line has opened directly over it.
 ///
-/// The box is the last rows of the region, the list is the ones above it, and
-/// the plan is above that. Drawn in that order for the reason the list opens
-/// upwards at all: the box and the row under it are what the eye is resting on,
-/// and rows added above them leave both exactly where they were.
-///
-/// Which is also why that count is what comes back. A click is read against the
-/// box, and the box is however far down the region this frame happened to put
-/// it — so the frame that put it there is what has to say.
+/// Two calls rather than one, and that is the whole of why this reads the way
+/// it does. The box goes into the band that is held to a share of the window,
+/// because that share is a rule about how much of the screen a long prompt may
+/// take from what it is answering. Everything above it — the list, the plan,
+/// the row saying what is left — goes into the band above, which has no share:
+/// a list is what the reader is looking at while it is open, so the transcript
+/// is what gives way to it rather than the box being pushed off the screen.
 ///
 /// The list takes its share of the window before the plan is asked for any. It
 /// is the shorter of the two and it was opened by the character last typed,
 /// which is a stronger claim on the rows than a panel that was already there.
+/// Neither is counted against the opening: a list opened over it is what the
+/// reader is looking at, and shrinking it to keep a card that has already been
+/// read is the wrong way round.
 fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
     style: Style,
     around: Around<'_>,
-    opening: Option<&opening::Standing>,
-) -> Result<Drawn, Fatal> {
+) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let prompt = writing(editor, around.says, Prompt::room(renderer.rows()));
 
-    let mut boxed = prompt.rows(columns, style.glyphs());
-    let mut caret = prompt.caret(columns);
+    let boxed = prompt.rows(columns, style.glyphs());
+    let caret = prompt.caret(columns);
 
     // What is left for a list once the box and the blank row that keeps it off
-    // the box have taken theirs. The opening is not counted here: a list opened
-    // over it is what the reader is looking at, and shrinking it to keep a card
-    // that has already been read is the wrong way round.
+    // the box have taken theirs.
     let room = renderer.rows().saturating_sub(boxed.len() + 1);
 
     let mut listed = around.open.rows(columns, room, style.glyphs());
@@ -1250,90 +1294,29 @@ fn draw<T: Terminal>(
         listed.push(Row::new());
     }
 
-    let mut rows = Vec::new();
-    rows.append(&mut around.planning.rows(
+    let mut over = Vec::new();
+    over.append(&mut around.planning.rows(
         columns,
         room.saturating_sub(listed.len()),
         style.glyphs(),
     ));
-    rows.append(&mut listed);
+    over.append(&mut listed);
 
     // Directly over the box, right-aligned, so it sits in the column the row a
     // turn runs on puts it in. Nothing at all where no window is known, which
     // is not a reading of zero.
     if let Some(row) = left(around.says.left, columns) {
-        rows.push(row);
+        over.push(row);
     }
 
-    // Above everything else, because the opening is what the session opened
-    // with and nothing has been said yet for it to be under.
-    //
-    // It stands only where the whole frame fits the window with it. A live
-    // region taller than the window has its top above the first row of the
-    // screen, where no rewind may reach it, so the frame after would leave
-    // what it could not reach behind; and a card that took its rows from the
-    // list would hide the thing that was just opened. Either way the answer is
-    // the same, and it is the caller who writes it down.
-    let stood = match opening {
-        Some(opening) => {
-            let mut card = opening.rows(columns);
-            if card.len() + rows.len() + boxed.len() > renderer.rows() {
-                return Ok(Drawn {
-                    above: 0,
-                    stood: false,
-                });
-            }
-            card.append(&mut rows);
-            rows = card;
-            true
-        }
-        None => false,
-    };
-
-    let above = rows.len();
-    caret.row += above;
-    rows.append(&mut boxed);
-
-    renderer.live(&rows, caret, style.palette())?;
-    Ok(Drawn { above, stood })
-}
-
-/// What one frame of the box left behind.
-struct Drawn {
-    /// How many rows of the region ended up above the box.
-    above: usize,
-    /// Whether the opening stood in that region. `false` where the window had
-    /// no room for it beside the box, which is what the frame below writes it
-    /// down on.
-    stood: bool,
-}
-
-/// One frame of the box, writing the opening down where it can no longer stand
-/// over it.
-///
-/// The window is the only thing that decides: a card that fits is drawn again
-/// on every frame and therefore at every width, and one that does not is
-/// committed at the width it has now and belongs to the terminal from then on.
-/// Which way it goes is asked per frame rather than once, because the window is
-/// dragged between them.
-fn framed<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    editor: &Editor,
-    style: Style,
-    around: Around<'_>,
-    opening: &mut Option<opening::Standing>,
-) -> Result<usize, Fatal> {
-    let drawn = draw(renderer, editor, style, around, opening.as_ref())?;
-    if drawn.stood {
-        return Ok(drawn.above);
-    }
-
-    let Some(card) = opening.take() else {
-        return Ok(drawn.above);
-    };
-
-    card.commit(renderer)?;
-    Ok(draw(renderer, editor, style, around, None)?.above)
+    // The box first, and the order matters. Each of these is a frame, and the
+    // box's rows are decided by the window and its own height alone — so
+    // setting it first puts it where it is going to stay, and the frame after
+    // it only fills in what is above. The other way round draws the rows over
+    // a box that has not moved yet and then moves them.
+    renderer.live(&boxed, caret, style.palette())?;
+    renderer.under(&over, None, style.palette())?;
+    Ok(())
 }
 
 /// How much of the window is left, against the end of its own row.
@@ -1382,17 +1365,6 @@ struct Pointed {
     column: usize,
 }
 
-/// The screen row the terminal says its cursor is on.
-///
-/// The one fact an inline renderer cannot work out for itself: it draws
-/// wherever the shell left off and the terminal scrolls that without saying so,
-/// so where a frame went is a question only the terminal can answer. Asked once
-/// per click and never per frame, because it costs a round trip — and `None`
-/// where it went unanswered, which leaves the click meaning nothing.
-fn cursor() -> Option<usize> {
-    caret().ok().map(|(row, _)| row)
-}
-
 /// What a click landed on.
 ///
 /// Three answers rather than two, because a click that landed on nothing is not
@@ -1414,34 +1386,24 @@ enum Landed {
 
 /// Reads where a click landed, moving the cursor where it landed on the line.
 ///
-/// Which row of its region a click landed on is the renderer's arithmetic — it
-/// knows how tall the region is and how far up in it the cursor was parked, so
-/// the screen row the terminal reported is the one thing it was missing. Both
-/// answers come out of that one reading, which is why they are asked together:
-/// a row above the region is a row of the record, and a row inside it may be a
-/// place in the line.
-///
-/// What is left here is where the box sits inside that region, which the frame
-/// that drew it said. Leaving the cursor where it is is the right answer to a
-/// click that did not land on the line.
+/// What is under a window row is the renderer's answer: it shares the window
+/// out and it holds the transcript, so a row of one band and a line of the
+/// session come out of the same reading. What is left here is where the box
+/// sits inside what is standing, which the frame that drew it said. Leaving the
+/// cursor where it is is the right answer to a click that did not land on the
+/// line.
 fn landed<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &mut Editor,
     says: &Says,
-    above: usize,
     at: Pointed,
 ) -> Landed {
-    let Some(cursor) = cursor() else {
-        return Landed::Nothing;
-    };
-
-    if let Some(row) = renderer.recorded(at.row, cursor) {
-        return Landed::Record(row);
-    }
-
-    let within = renderer.within(at.row, cursor);
-    let Some(row) = within.and_then(|row| row.checked_sub(above)) else {
-        return Landed::Nothing;
+    let row = match renderer.aimed(at.row) {
+        Some(Aimed::Line(line)) => return Landed::Record(line),
+        Some(Aimed::Boxed(row)) => row,
+        // A list or a plan standing over the box. Answered where it is drawn,
+        // by the loop that opened it, and not here.
+        Some(Aimed::Stood(_)) | None => return Landed::Nothing,
     };
 
     let prompt = writing(editor, says, Prompt::room(renderer.rows()));
@@ -1533,12 +1495,10 @@ impl Opened {
     /// The rows to open above the box, and the blank row that keeps them off
     /// it.
     ///
-    /// A list with no room for it is not opened. The live region is taken back
-    /// by moving the cursor up over it, so one taller than the screen is one
-    /// whose top has already scrolled beyond reach — the next rewind would move
-    /// back over rows the terminal has taken. Drawing what fits instead would
-    /// be worse than drawing nothing: a list cut off at the top reads as the
-    /// whole list.
+    /// A list with no room for it is not opened, and not cut down to what there
+    /// is room for either: a list cut off at the top reads as the whole list,
+    /// which is worse than drawing nothing at all. Nothing is what a reader can
+    /// tell is nothing.
     fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
         if self.shown.is_empty() || self.shown.len() > room {
             return Vec::new();
@@ -1568,7 +1528,6 @@ fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &mut Editor,
     open: &Opened,
-    opening: &mut Option<opening::Standing>,
     style: Style,
 ) -> Result<Asked, Fatal> {
     let chosen = open.chosen();
@@ -1577,16 +1536,11 @@ fn said<T: Terminal>(
 
     let columns = renderer.columns();
 
+    // Back to the foot before a word of it is drawn: what was just sent is
+    // about to be answered at the bottom, and somebody who had scrolled up to
+    // read is done doing that the moment they send something.
+    renderer.follows()?;
     renderer.settle()?;
-
-    // The opening stood in the live region the settle above has just taken
-    // back, and this is the last moment it can be written down: the line below
-    // is the first row of the record that is not the opening, and a row of the
-    // record is a row no rewind may reach. From here the width it was last
-    // drawn at is the width it keeps.
-    if let Some(opening) = opening.take() {
-        opening.commit(renderer)?;
-    }
 
     // What was asked is a block like any other, and what parts one block from
     // the next is a row of nothing. Asked on the way in rather than left behind
@@ -1594,10 +1548,12 @@ fn said<T: Terminal>(
     // parted afterwards would end on a blank row under the final answer, and the
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
-    renderer.present(
-        &Prompt::committed(&said, columns, style.glyphs(), style.palette().bands()),
-        style.palette(),
-    )?;
+    renderer.present(&Prompt::committed(
+        &said,
+        columns,
+        style.glyphs(),
+        style.palette().bands(),
+    ))?;
 
     Ok(Asked::Said(said))
 }

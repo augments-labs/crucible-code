@@ -106,6 +106,10 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
 /// answered and its line has stopped being live.
 fn committed(said: &str, window: usize, style: Style) -> String {
     let mut renderer = Renderer::new(Recording::new(window, 24));
+    // Dressed, the way the run dresses it once the style is settled. A record
+    // is painted from the palette the renderer is wearing at the moment the
+    // frame is drawn, so one nobody told would draw every row plain.
+    renderer.wears(style.palette());
 
     returned(&mut renderer, said, style).expect("the call to commit");
 
@@ -126,9 +130,9 @@ fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
 #[test]
 fn a_call_is_not_committed_while_its_tool_is_still_out() {
     // It stands in the footing instead, with a mark that pulses, and the
-    // renderer moves back over it every frame. A line written to scrollback
-    // here would be that same line a second time once the tool answered --
-    // and a moving line cannot be one the renderer never rewinds over.
+    // renderer draws it again every frame. A line committed here would be that
+    // same line a second time once the tool answered, and a moving line is not
+    // one the transcript can hold still.
     let written = announced("read", r#"{"path":"src/main.rs"}"#, "src/main.rs");
 
     assert!(!written.contains("Read"), "{written}");
@@ -177,6 +181,7 @@ fn the_line_hanging_under_a_call_is_quiet() {
     let style = Style::coloured();
     let palette = style.palette();
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    renderer.wears(palette);
 
     event(
         &mut renderer,
@@ -928,6 +933,7 @@ fn a_change_reaches_the_terminal_on_the_ground_that_says_which_way_it_went() {
     // colour under it and nothing above this draws one.
     let style = Style::coloured();
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    renderer.wears(style.palette());
 
     event(
         &mut renderer,
@@ -972,9 +978,9 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
 #[test]
 fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
     // The two halves of the arm, together: a piece of a running command's output
-    // reaches the key that stands a call whole, and reaches scrollback not at
-    // all. Committed, it would sit immediately above the same text inside the
-    // result that follows it.
+    // reaches the key that stands a call whole, and reaches the transcript not
+    // at all. Committed, it would sit immediately above the same text inside
+    // the result that follows it.
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
     let mut kept = Kept::default();
     kept.calling("Bash(cargo build)".to_owned());
@@ -995,9 +1001,9 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
         Some("   Compiling crucible-core v0.5.0\n")
     );
     assert_eq!(
-        renderer.record(),
+        renderer.lines(),
         0,
-        "a running command's output was committed to scrollback"
+        "a running command's output was committed to the transcript"
     );
 }
 

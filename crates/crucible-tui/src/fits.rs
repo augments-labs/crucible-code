@@ -2,10 +2,11 @@
 //!
 //! Nothing drawn is wider than the window it was given, and nothing given a
 //! room is taller than that room. Both are the renderer's arithmetic rather
-//! than a matter of taste: a row past the last column is one the terminal wraps
-//! itself, which leaves the cursor a row below where the next frame expects it,
-//! and a live region taller than the window is one whose top has scrolled out
-//! of reach of the rewind that has to take it back.
+//! than a matter of taste. The window is cut into bands once, and each band is
+//! a rectangle a component is handed: a row past the last column is one the
+//! terminal wraps itself, which puts a second row where one was allowed for and
+//! draws every band below it a row from where it belongs — and a row past the
+//! last the caller offered is one written straight into the band underneath.
 //!
 //! Every component tests its own layout beside itself, and this replaces none
 //! of that. Those tests say the picture is *right*, which is the longer

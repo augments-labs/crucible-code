@@ -30,9 +30,9 @@ struct Span {
 
 /// One row of a component: its spans, left to right.
 ///
-/// Built once and then read. Nothing here is on the render path — a component
-/// is drawn into scrollback and never redrawn — so a row owns its text rather
-/// than borrowing what it was assembled from.
+/// Built once and then read. A row is laid out where the facts behind it are,
+/// and drawn wherever it ends up — held in the record, or stood over the box —
+/// so it owns its text rather than borrowing what it was assembled from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Row(Vec<Span>);
 
@@ -110,6 +110,83 @@ impl Row {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// How many display rows this row folds to at `columns`.
+    ///
+    /// Asked once per line per width and cached by whoever is keeping the rows,
+    /// because scrolling asks how tall a body of them is far more often than it
+    /// asks what is in any one.
+    #[must_use]
+    pub fn folds(&self, columns: usize) -> usize {
+        if columns == 0 {
+            return 1;
+        }
+        width::folds(&self.text(), columns).len().max(1)
+    }
+
+    /// This row folded to `columns`, each part keeping the slots it was written
+    /// in.
+    ///
+    /// The same breaks [`width::fold`] would choose for the same words, because
+    /// it is the same walk: a row of spans and a line of plain text must not
+    /// disagree about where a line ends. A row narrow enough already is one
+    /// row, and an empty row is one empty row — a blank line between paragraphs
+    /// is a row somebody meant.
+    #[must_use]
+    pub fn fold(&self, columns: usize) -> Vec<Self> {
+        if columns == 0 || self.columns() <= columns {
+            return vec![self.clone()];
+        }
+
+        let text = self.text();
+        let mut folded: Vec<Self> = width::folds(&text, columns)
+            .into_iter()
+            .map(|part| self.between(part.start, part.end))
+            .collect();
+
+        if folded.is_empty() {
+            folded.push(Self::new());
+        }
+        folded
+    }
+
+    /// This row with anything past `columns` cut off.
+    ///
+    /// What a row gets instead of folding when something laid it out against a
+    /// width: a narrower window is not an invitation to re-flow a table into
+    /// prose, and a row of box-drawing characters has no spaces to break at.
+    #[must_use]
+    pub fn clipped(&self, columns: usize) -> Self {
+        if self.columns() <= columns {
+            return self.clone();
+        }
+        let text = self.text();
+        self.between(0, width::clip(&text, columns).len())
+    }
+
+    /// The bytes of [`Row::text`] between `from` and `to`, as a row.
+    ///
+    /// Whichever spans the two ends fall inside are cut, and each piece keeps
+    /// the slot the span it came from was written in — which is the whole
+    /// reason folding happens here rather than on the painted string, where a
+    /// break would land in the middle of an escape sequence.
+    fn between(&self, from: usize, to: usize) -> Self {
+        let mut cut = Self::new();
+        let mut at = 0;
+
+        for span in &self.0 {
+            let (start, end) = (at, at + span.text.len());
+            at = end;
+
+            let (from, to) = (from.max(start), to.min(end));
+            if from >= to {
+                continue;
+            }
+            cut.push(span.slot, &span.text[from - start..to - start]);
+        }
+
+        cut
     }
 
     /// What the row says, with no colour in it.
@@ -208,6 +285,128 @@ mod tests {
         Palette::resolve(true, crate::color::Theme::Dark, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
+    }
+
+    #[test]
+    fn a_folded_row_says_what_the_same_words_folded_as_text_say() {
+        // The two walks are one walk, and this is where that is stated. A row
+        // of spans wrapping a column earlier than the paragraph beside it would
+        // be a picture nobody could line up.
+        let row = Row::plain("a sentence long enough to need somewhere sensible to break")
+            .then(Slot::Accent, " and an accented tail on the end of it");
+
+        for columns in 1..40 {
+            let said: Vec<String> = row.fold(columns).iter().map(Row::text).collect();
+            assert_eq!(
+                said,
+                width::fold(&row.text(), columns),
+                "at {columns} columns"
+            );
+        }
+    }
+
+    #[test]
+    fn no_row_a_fold_hands_back_is_wider_than_it_was_asked_for() {
+        let row = Row::plain("short ")
+            .then(Slot::Strong, "supercalifragilisticexpialidocious")
+            .then(Slot::Quiet, " and more");
+
+        for columns in 1..40 {
+            for part in row.fold(columns) {
+                assert!(part.columns() <= columns, "{:?} at {columns}", part.text());
+            }
+        }
+    }
+
+    #[test]
+    fn a_span_cut_by_a_fold_keeps_the_slot_it_was_written_in() {
+        // What makes folding a row's job rather than the painted string's: the
+        // break falls inside the accented run, and both halves are still
+        // accented afterwards.
+        let row = Row::plain("plain ").then(Slot::Accent, "one two three");
+        let folded = row.fold(10);
+
+        assert!(folded.len() > 1, "the row did not fold");
+        for part in &folded {
+            for (slot, text) in part.spans() {
+                let expected = if text.trim() == "plain" {
+                    Slot::Plain
+                } else {
+                    Slot::Accent
+                };
+                assert_eq!(slot, expected, "{text:?} lost its slot");
+            }
+        }
+    }
+
+    #[test]
+    fn a_row_with_nothing_in_it_folds_to_one_row_with_nothing_in_it() {
+        // A blank line between paragraphs is a row somebody meant. Folding it
+        // away would close the gap the reader is using to tell them apart.
+        assert_eq!(Row::new().fold(20).len(), 1);
+        assert_eq!(Row::plain("").fold(20).len(), 1);
+        assert_eq!(Row::plain("   ").fold(20).len(), 1);
+    }
+
+    #[test]
+    fn a_row_of_nothing_but_spaces_folds_to_one_row() {
+        let mut row = Row::new();
+        row.push(Slot::Plain, "            ");
+
+        // The fold drops whitespace at a break, so a row that is nothing else
+        // has no rows left to hand back. It is still a row somebody wrote, and
+        // a blank one is what it looks like.
+        assert_eq!(row.fold(4).len(), 1);
+        assert_eq!(row.fold(4).first().map(Row::text).as_deref(), Some(""));
+        assert_eq!(row.folds(4), 1);
+    }
+
+    #[test]
+    fn a_row_already_narrow_enough_is_handed_back_whole() {
+        // Including its trailing spaces, which a fold would trim: something
+        // padded this row to a width and painted it, and the padding is part of
+        // the picture rather than whitespace to be tidied.
+        let row = Row::plain("kept ").then(Slot::Accent, "  ");
+        assert_eq!(row.fold(40), vec![row.clone()]);
+    }
+
+    #[test]
+    fn how_tall_a_row_folds_is_how_many_rows_it_folds_to() {
+        let row = Row::plain("one two three four five six seven eight nine ten");
+        for columns in 1..40 {
+            assert_eq!(row.folds(columns), row.fold(columns).len(), "at {columns}");
+        }
+    }
+
+    #[test]
+    fn a_clipped_row_stops_at_the_width_and_keeps_its_slots() {
+        // What a set row gets instead of folding. The cut falls inside the
+        // accented run, and what survives is still accented.
+        let row = Row::plain("|")
+            .then(Slot::Accent, "-----------")
+            .then(Slot::Plain, "|");
+        let clipped = row.clipped(5);
+
+        assert_eq!(clipped.text(), "|----");
+        assert_eq!(
+            clipped.kinds().collect::<Vec<_>>(),
+            [Slot::Plain, Slot::Accent]
+        );
+        assert_eq!(row.clipped(40), row);
+    }
+
+    #[test]
+    fn a_wide_glyph_is_never_cut_in_half_by_a_fold_or_a_clip() {
+        // Two columns and one character. A cut between its bytes is not a
+        // narrower row, it is a broken one.
+        let row = Row::plain("\u{65e5}\u{672c}\u{8a9e}");
+
+        for columns in 1..8 {
+            assert!(row.clipped(columns).text().chars().all(|c| c != '\u{fffd}'));
+            for part in row.fold(columns) {
+                assert!(part.columns() <= columns.max(2), "{:?}", part.text());
+            }
+        }
     }
 
     #[test]

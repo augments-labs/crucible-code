@@ -20,27 +20,43 @@ use crate::error::{Accepted, ConfigError};
 
 use super::Settings;
 
-/// Whether the terminal is emptied before crucible draws its first row.
+/// How many rows of the transcript one notch of the wheel moves.
 ///
 /// Spelled out rather than built from the prefix, because a name assembled at
 /// run time is a name nobody can grep for. The test below is what keeps it in
 /// the namespace.
-pub(crate) const CLEAR_SCREEN: &str = "CRUCIBLE_CODE_CLEAR_SCREEN";
+pub(crate) const MOUSE_SCROLL_SPEED: &str = "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED";
 
-/// Every way of writing yes.
+/// The fewest rows a notch may move.
 ///
-/// Two spellings because there are two places to write one: a shell variable is
-/// usually set to `1` and a JSON file usually reads `true`, and refusing either
-/// would be refusing the way somebody normally writes it where they wrote it.
-const YES: [&str; 2] = ["1", "true"];
+/// One rather than none. A wheel set to move nothing is a setting that looks
+/// applied and does nothing, which is the failure every refusal in this module
+/// exists to prevent — and a reader who wants the wheel to leave the transcript
+/// alone is asking for a thing crucible no longer has to give, because the
+/// screen it scrolls is its own.
+const LEAST: u16 = 1;
 
-/// Every way of writing no.
-const NO: [&str; 2] = ["0", "false"];
+/// The most rows a notch may move.
+///
+/// A screenful on most terminals. Past that the wheel stops being a scroll and
+/// becomes a jump: two notches and the rows that were on screen are gone with
+/// nothing between them to read, which is a worse way to lose your place than
+/// scrolling too slowly ever is.
+const MOST: u16 = 30;
+
+/// What a notch moves where nothing said otherwise.
+///
+/// Three lines of prose per notch, which is fast enough to cross a long answer
+/// in a few flicks and slow enough that the rows going past can still be read.
+const USUAL: u16 = 6;
 
 /// What a setting of this kind takes, for the message when it was given
 /// something else.
+///
+/// A sentence rather than a list, because the answers are a range and a range
+/// written out is thirty words nobody reads to the end of.
 fn accepted() -> Accepted {
-    Accepted::new(YES.iter().chain(&NO).copied().collect())
+    Accepted::new(vec!["a whole number of rows from 1 to 30"])
 }
 
 /// Whether a name is one of crucible's own settings set to something it does
@@ -53,50 +69,44 @@ fn accepted() -> Accepted {
 /// Asked per document rather than of the resolved settings, because this is the
 /// last moment the file and the position are still known.
 pub(crate) fn refused(name: &str, written: &str) -> Option<Accepted> {
-    (name == CLEAR_SCREEN && ClearScreen::read(written).is_none()).then(accepted)
+    (name == MOUSE_SCROLL_SPEED && ScrollSpeed::read(written).is_none()).then(accepted)
 }
 
-/// Whether the terminal is emptied before crucible draws its first row.
-///
-/// The default is not to. Crucible renders inline, so what is already on screen
-/// is somebody's own work and the scrollback above it is theirs to keep.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ClearScreen(bool);
+/// How many rows of the transcript one notch of the wheel moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollSpeed(u16);
 
-impl ClearScreen {
-    /// Whether a clear was asked for.
+impl Default for ScrollSpeed {
+    fn default() -> Self {
+        Self(USUAL)
+    }
+}
+
+impl ScrollSpeed {
+    /// How many rows to move, as the renderer counts them.
     #[must_use]
-    pub fn wanted(self) -> bool {
-        self.0
+    pub fn rows(self) -> i32 {
+        i32::from(self.0)
     }
 
-    /// Reads one of [`YES`] or [`NO`], however it was capitalised.
+    /// Reads a whole number of rows inside the bounds above.
     ///
-    /// `None` for anything else. There is no third answer to fall back to, and
-    /// falling back to `no` would be a setting that looks applied and does
-    /// nothing — which is the failure the refusals in this module exist to
-    /// prevent.
+    /// `None` for anything else, including a number outside them. Clamping
+    /// would be a setting that looks applied and does something else, and the
+    /// two are equally worth refusing: somebody who wrote `600` meant something
+    /// by it, and being told the range is how they find out what crucible
+    /// meant.
     fn read(written: &str) -> Option<Self> {
-        /// Whether a value is one of these spellings, however it was
-        /// capitalised.
-        fn among(answers: [&str; 2], written: &str) -> bool {
-            answers
-                .iter()
-                .any(|answer| answer.eq_ignore_ascii_case(written))
-        }
-
-        if among(YES, written) {
-            return Some(Self(true));
-        }
-        if among(NO, written) {
-            return Some(Self(false));
-        }
-        None
+        written
+            .parse::<u16>()
+            .ok()
+            .filter(|rows| (LEAST..=MOST).contains(rows))
+            .map(Self)
     }
 }
 
 impl Settings {
-    /// Whether to empty the terminal before crucible draws its first row.
+    /// How many rows of the transcript one notch of the wheel moves.
     ///
     /// `from` is the environment crucible was started in, and it wins: it is
     /// what somebody typed in front of this run, against a block they wrote
@@ -108,21 +118,21 @@ impl Settings {
     /// to something this cannot read. A value written in a *file* was refused
     /// while that file was still open, so the shell is the only place left that
     /// can still be wrong by the time this is asked.
-    pub fn clear_screen(
+    pub fn scroll_speed(
         &self,
         from: &impl Fn(&str) -> Option<String>,
-    ) -> Result<ClearScreen, ConfigError> {
-        if let Some(set) = from(CLEAR_SCREEN) {
-            return ClearScreen::read(&set).ok_or_else(|| ConfigError::AnswerInShell {
-                name: CLEAR_SCREEN.into(),
+    ) -> Result<ScrollSpeed, ConfigError> {
+        if let Some(set) = from(MOUSE_SCROLL_SPEED) {
+            return ScrollSpeed::read(&set).ok_or_else(|| ConfigError::AnswerInShell {
+                name: MOUSE_SCROLL_SPEED.into(),
                 accepted: accepted(),
             });
         }
 
         Ok(self
             .env()
-            .find(|(name, _)| *name == CLEAR_SCREEN)
-            .and_then(|(_, written)| ClearScreen::read(written))
+            .find(|(name, _)| *name == MOUSE_SCROLL_SPEED)
+            .and_then(|(_, written)| ScrollSpeed::read(written))
             .unwrap_or_default())
     }
 }
@@ -158,81 +168,89 @@ mod tests {
         // The prefix is what either workspace file is allowed to set, so a
         // name outside it would be a setting no project could use — and one
         // `check.rs` refuses in both project layers.
-        assert!(env::ours(CLEAR_SCREEN));
+        assert!(env::ours(MOUSE_SCROLL_SPEED));
     }
 
     #[test]
     fn every_answer_the_setting_accepts_reads_back_as_a_value() {
         // Two lists that have to agree: what `accepted()` promises a reader and
-        // what `read` will actually take. Without this, adding a spelling to
-        // one leaves the message advertising an answer the program refuses.
-        for answer in YES {
+        // what `read` will actually take. Without this, moving a bound leaves
+        // the message advertising an answer the program refuses.
+        for rows in LEAST..=MOST {
+            let written = rows.to_string();
             assert_eq!(
-                ClearScreen::read(answer),
-                Some(ClearScreen(true)),
-                "{answer}"
+                ScrollSpeed::read(&written),
+                Some(ScrollSpeed(rows)),
+                "{rows}"
             );
-        }
-        for answer in NO {
-            assert_eq!(
-                ClearScreen::read(answer),
-                Some(ClearScreen(false)),
-                "{answer}"
-            );
-        }
-        for answer in YES.iter().chain(&NO) {
-            assert!(refused(CLEAR_SCREEN, answer).is_none(), "{answer}");
+            assert!(refused(MOUSE_SCROLL_SPEED, &written).is_none(), "{rows}");
         }
     }
 
     #[test]
-    fn an_answer_is_read_however_it_was_capitalised() {
-        // `TRUE` is what somebody writes in a shell often enough that refusing
-        // it would only ever be pedantry.
-        assert_eq!(ClearScreen::read("TRUE"), Some(ClearScreen(true)));
-        assert_eq!(ClearScreen::read("False"), Some(ClearScreen(false)));
+    fn a_number_outside_the_bounds_is_refused_rather_than_pulled_into_them() {
+        // Clamping would be a setting that looks applied and does something
+        // else. Somebody who wrote 600 meant something by it, and the range is
+        // what tells them what crucible meant.
+        for written in ["0", "31", "600", "65536"] {
+            assert_eq!(ScrollSpeed::read(written), None, "{written}");
+            assert!(refused(MOUSE_SCROLL_SPEED, written).is_some(), "{written}");
+        }
     }
 
     #[test]
-    fn a_setting_nothing_mentioned_leaves_the_screen_alone() {
+    fn a_count_is_a_count_and_not_a_thing_that_looks_like_one() {
+        for written in ["", " 6", "6 ", "six", "6.0", "-6", "0x6"] {
+            assert_eq!(ScrollSpeed::read(written), None, "{written:?}");
+        }
+
+        // A leading plus is a spelling of the same number, and refusing it
+        // would be pedantry aimed at somebody who wrote what they meant.
+        assert_eq!(ScrollSpeed::read("+6"), Some(ScrollSpeed(6)));
+    }
+
+    #[test]
+    fn a_setting_nothing_mentioned_moves_the_usual_amount() {
         let settings = Settings::resolve(Vec::new());
 
         assert_eq!(
-            settings.clear_screen(&nothing()).expect("nothing was set"),
-            ClearScreen::default()
+            settings.scroll_speed(&nothing()).expect("nothing was set"),
+            ScrollSpeed::default()
         );
-        assert!(!ClearScreen::default().wanted());
+        assert_eq!(ScrollSpeed::default().rows(), i32::from(USUAL));
     }
 
     #[test]
     fn a_block_says_it_for_every_run_in_this_project() {
         let project = Document::sample(
-            r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "true"}}"#,
+            r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "3"}}"#,
             Origin::Project,
         );
         let settings = Settings::resolve(vec![project]);
 
-        assert!(
+        assert_eq!(
             settings
-                .clear_screen(&nothing())
+                .scroll_speed(&nothing())
                 .expect("nothing was set in the shell")
-                .wanted()
+                .rows(),
+            3
         );
     }
 
     #[test]
     fn the_shell_outranks_the_block() {
         let project = Document::sample(
-            r#"{"env": {"CRUCIBLE_CODE_CLEAR_SCREEN": "true"}}"#,
+            r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "3"}}"#,
             Origin::Project,
         );
         let settings = Settings::resolve(vec![project]);
 
-        assert!(
-            !settings
-                .clear_screen(&shell(&[(CLEAR_SCREEN, "0")]))
-                .expect("0 is an answer")
-                .wanted()
+        assert_eq!(
+            settings
+                .scroll_speed(&shell(&[(MOUSE_SCROLL_SPEED, "12")]))
+                .expect("12 is an answer")
+                .rows(),
+            12
         );
     }
 
@@ -241,12 +259,12 @@ mod tests {
         let settings = Settings::resolve(Vec::new());
 
         let problem = settings
-            .clear_screen(&shell(&[(CLEAR_SCREEN, "sometimes")]))
-            .expect_err("sometimes is not an answer");
+            .scroll_speed(&shell(&[(MOUSE_SCROLL_SPEED, "quickly")]))
+            .expect_err("quickly is not an answer");
 
         let said = problem.to_string();
-        assert!(said.contains(CLEAR_SCREEN), "{said}");
-        assert!(said.contains("true"), "{said}");
+        assert!(said.contains(MOUSE_SCROLL_SPEED), "{said}");
+        assert!(said.contains("1 to 30"), "{said}");
     }
 
     #[test]
@@ -257,7 +275,7 @@ mod tests {
         let settings = Settings::resolve(Vec::new());
 
         let problem = settings
-            .clear_screen(&shell(&[(CLEAR_SCREEN, "hunter2")]))
+            .scroll_speed(&shell(&[(MOUSE_SCROLL_SPEED, "hunter2")]))
             .expect_err("hunter2 is not an answer");
 
         assert!(!problem.to_string().contains("hunter2"), "{problem}");
@@ -269,6 +287,6 @@ mod tests {
         // The block is still the environment. `EDITOR=sometimes` is a string on
         // its way to a command, and this module has nothing to say about it.
         assert!(refused("EDITOR", "sometimes").is_none());
-        assert!(refused(CLEAR_SCREEN, "sometimes").is_some());
+        assert!(refused(MOUSE_SCROLL_SPEED, "sometimes").is_some());
     }
 }

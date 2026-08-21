@@ -10,24 +10,24 @@
 //! reporting clicks after crucible has gone sends escape bytes into whatever
 //! runs next.
 //!
-//! It has a price, and the price is the whole of why nothing here is on unless
-//! something asked for it. A terminal forwarding buttons is not using them
-//! itself: the wheel stops reaching the scrollback, and a drag stops selecting.
-//! Both of those are the reader's own and neither is crucible's to spend, so
-//! the pointer is the terminal's until something takes it rather than the other
-//! way about.
+//! It has a price, and the price is a drag that no longer selects: a terminal
+//! forwarding buttons is not using them itself. That was once reason enough to
+//! leave the pointer alone except where something asked for it, back when the
+//! wheel a reader turned was moving a scrollback this process did not own.
 //!
-//! Two things take it. A key, held for as long as a reader wants a click to put
-//! the cursor where they point; and a list, held for as long as it stands —
-//! there the wheel walking the list is what a wheel was going to be reached for
-//! anyway, and there is no scrollback under a list to lose.
+//! It is not any more. The transcript is crucible's, and the wheel is the way
+//! anybody reaches the part of it that is off screen, so the pointer is held for
+//! as long as a session is drawn. What the reader loses in exchange is a
+//! selection they can still make: every terminal keeps Shift as the way past a
+//! program holding the pointer, and that is the answer until this one has a
+//! selection of its own.
 //!
-//! Which means holders nest, so they are counted. A list opened while the key
-//! is held hands the pointer back at the end of the list and not at the end of
-//! the key, and the count is the only thing that knows the difference. It is
-//! per thread because writing to the terminal is one thread's job here, and a
-//! count two threads could race is a count that turns reporting off under the
-//! holder still holding it.
+//! Holders nest, so they are counted. A session holds one for its whole length
+//! and something standing inside it may hold another, and the end of the inner
+//! one is not the end of the outer — the count is the only thing that knows the
+//! difference. It is per thread because writing to the terminal is one thread's
+//! job here, and a count two threads could race is a count that turns reporting
+//! off under the holder still holding it.
 //!
 //! [`Raw`]: super::raw::Raw
 
@@ -218,10 +218,10 @@ mod tests {
 
     #[test]
     fn a_second_holder_does_not_hand_the_pointer_back_under_the_first() {
-        // The nesting the module doc claims: a list stands while the key that
-        // took the pointer is still held, and the end of the list is not the
-        // end of the key. Without the count the reader presses one key, opens
-        // one list, closes it, and finds their clicks gone.
+        // The nesting the module doc claims: something stands while the session
+        // that took the pointer is still running, and the end of the one is not
+        // the end of the other. Without the count the reader opens one list,
+        // closes it, and finds the wheel dead for the rest of the session.
         QUIETED.with(|count| count.set(0));
 
         let outer = held();
