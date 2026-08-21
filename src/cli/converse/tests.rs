@@ -3,6 +3,7 @@
 use std::cell::Cell;
 use std::io;
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1160,4 +1161,53 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
         .expect_err("a run that answered nothing to fail");
 
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
+}
+
+#[test]
+fn a_session_that_took_no_screen_has_nothing_to_say_about_where_it_went() {
+    // The reader kept everything: with no screen taken, the transcript was
+    // drawn into their own scrollback and is still above the cursor. A line
+    // sending them to a file to read what they can see would be noise, and
+    // noise at the one moment the terminal is theirs again.
+    let file = PathBuf::from("/sessions/one.jsonl");
+
+    assert_eq!(
+        Parting::of(false, Some(file.clone()), None),
+        Parting::Nothing
+    );
+    assert_eq!(
+        Parting::of(false, Some(file), Some("no room left on the device")),
+        Parting::Nothing
+    );
+}
+
+#[test]
+fn a_transcript_that_went_with_the_screen_is_pointed_at() {
+    let file = PathBuf::from("/sessions/one.jsonl");
+
+    assert_eq!(
+        Parting::of(true, Some(file.clone()), None),
+        Parting::Kept(file)
+    );
+}
+
+#[test]
+fn a_log_that_stopped_recording_is_not_pointed_at_as_the_whole_transcript() {
+    // What was said about the failure while the session ran was said on the
+    // screen that has just been handed back. So the only word left about it is
+    // this one, and calling the file the transcript would be crucible's last
+    // sentence and a false one.
+    let file = PathBuf::from("/sessions/one.jsonl");
+
+    assert_eq!(
+        Parting::of(true, Some(file.clone()), Some("no room left on the device")),
+        Parting::Lost(file)
+    );
+}
+
+#[test]
+fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
+    // No file, so nowhere to send anybody -- and the screen having been taken
+    // does not conjure one.
+    assert_eq!(Parting::of(true, None, None), Parting::Nothing);
 }

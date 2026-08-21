@@ -5,7 +5,7 @@
 //! because the budget in `CONTRIBUTING.md` is a ceiling on the whole process
 //! and a store that grew with the session would spend it on rows nobody is
 //! looking at. What falls off the top is not lost: the session log holds every
-//! message, and a recap on the way out says where it is.
+//! message, and the line a session ends on says where that is.
 //!
 //! A line is held as a [`Row`] — spans carrying slots — rather than as the
 //! bytes a terminal would receive, so a narrower window re-wraps rather than

@@ -21,6 +21,12 @@ back and ask for.
 
 ### Added
 
+**A session that ends says where its transcript went.** The screen crucible
+draws on is borrowed and handed back, so the last thing it writes is the file
+the transcript is in and the command that picks the session up. A log that
+stopped being written says so beside the file, and a run that borrowed no
+screen says nothing at all.
+
 **A result the transcript cut short lights up when you point at it.** The row is
 the thing a click opens, so pointing at one now shows which rows answer a click
 and which are only text. Nothing else on the window lights, because nothing else

@@ -1199,3 +1199,50 @@ fn a_window_with_no_room_for_the_words_either_still_fits_the_window() {
         assert!(widest <= columns, "{columns}: {said}");
     }
 }
+
+/// A window too narrow to hold the address below, so that a clip would show.
+const CRAMPED: usize = 24;
+
+/// A session file with a name longer than that window.
+const FILE: &str = "/home/somebody/.crucible/sessions/one.jsonl";
+
+/// A session's last word, drawn onto the screen it did not run on.
+fn parted(went: &Parting) -> String {
+    let mut renderer = Renderer::new(Recording::new(CRAMPED, 24));
+
+    parting(&mut renderer, went, Style::plain()).expect("a parting to draw");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_transcript_that_went_with_the_screen_is_named_by_a_path_that_can_be_opened() {
+    // The address is the whole point of the line, and an address cut to the
+    // window is a reader sent nowhere. Every other word here is a sentence and
+    // would survive losing its tail; this one would not.
+    let written = parted(&Parting::Kept(FILE.into()));
+
+    assert!(written.contains(FILE), "{written}");
+    assert!(written.contains("--continue"), "{written}");
+}
+
+#[test]
+fn a_log_that_stopped_recording_says_so_where_it_says_where_the_file_is() {
+    // The session said this on the screen it was running on too, and that
+    // screen has just been handed back. So the same sentence has to be here,
+    // beside the file, or a reader opens a truncated transcript believing it
+    // whole.
+    let written = parted(&Parting::Lost(FILE.into()));
+
+    assert!(written.contains(FILE), "{written}");
+    assert!(written.contains("stopped recording"), "{written}");
+}
+
+#[test]
+fn a_session_that_hid_nothing_writes_nothing_on_its_way_out() {
+    // The row a shell is about to draw its prompt on belongs to the shell. A
+    // session that took no screen has nothing to hand back and nothing to
+    // report, and spending that row saying so is the one cost this line exists
+    // to avoid.
+    assert_eq!(parted(&Parting::Nothing), "");
+}
