@@ -19,11 +19,15 @@
 //! which is why there was none; the box below lays out by line, so now there
 //! is.
 //!
-//! Nothing here reads a key or draws a row. It is a string and an offset, so a
-//! test of what a keystroke does is a test of what a keystroke does, and the
-//! component that owns the box decides what any of it looks like.
+//! Nothing here reads a key or draws a row. It is a string, an offset, and
+//! bounded ranges for large pastes, so a test of what a keystroke does is a test
+//! of what a keystroke does, and the component that owns the box decides what
+//! any of it looks like. The source stays expanded; only its prompt projection
+//! substitutes a compact label.
 //! The string retains at most one MiB. An edit that would cross that boundary is
 //! refused whole, leaving the caller to say so in the box.
+
+use std::ops::Range;
 
 use crate::width;
 
@@ -35,6 +39,131 @@ use crate::width;
 /// arrives with its indentation gone -- out of the box, and out of the prompt
 /// that is sent. Four columns is what one level of it reads as in a box.
 const TAB: &str = "    ";
+
+/// A paste longer than this is one compact element on screen.
+const PASTED_AFTER: usize = 1_000;
+
+/// Where one compact paste stands in the authoritative source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pasted {
+    source: Range<usize>,
+    shown: Range<usize>,
+}
+
+/// The prompt-facing view of an editor.
+///
+/// Its text may compact large pastes, while every position it returns is in
+/// the editor's authoritative expanded source.
+#[derive(Debug, Clone, Copy)]
+pub struct Projection<'a> {
+    source: &'a str,
+    shown: &'a str,
+    pasted: &'a [Pasted],
+    at: usize,
+}
+
+impl<'a> Projection<'a> {
+    /// What the prompt draws.
+    #[must_use]
+    pub fn text(&self) -> &'a str {
+        self.shown
+    }
+
+    /// Which displayed logical line the caret is on.
+    #[must_use]
+    pub fn line(&self) -> usize {
+        let at = self.shown_at(self.at);
+        self.shown
+            .get(..at)
+            .unwrap_or_default()
+            .matches('\n')
+            .count()
+    }
+
+    /// How many display columns into its displayed logical line the caret sits.
+    #[must_use]
+    pub fn column(&self) -> usize {
+        let at = self.shown_at(self.at);
+        let before = self.shown.get(..at).unwrap_or_default();
+        width::columns(before.split('\n').next_back().unwrap_or_default())
+    }
+
+    /// Maps a displayed logical line and column back into the expanded source.
+    pub(crate) fn source_position(&self, line: usize, column: usize) -> (usize, usize) {
+        let mut start = 0;
+        let mut at_line = 0;
+
+        for (offset, character) in self.shown.char_indices() {
+            if at_line == line {
+                break;
+            }
+            if character == '\n' {
+                at_line += 1;
+                start = offset + 1;
+            }
+        }
+
+        let rest = self.shown.get(start..).unwrap_or_default();
+        let line_text = rest.split('\n').next().unwrap_or_default();
+        let within = width::cut(line_text, column).unwrap_or(line_text.len());
+        let source_at = self.source_at(start + within);
+        let before = self.source.get(..source_at).unwrap_or_default();
+        let source_line = before.matches('\n').count();
+        let source_column = width::columns(before.split('\n').next_back().unwrap_or_default());
+
+        (source_line, source_column)
+    }
+
+    /// The display offset corresponding to a source boundary.
+    fn shown_at(&self, source_at: usize) -> usize {
+        let mut source = 0;
+        let mut shown = 0;
+
+        for pasted in self.pasted {
+            if source_at <= pasted.source.start {
+                return shown + source_at.saturating_sub(source);
+            }
+            if source_at < pasted.source.end {
+                let past_half = (source_at - pasted.source.start) * 2 >= pasted.source.len();
+                return if past_half {
+                    pasted.shown.end
+                } else {
+                    pasted.shown.start
+                };
+            }
+
+            source = pasted.source.end;
+            shown = pasted.shown.end;
+        }
+
+        shown + source_at.saturating_sub(source)
+    }
+
+    /// The source boundary corresponding to a display boundary.
+    fn source_at(&self, shown_at: usize) -> usize {
+        let mut source = 0;
+        let mut shown = 0;
+
+        for pasted in self.pasted {
+            if shown_at <= pasted.shown.start {
+                return source + shown_at.saturating_sub(shown);
+            }
+            if shown_at < pasted.shown.end {
+                let past_half = (shown_at - pasted.shown.start) * 2 >= pasted.shown.len();
+                return if past_half {
+                    pasted.source.end
+                } else {
+                    pasted.source.start
+                };
+            }
+
+            source = pasted.source.end;
+            shown = pasted.shown.end;
+        }
+
+        source + shown_at.saturating_sub(shown)
+    }
+}
 
 /// A key, as an editor cares about it.
 ///
@@ -142,6 +271,8 @@ pub enum Typed {
 pub struct Editor {
     /// What has been typed.
     said: String,
+    /// What is shown, identical to source except for compact large pastes.
+    shown: String,
     /// Where the cursor is, as a byte offset into it.
     ///
     /// Bytes rather than characters because every edit is an insert or a remove
@@ -186,6 +317,11 @@ pub struct Editor {
     /// keeps the modified Return for itself is not one spelling a break in full
     /// for a key it was bound to.
     paired: bool,
+    /// Large pastes, kept as source ranges so they can be crossed atomically.
+    ///
+    /// Every range holds more than `PASTED_AFTER` source characters, which
+    /// bounds this list by the editor's one-MiB source ceiling.
+    pasted: Vec<Pasted>,
 }
 
 impl Editor {
@@ -224,6 +360,17 @@ impl Editor {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.said
+    }
+
+    /// The display view and its reversible mapping to expanded source.
+    #[must_use]
+    pub fn projection(&self) -> Projection<'_> {
+        Projection {
+            source: &self.said,
+            shown: &self.shown,
+            pasted: &self.pasted,
+            at: self.at,
+        }
     }
 
     /// Whether anything has been.
@@ -265,6 +412,7 @@ impl Editor {
     /// moved nothing costs no frame.
     pub fn place(&mut self, column: usize) -> Typed {
         let at = width::cut(&self.said, column).unwrap_or(self.said.len());
+        let at = self.snapped(at);
 
         if at == self.at {
             return Typed::Ignored;
@@ -303,6 +451,7 @@ impl Editor {
         let rest = self.said.get(start..).unwrap_or_default();
         let line_text = rest.split('\n').next().unwrap_or_default();
         let at = start + width::cut(line_text, column).unwrap_or(line_text.len());
+        let at = self.snapped(at);
 
         if at == self.at {
             return Typed::Ignored;
@@ -321,13 +470,17 @@ impl Editor {
     /// line starts in.
     pub fn take(&mut self) -> String {
         self.at = 0;
+        self.shown.clear();
+        self.pasted.clear();
         std::mem::take(&mut self.said)
     }
 
     /// Empties the line without taking it anywhere.
     pub fn clear(&mut self) {
         self.said.clear();
+        self.shown.clear();
         self.at = 0;
+        self.pasted.clear();
     }
 
     /// Whether `key` would move the cursor, without moving it.
@@ -403,7 +556,7 @@ impl Editor {
         // Nothing to rewrite: every character stands as it is, including a
         // break already spelled the way this editor stores one.
         let Some(first_rewritten) = pasted.find(|character: char| !keeps(character)) else {
-            return self.insert_text(pasted);
+            return self.insert_paste(pasted);
         };
 
         let remaining = Self::MAX_BYTES.saturating_sub(self.said.len());
@@ -429,7 +582,7 @@ impl Editor {
             plain.push_str(carried);
         }
 
-        self.insert_text(&plain)
+        self.insert_paste(&plain)
     }
 
     /// Everything the cursor has passed.
@@ -491,8 +644,12 @@ impl Editor {
             return Typed::Refused;
         }
 
-        self.said.insert(self.at, typed);
+        let at = self.at;
+        let shown = self.projection().shown_at(at);
+        self.said.insert(at, typed);
+        self.shown.insert(shown, typed);
         self.at += typed.len_utf8();
+        self.shift_after_insert(at, shown, typed.len_utf8(), typed.len_utf8());
         self.wanted = None;
         Typed::Changed
     }
@@ -559,7 +716,7 @@ impl Editor {
         let wanted = *self.wanted.get_or_insert(column);
         let line = self.said.get(start..end).unwrap_or_default();
         let within = width::cut(line, wanted).unwrap_or(line.len());
-        let to = start + within;
+        let to = self.snapped(start + within);
 
         if to == self.at {
             return Typed::Ignored;
@@ -578,33 +735,103 @@ impl Editor {
             return Typed::Refused;
         }
 
-        self.said.insert_str(self.at, text);
+        let at = self.at;
+        let shown = self.projection().shown_at(at);
+        self.said.insert_str(at, text);
+        self.shown.insert_str(shown, text);
         self.at += text.len();
+        self.shift_after_insert(at, shown, text.len(), text.len());
         self.wanted = None;
+        Typed::Changed
+    }
+
+    /// Moves every compact element after an insertion by the inserted bytes.
+    fn shift_after_insert(
+        &mut self,
+        source_at: usize,
+        shown_at: usize,
+        source_bytes: usize,
+        shown_bytes: usize,
+    ) {
+        for pasted in &mut self.pasted {
+            if pasted.source.start >= source_at {
+                pasted.source.start += source_bytes;
+                pasted.source.end += source_bytes;
+            }
+            if pasted.shown.start >= shown_at {
+                pasted.shown.start += shown_bytes;
+                pasted.shown.end += shown_bytes;
+            }
+        }
+    }
+
+    /// Puts sanitized pasted text in the source and remembers a large one.
+    fn insert_paste(&mut self, text: &str) -> Typed {
+        if text.is_empty() {
+            return Typed::Ignored;
+        }
+        if text.len() > Self::MAX_BYTES.saturating_sub(self.said.len()) {
+            return Typed::Refused;
+        }
+
+        let characters = text.chars().count();
+        if characters <= PASTED_AFTER {
+            return self.insert_text(text);
+        }
+
+        let start = self.at;
+        let shown = self.projection().shown_at(start);
+        let label = format!("[Pasted text {characters} chars]");
+
+        self.said.insert_str(start, text);
+        self.shown.insert_str(shown, &label);
+        self.at += text.len();
+        self.shift_after_insert(start, shown, text.len(), label.len());
+        self.pasted.push(Pasted {
+            source: start..start + text.len(),
+            shown: shown..shown + label.len(),
+        });
+        self.pasted
+            .sort_unstable_by_key(|pasted| pasted.source.start);
+        self.wanted = None;
+
         Typed::Changed
     }
 
     /// Removes the character behind the cursor.
     fn rub(&mut self) -> Typed {
+        if let Some(source) = self
+            .pasted
+            .iter()
+            .find(|pasted| pasted.source.end == self.at)
+            .map(|pasted| pasted.source.clone())
+        {
+            return self.cut(source.start, source.end);
+        }
+
         let Some(back) = self.back() else {
             return Typed::Ignored;
         };
 
-        self.at -= back;
-        self.said.remove(self.at);
-        self.wanted = None;
-        Typed::Changed
+        self.cut(self.at - back, self.at)
     }
 
     /// Removes the character ahead of the cursor, which does not move.
     fn rub_ahead(&mut self) -> Typed {
-        if self.ahead().is_none() {
-            return Typed::Ignored;
+        if let Some(source) = self
+            .pasted
+            .iter()
+            .find(|pasted| pasted.source.start == self.at)
+            .map(|pasted| pasted.source.clone())
+        {
+            return self.cut(source.start, source.end);
         }
 
-        self.said.remove(self.at);
-        self.wanted = None;
-        Typed::Changed
+        let Some(ahead) = self.ahead() else {
+            return Typed::Ignored;
+        };
+
+        self.cut(self.at, self.at + ahead)
     }
 
     /// Removes everything between two boundaries the line already has, and
@@ -613,18 +840,55 @@ impl Editor {
     /// Both come from the same helpers the cursor moves by, so neither can land
     /// off a character boundary. An empty span is nothing happening, which is
     /// what keeps a rub against an end it is already at from redrawing.
-    fn cut(&mut self, from: usize, to: usize) -> Typed {
+    fn cut(&mut self, mut from: usize, mut to: usize) -> Typed {
         if from >= to {
             return Typed::Ignored;
         }
 
+        // A broad edit that reaches any part of a compact paste takes all of
+        // it. No ordinary editing path can leave metadata naming half a source.
+        for pasted in &self.pasted {
+            if pasted.source.start < to && pasted.source.end > from {
+                from = from.min(pasted.source.start);
+                to = to.max(pasted.source.end);
+            }
+        }
+
+        let shown_from = self.projection().shown_at(from);
+        let shown_to = self.projection().shown_at(to);
         self.said.replace_range(from..to, "");
+        self.shown.replace_range(shown_from..shown_to, "");
+        let removed = to - from;
+        let shown_removed = shown_to - shown_from;
+        self.pasted.retain_mut(|pasted| {
+            if pasted.source.end <= from {
+                true
+            } else if pasted.source.start >= to {
+                pasted.source.start -= removed;
+                pasted.source.end -= removed;
+                pasted.shown.start -= shown_removed;
+                pasted.shown.end -= shown_removed;
+                true
+            } else {
+                false
+            }
+        });
         self.at = from;
         self.wanted = None;
         Typed::Changed
     }
 
     fn left(&mut self) -> Typed {
+        if let Some(pasted) = self
+            .pasted
+            .iter()
+            .find(|pasted| pasted.source.end == self.at)
+        {
+            self.at = pasted.source.start;
+            self.wanted = None;
+            return Typed::Changed;
+        }
+
         match self.back() {
             Some(back) => {
                 self.at -= back;
@@ -636,6 +900,16 @@ impl Editor {
     }
 
     fn right(&mut self) -> Typed {
+        if let Some(pasted) = self
+            .pasted
+            .iter()
+            .find(|pasted| pasted.source.start == self.at)
+        {
+            self.at = pasted.source.end;
+            self.wanted = None;
+            return Typed::Changed;
+        }
+
         match self.ahead() {
             Some(ahead) => {
                 self.at += ahead;
@@ -682,6 +956,18 @@ impl Editor {
     /// A move that lands where it started is nothing happening, which is what
     /// keeps the key that reaches an end it is already at from redrawing.
     fn jump(&mut self, to: usize) -> Typed {
+        let to = self
+            .pasted
+            .iter()
+            .find(|pasted| pasted.source.contains(&to))
+            .map_or(to, |pasted| {
+                if to < self.at {
+                    pasted.source.start
+                } else {
+                    pasted.source.end
+                }
+            });
+
         if self.at == to {
             return Typed::Ignored;
         }
@@ -689,6 +975,20 @@ impl Editor {
         self.at = to;
         self.wanted = None;
         Typed::Changed
+    }
+
+    /// The nearest editable source boundary to an arbitrary source offset.
+    fn snapped(&self, at: usize) -> usize {
+        self.pasted
+            .iter()
+            .find(|pasted| pasted.source.contains(&at))
+            .map_or(at, |pasted| {
+                if (at - pasted.source.start) * 2 < pasted.source.len() {
+                    pasted.source.start
+                } else {
+                    pasted.source.end
+                }
+            })
     }
 
     /// Finishes the line, unless there is no line to finish.

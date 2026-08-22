@@ -26,6 +26,34 @@ fn keeping_one() -> Compaction {
 }
 
 #[test]
+fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(20_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(30_000)),
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let _ = scripted.left();
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .expect("a structured recap");
+
+    assert_eq!(scripted.left(), [scripted.runner.left()]);
+}
+
+#[test]
 fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let script = Script::new(vec![
         saying("first"),

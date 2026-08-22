@@ -150,6 +150,24 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
 }
 
 #[test]
+fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
+    let mut renderer = roomy();
+    let mut says = settled(Mode::Ask);
+    says.left = Some(73);
+
+    draw(
+        &mut renderer,
+        &typed("hi"),
+        Style::plain(),
+        around(&nothing(), &Opened::default(), &says),
+    )
+    .expect("the box to be drawn");
+
+    let written = renderer.terminal().written();
+    assert_eq!(written.matches("73% window left").count(), 1, "{written:?}");
+}
+
+#[test]
 fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
     // Which is the right way round: the mode is what is in force, and the keys
     // are how to change it. A row that wrapped to fit both would move the box
@@ -224,7 +242,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(line) if line == "hi"));
+    assert!(matches!(asked, Asked::Said { said, .. } if said == "hi"));
 
     // The box goes and the line stays: everything written after the box was on
     // screen is the record of it, with no border and no status row in it.
@@ -566,7 +584,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(line) if line == "/resume"));
+    assert!(matches!(asked, Asked::Said { said, .. } if said == "/resume"));
 }
 
 #[test]
@@ -584,7 +602,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(line) if line == "what does /resume do"));
+    assert!(matches!(asked, Asked::Said { said, .. } if said == "what does /resume do"));
 }
 
 #[test]
@@ -757,6 +775,83 @@ fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
 }
 
 #[test]
+fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
+    let renderer = roomy();
+    let editor = typed("next");
+    let mut turning = Turning::started(None);
+    turning.saw(&crucible_core::Event::Carried { left: Some(61) });
+    let planning = nothing();
+    let mut says = settled(Mode::Ask);
+    says.left = Some(88);
+
+    let footed = working(
+        &renderer,
+        &editor,
+        Footing {
+            turning: &turning,
+            planning: &planning,
+        },
+        &says,
+        Style::plain(),
+    );
+
+    assert!(
+        footed
+            .boxed
+            .iter()
+            .any(|row| row.text().contains("61% window left")),
+        "{:?}",
+        footed.boxed
+    );
+    assert!(
+        footed
+            .over
+            .iter()
+            .all(|row| !row.text().contains("window left")),
+        "{:?}",
+        footed.over
+    );
+}
+
+#[test]
+fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
+    let renderer = roomy();
+    let editor = typed("next");
+    let planning = nothing();
+    let mut says = settled(Mode::Ask);
+    says.left = Some(88);
+    let turning = Turning::started(says.left);
+
+    let footed = working(
+        &renderer,
+        &editor,
+        Footing {
+            turning: &turning,
+            planning: &planning,
+        },
+        &says,
+        Style::plain(),
+    );
+
+    assert!(
+        footed
+            .boxed
+            .iter()
+            .any(|row| row.text().contains("88% window left")),
+        "{:?}",
+        footed.boxed
+    );
+    assert!(
+        footed
+            .boxed
+            .iter()
+            .all(|row| !row.text().contains("window unknown")),
+        "{:?}",
+        footed.boxed
+    );
+}
+
+#[test]
 fn what_parts_the_two_keys_under_a_running_turn_comes_out_of_the_glyph_set() {
     // The row above the box parts its own segments with this mark, two rows
     // away and out of the setting already. One of the two drawn from the
@@ -865,6 +960,94 @@ fn the_key_that_copies_takes_the_line_and_not_the_picture_of_it() {
         renderer.terminal().written(),
         "\x1b]52;c;Y2FyZ28gdGVzdCAtLWFsbAphbmQgYSBzZWNvbmQgbGluZQ==\x07"
     );
+}
+
+#[test]
+fn a_large_paste_is_shown_compactly_but_copied_expanded() {
+    let source = format!("before {}", "vertical ".repeat(140));
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste(&source), Typed::Changed);
+    let mut renderer = roomy();
+
+    draw(
+        &mut renderer,
+        &editor,
+        Style::plain(),
+        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+    )
+    .expect("the compact paste to be drawn");
+    assert!(
+        renderer
+            .terminal()
+            .picture()
+            .said()
+            .join("\n")
+            .contains("[Pasted text "),
+        "the source rather than its compact element was drawn"
+    );
+
+    let mut copied = roomy();
+    assert_eq!(copy(&mut copied, &editor).unwrap(), Some(COPIED));
+    let mut expected = roomy();
+    assert!(expected.copied(&source).unwrap());
+    assert_eq!(copied.terminal().written(), expected.terminal().written());
+}
+
+#[test]
+fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
+    let source = format!("/help {}", "x".repeat(1_001));
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste(&source), Typed::Changed);
+    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let mut renderer = roomy();
+
+    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let Asked::Said { said, local } = asked else {
+        panic!("the pasted prompt to be said");
+    };
+
+    assert_eq!(said, source);
+    assert!(!local, "hidden pasted source selected a local command");
+    let committed = renderer.terminal().picture().said().join("\n");
+    assert!(!committed.contains("[Pasted text "), "{committed:?}");
+    assert!(committed.starts_with("› /help"), "{committed:?}");
+    assert_eq!(committed.matches('x').count(), 1_001, "{committed:?}");
+}
+
+#[test]
+fn a_visible_command_prefix_can_take_an_expanded_pasted_argument() {
+    let mut editor = typed("/mode ");
+    let argument = "x".repeat(1_001);
+    assert_eq!(editor.paste(&argument), Typed::Changed);
+    let source = format!("/mode {argument}");
+    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let mut renderer = roomy();
+
+    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let Asked::Said { said, local } = asked else {
+        panic!("the command to be said");
+    };
+
+    assert_eq!(said, source);
+    assert!(local, "visible non-element text did not select the command");
+}
+
+#[test]
+fn a_visible_command_name_remains_local_when_the_paste_carries_its_separator() {
+    let mut editor = typed("/mode");
+    let argument = format!(" {}", "x".repeat(1_000));
+    assert_eq!(editor.paste(&argument), Typed::Changed);
+    let source = format!("/mode{argument}");
+    let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
+    let mut renderer = roomy();
+
+    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let Asked::Said { said, local } = asked else {
+        panic!("the command to be said");
+    };
+
+    assert_eq!(said, source);
+    assert!(local, "the visible command name lost its local path");
 }
 
 #[test]

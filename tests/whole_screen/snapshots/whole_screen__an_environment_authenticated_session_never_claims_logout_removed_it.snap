@@ -22,7 +22,7 @@ expression: window.picture()
 |anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before restarting |
 |                                                                                |
 |                                                                                |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
+|╭────────────────────────────────────────────────────────────── window unknown ╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|

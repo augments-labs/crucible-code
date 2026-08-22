@@ -474,18 +474,19 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let prompt = match asked {
+        let (prompt, local) = match asked {
             // Through the same door as a typed one, on purpose: a woken turn
             // still needs a model to be asked of, and the guards below are
             // where that is answered.
-            Asked::Said(said) | Asked::Woke(said) => said,
+            Asked::Said { said, local } => (said, local),
+            Asked::Woke(said) => (said, false),
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.
             Asked::Expand | Asked::Clicked(_) => continue,
 
             Asked::Untyped => match unboxed(renderer, &runner, style, held.answers.input)? {
-                Some(said) => said,
+                Some(said) => (said, true),
                 None => break,
             },
         };
@@ -494,7 +495,7 @@ pub(crate) fn converse<T: Terminal>(
         // on this thread, and costs the provider nothing. Nothing of it reaches
         // the transcript either — what the model is told about a session is
         // what was said to it, and `/help` was not.
-        if let Some(wanted) = command::wanted(&prompt) {
+        if local && let Some(wanted) = command::wanted(&prompt) {
             match command::run(wanted, renderer, &mut runner, &mut held, terms)? {
                 Ran::Again => continue,
                 Ran::Leave => break,
@@ -725,7 +726,7 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let mut turning = Turning::started();
+    let mut turning = Turning::started(says.left);
 
     // A turn can start with prompts already behind it: room is made before the
     // queue is read, so a line typed during the last turn is still waiting when
@@ -930,7 +931,7 @@ fn sent(
             let did = match work {
                 Work::Turn(prompt) => {
                     if let Err(problem) =
-                        runner.turn(prompt.trim(), &mut asking, &relay, &running, &steer)
+                        runner.turn(&prompt, &mut asking, &relay, &running, &steer)
                     {
                         relay.post(Event::Failed { error: problem });
                     }

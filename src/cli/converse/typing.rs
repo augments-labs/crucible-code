@@ -36,8 +36,8 @@ use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
-    Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Renderer, Row, Slot,
-    Terminal, Typed, characters, pressed,
+    Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, PromptRows, Renderer, Row,
+    Slot, Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -123,7 +123,12 @@ const TOGETHER: Duration = Duration::from_secs(2);
 /// What reading a prompt produced.
 pub(crate) enum Asked {
     /// A line was typed and finished.
-    Said(String),
+    Said {
+        /// The expanded normalized source to commit and send.
+        said: String,
+        /// Whether visible non-element text selected a local command.
+        local: bool,
+    },
     /// The session is over: Ctrl-D on an empty line, or Ctrl-C twice against
     /// one.
     Ended,
@@ -307,11 +312,20 @@ fn arriving<T: Terminal>(
         // Offered to the selection first, the same as every other read in this
         // session: a drag comes back as nothing, having already drawn itself.
         if left.count() == 0 && says.running == 0 {
-            return Ok(renderer.pressed()?);
+            loop {
+                let arrived = renderer.pressed()?;
+                if arrived.is_some() || renderer.pointed_changed() {
+                    return Ok(arrived);
+                }
+            }
         }
 
         if renderer.waiting(BEAT)? {
-            return Ok(renderer.took(pressed()?)?);
+            let arrived = renderer.took(pressed()?)?;
+            if arrived.is_some() || renderer.pointed_changed() {
+                return Ok(arrived);
+            }
+            continue;
         }
 
         let ended = left.reap();
@@ -390,7 +404,7 @@ pub(crate) fn ask<T: Terminal>(
         return Ok(woke);
     }
 
-    let mut open = Opened::filtered(editor.text(), glyphs);
+    let mut open = Opened::filtered(editor.projection().text(), glyphs);
     draw(renderer, editor, style, around(planning, &open, &says))?;
 
     let mut following = None;
@@ -522,7 +536,7 @@ pub(crate) fn ask<T: Terminal>(
                 following = inserted.following;
 
                 if inserted.changed {
-                    open = Opened::filtered(editor.text(), glyphs);
+                    open = Opened::filtered(editor.projection().text(), glyphs);
                 }
                 if inserted.refused {
                     says.asking = Some(LIMITED);
@@ -536,7 +550,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Pasted(text) => {
                 let moved = pasted(editor, &text, &mut says);
                 if moved {
-                    open = Opened::filtered(editor.text(), glyphs);
+                    open = Opened::filtered(editor.projection().text(), glyphs);
                 }
                 moved || offered.is_some()
             }
@@ -547,7 +561,7 @@ pub(crate) fn ask<T: Terminal>(
                 // the end of a line is what the first half of that saves.
                 Typed::Ignored => offered.is_some(),
                 Typed::Changed => {
-                    open = Opened::filtered(editor.text(), glyphs);
+                    open = Opened::filtered(editor.projection().text(), glyphs);
                     true
                 }
                 Typed::Refused => {
@@ -620,11 +634,8 @@ pub(super) struct Says {
     /// How many commands are still running. Read per frame rather than per turn,
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
-    /// How much of the model's window is left, where a window is known.
-    ///
-    /// On the row above the box between turns, where the row a turn runs on
-    /// says it during one — the same reading in the same column either way, so
-    /// it does not move when a turn starts. `None` draws nothing at all.
+    /// How much of the model's window is left at the latest known reading.
+    /// `None` makes the prompt say that the reading is unknown.
     pub(super) left: Option<u8>,
 }
 
@@ -666,21 +677,18 @@ fn working<T: Terminal>(
     style: Style,
 ) -> Footed {
     let columns = renderer.columns();
-    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
-
-    let boxed = prompt.rows(columns, style.glyphs());
-    let caret = prompt.caret(columns);
-    let room = renderer.rows().saturating_sub(boxed.len());
+    let boxed = boxing(renderer, editor, says, footing.turning.left(), style);
+    let room = renderer.rows().saturating_sub(boxed.rows.len());
 
     Footed {
         over: footing.turning.rows(footing.planning, columns, style, room),
-        boxed,
-        caret,
+        boxed: boxed.rows,
+        pointed: boxed.pointed,
+        caret: boxed.caret,
     }
 }
 
-/// The foot of the window while a turn runs, in two parts because it is drawn
-/// in two.
+/// The two layout bands the renderer replaces together while a turn runs.
 ///
 /// They are not one region with the box at the end of it. The box is held to a
 /// share of the window and what stands over it is not, so the two are kept
@@ -691,6 +699,8 @@ struct Footed {
     over: Vec<Row>,
     /// The box.
     boxed: Vec<Row>,
+    /// The pointable prompt row in its pointed palette state.
+    pointed: Option<(usize, Row)>,
     /// Where the cursor sits in the box, counted from its own first row.
     caret: Caret,
 }
@@ -770,15 +780,14 @@ pub(super) fn during<T: Terminal>(
     let mut following = None;
     while following.is_some() || renderer.waiting(Duration::ZERO)? {
         let arrived = match following.take() {
-            Some(arrived) => match renderer.took(arrived)? {
-                Some(arrived) => arrived,
-                None => continue,
-            },
-            None => match renderer.took(pressed()?)? {
-                Some(arrived) => arrived,
-                // The selection answered it, and drew whatever changed.
-                None => continue,
-            },
+            Some(arrived) => arrived,
+            None => pressed()?,
+        };
+        let Some(arrived) = renderer.took(arrived)? else {
+            // A selection draws for itself. A pointer transition waits for the
+            // pointable prompt and fixed foot to be replaced together below.
+            moved |= renderer.pointed_changed();
+            continue;
         };
 
         // Whatever arrived, the offer to leave was made to the key after the
@@ -1251,8 +1260,8 @@ fn rewrap<T: Terminal>(
 
 /// Puts the box under the turn, with the cursor in it.
 ///
-/// The box first and the footing after, for the reason [`draw`] draws them in
-/// that order between turns.
+/// The renderer receives the box and footing together so their replacement is
+/// one frame.
 pub(super) fn stand<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
@@ -1262,8 +1271,16 @@ pub(super) fn stand<T: Terminal>(
 ) -> Result<(), Fatal> {
     let footed = working(renderer, editor, footing, says, style);
 
-    renderer.live(&footed.boxed, footed.caret, style.palette())?;
-    renderer.under(&footed.over, None, style.palette())?;
+    let pointed = footed.pointed.as_ref().map(|(at, row)| (*at, row));
+    renderer.replace(
+        PromptRows {
+            rows: &footed.boxed,
+            caret: footed.caret,
+            pointed,
+        },
+        &footed.over,
+        style.palette(),
+    )?;
     Ok(())
 }
 
@@ -1317,13 +1334,13 @@ fn around<'a>(planning: &'a Planning, open: &'a Opened, says: &'a Says) -> Aroun
 /// Puts the box on screen with the cursor where the line was typed to, and
 /// whatever the line has opened directly over it.
 ///
-/// Two calls rather than one, and that is the whole of why this reads the way
-/// it does. The box goes into the band that is held to a share of the window,
-/// because that share is a rule about how much of the screen a long prompt may
-/// take from what it is answering. Everything above it — the list, the plan,
-/// the row saying what is left — goes into the band above, which has no share:
-/// a list is what the reader is looking at while it is open, so the transcript
-/// is what gives way to it rather than the box being pushed off the screen.
+/// The box goes into the band that is held to a share of the window, because
+/// that share is a rule about how much of the screen a long prompt may take
+/// from what it is answering. Everything above it — the list and the plan —
+/// goes into the band above, which has no share: a list is what the reader is
+/// looking at while it is open, so the transcript is what gives way to it
+/// rather than the box being pushed off the screen. Both bands reach the
+/// renderer together so the prompt, status and map control come from one frame.
 ///
 /// The list takes its share of the window before the plan is asked for any. It
 /// is the shorter of the two and it was opened by the character last typed,
@@ -1338,14 +1355,11 @@ fn draw<T: Terminal>(
     around: Around<'_>,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
-    let prompt = writing(editor, around.says, Prompt::room(renderer.rows()));
-
-    let boxed = prompt.rows(columns, style.glyphs());
-    let caret = prompt.caret(columns);
+    let boxed = boxing(renderer, editor, around.says, around.says.left, style);
 
     // What is left for a list once the box and the blank row that keeps it off
     // the box have taken theirs.
-    let room = renderer.rows().saturating_sub(boxed.len() + 1);
+    let room = renderer.rows().saturating_sub(boxed.rows.len() + 1);
 
     let mut listed = around.open.rows(columns, room, style.glyphs());
 
@@ -1365,36 +1379,55 @@ fn draw<T: Terminal>(
     ));
     over.append(&mut listed);
 
-    // Directly over the box, right-aligned, so it sits in the column the row a
-    // turn runs on puts it in. Nothing at all where no window is known, which
-    // is not a reading of zero.
-    if let Some(row) = left(around.says.left, columns) {
-        over.push(row);
-    }
-
-    // The box first, and the order matters. Each of these is a frame, and the
-    // box's rows are decided by the window and its own height alone — so
-    // setting it first puts it where it is going to stay, and the frame after
-    // it only fills in what is above. The other way round draws the rows over
-    // a box that has not moved yet and then moves them.
-    renderer.live(&boxed, caret, style.palette())?;
-    renderer.under(&over, None, style.palette())?;
+    let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
+    renderer.replace(
+        PromptRows {
+            rows: &boxed.rows,
+            caret: boxed.caret,
+            pointed,
+        },
+        &over,
+        style.palette(),
+    )?;
     Ok(())
 }
 
-/// How much of the window is left, against the end of its own row.
-///
-/// Whole or not at all, for the reason the row above a running turn says it
-/// that way: half a percentage is a number that is not the percentage.
-fn left(left: Option<u8>, columns: usize) -> Option<Row> {
-    let said = format!("{}% window left", left?);
-    let wide = crucible_tui::columns(&said);
+/// The box rows in their resting state and the sole pointable row contrasted.
+struct Boxed {
+    rows: Vec<Row>,
+    pointed: Option<(usize, Row)>,
+    caret: Caret,
+}
 
-    (wide <= columns).then(|| {
-        Row::new()
-            .then(Slot::Quiet, " ".repeat(columns - wide))
-            .then(Slot::Quiet, said)
-    })
+/// Lays out the prompt once for geometry and once for its pointable row.
+fn boxing<T: Terminal>(
+    renderer: &Renderer<T>,
+    editor: &Editor,
+    says: &Says,
+    left: Option<u8>,
+    style: Style,
+) -> Boxed {
+    let room = Prompt::room(renderer.rows());
+    let columns = renderer.columns();
+    let glyphs = style.glyphs();
+    let prompt = writing(editor, says, left, false, room);
+    let rows = prompt.rows(columns, glyphs);
+    let caret = prompt.caret(columns);
+    let pointed = (0..rows.len())
+        .find(|row| prompt.counting(columns, *row))
+        .and_then(|at| {
+            writing(editor, says, left, true, room)
+                .rows(columns, glyphs)
+                .get(at)
+                .cloned()
+                .map(|row| (at, row))
+        });
+
+    Boxed {
+        rows,
+        pointed,
+        caret,
+    }
 }
 
 /// The box as it is being typed into.
@@ -1402,11 +1435,19 @@ fn left(left: Option<u8>, columns: usize) -> Option<Row> {
 /// One place the fields are named, because [`draw`] and the click that follows
 /// it have to lay the same component out: a click read against a box drawn any
 /// other way lands somewhere nobody pointed at.
-fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
+fn writing<'a>(
+    editor: &'a Editor,
+    says: &'a Says,
+    left: Option<u8>,
+    running_pointed: bool,
+    room: usize,
+) -> Prompt<'a> {
     Prompt {
         said: editor.text(),
+        projection: Some(editor.projection()),
         line: editor.line(),
         column: editor.column(),
+        left,
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: &says.keys,
@@ -1415,6 +1456,7 @@ fn writing<'a>(editor: &'a Editor, says: &'a Says, room: usize) -> Prompt<'a> {
         effort: says.effort,
         asking: says.asking,
         running: Some(says.running),
+        running_pointed,
         room,
     }
 }
@@ -1469,7 +1511,13 @@ fn landed<T: Terminal>(
         Some(Aimed::Stood(_)) | None => return Landed::Nothing,
     };
 
-    let prompt = writing(editor, says, Prompt::room(renderer.rows()));
+    let prompt = writing(
+        editor,
+        says,
+        says.left,
+        false,
+        Prompt::room(renderer.rows()),
+    );
 
     // Asked of the box, because which row the count came out on is the box's own
     // arithmetic at this width. The column is not asked about: the row is the
@@ -1594,6 +1642,7 @@ fn said<T: Terminal>(
     style: Style,
 ) -> Result<Asked, Fatal> {
     let chosen = open.chosen();
+    let local = local(editor, chosen.is_some());
     let typed = editor.take();
     let said = chosen.map_or(typed, str::to_owned);
 
@@ -1619,7 +1668,24 @@ fn said<T: Terminal>(
         style.palette().bands(),
     ))?;
 
-    Ok(Asked::Said(said))
+    Ok(Asked::Said { said, local })
+}
+
+/// Whether visible non-element text selected the local command path.
+fn local(editor: &Editor, chosen: bool) -> bool {
+    if chosen {
+        return true;
+    }
+
+    let source = editor.text().trim();
+    if command::wanted(source).is_none() {
+        return false;
+    }
+
+    let word = source
+        .split_once(char::is_whitespace)
+        .map_or(source, |(word, _)| word);
+    editor.projection().text().trim_start().starts_with(word)
 }
 
 #[cfg(test)]

@@ -89,6 +89,13 @@ pub(super) struct Load {
     output_seen: bool,
     /// Whether a provider count covers all output seen in this response so far.
     output_reported: bool,
+    /// Response bytes not yet covered by an output-token report.
+    ///
+    /// Kept separately from `appended`: while a response streams it is not in
+    /// the transcript yet. Recording the finished agent message replaces this
+    /// with the message's own byte count, so the same prose is never estimated
+    /// twice.
+    unreported: u64,
     /// Estimated content bytes in the request whose input count was reported.
     sent: u64,
     /// System-instruction and tool-schema bytes in that request.
@@ -150,6 +157,7 @@ impl Load {
         self.current_spent = 0;
         self.output_seen = false;
         self.output_reported = false;
+        self.unreported = 0;
         self.in_flight = self.bytes.saturating_add(self.overhead);
     }
 
@@ -207,16 +215,17 @@ impl Load {
         self.sent_overhead_signature = self.overhead_signature;
         self.input_reported = true;
         self.output_reported = true;
+        self.unreported = 0;
         self.appended = 0;
     }
 
     /// What this load would have a session remember, where it knows exactly.
     ///
     /// `None` wherever anything has happened that the last report does not
-    /// cover, which is the same test the percentage is drawn under: a log
-    /// remembering a number that covers a different transcript is worse than
-    /// one remembering nothing, because nothing is a session that measures
-    /// itself again and a wrong number is a session that never does.
+    /// cover. Persistence is stricter than display: a conservative estimate is
+    /// useful on screen, while writing it down as a measurement would make a
+    /// later session trust a number no provider proved. Nothing makes that
+    /// session measure itself again; a wrong number may never be corrected.
     pub(super) fn calibrated(&self) -> Option<Calibration> {
         self.exact().then(|| Calibration {
             carried: Carried::new(self.carried),
@@ -235,17 +244,14 @@ impl Load {
             .saturating_add(spent);
         self.current_spent = spent;
         self.output_reported = true;
+        self.unreported = 0;
     }
 
-    /// Notes provider output whose exact token count has not caught up yet.
-    ///
-    /// Returns whether an exact percentage was just invalidated, so a stream of
-    /// text posts one clearing event rather than one per fragment.
-    pub(super) fn produced(&mut self) -> bool {
-        let was = self.exact();
+    /// Notes response bytes whose output-token count has not caught up yet.
+    pub(super) fn produced(&mut self, bytes: usize) {
         self.output_seen = true;
         self.output_reported = false;
-        was
+        self.unreported = self.unreported.saturating_add(bytes as u64);
     }
 
     fn exact(&self) -> bool {
@@ -278,6 +284,9 @@ impl Load {
             // message, nor any output it may go on to produce.
             self.input_reported = false;
             self.output_reported = false;
+        }
+        if matches!(message, Message::Agent { .. }) {
+            self.unreported = 0;
         }
     }
 
@@ -336,7 +345,9 @@ impl Load {
     fn estimated(&self) -> u64 {
         let bytes = if self.sent == 0 || self.carried == 0 {
             // No exact request exists to include its fixed request content.
-            self.appended.saturating_add(self.overhead)
+            self.appended
+                .saturating_add(self.overhead)
+                .saturating_add(self.unreported)
         } else {
             // The exact request already included its own overhead. Only growth
             // since then belongs beside it. A decrease is deliberately not
@@ -346,6 +357,7 @@ impl Load {
                 || self.overhead_signature != self.sent_overhead_signature;
             self.appended
                 .saturating_add(if changed { self.overhead } else { 0 })
+                .saturating_add(self.unreported)
         };
 
         if self.sent == 0 || self.carried == 0 {
@@ -401,10 +413,6 @@ impl Load {
     /// already run out.
     #[must_use]
     pub(super) fn left(&self, window: Option<u32>) -> Option<u8> {
-        if !self.exact() {
-            return None;
-        }
-
         let window = u64::from(window?);
         let used = self.tokens().min(window);
 

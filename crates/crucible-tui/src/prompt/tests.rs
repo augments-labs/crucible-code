@@ -1,6 +1,7 @@
 use crate::color::Palette;
 use crate::color::Theme;
 use crate::dump::dump;
+use crate::editor::Editor;
 
 use super::*;
 
@@ -65,8 +66,10 @@ const SAID: [&str; 4] = [
 fn typing(said: &str, column: usize) -> Prompt<'_> {
     Prompt {
         said,
+        projection: None,
         line: 0,
         column,
+        left: None,
         mode: MODE,
         tone: Slot::Accent,
         hint: HINT,
@@ -79,6 +82,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         // Nothing, so that every test written before this row said what was
         // running is still a test about what it said before.
         running: None,
+        running_pointed: false,
         room: ROOM,
     }
 }
@@ -161,6 +165,51 @@ fn every_row_of_a_framed_box_ends_at_its_last_column() {
             }
         }
     }
+}
+
+#[test]
+fn an_unknown_window_is_always_named_in_the_top_border_without_a_row() {
+    let prompt = typed("");
+    let rows = prompt.rows(80, Glyphs::Unicode);
+
+    assert!(
+        rows.first()
+            .is_some_and(|row| row.text().contains("window unknown"))
+    );
+    assert_eq!(rows.len(), 4, "the reading added vertical space");
+}
+
+#[test]
+fn known_window_edges_are_named_in_the_same_top_border() {
+    for (left, expected) in [(0, "0% window left"), (100, "100% window left")] {
+        let prompt = Prompt {
+            left: Some(left),
+            ..typed("")
+        };
+        let rows = prompt.rows(80, Glyphs::Unicode);
+
+        assert!(
+            rows.first()
+                .is_some_and(|row| row.text().contains(expected)),
+            "{rows:#?}"
+        );
+        assert_eq!(rows.len(), 4, "the reading added vertical space");
+    }
+}
+
+#[test]
+fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
+    let known = Prompt {
+        left: Some(75),
+        ..typed("")
+    };
+    assert!(row(&known, 1, 23, Glyphs::Unicode).contains("75% window left"));
+    assert!(row(&known, 1, 10, Glyphs::Unicode).ends_with("75%"));
+    assert_eq!(row(&known, 1, 2, Glyphs::Unicode), " ?");
+
+    let unknown = typed("");
+    assert!(row(&unknown, 1, 23, Glyphs::Unicode).contains("window unknown"));
+    assert_eq!(row(&unknown, 1, 1, Glyphs::Unicode), "?");
 }
 
 #[test]
@@ -354,6 +403,40 @@ fn a_line_longer_than_the_box_wraps_onto_the_next_row() {
             row: FRAMED_ROW + 1,
             column: FRAMED + 8,
         }
+    );
+}
+
+#[test]
+fn prose_wraps_before_vertical_instead_of_cutting_the_word() {
+    let rows = drawn(
+        &typed("additional vertical space"),
+        FRAMED_AT,
+        Glyphs::Unicode,
+    );
+
+    assert!(
+        rows.iter().any(|row| row.contains("vertical space")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_large_paste_is_drawn_compactly_and_clicks_map_to_its_source_edges() {
+    let source = "x".repeat(1_001);
+    let mut editor = Editor::new();
+    editor.paste(&source);
+    let mut prompt = typed(editor.text());
+    prompt.projection = Some(editor.projection());
+
+    let rows = prompt.rows(80, Glyphs::Unicode);
+    let label = "[Pasted text 1001 chars]";
+    assert!(rows.iter().any(|row| row.text().contains(label)));
+    assert!(!rows.iter().any(|row| row.text().contains(&source)));
+
+    assert_eq!(prompt.clicked(80, FRAMED_ROW, FRAMED + 1), Some((0, 0)));
+    assert_eq!(
+        prompt.clicked(80, FRAMED_ROW, FRAMED + width::columns(label) - 1),
+        Some((0, 1_001))
     );
 }
 
@@ -976,6 +1059,39 @@ fn what_is_running_is_the_one_thing_on_that_row_drawn_in_the_accent() {
 }
 
 #[test]
+fn pointing_at_the_command_count_changes_only_its_slot() {
+    let resting = Prompt {
+        tone: Slot::Quiet,
+        ..leaving("", 2)
+    };
+    let pointed = Prompt {
+        running_pointed: true,
+        ..resting
+    };
+    let rest = resting.rows(80, Glyphs::Unicode);
+    let hover = pointed.rows(80, Glyphs::Unicode);
+    let rest = rest.last().expect("a status row");
+    let hover = hover.last().expect("a status row");
+
+    assert_eq!(rest.text(), hover.text());
+    let rest_slots: Vec<_> = rest.spans().collect();
+    let hover_slots: Vec<_> = hover.spans().collect();
+
+    assert!(rest_slots.contains(&(Slot::Accent, "2 commands")));
+    assert!(hover_slots.contains(&(Slot::Pointed, "2 commands")));
+    assert_eq!(
+        rest_slots
+            .iter()
+            .filter(|(_, text)| *text != "2 commands")
+            .collect::<Vec<_>>(),
+        hover_slots
+            .iter()
+            .filter(|(_, text)| *text != "2 commands")
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_click_on_the_row_naming_what_is_running_lands_on_it() {
     // The row is the affordance, and it is the component that knows which row it
     // came out on: a caller working that out would be a second copy of this box's
@@ -1011,4 +1127,13 @@ fn nothing_running_makes_that_row_no_door() {
     let rows = box_of.rows(80, Glyphs::Unicode);
 
     assert!(!box_of.counting(80, rows.len() - 1));
+}
+
+#[test]
+fn a_count_that_does_not_fit_makes_the_status_row_no_door() {
+    let box_of = leaving("", 2);
+    let rows = box_of.rows(1, Glyphs::Unicode);
+
+    assert!(!rows.iter().any(|row| row.text().contains("command")));
+    assert!(!box_of.counting(1, rows.len() - 1));
 }

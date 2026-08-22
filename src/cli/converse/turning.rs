@@ -184,8 +184,8 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
-    /// How much of the model's window is left, or `None` where no window is
-    /// known and while room is being made.
+    /// How much of the model's window was left at the latest reading, or `None`
+    /// where no window is known.
     left: Option<u8>,
     /// Why room is being made, and `None` when it is not.
     ///
@@ -456,12 +456,12 @@ struct Drawn {
 }
 
 impl Turning {
-    /// A turn that starts now.
-    pub(super) fn started() -> Self {
+    /// A turn that starts now, with the session's latest window reading.
+    pub(super) fn started(left: Option<u8>) -> Self {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
-            left: None,
+            left,
             making: None,
             part: 0,
             spent: None,
@@ -581,20 +581,14 @@ impl Turning {
             return returned;
         }
 
-        // How full the window is, kept whether or not a turn is running: the
-        // reading is on screen from the first frame of the session to the last,
-        // and the one moment it is not is while the number it would show is the
-        // one being replaced.
+        // How full the window is, kept whether or not a turn is running. While
+        // compaction writes its recap, this remains the latest true reading;
+        // the Carried event posted after replacement moves it to the new one.
         match event {
             Event::Carried { left } => self.left = *left,
-            // Reported again as the notes are written, so what the row shows
-            // moves rather than sitting still for one request. The reading is
-            // taken away for the duration: the number it would show is the one
-            // being replaced.
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = *part;
-                self.left = None;
             }
             Event::Compacted { .. } => self.making = None,
             _ => {}
@@ -667,6 +661,11 @@ impl Turning {
 
         self.drawn = Some(now);
         moved
+    }
+
+    /// The latest remaining-window reading reported while this turn runs.
+    pub(super) const fn left(&self) -> Option<u8> {
+        self.left
     }
 
     /// The rows to put above the box, or none where the window has no room.
@@ -761,41 +760,11 @@ impl Turning {
 
         rows.extend(panel_rows);
 
-        // The window left, on a row of its own directly above the box — where it
-        // stands between turns — rather than against the end of the working row,
-        // so the one number that moves while a turn runs sits in the same place
-        // whether the turn is going or not.
-        if let Some(row) = left(self.left, columns) {
-            rows.push(row);
-        }
-
         rows.append(&mut panel);
         rows.push(Row::new());
 
         rows
     }
-}
-
-/// How much of the window is left, right-aligned on a row of its own.
-///
-/// The same row the prompt box draws between turns, so the number sits in the
-/// one place it is looked for whether a turn is running or not. Whole or not at
-/// all, for the reason that row says it: half a percentage is a number that is
-/// not the percentage. Nothing where no window is known, which is not a reading
-/// of zero.
-fn left(left: Option<u8>, columns: usize) -> Option<Row> {
-    let said = format!("{}% window left", left?);
-    let wide = crucible_tui::columns(&said);
-
-    if wide >= columns {
-        return None;
-    }
-
-    Some(
-        Row::new()
-            .then(Slot::Quiet, " ".repeat(columns - wide))
-            .then(Slot::Quiet, said),
-    )
 }
 
 /// The bar under the word while room is being made, or nothing where there is

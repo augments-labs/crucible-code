@@ -14,7 +14,7 @@ expression: window.picture()
 |fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
 |quick brown fox jumps over the lazy dog.                                        |
 |                                                                                |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
+|╭────────────────────────────────────────────────────────────── window unknown ╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|

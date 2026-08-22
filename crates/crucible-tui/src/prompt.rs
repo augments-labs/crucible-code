@@ -10,12 +10,16 @@
 //! and read at the same time and a paragraph scrolled out of sight is one
 //! nobody can check before sending. The box therefore grows, and stops growing
 //! at about half the window: past that the line scrolls under the top edge.
+//! The remaining model window stands at the right of that top edge, inside the
+//! border and without taking a row of its own.
 //!
 //! The status sits below the frame rather than on its bottom edge. A frame is a
 //! container, and everything drawn on one reads as belonging to what is inside
 //! it; the mode is a fact about the session rather than about the line being
 //! typed. Outside the frame it is a row like any other, which is what let the
-//! model join it without re-bordering anything.
+//! model join it without re-bordering anything. On a terminal too narrow for a
+//! frame, the remaining-window fact joins this row and shortens before it can
+//! overflow.
 //!
 //! That row has two ends, and what decides which end a fact goes to is whether
 //! it is about the next key or about the next turn. The mode is the first: it
@@ -32,6 +36,7 @@
 //! component also says where the cursor goes.
 
 use crate::color::Slot;
+use crate::editor::Projection;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
 use crate::row::Row;
@@ -78,11 +83,15 @@ const CHROME: usize = 3;
 pub struct Prompt<'a> {
     /// The line being typed.
     pub said: &'a str,
+    /// A compact display view of that line, when its editor has one.
+    pub projection: Option<Projection<'a>>,
     /// Which line of it the cursor is on, counting from none. Zero where the
     /// text is one line, which is every prompt before this took a newline.
     pub line: usize,
     /// How many display columns into that line the cursor sits.
     pub column: usize,
+    /// How much of the model window remains, or that it is not known.
+    pub left: Option<u8>,
     /// What the status row says the mode in force is.
     pub mode: &'a str,
     /// The colour that mode's own sentence is drawn in. Not the border's: see
@@ -123,6 +132,8 @@ pub struct Prompt<'a> {
     ///
     /// `None`, or zero, is the row as it was before any of this existed.
     pub running: Option<usize>,
+    /// Whether the pointer is over the row offering the running commands.
+    pub running_pointed: bool,
     /// How many rows of the line the box may show at once.
     ///
     /// The box grows to what the line needs and stops here. [`Prompt::room`] is
@@ -196,8 +207,13 @@ impl Prompt<'_> {
             let (open, opened) = glyphs.top();
             let (close, closed) = glyphs.bottom();
             let across = bar.repeat(columns.saturating_sub(2));
+            let reading = self.reading();
+            let fill = columns.saturating_sub(width::columns(&reading) + 4);
 
-            let mut rows = vec![Row::new().then(Self::BORDER, format!("{open}{across}{opened}"))];
+            let mut rows = vec![Row::new().then(
+                Self::BORDER,
+                format!("{open}{} {reading} {opened}", bar.repeat(fill)),
+            )];
             rows.extend(self.typed(columns, glyphs));
             rows.push(Row::new().then(Self::BORDER, format!("{close}{across}{closed}")));
             rows.push(self.status(columns, glyphs));
@@ -282,7 +298,10 @@ impl Prompt<'_> {
 
         let into = column.saturating_sub(before).min(width::columns(hit.text));
 
-        Some((hit.line, above + into))
+        let position = (hit.line, above + into);
+        Some(self.projection.map_or(position, |projection| {
+            projection.source_position(position.0, position.1)
+        }))
     }
 
     /// Whether `row` of this component is the row naming what is still running,
@@ -307,7 +326,11 @@ impl Prompt<'_> {
         let typed = self.shown(inner(columns)).rows.len();
         let border = usize::from(framed);
 
-        row == first.saturating_add(typed).saturating_add(border)
+        if row != first.saturating_add(typed).saturating_add(border) {
+            return false;
+        }
+
+        self.status_counted(columns, Glyphs::Ascii).1
     }
 
     /// The line as it is left in the transcript once it has been typed.
@@ -322,10 +345,9 @@ impl Prompt<'_> {
     /// wrap; a row handed over wider than the window is one the terminal breaks
     /// itself, leaving that count short by however many rows it took.
     ///
-    /// At a space rather than at the column, unlike the box. What an input box
-    /// owes the person typing into it is that the character just typed stays
-    /// where it was put, which breaking at a word would move; a line nobody is
-    /// typing into any more owes only that it reads well.
+    /// At a space rather than inside a word, the same as the live box. Source
+    /// whitespace is retained in the rows so the transcript still says exactly
+    /// what was asked.
     ///
     /// `banded` is whether the palette this will be painted with writes a
     /// ground for the row. Where it does not, the row stops where the words do:
@@ -347,17 +369,16 @@ impl Prompt<'_> {
         let mark = glyphs.caret();
         let under = width::columns(mark) + 1;
         let room = columns.saturating_sub(under);
-        // Broken at the column, the way the box breaks the line while it is
-        // being typed, rather than folded at a space. A record says what was
-        // asked: `fold` trims what it is given and drops the space it breaks
-        // at, so a pasted line arrives at the model with its indentation and
-        // reads back here without it — a transcript disagreeing with the
-        // request it is the record of.
-        let folded = if room == 0 {
+        // The same source-preserving word wrap as the live box. A record says
+        // what was asked, including indentation and repeated whitespace.
+        let mut folded = if room == 0 {
             Vec::new()
         } else {
             broken(said, room)
         };
+        if folded.len() > 1 && folded.last().is_some_and(|line| line.text.is_empty()) {
+            folded.pop();
+        }
 
         if folded.is_empty() {
             // The one row a window this narrow can hold, and it carries the
@@ -485,6 +506,28 @@ impl Prompt<'_> {
     /// the component not holding an edge up, so anything after the last thing
     /// it says is bytes written every keystroke to draw nothing.
     fn status(&self, columns: usize, glyphs: Glyphs) -> Row {
+        self.status_counted(columns, glyphs).0
+    }
+
+    /// The status row and whether its command control survived the width.
+    fn status_counted(&self, columns: usize, glyphs: Glyphs) -> (Row, bool) {
+        if columns >= FRAMED_AT {
+            return self.session_status(columns, glyphs);
+        }
+
+        let reading = self.bare_reading(columns);
+        let wide = width::columns(&reading);
+        let gap = APART.min(columns.saturating_sub(wide));
+        let room = columns.saturating_sub(wide + gap);
+        let (mut row, counted) = self.session_status(room, glyphs);
+        row.pad(room);
+        row.push(Slot::Quiet, " ".repeat(gap));
+        row.push(Slot::Quiet, reading);
+        (row, counted)
+    }
+
+    /// The session facts that occupy the status row before its window reading.
+    fn session_status(&self, columns: usize, glyphs: Glyphs) -> (Row, bool) {
         let mut row = Row::new().then(self.tone, width::clip(self.mode, columns));
 
         let said = self.asked(glyphs);
@@ -524,9 +567,16 @@ impl Prompt<'_> {
 
         // The mark parting it from the mode stays quiet with the rest of the row.
         // Only the words naming a door are lit.
-        if let Some(counted) = counted.filter(|_| needed <= room.saturating_sub(row.columns())) {
+        let counted = counted.filter(|_| needed <= room.saturating_sub(row.columns()));
+        let drew_counted = counted.is_some();
+        if let Some(counted) = counted {
             row.push(Slot::Quiet, parting);
-            row.push(Slot::Accent, counted);
+            let tone = if self.running_pointed {
+                Slot::Pointed
+            } else {
+                Slot::Accent
+            };
+            row.push(tone, counted);
         }
 
         if let Some(at) = at {
@@ -534,7 +584,7 @@ impl Prompt<'_> {
             row.push(Slot::Quiet, said);
         }
 
-        row
+        (row, drew_counted)
     }
 
     /// Whose model it is, which model, and the rung it is being asked on, as one
@@ -562,6 +612,32 @@ impl Prompt<'_> {
         }
     }
 
+    /// The remaining-window fact in its full spelling.
+    fn reading(&self) -> String {
+        self.left.map_or_else(
+            || "window unknown".to_owned(),
+            |left| format!("{left}% window left"),
+        )
+    }
+
+    /// The longest remaining-window spelling a bare row can hold.
+    fn bare_reading(&self, columns: usize) -> String {
+        let full = self.reading();
+        if width::columns(&full) <= columns {
+            return full;
+        }
+
+        let compact = self.left.map(|left| format!("{left}%"));
+        if compact
+            .as_deref()
+            .is_some_and(|compact| width::columns(compact) <= columns)
+        {
+            return compact.unwrap_or_default();
+        }
+
+        width::clip("?", columns).to_owned()
+    }
+
     /// The rows of the line the box has room for, and where the cursor sits
     /// among them.
     ///
@@ -577,8 +653,17 @@ impl Prompt<'_> {
     ///
     /// [`room`]: Prompt::room
     fn shown(&self, inner: usize) -> Shown<'_> {
-        let broken = broken(self.said, inner);
-        let (row, column) = place(&broken, self.line, self.column);
+        let said = self
+            .projection
+            .map_or(self.said, |projection| projection.text());
+        let line = self
+            .projection
+            .map_or(self.line, |projection| projection.line());
+        let column = self
+            .projection
+            .map_or(self.column, |projection| projection.column());
+        let broken = broken(said, inner);
+        let (row, column) = place(&broken, line, column);
 
         // The cursor's row is the last one shown, so a line being written grows
         // the box downwards and a line longer than the allowance scrolls under
@@ -624,10 +709,8 @@ struct RowInLine<'a> {
 /// line does too, so the two read the same and only the cursor's arithmetic
 /// tells them apart.
 ///
-/// Broken at the column rather than at a space, which is what an input box owes
-/// the person typing into it: a word moving to the next row as it is written
-/// would move the cursor with it, and the character just typed would not be
-/// where it was put.
+/// Broken at a word boundary where one exists, while retaining every source
+/// byte. Only a word or glyph sequence wider than the row is hard-broken.
 fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
     if inner == 0 {
         return vec![RowInLine { text: "", line: 0 }];
@@ -636,41 +719,30 @@ fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
     let mut rows = Vec::new();
 
     for (line, text) in said.split('\n').enumerate() {
-        let mut rest = text;
-
-        // `cut` answers with nothing where the rest fits, which is what ends this.
-        while let Some(at) = width::cut(rest, inner) {
-            // A character wider than the whole row takes no bytes off the front and
-            // this would not end. It is drawn a column over instead, which is the
-            // one row a box this narrow cannot hold either way.
-            let at = if at == 0 { step(rest) } else { at };
-
+        for range in width::wraps(text, inner) {
             rows.push(RowInLine {
-                text: rest.get(..at).unwrap_or_default(),
+                text: text.get(range).unwrap_or_default(),
                 line,
             });
-            rest = rest.get(at..).unwrap_or_default();
         }
 
-        rows.push(RowInLine { text: rest, line });
+        if text.is_empty() {
+            rows.push(RowInLine { text, line });
+        }
 
         // A line that exactly fills its last row is followed by an empty one, so
         // the cursor after the last character stands at the start of a row rather
         // than on the padding beside the border — which is where the next character
         // is going to appear anyway.
-        if width::columns(rest) == inner {
+        if rows
+            .last()
+            .is_some_and(|row| row.line == line && width::columns(row.text) == inner)
+        {
             rows.push(RowInLine { text: "", line });
         }
     }
 
     rows
-}
-
-/// The offset one character in.
-fn step(text: &str) -> usize {
-    text.char_indices()
-        .nth(1)
-        .map_or(text.len(), |(offset, _)| offset)
 }
 
 /// Which display row the cursor's (`line`, `column`) falls on, and where in it.

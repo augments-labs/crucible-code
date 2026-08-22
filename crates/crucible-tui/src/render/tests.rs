@@ -144,6 +144,113 @@ fn what_a_turn_stands_under_sits_between_the_transcript_and_the_box() {
 }
 
 #[test]
+fn replacing_the_foot_flushes_turn_prompt_status_and_map_once() {
+    let mut drawn = Drawn::new(60, 10);
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    let old = vec![Row::plain("old prompt"), Row::plain("old status")];
+    drawn
+        .replace(
+            PromptRows {
+                rows: &old,
+                caret: Caret::default(),
+                pointed: None,
+            },
+            &[Row::plain("old turn")],
+            Palette::plain(),
+        )
+        .unwrap();
+    let before = drawn.terminal().flushes();
+
+    let new = vec![Row::plain("new prompt"), Row::plain("new status")];
+    drawn
+        .replace(
+            PromptRows {
+                rows: &new,
+                caret: Caret::default(),
+                pointed: None,
+            },
+            &[Row::plain("new turn")],
+            Palette::plain(),
+        )
+        .unwrap();
+
+    assert_eq!(drawn.terminal().flushes(), before + 1);
+    let screen = drawn.screen().said();
+    assert!(screen.iter().any(|row| row == "new turn"), "{screen:?}");
+    assert!(screen.iter().any(|row| row == "new prompt"), "{screen:?}");
+    assert!(screen.iter().any(|row| row == "new status"), "{screen:?}");
+    assert!(
+        drawn
+            .screen()
+            .row(map_row(&drawn))
+            .ends_with(" transcript map →"),
+        "{screen:?}"
+    );
+}
+
+#[test]
+fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
+    let mut drawn = Drawn::new(60, 10);
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    drawn.wears(colourful());
+    let prompt = vec![
+        Row::plain("prompt"),
+        Row::new().then(Slot::Accent, "2 commands"),
+    ];
+    let pointed = Row::new().then(Slot::Pointed, "2 commands");
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    drawn.take();
+    let at = drawn.bands().prompt.start + 1;
+
+    assert_eq!(
+        drawn.took(Pressed::Hovered { row: at, column: 0 }).unwrap(),
+        None
+    );
+    assert_eq!(drawn.take(), "", "the renderer flushed before replacement");
+    assert!(drawn.pointed_changed());
+
+    let before = drawn.terminal().flushes();
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    assert_eq!(drawn.terminal().flushes(), before + 1);
+    assert!(drawn.take().contains("48;"), "the target gained no ground");
+
+    drawn.took(Pressed::Hovered { row: at, column: 1 }).unwrap();
+    assert!(
+        !drawn.pointed_changed(),
+        "motion inside one target asked for a frame"
+    );
+    assert_eq!(drawn.take(), "");
+}
+
+#[test]
 fn taking_a_standing_row_back_takes_it_off_the_screen() {
     let mut drawn = Drawn::new(40, 10);
     drawn.under(&standing(), None, Palette::plain()).unwrap();

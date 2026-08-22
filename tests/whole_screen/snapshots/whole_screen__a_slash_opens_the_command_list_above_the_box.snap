@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 158
 expression: window.picture()
 ---
 80x24 cursor 20,5 scrolled 0
@@ -23,7 +22,7 @@ expression: window.picture()
 |  /clear     start a new session, leaving this one                              |
 |  /exit      leave                                                              |
 |                                                                                |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
+|╭────────────────────────────────────────────────────────────── window unknown ╮|
 |│ › /                                                                          │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |

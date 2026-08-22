@@ -133,11 +133,13 @@ fn standing<T: Terminal>(
     let said = glyphs.hidden().repeat(hidden);
     let prompt = Prompt {
         said: &said,
+        projection: None,
         // The mark is one column wide in either set, so the cursor sits after
         // as many columns as there are characters — which is the one thing the
         // box knows about the line and the only thing it is allowed to know.
         line: 0,
         column: hidden,
+        left: None,
         mode: asking,
         // The border says what the box is for. Not a mode's colour: no mode is
         // in force in here, and borrowing one would say a permission had
@@ -148,6 +150,7 @@ fn standing<T: Terminal>(
         // is a key being pasted in, and a door out of it to a list of commands is
         // a door nobody wants while a secret is on screen.
         running: None,
+        running_pointed: false,
         // Nothing about the vendor, the model or the rung, which are facts
         // about the next turn. This box is not one: what is typed into it goes
         // to no provider, and naming one over a key being pasted in would say

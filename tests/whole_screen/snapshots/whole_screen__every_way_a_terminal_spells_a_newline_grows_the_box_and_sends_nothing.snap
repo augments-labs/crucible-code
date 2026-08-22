@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 134
 expression: window.picture()
 ---
 80x24 cursor 20,8 scrolled 0
@@ -20,7 +19,7 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |                                                                                |
-|╭──────────────────────────────────────────────────────────────────────────────╮|
+|╭────────────────────────────────────────────────────────────── window unknown ╮|
 |│ › one                                                                        │|
 |│   two                                                                        │|
 |│   three                                                                      │|

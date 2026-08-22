@@ -73,11 +73,108 @@ fn a_paste_is_inserted_whole_at_the_cursor() {
 }
 
 #[test]
+fn a_paste_over_one_thousand_characters_moves_as_one_element() {
+    let pasted = "x".repeat(1_001);
+    let mut editor = Editor::new();
+
+    assert_eq!(editor.paste(&pasted), Typed::Changed);
+    assert_eq!(editor.text(), pasted);
+    assert_eq!(editor.press(Key::Left), Typed::Changed);
+    assert_eq!(editor.column(), 0);
+    assert_eq!(editor.press(Key::Right), Typed::Changed);
+    assert_eq!(editor.column(), 1_001);
+}
+
+#[test]
+fn only_a_paste_over_one_thousand_unicode_characters_is_compacted() {
+    let ordinary = "日".repeat(1_000);
+    let mut at_the_boundary = Editor::new();
+    at_the_boundary.paste(&ordinary);
+
+    assert_eq!(at_the_boundary.projection().text(), ordinary);
+
+    let large = "日".repeat(1_001);
+    let mut compacted = Editor::new();
+    compacted.paste(&large);
+
+    assert_eq!(compacted.projection().text(), "[Pasted text 1001 chars]");
+    assert_eq!(compacted.text(), large);
+    assert_eq!(compacted.take(), large);
+    assert!(compacted.projection().text().is_empty());
+}
+
+#[test]
+fn adjacent_delete_keys_remove_one_large_paste_whole() {
+    let pasted = "x".repeat(1_001);
+    let mut behind = Editor::new();
+    behind.paste(&pasted);
+    behind.press(Key::Char('!'));
+
+    assert_eq!(behind.press(Key::Left), Typed::Changed);
+    assert_eq!(behind.press(Key::Backspace), Typed::Changed);
+    assert_eq!(behind.text(), "!");
+    assert_eq!(behind.column(), 0);
+
+    let mut ahead = Editor::new();
+    ahead.paste(&pasted);
+    ahead.press(Key::Home);
+
+    assert_eq!(ahead.press(Key::Delete), Typed::Changed);
+    assert!(ahead.is_empty());
+}
+
+#[test]
+fn placing_inside_a_large_paste_snaps_to_one_of_its_edges() {
+    let pasted = "x".repeat(1_001);
+    let mut editor = Editor::new();
+    editor.paste(&pasted);
+
+    assert_eq!(editor.place(500), Typed::Changed);
+    assert_eq!(editor.column(), 0);
+    assert_eq!(editor.place(501), Typed::Changed);
+    assert_eq!(editor.column(), 1_001);
+}
+
+#[test]
+fn normalization_precedes_the_large_paste_count_and_compaction() {
+    let pasted = format!("{}\r\n\x07", "\t".repeat(251));
+    let normalized = format!("{}\n", " ".repeat(1_004));
+    let mut editor = Editor::new().multiline();
+
+    assert_eq!(editor.paste(&pasted), Typed::Changed);
+    assert_eq!(editor.text(), normalized);
+    assert_eq!(editor.projection().text(), "[Pasted text 1005 chars]");
+}
+
+#[test]
+fn duplicate_large_pastes_remain_independent_elements() {
+    let pasted = "x".repeat(1_001);
+    let label = "[Pasted text 1001 chars]";
+    let mut editor = Editor::new();
+    editor.paste(&pasted);
+    editor.press(Key::Char('|'));
+    editor.paste(&pasted);
+
+    assert_eq!(editor.projection().text(), format!("{label}|{label}"));
+
+    editor.press(Key::Home);
+    assert_eq!(editor.press(Key::Delete), Typed::Changed);
+    assert_eq!(editor.text(), format!("|{pasted}"));
+    assert_eq!(editor.projection().text(), format!("|{label}"));
+
+    editor.press(Key::End);
+    assert_eq!(editor.press(Key::Backspace), Typed::Changed);
+    assert_eq!(editor.text(), "|");
+    assert_eq!(editor.projection().text(), "|");
+}
+
+#[test]
 fn a_large_middle_paste_moves_each_side_once() {
     const SIDE: usize = 256 * 1024;
 
     let mut editor = Editor {
         said: format!("{}{}", "a".repeat(SIDE), "z".repeat(SIDE)),
+        shown: format!("{}{}", "a".repeat(SIDE), "z".repeat(SIDE)),
         at: SIDE,
         ..Editor::new()
     };
@@ -104,9 +201,14 @@ fn a_paste_over_the_prompt_bound_is_refused_whole() {
 
 #[test]
 fn the_last_byte_fits_and_the_next_character_is_refused() {
-    let mut editor = Editor::new();
+    let full = "x".repeat(Editor::MAX_BYTES);
+    let mut editor = Editor {
+        said: full.clone(),
+        shown: full,
+        at: Editor::MAX_BYTES,
+        ..Editor::new()
+    };
 
-    assert_eq!(editor.paste(&"x".repeat(Editor::MAX_BYTES)), Typed::Changed);
     assert_eq!(editor.press(Key::Char('y')), Typed::Refused);
     assert_eq!(editor.text().len(), Editor::MAX_BYTES);
     assert_eq!(editor.press(Key::Backspace), Typed::Changed);

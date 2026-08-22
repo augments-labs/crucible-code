@@ -672,7 +672,9 @@ impl Runner {
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
                 self.record(Message::User(line.into()));
-                events.post(Event::Carried { left: None });
+                events.post(Event::Carried {
+                    left: self.load.left(counting.window),
+                });
             }
 
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
@@ -832,7 +834,9 @@ impl Runner {
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
             self.record(Message::ToolResults(results));
-            events.post(Event::Carried { left: None });
+            events.post(Event::Carried {
+                left: self.load.left(counting.window),
+            });
 
             match went {
                 Went::On => {}
@@ -1044,17 +1048,20 @@ impl Runner {
         while let Some(delta) = stream.next() {
             match delta? {
                 Delta::Text(text) => {
+                    let bytes = text.len();
                     answer.say(&text)?;
                     events.post(Event::Delta { text });
-                    Self::output_grew(events, counting);
+                    Self::output_grew(events, counting, bytes);
                 }
                 Delta::ToolStarted { id, name } => {
+                    let bytes = id.as_str().len().saturating_add(name.len());
                     answer.calling(id, name)?;
-                    Self::output_grew(events, counting);
+                    Self::output_grew(events, counting, bytes);
                 }
                 Delta::ToolArgs(fragment) => {
+                    let bytes = fragment.len();
                     answer.arguments(&fragment)?;
-                    Self::output_grew(events, counting);
+                    Self::output_grew(events, counting, bytes);
                 }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
@@ -1109,10 +1116,13 @@ impl Runner {
         Ok(())
     }
 
-    /// Hides an exact percentage once uncounted response output arrives.
-    fn output_grew(events: &dyn Post, counting: &mut Counting) {
-        if counting.load.produced() {
-            events.post(Event::Carried { left: None });
+    /// Updates the reading when unreported response bytes cross a percentage.
+    fn output_grew(events: &dyn Post, counting: &mut Counting, bytes: usize) {
+        let before = counting.load.left(counting.window);
+        counting.load.produced(bytes);
+        let left = counting.load.left(counting.window);
+        if left != before {
+            events.post(Event::Carried { left });
         }
     }
 
