@@ -189,6 +189,53 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// Where the count of what is still running lands, as a row of the window the
+/// click below is aimed at. The picture carries its size and cursor on a
+/// header line, so a line of it is one further down than the row it shows.
+fn count_row(picture: &str) -> usize {
+    picture
+        .lines()
+        .position(|line| line.contains("1 command"))
+        .expect("the count row under the box")
+        - 1
+}
+
+#[test]
+fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
+    // The count is the one thing on the row under the box that can be acted
+    // on, and the key that opens the list means backgrounding while a turn is
+    // waiting — so the mouse is the door here, and a click that moved nothing
+    // was the defect. The command is backgrounded by the model, so the count
+    // is up from the moment the call is answered, with the next answer still
+    // arriving over it.
+    // The answer after the call is long enough to still be arriving when the
+    // click lands, which is what keeps the turn running over it: a short one
+    // ends the turn first, and the click finds the at-rest box instead.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("click-count-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    // The first word of the answer after the call is what the catch waits
+    // for: the command is backgrounded and counted by then, the turn is
+    // provably still running, and the count under the box names the row to
+    // click. The spinner keeps the screen beating, so this catches the text
+    // rather than waiting for a stillness that does not come. A narrow
+    // window, so the model's name is the fact that gives way rather than the
+    // count.
+    window.types_and_catches("start it\r", "the quick brown fox");
+    let at = count_row(&window.picture());
+
+    // The same reason: the answer is still arriving over the list, so opening
+    // it is caught by its heading rather than waited out to a still screen.
+    window.clicks_catching(at, 0, "Still running");
+
+    insta::assert_snapshot!(window.picture());
+}
+
 #[test]
 fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     // A real SGR mouse click opens the control at the bottom right, then a

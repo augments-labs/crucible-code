@@ -869,7 +869,8 @@ fn take<T: Terminal>(
                     kept: &mut held.kept,
                     opened: &mut held.opened,
                     viewing: &mut held.viewing,
-                    says: &says,
+                    listing: &mut held.listing,
+                    says: &mut says,
                     style: terms.style(),
                     cancel: &terms.cancel,
                     steer: &terms.steer,
@@ -1183,6 +1184,11 @@ struct Held<'a> {
     /// that was under it is what keeps the queue from being committed out from
     /// under a reader who was halfway through it.
     viewing: queueing::Standing,
+    /// The list of what is still running, stood by a click on the count under
+    /// the box. Held for the session like the two standings beside it: the box
+    /// a turn is drawn over is the same one the click is read against, so the
+    /// mark in it belongs to the session rather than to a turn.
+    listing: leaving::Leaving,
     /// The plan above the box. A turn is when it changes — the tool that writes
     /// it runs on the worker thread — and what this holds is a copy of the plan
     /// and the setting of the key that opens it, both of which outlive it.
@@ -1208,6 +1214,7 @@ impl<'a> Held<'a> {
             kept: Kept::default(),
             opened: Standing::default(),
             viewing: queueing::Standing::default(),
+            listing: leaving::Leaving::default(),
             planning: Planning::new(plan),
             told: false,
             answers,
