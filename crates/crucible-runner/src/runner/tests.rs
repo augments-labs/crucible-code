@@ -7,8 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Carried, Change, Diff, Line, ProviderError, Sensitivity, SessionId, Spend, Summary,
-    Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict, Watch,
+    Approved, Carried, Change, Diff, Line, Modalities, Modality, ProviderError, Sensitivity,
+    SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict,
+    Watch,
 };
 
 use super::*;
@@ -684,6 +685,15 @@ const ELSEWHERE: &str = "elsewhere";
 impl Provider for Elsewhere {
     fn name(&self) -> &'static str {
         ELSEWHERE
+    }
+
+    /// A stand-in spells what every real provider here spells today.
+    ///
+    /// It is not a wire protocol, so it has nothing of its own to declare; what
+    /// it must not do is differ, or a test would be exercising a capability no
+    /// provider has.
+    fn spells(&self) -> Modalities {
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(

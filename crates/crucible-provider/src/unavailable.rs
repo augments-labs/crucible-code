@@ -12,7 +12,7 @@
 //! knows which commands exist — and saying it in two places is how the two come
 //! to disagree.
 
-use crucible_core::{Cancel, DeltaStream, Provider, ProviderError, Request};
+use crucible_core::{Cancel, DeltaStream, Modalities, Modality, Provider, ProviderError, Request};
 
 /// What this provider is called, in the session log and in the status line.
 ///
@@ -37,6 +37,12 @@ impl Unavailable {
 impl Provider for Unavailable {
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn spells(&self) -> Modalities {
+        // No protocol at all, so nothing beyond the text of a turn it will
+        // refuse anyway.
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(
@@ -83,5 +89,19 @@ mod tests {
         // key never wrote to one, and a log saying otherwise is a record of a
         // request that was never made.
         assert_eq!(Unavailable::new("nothing is set up").name(), "none");
+    }
+
+    /// A provider that speaks no protocol still spells text: what it refuses is
+    /// the turn, not the modality, and an empty answer here would have the
+    /// binary telling somebody their model cannot read a picture when the real
+    /// answer is that nothing is set up yet.
+    #[test]
+    fn a_provider_that_speaks_no_protocol_still_spells_text() {
+        let provider = Unavailable::new("nothing is set up");
+
+        assert_eq!(
+            provider.spells(),
+            Modalities::empty().insert(Modality::Text),
+        );
     }
 }

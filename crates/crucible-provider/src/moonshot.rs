@@ -23,7 +23,10 @@ mod body;
 mod stream;
 mod wire;
 
-use crucible_core::{Cancel, Credential, DeltaStream, Outgoing, Provider, ProviderError, Request};
+use crucible_core::{
+    Cancel, Credential, DeltaStream, Modalities, Modality, Outgoing, Provider, ProviderError,
+    Request,
+};
 
 use crate::endpoint::Endpoint;
 use crate::moonshot::stream::Stream;
@@ -110,6 +113,12 @@ impl Moonshot {
 impl Provider for Moonshot {
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn spells(&self) -> Modalities {
+        // `chat/completions` spells a picture as an `image_url` part carrying a
+        // `data:` URL. This module writes none yet, so none is offered.
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(

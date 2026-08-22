@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Cancel, Command, Delta, DeltaStream, Provider, ProviderError, Request, Sensitivity,
-    Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
+    Approved, Cancel, Command, Delta, DeltaStream, Modalities, Modality, Provider, ProviderError,
+    Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 /// How many requests a script has been given, readable after it has moved into
@@ -71,6 +71,15 @@ impl Script {
 impl Provider for Script {
     fn name(&self) -> &'static str {
         "script"
+    }
+
+    /// A stand-in spells what every real provider here spells today.
+    ///
+    /// It is not a wire protocol, so it has nothing of its own to declare; what
+    /// it must not do is differ, or a test would be exercising a capability no
+    /// provider has.
+    fn spells(&self) -> Modalities {
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(
@@ -139,6 +148,15 @@ impl Stalling {
 impl Provider for Stalling {
     fn name(&self) -> &'static str {
         "stalling"
+    }
+
+    /// A stand-in spells what every real provider here spells today.
+    ///
+    /// It is not a wire protocol, so it has nothing of its own to declare; what
+    /// it must not do is differ, or a test would be exercising a capability no
+    /// provider has.
+    fn spells(&self) -> Modalities {
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(
