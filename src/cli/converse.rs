@@ -478,7 +478,7 @@ pub(crate) fn converse<T: Terminal>(
             // Through the same door as a typed one, on purpose: a woken turn
             // still needs a model to be asked of, and the guards below are
             // where that is answered.
-            Asked::Said { said, local } => (said, local),
+            Asked::Said(said) => said.into_parts(),
             Asked::Woke(said) => (said, false),
             Asked::Ended => break,
 

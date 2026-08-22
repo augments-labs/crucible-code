@@ -50,7 +50,8 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
         .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
         .expect("a structured recap");
 
-    assert_eq!(scripted.left(), [scripted.runner.left()]);
+    assert_eq!(scripted.left(), [Some(99)]);
+    assert_eq!(scripted.runner.left(), Some(99));
 }
 
 #[test]
@@ -292,9 +293,24 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         .turn("go")
         .expect("the active turn made room instead of failing");
 
+    let events: Vec<Event> = scripted.seen.try_iter().collect();
     assert_eq!(stop, StopReason::Yielded);
-    assert!(scripted.said().contains("carried on"));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Delta { text } if text.contains("carried on")))
+    );
     assert_eq!(scripted.asked(), [1, 3, 5, 7]);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Carried { left } => Some(*left),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [Some(62), Some(24), Some(0), Some(62)]
+    );
 
     let sizes: Vec<usize> = scripted
         .runner
@@ -342,7 +358,9 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     let script = Script::new(vec![
         vec![
             Delta::Text(original.clone().into()),
-            Delta::Spent(Spend::new(10_000)),
+            // Enough exact output spend to cross the 16 000-token request
+            // boundary without relying on the same prose being estimated too.
+            Delta::Spent(Spend::new(17_000)),
             Delta::ToolStarted {
                 id: ToolId::new("a"),
                 name: "read".into(),

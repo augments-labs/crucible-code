@@ -207,6 +207,33 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
 }
 
 #[test]
+fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording() {
+    let mut load = Load::default();
+    load.recorded(&results(400_000));
+    load.responding();
+    load.carried(Carried::new(100_000));
+
+    // The provider counted the first 400 bytes exactly, then another 200 bytes
+    // arrived before the complete 600-byte message was recorded.
+    load.produced(400);
+    load.spent(Spend::new(100));
+    load.produced(200);
+    load.recorded(&Message::Agent {
+        text: "x".repeat(600).into(),
+        calls: Vec::new(),
+        stop: None,
+    });
+
+    assert_eq!(
+        load.tokens(),
+        100_150,
+        "the exact prefix was estimated again"
+    );
+    assert_eq!(load.left(Some(200_000)), Some(49));
+    assert!(!load.full(Some(100_151), 0));
+}
+
+#[test]
 fn an_estimate_has_a_conservative_window_percentage() {
     let mut load = Load::default();
     load.recorded(&results(50_000));

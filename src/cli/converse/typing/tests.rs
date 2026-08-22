@@ -242,7 +242,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said { said, .. } if said == "hi"));
+    assert!(matches!(asked, Asked::Said(said) if said.said == "hi"));
 
     // The box goes and the line stays: everything written after the box was on
     // screen is the record of it, with no border and no status row in it.
@@ -584,7 +584,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said { said, .. } if said == "/resume"));
+    assert!(matches!(asked, Asked::Said(said) if said.said == "/resume"));
 }
 
 #[test]
@@ -602,7 +602,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said { said, .. } if said == "what does /resume do"));
+    assert!(matches!(asked, Asked::Said(said) if said.said == "what does /resume do"));
 }
 
 #[test]
@@ -994,6 +994,62 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
 }
 
 #[test]
+fn clicking_the_visible_command_count_reaches_the_background_command_door() {
+    let mut renderer = roomy();
+    let editor = Editor::new();
+    let says = Says {
+        running: 2,
+        ..settled(Mode::Ask)
+    };
+    draw(
+        &mut renderer,
+        &editor,
+        Style::plain(),
+        around(&nothing(), &Opened::default(), &says),
+    )
+    .unwrap();
+
+    let prompt = writing(
+        &editor,
+        &says,
+        says.left,
+        false,
+        Prompt::room(renderer.rows()),
+    );
+    let relative = (0..prompt.rows(renderer.columns(), Glyphs::Unicode).len())
+        .find(|row| prompt.counting(renderer.columns(), *row))
+        .expect("the visible command row");
+    let absolute = (0..renderer.rows())
+        .find(|row| renderer.aimed(*row) == Some(Aimed::Boxed(relative)))
+        .expect("the command row in the window");
+
+    assert!(matches!(
+        landed(
+            &renderer,
+            &mut Editor::new(),
+            &says,
+            Pointed {
+                row: absolute,
+                column: 0,
+            },
+        ),
+        Landed::Counted
+    ));
+    assert!(!matches!(
+        landed(
+            &renderer,
+            &mut Editor::new(),
+            &says,
+            Pointed {
+                row: absolute.saturating_sub(1),
+                column: 0,
+            },
+        ),
+        Landed::Counted
+    ));
+}
+
+#[test]
 fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let source = format!("/help {}", "x".repeat(1_001));
     let mut editor = Editor::new().multiline();
@@ -1002,9 +1058,10 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let mut renderer = roomy();
 
     let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
-    let Asked::Said { said, local } = asked else {
+    let Asked::Said(said) = asked else {
         panic!("the pasted prompt to be said");
     };
+    let (said, local) = said.into_parts();
 
     assert_eq!(said, source);
     assert!(!local, "hidden pasted source selected a local command");
@@ -1015,7 +1072,7 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
 }
 
 #[test]
-fn a_visible_command_prefix_can_take_an_expanded_pasted_argument() {
+fn a_visible_command_prefix_cannot_authorize_a_compact_pasted_argument() {
     let mut editor = typed("/mode ");
     let argument = "x".repeat(1_001);
     assert_eq!(editor.paste(&argument), Typed::Changed);
@@ -1024,30 +1081,32 @@ fn a_visible_command_prefix_can_take_an_expanded_pasted_argument() {
     let mut renderer = roomy();
 
     let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
-    let Asked::Said { said, local } = asked else {
+    let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
+    let (said, local) = said.into_parts();
 
     assert_eq!(said, source);
-    assert!(local, "visible non-element text did not select the command");
+    assert!(!local, "hidden pasted source selected a local command");
 }
 
 #[test]
-fn a_visible_command_name_remains_local_when_the_paste_carries_its_separator() {
+fn padded_compact_source_cannot_hide_a_full_access_local_command() {
     let mut editor = typed("/mode");
-    let argument = format!(" {}", "x".repeat(1_000));
+    let argument = format!("{}fullAccess", "\t".repeat(251));
     assert_eq!(editor.paste(&argument), Typed::Changed);
     let source = format!("/mode{argument}");
     let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
     let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
-    let Asked::Said { said, local } = asked else {
+    let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
+    let (said, local) = said.into_parts();
 
-    assert_eq!(said, source);
-    assert!(local, "the visible command name lost its local path");
+    assert_eq!(said, source.replace('\t', "    "));
+    assert!(!local, "compact source escalated the local permission mode");
 }
 
 #[test]

@@ -193,6 +193,18 @@ fn replacing_the_foot_flushes_turn_prompt_status_and_map_once() {
 }
 
 #[test]
+fn prompt_row_construction_rejects_mismatched_targets_and_carets() {
+    let rows = vec![Row::plain("prompt"), Row::plain("2 commands")];
+    let other = Row::plain("different action");
+    let target = rows.get(1).expect("the command row");
+
+    assert!(PromptRows::new(&rows, Caret::default(), Some((2, target))).is_none());
+    assert!(PromptRows::new(&rows, Caret::default(), Some((1, &other))).is_none());
+    assert!(PromptRows::new(&rows, Caret { row: 3, column: 0 }, None,).is_none());
+    assert!(PromptRows::new(&rows, Caret::default(), Some((1, target))).is_some());
+}
+
+#[test]
 fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
     let mut drawn = Drawn::new(60, 10);
     drawn
@@ -248,6 +260,91 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
         "motion inside one target asked for a frame"
     );
     assert_eq!(drawn.take(), "");
+
+    drawn
+        .took(Pressed::Hovered {
+            row: at.saturating_sub(1),
+            column: 1,
+        })
+        .unwrap();
+    assert!(
+        drawn.pointed_changed(),
+        "leaving the target was not reported"
+    );
+    assert_eq!(drawn.take(), "", "leaving flushed before replacement");
+
+    let before = drawn.terminal().flushes();
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    assert_eq!(drawn.terminal().flushes(), before + 1);
+}
+
+#[test]
+fn crossing_from_the_command_target_to_the_transcript_map_waits_for_one_foot_frame() {
+    let mut drawn = Drawn::new(60, 10);
+    drawn.wears(colourful());
+    drawn
+        .heads(Head {
+            root: "/work/crucible",
+        })
+        .unwrap();
+    let prompt = vec![
+        Row::plain("prompt"),
+        Row::new().then(Slot::Accent, "2 commands"),
+    ];
+    let pointed = Row::new().then(Slot::Pointed, "2 commands");
+    let packet = || PromptRows {
+        rows: &prompt,
+        caret: Caret::default(),
+        pointed: Some((1, &pointed)),
+    };
+    drawn.replace(packet(), &[], colourful()).unwrap();
+    drawn.take();
+
+    let target = drawn.bands().prompt.start + 1;
+    drawn
+        .took(Pressed::Hovered {
+            row: target,
+            column: 0,
+        })
+        .unwrap();
+    assert!(drawn.pointed_changed());
+    drawn.replace(packet(), &[], colourful()).unwrap();
+    drawn.take();
+
+    let map = map_row(&drawn);
+    let door = transcript_map::door(drawn.columns()).expect("the transcript-map door");
+    let before = drawn.terminal().flushes();
+    drawn
+        .took(Pressed::Hovered {
+            row: map,
+            column: door.start,
+        })
+        .unwrap();
+
+    assert!(drawn.pointed_changed());
+    assert_eq!(drawn.terminal().flushes(), before);
+    assert_eq!(
+        drawn.take(),
+        "",
+        "the map painted before the prompt candidate"
+    );
+
+    drawn.replace(packet(), &[], colourful()).unwrap();
+    assert_eq!(drawn.terminal().flushes(), before + 1);
+    assert!(
+        drawn.take().contains("48;"),
+        "neither target gained a ground"
+    );
 }
 
 #[test]
@@ -447,6 +544,56 @@ fn a_resize_drops_what_was_standing_rather_than_drawing_it_at_the_wrong_size() {
     drawn.resized().unwrap();
 
     assert!(drawn.screen().said().is_empty());
+}
+
+#[test]
+fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
+    let mut drawn = Drawn::new(60, 10);
+    let prompt = vec![
+        Row::plain("prompt"),
+        Row::new().then(Slot::Accent, "2 commands"),
+    ];
+    let pointed = Row::new().then(Slot::Pointed, "2 commands");
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    let target = drawn.bands().prompt.start + 1;
+    drawn
+        .took(Pressed::Hovered {
+            row: target,
+            column: 0,
+        })
+        .unwrap();
+    assert!(drawn.pointed_changed());
+
+    drawn.render.terminal.resize(40, 10);
+    drawn.resized().unwrap();
+
+    assert!(drawn.prompt_target.is_none());
+    assert!(!drawn.pointed_changed());
+    assert!(drawn.standing.prompt.is_empty());
+
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    assert_eq!(drawn.prompt_target, Some(1));
+    assert!(drawn.prompt_pointed());
 }
 
 // A run whose output is a file.

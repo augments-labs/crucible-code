@@ -426,12 +426,12 @@ struct Drawn {
     doing: Doing,
     /// The count beside it.
     spent: Option<u64>,
-    /// The reading against the far end of it.
+    /// The remaining-window fact in the prompt belonging to this live foot.
     ///
     /// Part of what decides a redraw, because anything the row says and this
     /// value does not carry reaches the screen only when something else on the
-    /// row happens to change with it — a stale number, arriving late, on the
-    /// row somebody is reading to find out what is going on.
+    /// candidate happens to change with it — a stale number, arriving late, in
+    /// the prompt somebody is reading to find out what is going on.
     left: Option<u8>,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
@@ -574,16 +574,9 @@ impl Turning {
             | Event::Retrying => Vec::new(),
         };
 
-        // A turn that has been asked to stop is stopping whatever else it is
-        // still reporting. The deltas already in flight arrive after the key,
-        // and a row that went back to `writing` would be saying the key missed.
-        if self.doing == Doing::Interrupting {
-            return returned;
-        }
-
-        // How full the window is, kept whether or not a turn is running. While
-        // compaction writes its recap, this remains the latest true reading;
-        // the Carried event posted after replacement moves it to the new one.
+        // These are facts rather than the activity word below. A turn asked to
+        // stop keeps reporting them until the response in flight is actually
+        // over, so freezing them would leave the next prompt with stale room.
         match event {
             Event::Carried { left } => self.left = *left,
             Event::Compacting { why, part } => {
@@ -592,6 +585,13 @@ impl Turning {
             }
             Event::Compacted { .. } => self.making = None,
             _ => {}
+        }
+
+        // A turn that has been asked to stop is stopping whatever else it is
+        // still reporting. The deltas already in flight arrive after the key,
+        // and a row that went back to `writing` would be saying the key missed.
+        if self.doing == Doing::Interrupting {
+            return returned;
         }
 
         self.doing = match event {
@@ -663,7 +663,8 @@ impl Turning {
         moved
     }
 
-    /// The latest remaining-window reading reported while this turn runs.
+    /// The latest session reading, carried into the turn and updated by
+    /// [`Event::Carried`] while it runs.
     pub(super) const fn left(&self) -> Option<u8> {
         self.left
     }

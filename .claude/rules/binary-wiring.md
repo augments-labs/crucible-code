@@ -51,23 +51,23 @@ corrupted transcript, and it will not look like a locking bug when it happens.
 ## A redraw nobody asked for draws only when the picture has changed
 
 Most frames are caused by something — a key, an event — and end when the thing
-that caused them has been drawn. The row above the box is the exception: the
-clock counts and the mark turns while nothing arrives, so the loop has to redraw
-on its own, and the loop it redraws on looks at the keyboard sixty times a
-second.
+that caused them has been drawn. The live foot is the exception: its working row
+counts the clock and turns the mark while nothing arrives, so the loop has to
+redraw on its own, and the loop it redraws on looks at the keyboard sixty times
+a second. Prompt facts that change with an event belong to that same candidate
+because prompt, working rows, and transcript map are replaced together.
 
-So the row is a function of a small value, and that value is what the loop asks
-about. `Turning::moved` holds the `Drawn` the row is drawn from and answers
+So the live foot is a function of a small value, and that value is what the loop asks
+about. `Turning::moved` holds the `Drawn` the candidate is drawn from and answers
 whether it has changed since the last frame; a redraw with no cause behind it
 happens only when the answer is yes. That is what keeps an animated row four frames a
 second rather than sixty, and the box under it laid out four times rather than
 sixty.
 
-Which makes `Drawn` the thing to check when the row gains a segment. Anything
-the row says and that value does not carry is a segment that changes on screen
-only when something *else* on the row happens to change with it — a stale
-number, arriving late, on the row somebody is reading to find out what is going
-on.
+Which makes `Drawn` the thing to check when the live foot gains a fact. Anything
+the candidate says and that value does not carry changes on screen only when
+something *else* happens to change with it — stale state, arriving late, in the
+foot somebody is reading to find out what is going on.
 
 ## `src/bin/` is not shipped
 

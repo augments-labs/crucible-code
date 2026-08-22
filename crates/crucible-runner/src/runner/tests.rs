@@ -259,6 +259,34 @@ fn a_tool_result_keeps_a_known_window_reading_present() {
     );
 }
 
+#[test]
+fn large_streamed_tool_identity_arguments_and_late_spend_move_the_known_reading() {
+    let id = "i".repeat(10_000);
+    let args = format!(r#"{{"padding":"{}"}}"#, "a".repeat(40_000));
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(50_000)),
+            Delta::ToolStarted {
+                id: ToolId::new(id),
+                name: "read".into(),
+            },
+            Delta::ToolArgs(args.into()),
+            Delta::Spent(Spend::new(2_000)),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        saying("done"),
+    ]);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
+    scripted.runner.model.window = Some(200_000);
+
+    scripted.turn(&"x".repeat(200_000)).expect("a tool turn");
+
+    assert_eq!(
+        scripted.left(),
+        [Some(75), Some(73), Some(68), Some(74), Some(72)]
+    );
+}
+
 /// A scripted turn over a `Steer`, for pushing a line mid-turn.
 struct Steering {
     runner: Runner,
@@ -582,6 +610,23 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
         scripted.runner.load.tokens() > 0,
         "the transcript stopped counting"
     );
+}
+
+#[test]
+fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(40_000)),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+    scripted.runner.model.window = Some(200_000);
+    scripted.turn("go").expect("a measured turn");
+    assert_eq!(scripted.runner.left(), Some(80));
+
+    scripted.runner.ask("unbounded", 4_096, None);
+
+    assert_eq!(scripted.runner.left(), None);
+    assert_eq!(scripted.runner.load.calibrated(), None);
 }
 
 #[test]

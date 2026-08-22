@@ -40,10 +40,10 @@ use crate::width;
 /// that is sent. Four columns is what one level of it reads as in a box.
 const TAB: &str = "    ";
 
-/// A paste longer than this is one compact element on screen.
+/// More than this many normalized Unicode scalar values is one compact element.
 const PASTED_AFTER: usize = 1_000;
 
-/// Where one compact paste stands in the authoritative source.
+/// Where one compact paste stands in the authoritative source and shown text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Pasted {
     source: Range<usize>,
@@ -52,8 +52,9 @@ struct Pasted {
 
 /// The prompt-facing view of an editor.
 ///
-/// Its text may compact large pastes, while every position it returns is in
-/// the editor's authoritative expanded source.
+/// Its text, line, and column describe the compact display. A prompt placement
+/// maps back to boundaries in the editor's authoritative expanded source
+/// through [`Self::source_position`].
 #[derive(Debug, Clone, Copy)]
 pub struct Projection<'a> {
     source: &'a str,

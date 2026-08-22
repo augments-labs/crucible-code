@@ -30,14 +30,16 @@
 //! handed and steps nothing.
 
 use std::borrow::Cow;
+use std::io;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, Effort};
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
-    Aimed, Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, PromptRows, Renderer, Row,
-    Slot, Terminal, Typed, characters, pressed,
+    Aimed, Caret, CommandCount, Draft, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt,
+    PromptRows, Remaining, Renderer, Row, Slot, Terminal, TerminalError, Typed, characters,
+    pressed,
 };
 
 use crate::cli::Fatal;
@@ -121,14 +123,9 @@ fn interrupting(glyphs: Glyphs) -> String {
 const TOGETHER: Duration = Duration::from_secs(2);
 
 /// What reading a prompt produced.
-pub(crate) enum Asked {
+pub(super) enum Asked {
     /// A line was typed and finished.
-    Said {
-        /// The expanded normalized source to commit and send.
-        said: String,
-        /// Whether visible non-element text selected a local command.
-        local: bool,
-    },
+    Said(Said),
     /// The session is over: Ctrl-D on an empty line, or Ctrl-C twice against
     /// one.
     Ended,
@@ -165,6 +162,26 @@ pub(crate) enum Asked {
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
     Woke(String),
+}
+
+/// A finished line and the local-command provenance established while typing.
+///
+/// The fields stay private to this module so a caller cannot pair arbitrary
+/// expanded source with a `true` local verdict. The parent can only consume
+/// the pair that [`said`] constructed from the editor and its visible menu.
+pub(super) struct Said {
+    said: String,
+    local: bool,
+}
+
+impl Said {
+    fn new(said: String, local: bool) -> Self {
+        Self { said, local }
+    }
+
+    pub(super) fn into_parts(self) -> (String, bool) {
+        (self.said, self.local)
+    }
 }
 
 /// Moves the cursor within a many-rowed line, where there is a row to reach.
@@ -620,7 +637,8 @@ pub(super) struct Says {
     pub(super) mode: Cow<'static, str>,
     /// The keys that act on it, said quietly after.
     pub(super) keys: Cow<'static, str>,
-    /// Which model the next turn goes to, at the other end of the row.
+    /// Which model the next turn goes to, at the other end of a framed row.
+    /// On a bare row the remaining-window reading stands after it.
     pub(super) model: String,
     /// The vendor it is asked of, drawn before it.
     pub(super) provider: &'static str,
@@ -1272,15 +1290,8 @@ pub(super) fn stand<T: Terminal>(
     let footed = working(renderer, editor, footing, says, style);
 
     let pointed = footed.pointed.as_ref().map(|(at, row)| (*at, row));
-    renderer.replace(
-        PromptRows {
-            rows: &footed.boxed,
-            caret: footed.caret,
-            pointed,
-        },
-        &footed.over,
-        style.palette(),
-    )?;
+    let prompt = replacement(&footed.boxed, footed.caret, pointed)?;
+    renderer.replace(prompt, &footed.over, style.palette())?;
     Ok(())
 }
 
@@ -1380,16 +1391,23 @@ fn draw<T: Terminal>(
     over.append(&mut listed);
 
     let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
-    renderer.replace(
-        PromptRows {
-            rows: &boxed.rows,
-            caret: boxed.caret,
-            pointed,
-        },
-        &over,
-        style.palette(),
-    )?;
+    let prompt = replacement(&boxed.rows, boxed.caret, pointed)?;
+    renderer.replace(prompt, &over, style.palette())?;
     Ok(())
+}
+
+/// Validates the prompt rows before they become one renderer replacement.
+fn replacement<'a>(
+    rows: &'a [Row],
+    caret: Caret,
+    pointed: Option<(usize, &'a Row)>,
+) -> Result<PromptRows<'a>, Fatal> {
+    PromptRows::new(rows, caret, pointed).ok_or_else(|| {
+        Fatal::from(TerminalError::from(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the prompt replacement disagrees with its rows",
+        )))
+    })
 }
 
 /// The box rows in their resting state and the sole pointable row contrasted.
@@ -1399,7 +1417,7 @@ struct Boxed {
     caret: Caret,
 }
 
-/// Lays out the prompt once for geometry and once for its pointable row.
+/// Lays out the prompt once and composes only its pointable row a second time.
 fn boxing<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
@@ -1411,17 +1429,8 @@ fn boxing<T: Terminal>(
     let columns = renderer.columns();
     let glyphs = style.glyphs();
     let prompt = writing(editor, says, left, false, room);
-    let rows = prompt.rows(columns, glyphs);
+    let (rows, pointed) = prompt.rows_with_pointed(columns, glyphs);
     let caret = prompt.caret(columns);
-    let pointed = (0..rows.len())
-        .find(|row| prompt.counting(columns, *row))
-        .and_then(|at| {
-            writing(editor, says, left, true, room)
-                .rows(columns, glyphs)
-                .get(at)
-                .cloned()
-                .map(|row| (at, row))
-        });
 
     Boxed {
         rows,
@@ -1443,11 +1452,8 @@ fn writing<'a>(
     room: usize,
 ) -> Prompt<'a> {
     Prompt {
-        said: editor.text(),
-        projection: Some(editor.projection()),
-        line: editor.line(),
-        column: editor.column(),
-        left,
+        draft: Draft::projected(editor.projection()),
+        left: Remaining::new(left),
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: &says.keys,
@@ -1455,8 +1461,7 @@ fn writing<'a>(
         provider: says.provider,
         effort: says.effort,
         asking: says.asking,
-        running: Some(says.running),
-        running_pointed,
+        commands: CommandCount::new(says.running, running_pointed),
         room,
     }
 }
@@ -1668,7 +1673,7 @@ fn said<T: Terminal>(
         style.palette().bands(),
     ))?;
 
-    Ok(Asked::Said { said, local })
+    Ok(Asked::Said(Said::new(said, local)))
 }
 
 /// Whether visible non-element text selected the local command path.
@@ -1678,6 +1683,9 @@ fn local(editor: &Editor, chosen: bool) -> bool {
     }
 
     let source = editor.text().trim();
+    if editor.projection().text() != editor.text() {
+        return false;
+    }
     if command::wanted(source).is_none() {
         return false;
     }

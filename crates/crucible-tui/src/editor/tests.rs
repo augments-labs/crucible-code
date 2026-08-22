@@ -73,6 +73,17 @@ fn a_paste_is_inserted_whole_at_the_cursor() {
 }
 
 #[test]
+fn empty_and_one_character_pastes_take_their_distinct_boundaries() {
+    let mut editor = Editor::new();
+
+    assert_eq!(editor.paste(""), Typed::Ignored);
+    assert!(editor.is_empty());
+    assert_eq!(editor.paste("日"), Typed::Changed);
+    assert_eq!(editor.text(), "日");
+    assert_eq!(editor.projection().text(), "日");
+}
+
+#[test]
 fn a_paste_over_one_thousand_characters_moves_as_one_element() {
     let pasted = "x".repeat(1_001);
     let mut editor = Editor::new();
@@ -169,6 +180,36 @@ fn duplicate_large_pastes_remain_independent_elements() {
 }
 
 #[test]
+fn multiline_unicode_pastes_keep_independent_source_edges_through_navigation() {
+    let first = "日".repeat(1_001);
+    let second = "é".repeat(1_001);
+    let first_label = "[Pasted text 1001 chars]";
+    let second_label = "[Pasted text 1001 chars]";
+    let mut editor = Editor::new().multiline();
+
+    assert_eq!(editor.paste(&first), Typed::Changed);
+    assert_eq!(editor.press(Key::Newline), Typed::Changed);
+    assert_eq!(editor.paste(&second), Typed::Changed);
+    assert_eq!(
+        editor.projection().text(),
+        format!("{first_label}\n{second_label}")
+    );
+
+    assert_eq!(editor.press(Key::Home), Typed::Changed);
+    assert_eq!(editor.line(), 1);
+    assert_eq!(editor.column(), 0);
+    assert_eq!(editor.press(Key::Delete), Typed::Changed);
+    assert_eq!(editor.text(), format!("{first}\n"));
+    assert_eq!(editor.projection().text(), format!("{first_label}\n"));
+
+    assert_eq!(editor.press(Key::Up), Typed::Changed);
+    assert_eq!(editor.press(Key::End), Typed::Changed);
+    assert_eq!(editor.press(Key::Backspace), Typed::Changed);
+    assert_eq!(editor.text(), "\n");
+    assert_eq!(editor.projection().text(), "\n");
+}
+
+#[test]
 fn a_large_middle_paste_moves_each_side_once() {
     const SIDE: usize = 256 * 1024;
 
@@ -202,18 +243,30 @@ fn a_paste_over_the_prompt_bound_is_refused_whole() {
 #[test]
 fn the_last_byte_fits_and_the_next_character_is_refused() {
     let full = "x".repeat(Editor::MAX_BYTES);
-    let mut editor = Editor {
-        said: full.clone(),
-        shown: full,
-        at: Editor::MAX_BYTES,
-        ..Editor::new()
-    };
+    let mut editor = Editor::new();
+
+    assert_eq!(editor.paste(&full), Typed::Changed);
+    assert_eq!(editor.text(), full);
+    assert_eq!(
+        editor.projection().text(),
+        format!("[Pasted text {} chars]", Editor::MAX_BYTES)
+    );
 
     assert_eq!(editor.press(Key::Char('y')), Typed::Refused);
     assert_eq!(editor.text().len(), Editor::MAX_BYTES);
-    assert_eq!(editor.press(Key::Backspace), Typed::Changed);
+    assert_eq!(editor.take().len(), Editor::MAX_BYTES);
+    assert!(editor.projection().text().is_empty());
+
+    let almost = "x".repeat(Editor::MAX_BYTES - 1);
+    let mut editor = Editor {
+        said: almost.clone(),
+        shown: almost,
+        at: Editor::MAX_BYTES - 1,
+        ..Editor::new()
+    };
     assert_eq!(editor.press(Key::Char('日')), Typed::Refused);
     assert_eq!(editor.press(Key::Char('y')), Typed::Changed);
+    assert_eq!(editor.text().len(), Editor::MAX_BYTES);
 }
 
 #[test]

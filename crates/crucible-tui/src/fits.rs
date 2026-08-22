@@ -240,11 +240,8 @@ fn the_row_at_the_top_fits_the_window_it_stands_in() {
 #[test]
 fn the_prompt_box_fits_the_window_it_is_typed_into() {
     let prompt = Prompt {
-        said: PROSE,
-        projection: None,
-        line: 0,
-        column: 4,
-        left: Some(57),
+        draft: crate::Draft::at(PROSE, 4),
+        left: crate::Remaining::new(Some(57)),
         mode: "ask before edits",
         tone: Slot::Quiet,
         hint: "ctrl+j for a new line",
@@ -252,8 +249,7 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
         provider: "anthropic",
         effort: Some("high"),
         asking: Some("queued"),
-        running: Some(2),
-        running_pointed: true,
+        commands: crate::CommandCount::new(2, true),
         room: 6,
     };
     across("the prompt box", |columns, glyphs| {

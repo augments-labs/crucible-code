@@ -75,11 +75,40 @@ pub struct Caret {
 #[derive(Debug, Clone, Copy)]
 pub struct PromptRows<'a> {
     /// The resting rows of the prompt component.
-    pub rows: &'a [Row],
+    rows: &'a [Row],
     /// Where the terminal cursor belongs inside them.
-    pub caret: Caret,
+    caret: Caret,
     /// A relative row and that row in its pointed palette state.
-    pub pointed: Option<(usize, &'a Row)>,
+    pointed: Option<(usize, &'a Row)>,
+}
+
+impl<'a> PromptRows<'a> {
+    /// A prompt replacement, with an optional pointed form of one of its rows.
+    ///
+    /// An out-of-range target or one whose text differs from the resting row
+    /// is not a target. This keeps the renderer from associating an action with
+    /// a different visible row while letting a prompt with no surviving
+    /// command control use the same constructor. Returns `None` when the caret
+    /// or pointed target does not belong to these rows.
+    #[must_use]
+    pub fn new(rows: &'a [Row], caret: Caret, pointed: Option<(usize, &'a Row)>) -> Option<Self> {
+        let caret_row = rows.get(caret.row)?;
+        if caret.column > caret_row.columns() {
+            return None;
+        }
+        if pointed.is_some_and(|(at, row)| {
+            rows.get(at)
+                .is_none_or(|resting| resting.text() != row.text())
+        }) {
+            return None;
+        }
+
+        Some(Self {
+            rows,
+            caret,
+            pointed,
+        })
+    }
 }
 
 /// What is under a row of the window.
@@ -435,8 +464,9 @@ impl<T: Terminal> Renderer<T> {
 
     /// Whether a pointer transition is waiting for a pointable prompt redraw.
     ///
-    /// Taken once. Motion within the same effective target leaves this false,
-    /// so all-motion reporting does not turn into one frame per cell.
+    /// Taken once. Motion within the same effective target sets no new
+    /// transition, so all-motion reporting does not turn into one frame per
+    /// cell. A transition already pending remains true until this takes it.
     #[must_use]
     pub fn pointed_changed(&mut self) -> bool {
         std::mem::take(&mut self.pointed_changed)
@@ -791,12 +821,11 @@ impl<T: Terminal> Renderer<T> {
     /// therefore the rows that changed, and the caller redraws only when
     /// something moved.
     ///
-    /// The box alone. Anything a line has opened over it — a list, a plan, a
-    /// count of what is left — is [`Renderer::under`]'s, because the band this
-    /// fills is held to a share of the window and that share is a rule about a
-    /// long prompt rather than about what is standing above one. A caller that
-    /// sends both through here has the box thrown off the bottom of the screen
-    /// by whatever it opened.
+    /// The box alone. Anything a line has opened over it — a list or a plan —
+    /// is [`Renderer::under`]'s, because the band this fills is held to a share
+    /// of the window and that share is a rule about a long prompt rather than
+    /// about what is standing above one. A caller that must replace prompt,
+    /// standing foot, and transcript map together uses [`Renderer::replace`].
     ///
     /// An empty slice takes the box off, and the caret goes unread — which is
     /// what a component standing where the box was does on its way in, so that

@@ -169,6 +169,31 @@ fn a_turn_asked_to_stop_goes_on_counting_what_it_spends() {
 }
 
 #[test]
+fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
+    let mut turning = Turning::started(Some(80));
+    turning.saw(&Event::Compacting {
+        why: Compacting::Asked,
+        part: 12,
+    });
+    turning.interrupting();
+
+    turning.saw(&Event::Carried { left: Some(70) });
+    assert_eq!(turning.left(), Some(70));
+
+    turning.saw(&Event::Compacted {
+        compacted: crucible_core::Compacted {
+            why: Compacting::Asked,
+            replaced: 3,
+            before: 80,
+            after: 70,
+            kept: 1,
+        },
+    });
+    assert!(turning.making.is_none());
+    assert_eq!(turning.doing, Doing::Interrupting);
+}
+
+#[test]
 fn a_row_that_would_be_drawn_the_same_again_is_not_drawn_again() {
     // The whole cost of an animated row on a sixty-times-a-second tick.
     // Without this the box under it is laid out and written on every one of

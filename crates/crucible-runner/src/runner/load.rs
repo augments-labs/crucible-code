@@ -89,12 +89,12 @@ pub(super) struct Load {
     output_seen: bool,
     /// Whether a provider count covers all output seen in this response so far.
     output_reported: bool,
-    /// Response bytes not yet covered by an output-token report.
+    /// Response bytes not yet covered by the latest output-token report.
     ///
     /// Kept separately from `appended`: while a response streams it is not in
-    /// the transcript yet. Recording the finished agent message replaces this
-    /// with the message's own byte count, so the same prose is never estimated
-    /// twice.
+    /// the transcript yet. Recording the finished agent message moves only
+    /// this uncovered suffix into `appended`, so a prefix already covered by a
+    /// provider report is never estimated again.
     unreported: u64,
     /// Estimated content bytes in the request whose input count was reported.
     sent: u64,
@@ -224,8 +224,8 @@ impl Load {
     /// `None` wherever anything has happened that the last report does not
     /// cover. Persistence is stricter than display: a conservative estimate is
     /// useful on screen, while writing it down as a measurement would make a
-    /// later session trust a number no provider proved. Nothing makes that
-    /// session measure itself again; a wrong number may never be corrected.
+    /// later session trust a number no provider proved until the next
+    /// successful provider report corrects it.
     pub(super) fn calibrated(&self) -> Option<Calibration> {
         self.exact().then(|| Calibration {
             carried: Carried::new(self.carried),
@@ -264,21 +264,20 @@ impl Load {
 
     /// A message added to the transcript since.
     ///
-    /// The agent's own message adds to the transcript's length like any other,
-    /// and is not added to what has to be *estimated*: what it cost is reported
-    /// exactly and is already held as `spent`, so estimating its bytes as well
-    /// would count one answer twice.
+    /// The agent's own message adds to the transcript's length like any other.
+    /// What joins the estimate is only the suffix not covered by its latest
+    /// output report. Where no output was observed separately, the complete
+    /// message is that suffix.
     pub(super) fn recorded(&mut self, message: &Message) {
         let bytes = Self::bytes(message);
         let estimated = match message {
-            Message::Agent { .. } => !self.output_reported,
-            Message::User(_) | Message::ToolResults(_) => true,
+            Message::Agent { .. } if self.output_reported => 0,
+            Message::Agent { .. } if self.output_seen => self.unreported,
+            Message::Agent { .. } | Message::User(_) | Message::ToolResults(_) => bytes,
         };
 
         self.bytes = self.bytes.saturating_add(bytes);
-        if estimated {
-            self.appended = self.appended.saturating_add(bytes);
-        }
+        self.appended = self.appended.saturating_add(estimated);
         if matches!(message, Message::User(_) | Message::ToolResults(_)) {
             // The next response has not reported the request containing this
             // message, nor any output it may go on to produce.

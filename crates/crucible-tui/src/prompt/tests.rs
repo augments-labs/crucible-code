@@ -64,12 +64,11 @@ const SAID: [&str; 4] = [
 
 /// A prompt with `said` typed into it and the cursor `column` columns along.
 fn typing(said: &str, column: usize) -> Prompt<'_> {
+    let line = said.split('\n').next().unwrap_or_default();
+    let at = width::cut(line, column).unwrap_or(line.len());
     Prompt {
-        said,
-        projection: None,
-        line: 0,
-        column,
-        left: None,
+        draft: Draft::at(said, at),
+        left: Remaining::default(),
         mode: MODE,
         tone: Slot::Accent,
         hint: HINT,
@@ -81,8 +80,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         asking: None,
         // Nothing, so that every test written before this row said what was
         // running is still a test about what it said before.
-        running: None,
-        running_pointed: false,
+        commands: CommandCount::default(),
         room: ROOM,
     }
 }
@@ -181,9 +179,13 @@ fn an_unknown_window_is_always_named_in_the_top_border_without_a_row() {
 
 #[test]
 fn known_window_edges_are_named_in_the_same_top_border() {
-    for (left, expected) in [(0, "0% window left"), (100, "100% window left")] {
+    for (left, expected) in [
+        (0, "0% window left"),
+        (1, "1% window left"),
+        (100, "100% window left"),
+    ] {
         let prompt = Prompt {
-            left: Some(left),
+            left: Remaining::new(Some(left)),
             ..typed("")
         };
         let rows = prompt.rows(80, Glyphs::Unicode);
@@ -198,9 +200,34 @@ fn known_window_edges_are_named_in_the_same_top_border() {
 }
 
 #[test]
+fn an_out_of_range_window_reading_is_capped_at_one_hundred_percent() {
+    let prompt = Prompt {
+        left: Remaining::new(Some(u8::MAX)),
+        ..typed("")
+    };
+    let rows = prompt.rows(80, Glyphs::Unicode);
+
+    assert!(
+        rows.first()
+            .is_some_and(|row| row.text().contains("100% window left")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_plain_draft_snaps_a_cursor_inside_utf8_to_a_source_boundary() {
+    let prompt = Prompt {
+        draft: Draft::at("é", 1),
+        ..typed("")
+    };
+
+    assert_eq!(prompt.caret(80).column, FRAMED);
+}
+
+#[test]
 fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
     let known = Prompt {
-        left: Some(75),
+        left: Remaining::new(Some(75)),
         ..typed("")
     };
     assert!(row(&known, 1, 23, Glyphs::Unicode).contains("75% window left"));
@@ -426,7 +453,7 @@ fn a_large_paste_is_drawn_compactly_and_clicks_map_to_its_source_edges() {
     let mut editor = Editor::new();
     editor.paste(&source);
     let mut prompt = typed(editor.text());
-    prompt.projection = Some(editor.projection());
+    prompt.draft = Draft::projected(editor.projection());
 
     let rows = prompt.rows(80, Glyphs::Unicode);
     let label = "[Pasted text 1001 chars]";
@@ -437,6 +464,29 @@ fn a_large_paste_is_drawn_compactly_and_clicks_map_to_its_source_edges() {
     assert_eq!(
         prompt.clicked(80, FRAMED_ROW, FRAMED + width::columns(label) - 1),
         Some((0, 1_001))
+    );
+}
+
+#[test]
+fn a_second_compact_label_maps_across_unicode_and_hidden_source_newlines() {
+    let first = "日\n".repeat(501);
+    let second = "é".repeat(1_002);
+    let mut editor = Editor::new().multiline();
+    editor.paste("α\n");
+    editor.paste(&first);
+    editor.press(crate::editor::Key::Newline);
+    editor.paste(&second);
+    let prompt = Prompt {
+        draft: Draft::projected(editor.projection()),
+        ..typed("")
+    };
+    let label = "[Pasted text 1002 chars]";
+    let second_row = FRAMED_ROW + 2;
+
+    assert_eq!(prompt.clicked(80, second_row, FRAMED), Some((503, 0)));
+    assert_eq!(
+        prompt.clicked(80, second_row, FRAMED + width::columns(label)),
+        Some((503, 1_002))
     );
 }
 
@@ -473,7 +523,11 @@ fn a_window_never_cuts_a_wide_character_in_half() {
     let said = "日本語のテキストを入れてみる";
 
     for columns in WIDTHS.filter(|columns| *columns >= FRAMED_AT) {
-        for column in 0..=width::columns(said) {
+        let cursor_columns = std::iter::once(0).chain(
+            said.char_indices()
+                .map(|(at, character)| width::columns(&said[..at + character.len_utf8()])),
+        );
+        for column in cursor_columns {
             let typed = typing(said, column);
             let rows = typed.rows(columns, Glyphs::Unicode);
             let framed = rows.len() - 1;
@@ -972,7 +1026,11 @@ fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
     // The two are separate calls and lay the same component out. A click read
     // against a box drawn any other way lands somewhere nobody pointed at.
     for said in SAID {
-        for column in 0..=width::columns(said) {
+        let columns = std::iter::once(0).chain(
+            said.char_indices()
+                .map(|(at, character)| width::columns(&said[..at + character.len_utf8()])),
+        );
+        for column in columns {
             let prompt = typing(said, column);
             let caret = prompt.caret(FRAMED_AT);
             let back = prompt.clicked(FRAMED_AT, caret.row, caret.column);
@@ -983,9 +1041,9 @@ fn a_click_reads_the_same_rows_the_caret_was_placed_against() {
 }
 
 /// The same box, with commands left running behind it.
-fn leaving(said: &'static str, running: usize) -> Prompt<'static> {
+fn leaving(said: &str, running: usize) -> Prompt<'_> {
     Prompt {
-        running: Some(running),
+        commands: CommandCount::new(running, false),
         ..asking_of(said)
     }
 }
@@ -1065,7 +1123,7 @@ fn pointing_at_the_command_count_changes_only_its_slot() {
         ..leaving("", 2)
     };
     let pointed = Prompt {
-        running_pointed: true,
+        commands: CommandCount::new(2, true),
         ..resting
     };
     let rest = resting.rows(80, Glyphs::Unicode);
@@ -1088,6 +1146,31 @@ fn pointing_at_the_command_count_changes_only_its_slot() {
             .iter()
             .filter(|(_, text)| *text != "2 commands")
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn pointed_rows_reuse_the_resting_layout_and_change_only_the_command_slot() {
+    let said = "long prompt ".repeat(200);
+    let prompt = Prompt {
+        tone: Slot::Quiet,
+        room: 1,
+        ..leaving(&said, 2)
+    };
+    let (resting, pointed) = prompt.rows_with_pointed(80, Glyphs::Unicode);
+    let (at, pointed) = pointed.expect("the command row to survive");
+    let rest = resting.get(at).expect("the same resting row");
+
+    assert_eq!(rest.text(), pointed.text());
+    assert_eq!(rest.columns(), pointed.columns());
+    assert!(
+        rest.spans()
+            .any(|span| span == (Slot::Accent, "2 commands"))
+    );
+    assert!(
+        pointed
+            .spans()
+            .any(|span| span == (Slot::Pointed, "2 commands"))
     );
 }
 
