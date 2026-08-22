@@ -4,7 +4,7 @@ expression: window.picture()
 ---
 80x16 cursor 12,4 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|╭─ crucible v0.18.0 ───────────────────────────────────────────────────────────╮|
+|╭─ crucible v0.18.1 ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
