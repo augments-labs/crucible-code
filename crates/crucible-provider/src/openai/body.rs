@@ -97,7 +97,7 @@ fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
 /// called none is one.
 fn append(items: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => items.object(|item| {
+        Message::User { text, .. } => items.object(|item| {
             item.text("role", "user");
             item.text("content", text);
         }),

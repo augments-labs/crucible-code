@@ -74,7 +74,7 @@ fn write_messages(messages: &mut Array<'_>, transcript: &Transcript) {
 /// keeping the message that held it only moves the refusal up a level.
 fn write_message(messages: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => messages.object(|message| {
+        Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
             message.text("content", text);
         }),
@@ -173,7 +173,7 @@ mod tests {
 
     fn said(text: &str) -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User(text.into()));
+        transcript.push(Message::said(text));
         transcript
     }
 

@@ -193,11 +193,11 @@ mod tests {
         };
 
         let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
-        session.append(&Message::User(asked.into()));
+        session.append(&Message::said(asked));
         session.append(&answered);
 
         let mut transcript = Transcript::new();
-        transcript.push(Message::User(asked.into()));
+        transcript.push(Message::said(asked));
         transcript.push(answered);
 
         Runner::new(

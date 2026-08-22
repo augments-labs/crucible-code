@@ -187,7 +187,7 @@ pub(crate) struct Opening {
 /// One message as the line that records it.
 pub(crate) fn line(message: &Message) -> String {
     let value = match message {
-        Message::User(text) => json!({ "user": text.as_ref() }),
+        Message::User { text, .. } => json!({ "user": text.as_ref() }),
         Message::Agent { text, calls, stop } => json!({
             "agent": text.as_ref(),
             "calls": calls.iter().map(called).collect::<Vec<_>>(),
@@ -206,7 +206,7 @@ pub(crate) fn message(line: &str) -> Option<Message> {
     let value: Value = serde_json::from_str(line).ok()?;
 
     if let Some(text) = value.get("user") {
-        return Some(Message::User(text.as_str()?.into()));
+        return Some(Message::said(text.as_str()?));
     }
 
     if let Some(text) = value.get("agent") {

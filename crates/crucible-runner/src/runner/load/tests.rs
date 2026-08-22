@@ -24,7 +24,7 @@ fn nothing_has_been_reported_so_the_load_is_what_was_appended_at_a_cautious_rate
 #[test]
 fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
     let mut load = Load::default();
-    load.recorded(&Message::User("x".repeat(300).into()));
+    load.recorded(&Message::said("x".repeat(300)));
     let tools = [ToolSchema {
         name: "read",
         schema: Box::leak("s".repeat(536).into_boxed_str()),
@@ -41,7 +41,7 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
 #[test]
 fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     let mut load = Load::default();
-    load.recorded(&Message::User("request".into()));
+    load.recorded(&Message::said("request"));
     load.requesting(Some("system one"), &[]);
     load.responding();
     load.carried(Carried::new(100));
@@ -59,7 +59,7 @@ fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
 #[test]
 fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
     let mut load = Load::default();
-    load.recorded(&Message::User("x".repeat(300).into()));
+    load.recorded(&Message::said("x".repeat(300)));
     let tools = [ToolSchema {
         name: "read",
         schema: Box::leak("s".repeat(536).into_boxed_str()),

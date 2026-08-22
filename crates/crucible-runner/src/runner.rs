@@ -590,7 +590,7 @@ impl Runner {
 
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
-        self.record(Message::User(prompt.into()));
+        self.record(Message::said(prompt));
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
@@ -684,7 +684,7 @@ impl Runner {
             // and so it cannot land while a tool call is out.
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
-                self.record(Message::User(line.into()));
+                self.record(Message::said(line));
                 events.post(Event::Carried {
                     left: self.load.left(counting.window, counting.reserve),
                 });

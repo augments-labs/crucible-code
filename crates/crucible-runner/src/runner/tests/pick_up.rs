@@ -16,7 +16,7 @@ fn earlier(sample: &Sample) -> SessionId {
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
     let id = named(&session);
 
-    session.append(&Message::User("what came before".into()));
+    session.append(&Message::said("what came before"));
     session.append(&Message::Agent {
         text: "an answer from before".into(),
         calls: Vec::new(),
@@ -70,7 +70,7 @@ fn the_next_turn_is_asked_with_the_transcript_of_the_session_picked_up() {
             .transcript()
             .messages()
             .first()
-            .is_some_and(|message| *message == Message::User("what came before".into())),
+            .is_some_and(|message| *message == Message::said("what came before")),
         "the transcript is the one picked up, not the one left behind"
     );
 }

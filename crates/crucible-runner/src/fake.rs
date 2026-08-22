@@ -140,7 +140,7 @@ impl Provider for Script {
                 .iter()
                 .filter_map(|message| match message {
                     Message::Agent { text, .. } => Some(fingerprint(text)),
-                    Message::User(_) | Message::ToolResults(_) => None,
+                    Message::User { .. } | Message::ToolResults(_) => None,
                 })
                 .collect(),
             tools: request.tools.to_vec(),

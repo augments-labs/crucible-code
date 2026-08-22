@@ -25,7 +25,7 @@ fn provider(endpoint: Endpoint, body: &str, status: u16) -> (Moonshot, std::sync
 
 fn asking(text: &str) -> Request<'static> {
     let mut transcript = Transcript::new();
-    transcript.push(Message::User(text.into()));
+    transcript.push(Message::said(text));
 
     Request {
         model: "kimi-test",

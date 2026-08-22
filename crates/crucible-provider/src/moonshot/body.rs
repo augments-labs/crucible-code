@@ -86,7 +86,7 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
 /// two.
 fn append(messages: &mut Array<'_>, message: &Message) {
     match message {
-        Message::User(text) => messages.object(|message| {
+        Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
             message.text("content", text);
         }),

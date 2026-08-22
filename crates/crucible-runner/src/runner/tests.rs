@@ -743,7 +743,7 @@ fn a_turn_that_yields_records_what_the_model_said() {
     assert_eq!(
         scripted.runner.transcript().messages(),
         [
-            Message::User("hi".into()),
+            Message::said("hi"),
             Message::Agent {
                 text: "Hello, world".into(),
                 calls: Vec::new(),
@@ -883,7 +883,7 @@ fn a_call_the_model_never_finished_asking_for_is_not_recorded() {
     assert_eq!(
         scripted.runner.transcript().messages(),
         [
-            Message::User("go".into()),
+            Message::said("go"),
             Message::Agent {
                 text: "looking".into(),
                 calls: Vec::new(),
@@ -946,7 +946,7 @@ fn an_answer_the_connection_broke_off_is_still_in_the_transcript() {
     assert_eq!(
         scripted.runner.transcript().messages(),
         [
-            Message::User("what is in main.rs?".into()),
+            Message::said("what is in main.rs?"),
             Message::Agent {
                 text: "let me look at src/main.rs".into(),
                 calls: Vec::new(),
@@ -979,7 +979,7 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
     assert_eq!(
         scripted.runner.transcript().messages(),
         [
-            Message::User("go".into()),
+            Message::said("go"),
             Message::Agent {
                 text: "done".into(),
                 calls: Vec::new(),
@@ -1227,7 +1227,7 @@ fn the_calls_of_a_pass_are_recorded_before_the_tools_run() {
         Some(Message::ToolResults(results)) => results
             .first()
             .map(|result| result.output.text().to_owned()),
-        Some(Message::User(_) | Message::Agent { .. }) | None => None,
+        Some(Message::User { .. } | Message::Agent { .. }) | None => None,
     }
     .expect("the tool ran and its result was recorded");
 
@@ -1301,13 +1301,13 @@ fn a_continued_session_goes_on_counting_where_it_stopped() {
     let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
 
     let mut earlier = Transcript::new();
-    earlier.push(Message::User("one".into()));
+    earlier.push(Message::said("one"));
     earlier.push(Message::Agent {
         text: "first".into(),
         calls: Vec::new(),
         stop: Some(StopReason::Yielded),
     });
-    earlier.push(Message::User("two".into()));
+    earlier.push(Message::said("two"));
     earlier.push(Message::Agent {
         text: "second".into(),
         calls: Vec::new(),
@@ -1400,7 +1400,7 @@ fn a_turn_that_was_cut_off_comes_back_from_a_replay_still_cut_off() {
     assert_eq!(
         replayed.messages(),
         [
-            Message::User("write it all out".into()),
+            Message::said("write it all out"),
             Message::Agent {
                 text: "as I was say".into(),
                 calls: Vec::new(),
@@ -1431,7 +1431,7 @@ fn a_stream_that_never_said_why_it_stopped_fails_the_turn_rather_than_finishing_
     assert_eq!(
         scripted.runner.transcript().messages(),
         [
-            Message::User("go".into()),
+            Message::said("go"),
             Message::Agent {
                 text: "as I was say".into(),
                 calls: Vec::new(),
@@ -1515,7 +1515,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .iter()
         .filter_map(|message| match message {
             Message::ToolResults(results) => Some(results),
-            Message::User(_) | Message::Agent { .. } => None,
+            Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
         .map(|result| result.output.diff())

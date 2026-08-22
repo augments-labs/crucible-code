@@ -23,7 +23,7 @@ fn request(transcript: Transcript) -> Request<'static> {
 
 fn said(text: &str) -> Transcript {
     let mut transcript = Transcript::new();
-    transcript.push(Message::User(text.into()));
+    transcript.push(Message::said(text));
     transcript
 }
 

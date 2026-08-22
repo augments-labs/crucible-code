@@ -198,7 +198,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // of messages still reads correctly.
         if let Some((replaced, recap)) = whole.and_then(wire::made_room) {
             transcript.behind(replaced);
-            transcript.push(Message::User(recap.into()));
+            transcript.push(Message::said(recap));
             calibration = None;
             through += read as u64;
             continue;

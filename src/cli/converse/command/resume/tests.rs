@@ -24,7 +24,7 @@ use super::*;
 fn recorded(sample: &Sample, asked: &str) -> Session {
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
 
-    session.append(&Message::User(asked.into()));
+    session.append(&Message::said(asked));
     session.append(&Message::Agent {
         text: "an answer".into(),
         calls: Vec::new(),
@@ -274,9 +274,7 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
     let left = leaving.path().to_owned();
     let mut runner = over(leaving);
 
-    runner
-        .session()
-        .append(&Message::User("said in passing".into()));
+    runner.session().append(&Message::said("said in passing"));
 
     // Asked for by where it is on the list rather than by a number written
     // here, and asked once both sessions are on it. The session being left is

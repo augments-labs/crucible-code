@@ -185,7 +185,7 @@ mod tests {
 
     fn asking(text: &str) -> Request<'static> {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User(text.into()));
+        transcript.push(Message::said(text));
 
         Request {
             model: "claude-test",

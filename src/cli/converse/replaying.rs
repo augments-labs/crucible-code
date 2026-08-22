@@ -122,7 +122,7 @@ fn said<T: Terminal>(
         // The notes a compaction left standing, under a line saying whose words
         // they are, and through the same door the model's prose goes through —
         // because that is what they are.
-        Message::User(said) if said.starts_with(RECAP) => {
+        Message::User { text: said, .. } if said.starts_with(RECAP) => {
             renderer.apart()?;
             renderer.present(&[Row::new().then(Slot::Quiet, clip(NOTES, columns))])?;
             renderer.stream(said.strip_prefix(RECAP).unwrap_or(said))?;
@@ -132,7 +132,7 @@ fn said<T: Terminal>(
         // What was asked, in the row the box commits when it is typed: the mark,
         // the ground behind it, the break at the column rather than at a space.
         // A reader finds their own words the way they left them.
-        Message::User(said) => draw::queued(renderer, said, style)?,
+        Message::User { text: said, .. } => draw::queued(renderer, said, style)?,
 
         Message::Agent { text, calls, stop } => {
             if !text.trim().is_empty() {
@@ -233,9 +233,7 @@ mod tests {
     /// A transcript with one of everything in it.
     fn everything() -> Transcript {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User(
-            "read the config and tell me what it says".into(),
-        ));
+        transcript.push(Message::said("read the config and tell me what it says"));
         transcript.push(Message::Agent {
             text: "I will look at it.".into(),
             calls: vec![ToolCall {
@@ -427,9 +425,9 @@ mod tests {
         // them — but they are the model's own words, and the mark a typed line
         // wears would say otherwise.
         let mut transcript = Transcript::new();
-        transcript.push(Message::User(
-            format!("{RECAP}what was decided, and what is left").into(),
-        ));
+        transcript.push(Message::said(format!(
+            "{RECAP}what was decided, and what is left"
+        )));
 
         let screen = screen(transcript, 80);
         println!("\n{screen}");

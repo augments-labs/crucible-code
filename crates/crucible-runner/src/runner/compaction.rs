@@ -175,7 +175,7 @@ impl Runner {
                 .messages()
                 .iter()
                 .rev()
-                .take_while(|message| !matches!(message, Message::User(_)))
+                .take_while(|message| !matches!(message, Message::User { .. }))
                 .any(|message| matches!(message, Message::ToolResults(_)));
             match (why, completed_pass) {
                 (Compacting::Full | Compacting::Refused, true) => self.transcript.len(),
@@ -216,7 +216,7 @@ impl Runner {
         self.session.compacted(replacing, &standing_as);
 
         let mut rebuilt = Transcript::new();
-        rebuilt.push(Message::User(standing_as.into()));
+        rebuilt.push(Message::said(standing_as));
         for message in standing {
             rebuilt.push(message);
         }
@@ -278,7 +278,7 @@ impl Runner {
         let mut marks = messages
             .iter()
             .enumerate()
-            .filter(|(_, message)| matches!(message, Message::User(_)))
+            .filter(|(_, message)| matches!(message, Message::User { .. }))
             .map(|(at, _)| at);
         let mut cut = marks.next_back()?;
 
@@ -290,7 +290,7 @@ impl Runner {
                 continue;
             }
             tokens = tokens.saturating_add(self.estimated(message));
-            if matches!(message, Message::User(_)) {
+            if matches!(message, Message::User { .. }) {
                 if tokens >= budget {
                     break;
                 }
@@ -312,7 +312,7 @@ impl Runner {
     /// direction that costs context rather than the turn.
     fn estimated(&self, message: &Message) -> u64 {
         let bytes = match message {
-            Message::User(said) => said.len(),
+            Message::User { text: said, .. } => said.len(),
             Message::Agent { text, .. } => text.len(),
             Message::ToolResults(results) => results
                 .iter()
@@ -346,7 +346,7 @@ impl Runner {
             // A recap from a compaction before this one. The span being
             // replaced starts after the latest of them, but the files it kept
             // are still this session's to remember.
-            if let Message::User(said) = message
+            if let Message::User { text: said, .. } = message
                 && let Some(recap) = said.strip_prefix(crucible_core::RECAP)
             {
                 for (path, changed) in listed(recap) {
@@ -384,7 +384,7 @@ impl Runner {
     ) -> Result<Recap, TurnError> {
         let asking = RECAP.to_owned();
         let asking_bytes = asking.len() as u64;
-        self.transcript.push(Message::User(asking.into()));
+        self.transcript.push(Message::said(asking));
 
         // The recap is a standalone request: no ordinary system prompt or tool
         // schemas, and its output has to fit beside the request itself. This is

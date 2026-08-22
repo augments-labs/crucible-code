@@ -62,7 +62,7 @@ mod tests {
 
     fn asking() -> Request<'static> {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User("hello".into()));
+        transcript.push(Message::said("hello"));
 
         Request {
             model: "",
