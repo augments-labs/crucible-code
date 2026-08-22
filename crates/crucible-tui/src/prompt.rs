@@ -4,14 +4,14 @@
 //! that is not part of the box. The border is coloured by the mode in force and
 //! the row underneath says what that colour means in words, which is the
 //! arrangement that keeps the colour from being the only thing that says it — a
-//! terminal with no colour at all still reads the mode off the screen.
+//! terminal with no colour at all still reads the mode off the screen. The
+//! remaining model window stands the same way above the box: a quiet row of its
+//! own against the top right, on screen for exactly as long as the box is.
 //!
 //! The line wraps rather than scrolling sideways, because a prompt is written
 //! and read at the same time and a paragraph scrolled out of sight is one
 //! nobody can check before sending. The box therefore grows, and stops growing
 //! at about half the window: past that the line scrolls under the top edge.
-//! The remaining model window stands at the right of that top edge, inside the
-//! border and without taking a row of its own.
 //!
 //! The status sits below the frame rather than on its bottom edge. A frame is a
 //! container, and everything drawn on one reads as belonging to what is inside
@@ -63,8 +63,13 @@ const CLOSING: usize = 2;
 /// What stands before the line where there is no frame.
 const BARE: usize = 2;
 
-/// Which row of a framed prompt the line starts on.
-const FRAMED_ROW: usize = 1;
+/// Which row of a framed prompt the line starts on: the reading above the
+/// box, then the top border, then the line.
+const FRAMED_ROW: usize = 2;
+
+/// The framed rows that are not the line: the reading above the box and the
+/// top border.
+const BEFORE_LINE: usize = FRAMED_ROW;
 
 /// At least this much between what the status row says on the left and what it
 /// says on the right, so that the two never read as one sentence.
@@ -342,13 +347,19 @@ impl Prompt<'_> {
             let (open, opened) = glyphs.top();
             let (close, closed) = glyphs.bottom();
             let across = bar.repeat(columns.saturating_sub(2));
-            let reading = self.reading();
-            let fill = columns.saturating_sub(width::columns(&reading) + 4);
 
-            let mut rows = vec![Row::new().then(
-                Self::BORDER,
-                format!("{open}{} {reading} {opened}", bar.repeat(fill)),
-            )];
+            // The reading stands on a row of its own, quiet and against the
+            // right edge: not part of the box, and on screen for exactly as
+            // long as the box is. The spaces reaching it to the edge are
+            // written on its left rather than its right — like the status
+            // row, it holds no edge up, so trailing spaces would be bytes
+            // written every keystroke to draw nothing.
+            let reading = Row::new().then(Slot::Quiet, format!("{:>columns$}", self.reading()));
+
+            let mut rows = vec![
+                reading,
+                Row::new().then(Self::BORDER, format!("{open}{across}{opened}")),
+            ];
             rows.extend(self.typed(columns, glyphs));
             rows.push(Row::new().then(Self::BORDER, format!("{close}{across}{closed}")));
             rows
@@ -380,7 +391,7 @@ impl Prompt<'_> {
         let (first, before) = if columns < FRAMED_AT {
             (0, BARE)
         } else {
-            (FRAMED_ROW, FRAMED)
+            (BEFORE_LINE, FRAMED)
         };
         let shown = self.shown(inner(columns));
 
@@ -412,7 +423,7 @@ impl Prompt<'_> {
         let (first, before) = if columns < FRAMED_AT {
             (0, BARE)
         } else {
-            (FRAMED_ROW, FRAMED)
+            (BEFORE_LINE, FRAMED)
         };
 
         let shown = self.shown(inner(columns));
@@ -458,7 +469,7 @@ impl Prompt<'_> {
         }
 
         let framed = columns >= FRAMED_AT;
-        let first = if framed { FRAMED_ROW } else { 0 };
+        let first = if framed { BEFORE_LINE } else { 0 };
         let typed = self.shown(inner(columns)).rows.len();
         let border = usize::from(framed);
 

@@ -4,7 +4,6 @@ expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|                                                                                |
 |› the first thing                                                               |
 |                                                                                |
 |one answer                                                                      |
@@ -22,7 +21,8 @@ expression: window.picture()
 |                                                                                |
 |! stopped                                                                       |
 |                                                                                |
-|╭────────────────────────────────────────────────────────────── window unknown ╮|
+|                                                                  window unknown|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|

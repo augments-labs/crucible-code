@@ -41,8 +41,9 @@ use watched::Watched;
 /// A line long enough to need more rows than the box is allowed to grow to.
 ///
 /// Built rather than written out so the arithmetic is visible: the box shows
-/// `(rows / 2) - 3` rows of a line that wraps at `columns - 6`, and this is
-/// comfortably past that at the size the case uses.
+/// `(rows / 2) - 3` rows of a line that wraps at `columns - 6` — the reading
+/// above the box takes its row out of the transcript's share, not the box's —
+/// and this is comfortably past that at the size the case uses.
 fn overlong() -> String {
     "the quick brown fox jumps over the lazy dog. ".repeat(12)
 }

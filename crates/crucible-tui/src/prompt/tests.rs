@@ -97,7 +97,7 @@ fn asking_of(said: &str) -> Prompt<'_> {
 
 /// How many rows of a drawn component the line itself took.
 fn lines(prompt: &Prompt<'_>, columns: usize) -> usize {
-    let chrome = if columns < FRAMED_AT { 1 } else { 3 };
+    let chrome = if columns < FRAMED_AT { 1 } else { 4 };
 
     prompt.rows(columns, Glyphs::Unicode).len() - chrome
 }
@@ -166,7 +166,7 @@ fn every_row_of_a_framed_box_ends_at_its_last_column() {
 }
 
 #[test]
-fn an_unknown_window_is_always_named_in_the_top_border_without_a_row() {
+fn an_unknown_window_is_named_on_a_row_above_the_box() {
     let prompt = typed("");
     let rows = prompt.rows(80, Glyphs::Unicode);
 
@@ -174,11 +174,11 @@ fn an_unknown_window_is_always_named_in_the_top_border_without_a_row() {
         rows.first()
             .is_some_and(|row| row.text().contains("window unknown"))
     );
-    assert_eq!(rows.len(), 4, "the reading added vertical space");
+    assert_eq!(rows.len(), 5, "the reading took a row of its own");
 }
 
 #[test]
-fn known_window_edges_are_named_in_the_same_top_border() {
+fn known_window_edges_are_named_on_the_same_row() {
     for (left, expected) in [
         (0, "0% window left"),
         (1, "1% window left"),
@@ -195,7 +195,7 @@ fn known_window_edges_are_named_in_the_same_top_border() {
                 .is_some_and(|row| row.text().contains(expected)),
             "{rows:#?}"
         );
-        assert_eq!(rows.len(), 4, "the reading added vertical space");
+        assert_eq!(rows.len(), 5, "the reading took a row of its own");
     }
 }
 
@@ -212,6 +212,30 @@ fn an_out_of_range_window_reading_is_capped_at_one_hundred_percent() {
             .is_some_and(|row| row.text().contains("100% window left")),
         "{rows:#?}"
     );
+}
+
+#[test]
+fn the_reading_row_stands_against_the_right_edge_directly_above_the_box() {
+    // Right-aligned and quiet, with no blank row between it and the border —
+    // the arrangement the mode sentence keeps under the box.
+    let prompt = Prompt {
+        left: Remaining::new(Some(75)),
+        ..typed("")
+    };
+    let rows = prompt.rows(80, Glyphs::Unicode);
+    let reading = rows.first().expect("the reading row");
+    let (slot, text) = reading.spans().next().expect("a span on it");
+
+    assert_eq!(slot, Slot::Quiet, "{reading:?}");
+    assert!(text.ends_with("75% window left"), "{reading:?}");
+    assert_eq!(reading.columns(), 80, "{reading:?}");
+    assert!(
+        rows.get(1).is_some_and(|row| row.text().starts_with('╭')),
+        "the border did not follow it: {rows:#?}"
+    );
+    assert_eq!(prompt.caret(80).row, FRAMED_ROW, "the line did not move");
+    assert_eq!(prompt.clicked(80, 0, 40), None);
+    assert_eq!(prompt.clicked(80, 1, 40), None);
 }
 
 #[test]
@@ -546,7 +570,7 @@ fn a_window_never_cuts_a_wide_character_in_half() {
 #[test]
 fn the_status_row_says_the_mode_and_then_the_keys_that_change_it() {
     assert_eq!(
-        row(&typed(""), 3, 80, Glyphs::Unicode),
+        row(&typed(""), 4, 80, Glyphs::Unicode),
         format!("{MODE} {HINT}")
     );
 }
@@ -557,10 +581,10 @@ fn a_hint_is_drawn_only_where_the_whole_of_it_fits() {
     let together = width::columns(MODE) + 1 + width::columns(HINT);
 
     assert_eq!(
-        row(&typed(""), 3, together, Glyphs::Unicode),
+        row(&typed(""), 4, together, Glyphs::Unicode),
         format!("{MODE} {HINT}")
     );
-    assert_eq!(row(&typed(""), 3, together - 1, Glyphs::Unicode), MODE);
+    assert_eq!(row(&typed(""), 4, together - 1, Glyphs::Unicode), MODE);
 }
 
 #[test]
@@ -571,7 +595,7 @@ fn the_model_being_asked_stands_against_the_right_edge_of_the_status_row() {
     // is redrawn every keystroke, at the end away from the mode: the mode is
     // what the next tool call costs and this is what the next turn is asked
     // of, and run together they read as one sentence.
-    let status = row(&asking_of(""), 3, 80, Glyphs::Unicode);
+    let status = row(&asking_of(""), 4, 80, Glyphs::Unicode);
 
     assert!(status.starts_with(MODE), "{status:?}");
     assert!(status.ends_with(MODEL), "{status:?}");
@@ -583,7 +607,7 @@ fn the_status_row_says_whose_model_it_is_before_saying_which() {
     // The row is redrawn every keystroke, so it is the one place this can be
     // said and stay true: `/login` changes the vendor mid-session, and a name
     // on its own never said whose it was in the first place.
-    let status = row(&asking_of(""), 3, 80, Glyphs::Unicode);
+    let status = row(&asking_of(""), 4, 80, Glyphs::Unicode);
 
     assert!(status.contains("anthropic/claude-sonnet-5"), "{status:?}");
 }
@@ -599,8 +623,8 @@ fn a_row_with_no_model_says_nothing_about_a_vendor_either() {
     };
 
     assert_eq!(
-        row(&vendorless, 3, 80, Glyphs::Unicode),
-        row(&typed(""), 3, 80, Glyphs::Unicode),
+        row(&vendorless, 4, 80, Glyphs::Unicode),
+        row(&typed(""), 4, 80, Glyphs::Unicode),
     );
 }
 
@@ -618,12 +642,12 @@ fn the_keys_go_before_the_model_does() {
     // they are a reminder of a key that is also on the welcome card, and the
     // model is the only place this fact is said at all.
     let all = width::columns(MODE) + 1 + width::columns(HINT) + APART + width::columns(MODEL);
-    let both = row(&asking_of(""), 3, all, Glyphs::Unicode);
+    let both = row(&asking_of(""), 4, all, Glyphs::Unicode);
 
     assert!(both.contains(HINT), "{both:?}");
     assert!(both.ends_with(MODEL), "{both:?}");
 
-    let tight = row(&asking_of(""), 3, all - 1, Glyphs::Unicode);
+    let tight = row(&asking_of(""), 4, all - 1, Glyphs::Unicode);
 
     assert!(!tight.contains(HINT), "{tight:?}");
     assert!(tight.ends_with(MODEL), "{tight:?}");
@@ -636,22 +660,22 @@ fn a_model_with_no_room_beside_the_mode_is_not_drawn_at_all() {
     // clipped fact crowding it is worse than the fact being absent.
     let least = width::columns(MODE) + APART + width::columns(MODEL);
 
-    assert!(row(&asking_of(""), 3, least, Glyphs::Unicode).ends_with(MODEL));
+    assert!(row(&asking_of(""), 4, least, Glyphs::Unicode).ends_with(MODEL));
 
     // A column narrower and none of it is there -- not the name on its own,
     // and not a shortened one. The room it gave up goes back to the keys,
     // which is the row this width had before there was anything on its right.
-    let tight = row(&asking_of(""), 3, least - 1, Glyphs::Unicode);
+    let tight = row(&asking_of(""), 4, least - 1, Glyphs::Unicode);
 
     assert!(!tight.contains(NAMED), "{tight:?}");
-    assert_eq!(tight, row(&typed(""), 3, least - 1, Glyphs::Unicode));
+    assert_eq!(tight, row(&typed(""), 4, least - 1, Glyphs::Unicode));
 }
 
 #[test]
 fn the_status_row_is_not_padded_out_to_the_width() {
     // It holds no edge up, and trailing spaces on it are bytes written every
     // keystroke to draw nothing.
-    let status = row(&typed(""), 3, 80, Glyphs::Unicode);
+    let status = row(&typed(""), 4, 80, Glyphs::Unicode);
 
     assert!(status.len() < 80);
     assert!(!status.ends_with(' '), "{status:?}");
@@ -665,21 +689,21 @@ fn a_question_takes_a_row_of_its_own_under_the_status_and_starts_at_the_left() {
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         let rows = drawn(&asked(), 80, glyphs);
 
-        assert_eq!(rows.len(), 5, "{rows:?}");
+        assert_eq!(rows.len(), 6, "{rows:?}");
         assert!(
-            rows.get(3).is_some_and(|status| status.starts_with(MODE)),
+            rows.get(4).is_some_and(|status| status.starts_with(MODE)),
             "the status row moved: {rows:?}"
         );
-        assert_eq!(rows.get(4).map(String::as_str), Some(ASKING));
+        assert_eq!(rows.get(5).map(String::as_str), Some(ASKING));
     }
 }
 
 #[test]
 fn nothing_asking_takes_no_row_at_all() {
     // The ordinary state, and the one every other test here is drawn in: the
-    // component is the height it has always been, so the box does not sit a row
-    // higher for the whole session.
-    assert_eq!(drawn(&typed(""), 80, Glyphs::Unicode).len(), 4);
+    // component is the height the reading above the box leaves it, so the box
+    // does not sit a row higher for the whole session.
+    assert_eq!(drawn(&typed(""), 80, Glyphs::Unicode).len(), 5);
     assert_eq!(drawn(&typed(""), 10, Glyphs::Unicode).len(), 2);
 }
 
@@ -706,7 +730,7 @@ fn the_mode_is_readable_with_no_colour_at_all() {
     // from being the only thing that says it — and matters more now that the
     // border says nothing about the mode at all.
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-        assert!(row(&typed(""), 3, 80, glyphs).contains(MODE));
+        assert!(row(&typed(""), 4, 80, glyphs).contains(MODE));
     }
 }
 
@@ -727,6 +751,8 @@ fn the_border_is_one_colour_whatever_mode_is_in_force() {
 
         let rows = prompt.rows(80, Glyphs::Unicode);
         let (_, framed) = rows.split_last().expect("a status row under the box");
+        // The reading is not of the box, so the box's colour is not its own.
+        let (_, framed) = framed.split_first().expect("the reading above the box");
 
         for row in framed {
             assert_eq!(
@@ -1001,12 +1027,13 @@ fn a_click_past_the_end_of_a_row_lands_where_the_line_ends() {
 
 #[test]
 fn a_click_anywhere_but_the_line_moves_nothing() {
-    // The border, the status row, and anything drawn above the box. Moving the
-    // cursor to the nearest place that is inside would answer a click nobody
-    // aimed at the line.
+    // The reading row, the border, the status row, and anything drawn above
+    // the box. Moving the cursor to the nearest place that is inside would
+    // answer a click nobody aimed at the line.
     let prompt = typed("hello");
 
     assert_eq!(prompt.clicked(80, 0, FRAMED + 1), None);
+    assert_eq!(prompt.clicked(80, 1, FRAMED + 1), None);
     assert_eq!(prompt.clicked(80, FRAMED_ROW + 1, FRAMED + 1), None);
     assert_eq!(prompt.clicked(80, FRAMED_ROW + 2, FRAMED + 1), None);
 }

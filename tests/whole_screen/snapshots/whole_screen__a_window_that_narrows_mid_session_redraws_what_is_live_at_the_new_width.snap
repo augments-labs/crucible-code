@@ -4,7 +4,6 @@ expression: window.picture()
 ---
 52x20 cursor 16,47 scrolled 0
 |…/and-something-below-that-again/workspace          |
-|│ Tips                                             │|
 |│                                                  │|
 |│ · /          opens the command list              │|
 |│ · \ enter    adds a line without sending         │|
@@ -18,7 +17,8 @@ expression: window.picture()
 |select a model.                                     |
 |                                                    |
 |                                                    |
-|╭────────────────────────────────── window unknown ╮|
+|                                      window unknown|
+|╭──────────────────────────────────────────────────╮|
 |│ › the quick brown fox jumps over the lazy dog    │|
 |╰──────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                    |

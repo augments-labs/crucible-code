@@ -731,10 +731,16 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         rows.get(at + 1).is_some_and(String::is_empty),
         "the row did not stand clear of the box: {rows:?}"
     );
+    // The window reading stands on the row above the box, and the box under it.
     assert!(
         rows.get(at + 2)
+            .is_some_and(|row| row.contains("window unknown") || row.contains("window left")),
+        "the reading was not over the box: {rows:?}"
+    );
+    assert!(
+        rows.get(at + 3)
             .is_some_and(|row| row.starts_with('\u{256d}')),
-        "the box was not under the row: {rows:?}"
+        "the box was not under the reading: {rows:?}"
     );
 
     // The mode remains directly under the box for the whole stretch it is
@@ -754,8 +760,9 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
     );
 
     // And the cursor comes back into the box rather than onto the answer,
-    // because the box is what takes typing while the turn runs.
-    assert_eq!(shown.caret(), (at + 3, 4), "{rows:?}");
+    // because the box is what takes typing while the turn runs — reading, two
+    // borders and the line past the working row.
+    assert_eq!(shown.caret(), (at + 4, 4), "{rows:?}");
 }
 
 /// The window as it stood at the end of the first frame that said `said`.

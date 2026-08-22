@@ -4,7 +4,6 @@ expression: window.picture()
 ---
 80x16 cursor 12,4 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
 |the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
 |brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
@@ -14,7 +13,8 @@ expression: window.picture()
 |fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
 |quick brown fox jumps over the lazy dog.                                        |
 |                                                                                |
-|╭────────────────────────────────────────────────────────────── window unknown ╮|
+|                                                                  window unknown|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
