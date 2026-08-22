@@ -17,9 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
-    Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolSchema, Transcript, TurnError, TurnId,
+    Ask, Attached, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode,
+    Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary,
+    ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -27,6 +27,7 @@ use crucible_session::Session;
 use crate::tools::Tools;
 
 mod answer;
+pub mod attachments;
 mod compaction;
 mod load;
 mod work;
@@ -1003,9 +1004,15 @@ impl Runner {
         listening: &mut Listening<'_>,
     ) -> Result<StopReason, TurnError> {
         listening.counting.load.responding();
-        let mut stream = self
-            .provider
-            .stream(self.request(listening.advertised), listening.cancel)?;
+        // Both locals are the request's whole hold on the bytes: `resolved`
+        // owns them, `attached` is what the provider borrows, and the pass
+        // returning drops the pair. Nothing read here survives one request.
+        let resolved = attachments::resolve(&self.transcript);
+        let attached = resolved.attached();
+        let mut stream = self.provider.stream(
+            self.request(listening.advertised, &attached),
+            listening.cancel,
+        )?;
 
         Self::hear(
             stream.as_mut(),
@@ -1159,7 +1166,11 @@ impl Runner {
     /// are built per pass — a tool the model looked up mid-turn belongs in the
     /// next request — and a `Request` borrows for as long as the caller holds
     /// them.
-    fn request<'a>(&'a self, advertised: &'a [ToolSchema]) -> Request<'a> {
+    fn request<'a>(
+        &'a self,
+        advertised: &'a [ToolSchema],
+        attached: &'a [Attached<'a>],
+    ) -> Request<'a> {
         Request {
             model: &self.model.name,
             transcript: &self.transcript,
@@ -1167,6 +1178,7 @@ impl Runner {
             max_tokens: self.model.max_tokens,
             system: self.model.system.as_deref(),
             effort: self.model.effort,
+            attached,
         }
     }
 }

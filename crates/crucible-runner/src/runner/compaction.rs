@@ -417,6 +417,13 @@ impl Runner {
                 max_tokens: room,
                 system: None,
                 effort: self.model.effort,
+                // Nothing, deliberately. This request exists to turn a
+                // transcript into a recap, and a recap is text; re-sending
+                // megabytes of pictures to write one would spend the whole
+                // ceiling on the code path that fires when the window is
+                // already full. What the recap can say about a file is what
+                // the prompt naming it said.
+                attached: &[],
             },
             cancel,
         );

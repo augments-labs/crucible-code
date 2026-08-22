@@ -13,7 +13,7 @@ use std::fmt;
 use crate::cancel::Cancel;
 use crate::credential::{CredentialError, Redactions};
 use crate::ids::ToolId;
-use crate::modality::Modalities;
+use crate::modality::{Modalities, Modality};
 use crate::transcript::{StopReason, Transcript};
 
 /// Why a provider could not produce a response.
@@ -264,6 +264,61 @@ pub struct Request<'a> {
     /// and each picked it for the models it serves, so a session nobody has
     /// said anything to about effort is one this program has not overridden.
     pub effort: Option<Effort>,
+    /// The files this request carries, in transcript order.
+    ///
+    /// The transcript holds a reference to every file a prompt was given; this
+    /// holds what that came to for one request. Every attachment in the
+    /// transcript appears here exactly once — the ones whose bytes fit, and the
+    /// ones that stand in their own place carrying a line instead.
+    pub attached: &'a [Attached<'a>],
+}
+
+/// One attachment as a request carries it.
+///
+/// `message` and `index` are where it sits in the transcript: which message,
+/// and which of that message's files. A body module walks the transcript and
+/// needs both to put the content where its prompt put it, since this slice is
+/// flat and the transcript is not.
+#[derive(Clone, Copy, Debug)]
+pub struct Attached<'a> {
+    /// Which message of the transcript it was named in.
+    pub message: usize,
+    /// Which of that message's files it is.
+    pub index: usize,
+    /// What the file is, as the wire needs it spelled — `image/png`.
+    pub media_type: &'a str,
+    /// Which kind, as the model's capabilities are stated in.
+    pub modality: Modality,
+    /// The bytes, or the line standing in for them.
+    pub content: Content<'a>,
+}
+
+/// What an attachment put in front of the model this time.
+///
+/// A request has a size it must stay inside, and the transcript it is built
+/// from has no such bound — so the two cannot always agree, and this is where
+/// they differ. [`Content::Instead`] is not an error and is not a gap: it is a
+/// sentence, written by the runner, that takes the attachment's place in the
+/// request and says the file may be read again.
+#[derive(Clone, Copy)]
+pub enum Content<'a> {
+    /// The file, read for this request and dropped when it returns.
+    Bytes(&'a [u8]),
+    /// A line naming the file, standing where its bytes would have gone.
+    Instead(&'a str),
+}
+
+/// How much, or that there is a line — never the line, which names a path.
+///
+/// The path is in the request on purpose, for a model that can act on it. A
+/// backtrace is not that reader, and neither is a log.
+impl fmt::Debug for Content<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bytes(bytes) => f.debug_tuple("Bytes").field(&bytes.len()).finish(),
+            Self::Instead(_) => f.debug_tuple("Instead").field(&"[redacted]").finish(),
+        }
+    }
 }
 
 impl fmt::Debug for Request<'_> {
@@ -275,6 +330,10 @@ impl fmt::Debug for Request<'_> {
             .field("max_tokens", &self.max_tokens)
             .field("system", &self.system.map(|_| "[redacted]"))
             .field("effort", &self.effort)
+            // Redacted whole, not counted: a stood-in attachment's line names a
+            // path, and it names one on purpose, for a model that can act on
+            // it. A backtrace is not that reader.
+            .field("attached", &"[redacted]")
             .finish()
     }
 }

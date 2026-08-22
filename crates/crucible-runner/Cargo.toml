@@ -17,6 +17,9 @@ crucible-core.workspace = true
 # The log a turn is recorded to. Re-exported, so the wiring names one crate
 # for the loop and the session alike.
 crucible-session.workspace = true
+# An attachment records the hash of what was attached; resolving one checks the
+# file still hashes to it before sending bytes the transcript did not promise.
+sha2.workspace = true
 
 [lints]
 workspace = true

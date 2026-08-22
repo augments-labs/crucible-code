@@ -191,6 +191,7 @@ mod tests {
             model: "claude-test",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],
+            attached: &[],
             max_tokens: 1024,
             system: None,
             effort: None,
