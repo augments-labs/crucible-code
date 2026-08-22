@@ -311,3 +311,30 @@ fn the_workspace_a_scan_is_for_is_the_one_it_answers_about() {
     assert_eq!(offered(&sample, 4).len(), 1);
     assert!(recent(&sample.logs(), &sample.elsewhere(), 4).is_empty());
 }
+
+#[test]
+fn a_session_that_opened_with_a_file_still_says_what_was_asked() {
+    // The row is drawn from the first prompt, and format 6 writes that prompt
+    // with a key beside it. A reader that stopped at the shape it knew would
+    // leave a session in the list with nothing written on it.
+    let sample = Sample::new("recent-attached");
+    let id = nth(1);
+    sample.plant(
+        &id,
+        &[
+            sample.header(wire::FORMAT, &id),
+            serde_json::json!({
+                "user": "what is in this screenshot",
+                "attached": [{
+                    "path": "pictures/holiday.png",
+                    "modality": "image",
+                    "media_type": "image/png",
+                    "hash": "ab".repeat(32),
+                }],
+            })
+            .to_string(),
+        ],
+    );
+
+    assert_eq!(first(&offered(&sample, 4)), "what is in this screenshot");
+}
