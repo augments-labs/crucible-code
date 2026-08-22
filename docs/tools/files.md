@@ -36,6 +36,58 @@ An `offset` past the end of the file is not a failure: the answer is
 than that something is wrong. A file that is not text says so too, rather than
 putting its bytes in the transcript.
 
+### A document is read by converting it first
+
+`read` answers with text, and a Word document, a spreadsheet, a slide deck, an
+e-book or a PDF is not text. Where the name says which of those a file is, the
+refusal names something that would turn it into text:
+
+```
+report.docx is not a text file. It is a Word document — convert it and read
+what comes out, for example: pandoc report.docx --extract-media=converted-media
+-o converted.md
+```
+
+The command named is one that is **on your machine**. crucible looks for each
+converter it knows about, best first, and names the first one you have:
+
+| The file | Tried, in this order |
+| --- | --- |
+| `.docx` `.odt` `.rtf` | `pandoc`, then `textutil` on macOS, then `soffice` |
+| `.epub` | `pandoc` |
+| `.xlsx` `.xls` `.ods` | `soffice`, then `xlsx2csv` |
+| `.pptx` `.odp` | `soffice` |
+| `.pdf` | `pdftotext`, then `soffice` |
+
+The order is what survives, not what is likeliest. `pandoc` writes Markdown and
+keeps headings, lists and tables; the others flatten a document into prose — a
+heading becomes a line like any other, and a table becomes tab-separated rows.
+
+`--extract-media` is there because a picture is the one thing no converter turns
+into text. `pandoc` without it writes the *reference* and not the file, leaving a
+link to something that was never saved; with it the pictures are written out
+beside the Markdown, and stay openable. The other converters keep a picture's
+description, where it has one, and nothing else.
+
+LibreOffice's command line is `soffice`, and its installer puts it on the `PATH`
+on Linux only — so on macOS and Windows crucible also looks where the installer
+writes, and names the absolute path it found. Where you have none of the
+converters for a file, the answer says so, and which to install:
+
+```
+budget.xlsx is not a text file. It is a spreadsheet, and nothing installed
+here converts one — soffice or xlsx2csv would.
+```
+
+Nothing is converted for you and nothing is installed for you. The command is a
+suggestion, run — if you allow it — by [`bash`](commands.md) like any other. A
+file whose name says nothing about it gets the plain refusal, because a
+suggestion that does not fit is worse than none.
+
+What comes back is the text of the document, and only the text. Pictures,
+charts, cell formatting and layout do not survive a conversion to text, so a
+document whose content *is* a diagram converts to very little.
+
 Reading is never asked about. It is allowed, or refused by a `deny`
 [rule](../permissions/rules.md), and the question is answered without being put
 to you.
