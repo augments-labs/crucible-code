@@ -13,7 +13,9 @@
 //! prefix on the text because there is no field for it, and how hard to think
 //! is nested under `reasoning` rather than named at the top of the body.
 
-use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
+use crucible_core::{
+    Attached, Content, Message, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+};
 #[cfg(test)]
 use serde_json::Value;
 
@@ -85,8 +87,8 @@ fn served(request: &Request<'_>, serving: Serving) -> Value {
 
 /// The transcript, as the flat list of items this endpoint reads.
 fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
-    for message in request.transcript.messages() {
-        append(items, message);
+    for (nth, message) in request.transcript.messages().iter().enumerate() {
+        append(items, message, nth, request.attached);
     }
 }
 
@@ -95,11 +97,33 @@ fn write_input(items: &mut Array<'_>, request: &Request<'_>) {
 /// Appends rather than maps because the counts differ both ways: a turn that
 /// said something and then called three tools is four items, and a turn that
 /// called none is one.
-fn append(items: &mut Array<'_>, message: &Message) {
+fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Attached<'_>]) {
     match message {
         Message::User { text, .. } => items.object(|item| {
             item.text("role", "user");
-            item.text("content", text);
+
+            let mut files = attached.iter().filter(|one| one.message == nth).peekable();
+            if files.peek().is_none() {
+                item.text("content", text);
+                return;
+            }
+
+            // Parts rather than a string, and the picture ahead of the words —
+            // which is what the vendor's own guidance asks for, and the words
+            // are one prompt behind however many files it named.
+            item.array("content", |content| {
+                for one in files {
+                    content.object(|part| write_attached(part, one));
+                }
+                // A prompt that named a file and said nothing else is the
+                // picture alone, rather than a part carrying no words.
+                if !text.is_empty() {
+                    content.object(|part| {
+                        part.text("type", "input_text");
+                        part.text("text", text);
+                    });
+                }
+            });
         }),
         Message::Agent { text, calls, stop } => {
             // A model that goes straight to a tool says nothing first, and an
@@ -133,6 +157,31 @@ fn append(items: &mut Array<'_>, message: &Message) {
             for result in results {
                 items.object(|item| write_result(item, result));
             }
+        }
+    }
+}
+
+/// One attached file, or the line standing where it would have been.
+///
+/// The sentence is printed rather than composed: the runner is the only thing
+/// that knows which of its three reasons applies, and a part that invented its
+/// own wording would be a fourth.
+///
+/// `detail` is left off. It is optional, and the endpoint's own default is a
+/// better answer than one this harness would have to guess per image.
+fn write_attached(part: &mut Object<'_>, attached: &Attached<'_>) {
+    match attached.content {
+        Content::Bytes(bytes) => {
+            part.text("type", "input_image");
+            part.prefixed_encoded(
+                "image_url",
+                &format!("data:{};base64,", attached.media_type),
+                bytes,
+            );
+        }
+        Content::Instead(line) => {
+            part.text("type", "input_text");
+            part.text("text", line);
         }
     }
 }

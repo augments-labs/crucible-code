@@ -5,6 +5,8 @@
 //! where a tool's description comes from, and that nothing here may panic on a
 //! payload it did not expect.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Map, Value};
 
 /// A JSON document written directly into its final allocation.
@@ -133,6 +135,30 @@ impl Object<'_> {
             json.0.push('"');
             json.text_content(prefix);
             json.text_content(value);
+            json.0.push('"');
+        });
+    }
+
+    /// One string of bytes, encoded straight into the document.
+    ///
+    /// Base64's alphabet is `A-Z a-z 0-9 + / =`, and JSON escapes none of them,
+    /// so the encoder appends into the buffer being built rather than into a
+    /// `String` this would then copy out of. On a request carrying megabytes
+    /// that copy is the difference the ceiling above this is derived from.
+    pub(crate) fn encoded(&mut self, name: &str, bytes: &[u8]) {
+        self.member(name, |json| {
+            json.0.push('"');
+            STANDARD.encode_string(bytes, &mut json.0);
+            json.0.push('"');
+        });
+    }
+
+    /// The same, behind a prefix that is escaped the way any other string is.
+    pub(crate) fn prefixed_encoded(&mut self, name: &str, prefix: &str, bytes: &[u8]) {
+        self.member(name, |json| {
+            json.0.push('"');
+            json.text_content(prefix);
+            STANDARD.encode_string(bytes, &mut json.0);
             json.0.push('"');
         });
     }

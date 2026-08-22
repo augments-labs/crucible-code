@@ -159,8 +159,11 @@ impl Provider for OpenAi {
 
     fn spells(&self) -> Modalities {
         // Responses spells an attachment as an `input_image` or `input_file`
-        // part. This module writes neither yet, so neither is offered.
-        Modalities::empty().insert(Modality::Text)
+        // part. This module writes the first; a file is a part of its own and
+        // is not offered until it is written.
+        Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
     }
 
     fn stream(
@@ -434,17 +437,19 @@ mod tests {
         );
     }
 
-    /// What a wire protocol declares is what its body writes, and until a body
-    /// writes an attachment that is text and nothing else. A declaration that
-    /// ran ahead of the body would be read as permission to send bytes this
-    /// module has no shape for.
+    /// What a wire protocol declares is what its body writes, which is now text and
+    /// a picture. A declaration that ran ahead of the body would be read as
+    /// permission to send bytes this module has no shape for — and one that lagged
+    /// behind it would refuse a file at the prompt that the request could carry.
     #[test]
     fn openai_spells_no_more_than_its_body_can_write_today() {
         let (provider, _replay) = provider(200, ANSWER);
 
         assert_eq!(
             provider.spells(),
-            Modalities::empty().insert(Modality::Text),
+            Modalities::empty()
+                .insert(Modality::Text)
+                .insert(Modality::Image),
         );
     }
 }

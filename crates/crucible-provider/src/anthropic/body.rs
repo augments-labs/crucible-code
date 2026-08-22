@@ -9,7 +9,7 @@
 //! builds a request may be one bad assumption away from taking the process
 //! down.
 
-use crucible_core::{Message, Request, StopReason, ToolResult, ToolSchema, Transcript};
+use crucible_core::{Attached, Content, Message, Request, StopReason, ToolResult, ToolSchema};
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
@@ -23,9 +23,7 @@ pub(super) fn serialize(request: &Request<'_>) -> String {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
         body.boolean("stream", true);
-        body.array("messages", |messages| {
-            write_messages(messages, request.transcript);
-        });
+        body.array("messages", |messages| write_messages(messages, request));
 
         // Absent rather than null: the API rejects a null system prompt, and a
         // session without one is the ordinary case.
@@ -61,9 +59,9 @@ fn build(request: &Request<'_>) -> Value {
 }
 
 /// Every message that has something in it, in order.
-fn write_messages(messages: &mut Array<'_>, transcript: &Transcript) {
-    for message in transcript.messages() {
-        write_message(messages, message);
+fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
+    for (nth, message) in request.transcript.messages().iter().enumerate() {
+        write_message(messages, message, nth, request.attached);
     }
 }
 
@@ -72,11 +70,39 @@ fn write_messages(messages: &mut Array<'_>, transcript: &Transcript) {
 /// Empty is refused at both levels this wire has: an empty text block, and a
 /// message whose blocks all turned out to be empty ones. Dropping the block but
 /// keeping the message that held it only moves the refusal up a level.
-fn write_message(messages: &mut Array<'_>, message: &Message) {
+fn write_message(
+    messages: &mut Array<'_>,
+    message: &Message,
+    nth: usize,
+    attached: &[Attached<'_>],
+) {
     match message {
         Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
-            message.text("content", text);
+
+            let mut files = attached.iter().filter(|one| one.message == nth).peekable();
+            if files.peek().is_none() {
+                message.text("content", text);
+                return;
+            }
+
+            // The vendor's own guidance is that the picture reads better
+            // ahead of the words, and the words are one prompt behind however
+            // many files it named.
+            message.array("content", |content| {
+                for one in files {
+                    content.object(|block| write_attached(block, one));
+                }
+                // A prompt that named a file and said nothing else is the
+                // picture alone: an empty text block is one this vendor
+                // refuses the request over rather than ignores.
+                if !text.is_empty() {
+                    content.object(|block| {
+                        block.text("type", "text");
+                        block.text("text", text);
+                    });
+                }
+            });
         }),
         Message::Agent { text, calls, stop } => {
             // Nothing said and nothing asked for: a turn cancelled or filtered
@@ -133,6 +159,28 @@ fn write_message(messages: &mut Array<'_>, message: &Message) {
     }
 }
 
+/// One attached file, or the line standing where it would have been.
+///
+/// The sentence is printed rather than composed: the runner is the only thing
+/// that knows which of its three reasons applies, and a block that invented its
+/// own wording would be a fourth.
+fn write_attached(block: &mut Object<'_>, attached: &Attached<'_>) {
+    match attached.content {
+        Content::Bytes(bytes) => {
+            block.text("type", "image");
+            block.object("source", |source| {
+                source.text("type", "base64");
+                source.text("media_type", attached.media_type);
+                source.encoded("data", bytes);
+            });
+        }
+        Content::Instead(line) => {
+            block.text("type", "text");
+            block.text("text", line);
+        }
+    }
+}
+
 /// One tool result.
 fn write_result(block: &mut Object<'_>, result: &ToolResult) {
     block.text("type", "tool_result");
@@ -153,7 +201,9 @@ fn write_tool(tool: &mut Object<'_>, schema: &ToolSchema) {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Effort, ToolArgs, ToolCall, ToolId, ToolOutput};
+    use crucible_core::{
+        Attached, Content, Effort, Modality, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
+    };
 
     use super::*;
 
@@ -170,6 +220,28 @@ mod tests {
             system: None,
             effort: None,
         }
+    }
+
+    /// The four bytes a PNG starts with, which encode to `iVBORw==`.
+    const PIXEL: &[u8] = &[0x89, b'P', b'N', b'G'];
+
+    /// The line the runner writes in place of a file it did not send.
+    const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
+         within its size limit: read it again if you need it.";
+
+    /// A prompt the runner resolved one attachment for.
+    fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+        // The transcript's own reference is deliberately absent: a provider
+        // reads what the runner resolved and never a path.
+        let mut request = request(said(text));
+        request.attached = Box::leak(Box::new([Attached {
+            message: 0,
+            index: 0,
+            media_type: "image/png",
+            modality: Modality::Image,
+            content,
+        }]));
+        request
     }
 
     fn said(text: &str) -> Transcript {
@@ -449,5 +521,71 @@ mod tests {
         let body = build(&request(said("hello")));
 
         assert!(body.get("tools").is_none(), "an empty tool list is not one");
+    }
+
+    /// The shape this vendor's documentation described on 2026-08-23: an
+    /// `image` block whose `source` is `base64`, ahead of the prompt, because
+    /// the same page asks for the picture before the words.
+    #[test]
+    fn an_image_is_a_base64_source_block_before_the_prompt() {
+        let body = build(&holding("what is in this", Content::Bytes(PIXEL)));
+
+        assert_eq!(
+            at(&body, "/messages/0/content"),
+            &json!([
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw=="
+                    }
+                },
+                { "type": "text", "text": "what is in this" }
+            ]),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_file_that_was_not_sent_is_the_runners_sentence_in_its_place() {
+        let body = build(&holding("what is in this", Content::Instead(INSTEAD)));
+
+        assert_eq!(
+            at(&body, "/messages/0/content"),
+            &json!([
+                { "type": "text", "text": INSTEAD },
+                { "type": "text", "text": "what is in this" }
+            ]),
+            "the sentence is printed, not composed: {body}"
+        );
+    }
+
+    #[test]
+    fn a_prompt_with_nothing_attached_is_the_string_it_always_was() {
+        let body = build(&request(said("hello")));
+
+        assert_eq!(at(&body, "/messages/0/content"), &json!("hello"), "{body}");
+    }
+
+    /// A prompt that named a file and said nothing else. The picture is the whole
+    /// message, and an empty text part beside it is one this vendor refuses the
+    /// request over rather than ignores.
+    #[test]
+    fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
+        let body = build(&holding("", Content::Bytes(PIXEL)));
+
+        assert_eq!(
+            at(&body, "/messages/0/content"),
+            &json!([{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw=="
+                }
+            }]),
+            "{body}"
+        );
     }
 }

@@ -343,6 +343,7 @@ dependencies = [
 name = "crucible-provider"
 version = "0.19.0"
 dependencies = [
+ "base64 0.23.1",
  "crucible-core",
  "serde_json",
  "thiserror",

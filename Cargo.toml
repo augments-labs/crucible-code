@@ -133,7 +133,10 @@ ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
 # already present through rustls and avoids growing a second, partial codec at
-# the credential boundary.
+# the credential boundary. The three wire protocols need the same codec the
+# other way, because every one of them carries an attached file as base64 text,
+# and this encoder appends into the body being built rather than returning a
+# second copy of a request's worth of bytes.
 base64 = "=0.23.1"
 
 # OAuth PKCE and stable installation identifiers need bytes from the operating

@@ -3,7 +3,10 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::{Effort, ToolArgs, ToolId, ToolOutput, Transcript};
+use crucible_core::{
+    Attached, Content, Effort, Modality, ToolArgs, ToolId, ToolOutput, Transcript,
+};
+use serde_json::json;
 
 use super::*;
 
@@ -26,6 +29,28 @@ fn said(text: &str) -> Transcript {
     let mut transcript = Transcript::new();
     transcript.push(Message::said(text));
     transcript
+}
+
+/// The four bytes a PNG starts with, which encode to `iVBORw==`.
+const PIXEL: &[u8] = &[0x89, b'P', b'N', b'G'];
+
+/// The line the runner writes in place of a file it did not send.
+const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
+     within its size limit: read it again if you need it.";
+
+/// A prompt the runner resolved one attachment for.
+fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+    // The transcript's own reference is deliberately absent: a provider reads
+    // what the runner resolved and never a path.
+    let mut request = request(said(text));
+    request.attached = Box::leak(Box::new([Attached {
+        message: 0,
+        index: 0,
+        media_type: "image/png",
+        modality: Modality::Image,
+        content,
+    }]));
+    request
 }
 
 /// One value by JSON pointer.
@@ -321,4 +346,63 @@ fn a_tool_is_advertised_flat_with_its_schema_and_its_description() {
 fn a_session_with_no_tools_sends_no_tools_field() {
     // An empty array is refused rather than read as a session with no tools.
     assert_eq!(at(&build(&request(said("hello"))), "/tools"), &NOTHING);
+}
+
+/// The shape this vendor's documentation described on 2026-08-23: an
+/// `input_image` part whose `image_url` is a `data:` URL, ahead of the prompt's
+/// own `input_text` part. `detail` is optional and left off, so the endpoint
+/// applies the default it documents rather than one this harness invented.
+#[test]
+fn an_image_is_a_data_url_part_before_the_prompt() {
+    let body = build(&holding("what is in this", Content::Bytes(PIXEL)));
+
+    assert_eq!(
+        at(&body, "/input/0/content"),
+        &json!([
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw=="
+            },
+            { "type": "input_text", "text": "what is in this" }
+        ]),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_file_that_was_not_sent_is_the_runners_sentence_in_its_place() {
+    let body = build(&holding("what is in this", Content::Instead(INSTEAD)));
+
+    assert_eq!(
+        at(&body, "/input/0/content"),
+        &json!([
+            { "type": "input_text", "text": INSTEAD },
+            { "type": "input_text", "text": "what is in this" }
+        ]),
+        "the sentence is printed, not composed: {body}"
+    );
+}
+
+#[test]
+fn a_prompt_with_nothing_attached_is_the_string_it_always_was() {
+    let body = build(&request(said("hello")));
+
+    assert_eq!(at(&body, "/input/0/content"), "hello", "{body}");
+}
+
+/// A prompt that named a file and said nothing else. The picture is the whole
+/// message, and an empty text part beside it is one this vendor refuses the
+/// request over rather than ignores.
+#[test]
+fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
+    let body = build(&holding("", Content::Bytes(PIXEL)));
+
+    assert_eq!(
+        at(&body, "/input/0/content"),
+        &json!([{
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw=="
+        }]),
+        "{body}"
+    );
 }
