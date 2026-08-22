@@ -22,6 +22,7 @@ mod credential;
 mod diff;
 mod event;
 mod ids;
+mod modality;
 mod permission;
 mod provider;
 mod revealed;
@@ -40,6 +41,7 @@ pub use credential::{
 pub use diff::{Change, Diff, Line};
 pub use event::{Event, Post, TurnError};
 pub use ids::{IdError, SessionId, ToolId, TurnId};
+pub use modality::{Modalities, Modality, ModalityError};
 pub use permission::{
     Approved, Ask, Command, Disposition, Grant, Host, Minted, Mode, Permission, Remember,
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
