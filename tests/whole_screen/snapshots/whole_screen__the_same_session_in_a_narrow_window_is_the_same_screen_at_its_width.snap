@@ -21,8 +21,8 @@ expression: window.picture()
 |                                        |
 |                                        |
 |                                        |
-|                                        |
-|╭────────────────────── window unknown ╮|
+|                          window unknown|
+|╭──────────────────────────────────────╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |

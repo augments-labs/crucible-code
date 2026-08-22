@@ -4,7 +4,6 @@ expression: window.picture()
 ---
 80x24 cursor 20,5 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
@@ -22,7 +21,8 @@ expression: window.picture()
 |  /clear     start a new session, leaving this one                              |
 |  /exit      leave                                                              |
 |                                                                                |
-|╭────────────────────────────────────────────────────────────── window unknown ╮|
+|                                                                  window unknown|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › /                                                                          │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |

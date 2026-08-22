@@ -4,7 +4,6 @@ expression: window.picture()
 ---
 80x32 cursor 28,4 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
-|│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
@@ -30,7 +29,8 @@ expression: window.picture()
 |                                                                                |
 |fn main() {}                                                                    |
 |                                                                                |
-|╭────────────────────────────────────────────────────────────── window unknown ╮|
+|                                                                  window unknown|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                         anthropic/claude-test-1|
