@@ -213,9 +213,10 @@ pub struct Prompt<'a> {
     /// What is said quietly after it — the keys that change the mode. Nothing
     /// is drawn in its place when there is none.
     pub hint: &'a str,
-    /// Which model the next turn goes to, against the end of the status row
-    /// away from the mode. Empty where there is none to say, and then nothing
-    /// is drawn there.
+    /// Which model the next turn goes to. On a framed prompt it stands against
+    /// the end of the status row away from the mode; on a bare prompt it fits
+    /// before the remaining-window reading. Empty where there is none to say,
+    /// and then nothing is drawn there.
     pub model: &'a str,
     /// The vendor that model is asked of, drawn before it. Empty where nothing
     /// has chosen one, and then nothing is drawn in its place.
@@ -623,8 +624,10 @@ impl Prompt<'_> {
             .collect()
     }
 
-    /// The row under the box: the mode and the keys that change it, and at the
-    /// other end the model the next turn goes to.
+    /// The row under the box: the mode and the keys that change it. A framed
+    /// row puts the model the next turn goes to at the other end; a bare row
+    /// gives that end to the remaining-window reading and fits the model before
+    /// it.
     ///
     /// Two ends rather than one sentence, because the two facts are about
     /// different things — what a tool call arriving now costs, and what the
@@ -637,9 +640,10 @@ impl Prompt<'_> {
     /// typing into, and every key that changes the model is typed there. Both
     /// rows are held in place, so neither is the one that survives a scroll.
     ///
-    /// Padded only as far as the model, and no further. This is the one row of
-    /// the component not holding an edge up, so anything after the last thing
-    /// it says is bytes written every keystroke to draw nothing.
+    /// Padded only as far as the last fact: the model when framed, the
+    /// remaining-window reading when bare. This is the one row of the component
+    /// not holding an edge up, so anything after that is bytes written every
+    /// keystroke to draw nothing.
     fn status(&self, columns: usize, glyphs: Glyphs) -> Row {
         self.status_counted(columns, glyphs).0
     }

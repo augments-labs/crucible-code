@@ -135,8 +135,9 @@ fn standing<T: Terminal>(
     let glyphs = style.glyphs();
     let said = glyphs.hidden().repeat(hidden);
     let prompt = Prompt {
-        // The mark is one byte and one column wide in either set.
-        draft: Draft::at(&said, hidden),
+        // The mark is one column wide in either set. Its byte length differs,
+        // so the cursor at the end comes from the source itself.
+        draft: Draft::at(&said, said.len()),
         left: Remaining::default(),
         mode: asking,
         // The border says what the box is for. Not a mode's colour: no mode is

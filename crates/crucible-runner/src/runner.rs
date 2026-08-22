@@ -347,8 +347,8 @@ impl Runner {
 
     /// How much of the model's window is left, where a window is known.
     ///
-    /// The same reading the row above the box shows during a turn, asked for
-    /// between turns — where no event is arriving to carry it.
+    /// The between-turn read of the same prompt fact [`Event::Carried`]
+    /// refreshes while a turn runs.
     #[must_use]
     pub fn left(&self) -> Option<u8> {
         self.load.left(self.model.window)

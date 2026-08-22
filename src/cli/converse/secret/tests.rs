@@ -120,6 +120,22 @@ fn what_stands_in_for_a_character_comes_out_of_the_glyph_set() {
 }
 
 #[test]
+fn unicode_hidden_marks_leave_the_caret_after_every_mark() {
+    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+
+    standing(
+        &mut renderer,
+        Style::drawn(crucible_tui::Glyphs::Unicode),
+        "paste key",
+        2,
+        false,
+    )
+    .expect("the box to be drawn");
+
+    assert_eq!(renderer.terminal().picture().caret().1, 6);
+}
+
+#[test]
 fn a_key_with_surrounding_whitespace_is_trimmed() {
     // A copied key often carries spaces around it. Sent as it stands, every
     // provider refuses it with a sentence about the key being wrong.

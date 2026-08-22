@@ -1417,7 +1417,7 @@ struct Boxed {
     caret: Caret,
 }
 
-/// Lays out the prompt once and composes only its pointable row a second time.
+/// Lays out the prompt rows once and composes only its pointable row a second time.
 fn boxing<T: Terminal>(
     renderer: &Renderer<T>,
     editor: &Editor,
