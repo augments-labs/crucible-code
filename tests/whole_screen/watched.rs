@@ -306,6 +306,22 @@ impl Watched {
         self.settle(&format!("{keys:?} was typed"), None);
     }
 
+    /// Clicks the left button on the zero-based cell and reads until `wanted`
+    /// is on screen, without waiting for the screen to go still.
+    ///
+    /// The click half of [`Self::types_and_catches`]: what the click opens can
+    /// stand under an answer that is still arriving, and a screen being
+    /// redrawn on the stream's beat is one [`Self::settle`] never hears go
+    /// quiet.
+    pub(crate) fn clicks_catching(&mut self, row: usize, column: usize, wanted: &str) {
+        let x = column + 1;
+        let y = row + 1;
+        self.terminal
+            .write_all(format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m").as_bytes())
+            .expect("the click goes to the terminal");
+        self.catches("a click", wanted);
+    }
+
     /// Types `keys` and waits until the screen contains `wanted` and settles.
     pub(crate) fn types_until(&mut self, keys: &str, wanted: &str) {
         self.terminal

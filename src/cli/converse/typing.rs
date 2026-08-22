@@ -785,6 +785,7 @@ pub(super) fn during<T: Terminal>(
         kept,
         opened,
         viewing,
+        listing,
         says,
         background,
         style,
@@ -1001,7 +1002,12 @@ pub(super) fn during<T: Terminal>(
                     moved |= opened.is_open();
                 }
                 Landed::Line => moved = true,
-                Landed::Counted | Landed::Nothing => {}
+                // The count is the one door on that row, and it is the door it
+                // is between turns: the key cannot open the list here — it
+                // means backgrounding the command the turn is waiting on — so
+                // the click is the way the list is reached while a turn runs.
+                Landed::Counted => moved |= stood(renderer, style, listing, background)?,
+                Landed::Nothing => {}
             },
 
             Meant::Scrolled { back } => {
@@ -1027,6 +1033,19 @@ pub(super) fn during<T: Terminal>(
     // clock: this is the one place in a session where a tool call can change
     // what stands above the box while nobody is pressing anything.
     moved |= planning.moved();
+
+    // The count under the box, for the rest of it. A command left running can
+    // begin or end while the turn waits on it, and nothing then reaches this
+    // loop to say so: no key, and no turn event until the call is answered.
+    // This is the same refresh the row gets between turns off `arriving`, on
+    // the beat the working row already moves to — so the number that says
+    // something is still running is never a stale one, and a click on it has
+    // something to land on.
+    let count = background.count();
+    if count != says.running {
+        says.running = count;
+        moved = true;
+    }
 
     if moved
         && !expanding::under(renderer, style, kept, opened)?
@@ -1229,7 +1248,16 @@ pub(super) struct During<'a> {
     /// Whether the queue is standing open to be gone over, which is the other
     /// thing that takes the box's rows while the turn goes on writing above.
     pub(super) viewing: &'a mut queueing::Standing,
-    pub(super) says: &'a Says,
+    /// The list of what is still running, which a click on the count under the
+    /// box stands — the same door the key is at the prompt, kept across the
+    /// looks at the channel a turn is one of.
+    pub(super) listing: &'a mut Leaving,
+    /// Mutable for the one fact on it that moves while the turn does: a
+    /// command left running can begin or end between two of this loop's looks
+    /// at the keyboard, with no turn event to carry the news, and the count
+    /// under the box is the row that exists to report it. Read between turns,
+    /// where the same refresh happens off the beat instead.
+    pub(super) says: &'a mut Says,
     /// Where a command the turn is waiting on is asked to be left running.
     ///
     /// The request only: the command is being waited on by the worker thread, so

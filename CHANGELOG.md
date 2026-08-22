@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**The running-command count under the box answers a click while a turn is
+still running.** The count is the one thing on that row that can be acted on,
+but a click on it moved nothing until the turn ended — the key that opens the
+list means backgrounding mid-turn, so the mouse is the way in. It stands the
+same list as between turns now. The count also stays live: a command that
+begins or ends while the turn waits on it no longer leaves a stale number.
+
 ## [0.18.1] - 2026-08-22
 
 ### Fixed
