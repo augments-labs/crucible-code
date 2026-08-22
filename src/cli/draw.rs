@@ -101,16 +101,11 @@ pub(crate) fn event<T: Terminal>(
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
-        // Both belong to the row above the box, which says each of them only
-        // while it is true. What a turn has spent is a running total, and one
-        // line per reading would be a column of numbers each wrong the moment
-        // the next arrived. A response nobody read a word of, asked for again
-        // and answered, left nothing behind worth a line — a line per hiccup is
-        // what a reader would have to look past to find the answer.
-        // How full the window is belongs to the same row, and for the same
-        // reason: it is true until it changes, and a line per reading would be
-        // a column of stale numbers. Room being made belongs there too, while
-        // it is happening.
+        // All four are transient live-foot state rather than transcript lines.
+        // Spend, retries and compaction shape the working row; carried load
+        // refreshes the remaining-window fact in the prompt. Each is true only
+        // until its next event, so committing every reading would leave a
+        // column of stale state in front of the answer.
         Event::Spent { .. }
         | Event::Retrying
         | Event::Carried { .. }

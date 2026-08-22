@@ -273,6 +273,18 @@ fn every_line_finished_during_a_turn_is_kept_in_the_order_it_was_typed() {
 }
 
 #[test]
+fn a_compact_paste_waits_in_the_queue_as_its_expanded_source() {
+    let source = format!("run this {}", "x".repeat(1_001));
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste(&source), crucible_tui::Typed::Changed);
+    assert!(editor.projection().text().starts_with("[Pasted text "));
+    let mut waiting = Prompts::default();
+
+    assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    assert_eq!(waiting.waiting(), Some(source.as_str()));
+}
+
+#[test]
 fn the_whole_queue_is_named_and_a_line_taken_back_leaves_the_rest_in_order() {
     // The panel names them all, so the queue has to hand them all over, oldest
     // first. And a line taken back from the middle is the reader's until its

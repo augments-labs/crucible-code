@@ -18,7 +18,10 @@
 //! the box refuses another character and says why beneath itself; no supported
 //! credential is close to that boundary.
 
-use crucible_tui::{Key, Pressed, Prompt, Renderer, Slot, Terminal, characters, pressed};
+use crucible_tui::{
+    CommandCount, Draft, Key, Pressed, Prompt, Remaining, Renderer, Slot, Terminal, characters,
+    pressed,
+};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -132,12 +135,10 @@ fn standing<T: Terminal>(
     let glyphs = style.glyphs();
     let said = glyphs.hidden().repeat(hidden);
     let prompt = Prompt {
-        said: &said,
-        // The mark is one column wide in either set, so the cursor sits after
-        // as many columns as there are characters — which is the one thing the
-        // box knows about the line and the only thing it is allowed to know.
-        line: 0,
-        column: hidden,
+        // The mark is one column wide in either set. Its byte length differs,
+        // so the cursor at the end comes from the source itself.
+        draft: Draft::at(&said, said.len()),
+        left: Remaining::default(),
         mode: asking,
         // The border says what the box is for. Not a mode's colour: no mode is
         // in force in here, and borrowing one would say a permission had
@@ -147,7 +148,7 @@ fn standing<T: Terminal>(
         // And nothing about what is running either, for the same reason: this box
         // is a key being pasted in, and a door out of it to a list of commands is
         // a door nobody wants while a secret is on screen.
-        running: None,
+        commands: CommandCount::default(),
         // Nothing about the vendor, the model or the rung, which are facts
         // about the next turn. This box is not one: what is typed into it goes
         // to no provider, and naming one over a key being pasted in would say

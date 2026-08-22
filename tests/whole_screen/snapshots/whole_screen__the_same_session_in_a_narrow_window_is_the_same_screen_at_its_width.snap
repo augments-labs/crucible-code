@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 94
 expression: window.picture()
 ---
 40x24 cursor 20,4 scrolled 0
@@ -23,7 +22,7 @@ expression: window.picture()
 |                                        |
 |                                        |
 |                                        |
-|╭──────────────────────────────────────╮|
+|╭────────────────────── window unknown ╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |

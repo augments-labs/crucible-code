@@ -161,6 +161,9 @@ impl Runner {
                     kept: self.transcript.turns(),
                 };
                 events.post(crucible_core::Event::Compacted { compacted });
+                events.post(crucible_core::Event::Carried {
+                    left: self.load.left(self.model.window),
+                });
                 return Ok(Room::Made(compacted));
             }
 
@@ -241,6 +244,9 @@ impl Runner {
             kept,
         };
         events.post(crucible_core::Event::Compacted { compacted });
+        events.post(crucible_core::Event::Carried {
+            left: self.load.left(self.model.window),
+        });
 
         Ok(Room::Made(compacted))
     }

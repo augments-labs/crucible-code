@@ -26,6 +26,35 @@ fn keeping_one() -> Compaction {
 }
 
 #[test]
+fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(20_000)),
+            Delta::Text("first".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(30_000)),
+            Delta::Text("second".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        recap("notes to self"),
+    ]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let _ = scripted.left();
+
+    scripted
+        .runner
+        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .expect("a structured recap");
+
+    assert_eq!(scripted.left(), [Some(99)]);
+    assert_eq!(scripted.runner.left(), Some(99));
+}
+
+#[test]
 fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     let script = Script::new(vec![
         saying("first"),
@@ -264,9 +293,24 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
         .turn("go")
         .expect("the active turn made room instead of failing");
 
+    let events: Vec<Event> = scripted.seen.try_iter().collect();
     assert_eq!(stop, StopReason::Yielded);
-    assert!(scripted.said().contains("carried on"));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Delta { text } if text.contains("carried on")))
+    );
     assert_eq!(scripted.asked(), [1, 3, 5, 7]);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Carried { left } => Some(*left),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [Some(62), Some(24), Some(0), Some(62)]
+    );
 
     let sizes: Vec<usize> = scripted
         .runner
@@ -314,7 +358,9 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     let script = Script::new(vec![
         vec![
             Delta::Text(original.clone().into()),
-            Delta::Spent(Spend::new(10_000)),
+            // Enough exact output spend to cross the 16 000-token request
+            // boundary without relying on the same prose being estimated too.
+            Delta::Spent(Spend::new(17_000)),
             Delta::ToolStarted {
                 id: ToolId::new("a"),
                 name: "read".into(),

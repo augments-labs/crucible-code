@@ -35,11 +35,11 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
     // 300 transcript bytes + 60 instructions + 4 name + 536 schema + the
     // conservative 64-byte provider wrapper, at three bytes per token.
     assert_eq!(load.tokens(), 322);
-    assert_eq!(load.left(Some(200_000)), None);
+    assert_eq!(load.left(Some(200_000)), Some(99));
 }
 
 #[test]
-fn same_sized_new_request_overhead_invalidates_an_exact_percentage() {
+fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     let mut load = Load::default();
     load.recorded(&Message::User("request".into()));
     load.requesting(Some("system one"), &[]);
@@ -49,7 +49,7 @@ fn same_sized_new_request_overhead_invalidates_an_exact_percentage() {
 
     load.requesting(Some("system two"), &[]);
 
-    assert_eq!(load.left(Some(200)), None);
+    assert_eq!(load.left(Some(200)), Some(20));
     assert!(
         load.tokens() > 100,
         "the replacement overhead disappeared from the estimate"
@@ -129,7 +129,7 @@ fn agent_prose_is_estimated_when_an_existing_transcript_is_recounted() {
     });
 
     assert_eq!(load.tokens(), 1_000);
-    assert_eq!(load.left(Some(200_000)), None);
+    assert_eq!(load.left(Some(200_000)), Some(99));
 }
 
 #[test]
@@ -149,26 +149,42 @@ fn a_response_supersedes_the_last_one_rather_than_adding_to_it() {
 }
 
 #[test]
-fn locally_estimated_tool_output_hides_an_older_exact_percentage() {
+fn locally_estimated_tool_output_updates_an_older_exact_percentage() {
     let mut load = Load::default();
     load.carried(Carried::new(50_000));
     assert_eq!(load.left(Some(200_000)), Some(75));
 
     load.recorded(&results(30_000));
 
-    assert_eq!(load.left(Some(200_000)), None);
+    assert_eq!(load.left(Some(200_000)), Some(69));
     assert!(load.tokens() > 50_000, "the estimate stopped counting");
 }
 
 #[test]
-fn response_growth_hides_the_percentage_until_output_usage_catches_up() {
+fn response_growth_is_estimated_until_output_usage_catches_up() {
     let mut load = Load::default();
+    load.recorded(&results(200_000));
+    load.responding();
     load.carried(Carried::new(50_000));
-    assert!(load.produced());
-    assert_eq!(load.left(Some(200_000)), None);
-    assert!(!load.produced(), "a second fragment invalidated it twice");
+    load.produced(40_000);
+    assert_eq!(load.left(Some(200_000)), Some(70));
 
     load.spent(Spend::new(10_000));
+    assert_eq!(load.left(Some(200_000)), Some(70));
+}
+
+#[test]
+fn a_late_input_report_preserves_unreported_response_growth() {
+    let mut load = Load::default();
+    load.recorded(&results(200_000));
+    load.responding();
+    load.produced(40_000);
+
+    // Input and output counts are independent wire facts. An input count that
+    // arrives after text covers the request, not the response bytes already
+    // seen, so those bytes remain estimated at the new four-byte rate.
+    load.carried(Carried::new(50_000));
+
     assert_eq!(load.left(Some(200_000)), Some(70));
 }
 
@@ -177,7 +193,7 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
     let mut load = Load::default();
     load.recorded(&results(3_000));
     load.carried(Carried::new(1_000));
-    load.produced();
+    load.produced(3_000);
     load.recorded(&Message::Agent {
         text: "x".repeat(3_000).into(),
         calls: Vec::new(),
@@ -187,15 +203,45 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
     // The six-byte result ID is part of the calibration, so 3 000 bytes of
     // prose conservatively round up to 999 tokens at that request's rate.
     assert_eq!(load.tokens(), 1_999);
-    assert_eq!(load.left(Some(200_000)), None);
+    assert_eq!(load.left(Some(200_000)), Some(99));
 }
 
 #[test]
-fn an_estimate_is_not_presented_as_an_exact_window_percentage() {
+fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording() {
+    let mut load = Load::default();
+    load.recorded(&results(400_000));
+    load.responding();
+    load.carried(Carried::new(100_000));
+
+    // The provider counted the first 400 bytes exactly, then another 200 bytes
+    // arrived before the complete 600-byte message was recorded.
+    load.produced(400);
+    load.spent(Spend::new(100));
+    load.produced(200);
+    load.recorded(&Message::Agent {
+        text: "x".repeat(600).into(),
+        calls: Vec::new(),
+        stop: None,
+    });
+
+    assert_eq!(
+        load.tokens(),
+        100_150,
+        "the exact prefix was estimated again"
+    );
+    assert_eq!(load.left(Some(200_000)), Some(49));
+    assert!(!load.full(Some(100_151), 0));
+}
+
+#[test]
+fn an_estimate_has_a_conservative_window_percentage() {
     let mut load = Load::default();
     load.recorded(&results(50_000));
 
-    assert_eq!(load.left(Some(200_000)), None);
+    // 50 006 bytes at the cautious three-byte rate round up to 16 669 tokens.
+    // The percentage rounds down in turn, so it never claims the fractional
+    // room the estimate has already reserved.
+    assert_eq!(load.left(Some(200_000)), Some(91));
 
     load.carried(Carried::new(50_000));
     assert_eq!(load.left(Some(200_000)), Some(75));

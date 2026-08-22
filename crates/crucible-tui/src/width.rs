@@ -177,6 +177,51 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     rows
 }
 
+/// Where to wrap editable text without discarding any source.
+///
+/// Unlike `folds`, these ranges partition the text: whitespace and indentation
+/// remain represented so a displayed caret or click can map back to the exact
+/// source. A word moves whole when it can, and only a word wider than the row
+/// is hard-broken.
+pub(crate) fn wraps(text: &str, columns: usize) -> Vec<Range<usize>> {
+    let mut rows = Vec::new();
+    if columns == 0 {
+        return rows;
+    }
+
+    let mut base = 0;
+    while base < text.len() {
+        let rest = text.get(base..).unwrap_or_default();
+        let Some(over) = cut(rest, columns) else {
+            rows.push(base..text.len());
+            break;
+        };
+
+        let at = if over == 0 {
+            step(rest)
+        } else if rest
+            .get(over..)
+            .and_then(|after| after.chars().next())
+            .is_some_and(char::is_whitespace)
+        {
+            over
+        } else {
+            rest.get(..over)
+                .unwrap_or_default()
+                .char_indices()
+                .filter(|(_, character)| character.is_whitespace())
+                .map(|(at, character)| at + character.len_utf8())
+                .next_back()
+                .unwrap_or(over)
+        };
+
+        rows.push(base..base + at);
+        base += at;
+    }
+
+    rows
+}
+
 /// `text` broken into rows no wider than `columns`, at the spaces where it can
 /// be.
 ///
@@ -391,5 +436,32 @@ mod tests {
     #[test]
     fn a_row_stops_being_counted_where_it_stops_being_a_row() {
         assert_eq!(columns("one\ntwo"), 3);
+    }
+
+    #[test]
+    fn editable_wraps_keep_whitespace_and_move_words_whole() {
+        let text = "  additional  vertical";
+        let ranges = wraps(text, 14);
+        let rows: Vec<_> = ranges
+            .iter()
+            .map(|range| text.get(range.clone()).unwrap_or_default())
+            .collect();
+
+        assert_eq!(rows, ["  additional  ", "vertical"]);
+        assert_eq!(rows.concat(), text);
+    }
+
+    #[test]
+    fn editable_wraps_preserve_combining_and_wide_source_when_a_word_cannot_fit() {
+        for text in ["e\u{301}e\u{301}e\u{301}", "日本語"] {
+            let ranges = wraps(text, 3);
+            let rows: Vec<_> = ranges
+                .iter()
+                .map(|range| text.get(range.clone()).unwrap_or_default())
+                .collect();
+
+            assert_eq!(rows.concat(), text);
+            assert!(rows.iter().all(|row| columns(row) <= 3));
+        }
     }
 }

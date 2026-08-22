@@ -103,6 +103,17 @@ impl Scripted {
             .collect()
     }
 
+    /// Each remaining-window reading posted while the turn ran.
+    fn left(&self) -> Vec<Option<u8>> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Carried { left } => Some(left),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Which turn each start announced, in order.
     fn started(&self) -> Vec<u32> {
         self.seen
@@ -206,6 +217,76 @@ fn tools(tools: impl IntoIterator<Item = Fixed>) -> Tools {
     offered
 }
 
+#[test]
+fn unreported_response_growth_updates_the_conservative_window_reading() {
+    // The request establishes this response's four-byte-per-token rate. While
+    // the provider has not reported output tokens, the visible bytes use that
+    // same cautious calibration rather than making the reading disappear.
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(50_000)),
+        Delta::Text("y".repeat(40_000).into()),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+    let mut scripted = Scripted::within(script, 200_000, Compaction::default());
+
+    scripted.turn(&"x".repeat(200_000)).expect("a turn");
+
+    assert_eq!(scripted.left(), [Some(75), Some(70)]);
+}
+
+#[test]
+fn a_tool_result_keeps_a_known_window_reading_present() {
+    let mut first = vec![Delta::Carried(Carried::new(50_000))];
+    first.extend(calling("a", "read", "{}"));
+    let mut second = vec![Delta::Carried(Carried::new(70_000))];
+    second.extend(saying("done"));
+    let output = "z".repeat(40_000);
+    let script = Script::new(vec![first, second]);
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("read").answering(&output)]),
+        Verdict::Allow,
+    );
+    scripted.runner.model.window = Some(200_000);
+
+    scripted.turn(&"x".repeat(200_000)).expect("a turn");
+
+    let left = scripted.left();
+    assert!(left.len() >= 3, "the result posted no estimate: {left:?}");
+    assert!(
+        left.iter().all(Option::is_some),
+        "reading blinked: {left:?}"
+    );
+}
+
+#[test]
+fn large_streamed_tool_identity_arguments_and_late_spend_move_the_known_reading() {
+    let id = "i".repeat(10_000);
+    let args = format!(r#"{{"padding":"{}"}}"#, "a".repeat(40_000));
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(50_000)),
+            Delta::ToolStarted {
+                id: ToolId::new(id),
+                name: "read".into(),
+            },
+            Delta::ToolArgs(args.into()),
+            Delta::Spent(Spend::new(2_000)),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        saying("done"),
+    ]);
+    let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
+    scripted.runner.model.window = Some(200_000);
+
+    scripted.turn(&"x".repeat(200_000)).expect("a tool turn");
+
+    assert_eq!(
+        scripted.left(),
+        [Some(75), Some(73), Some(68), Some(74), Some(72)]
+    );
+}
+
 /// A scripted turn over a `Steer`, for pushing a line mid-turn.
 struct Steering {
     runner: Runner,
@@ -261,6 +342,16 @@ impl Steering {
             .collect()
     }
 
+    fn left(&self) -> Vec<Option<u8>> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Carried { left } => Some(left),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn asked(&self) -> Vec<usize> {
         self.sent
             .lock()
@@ -292,6 +383,27 @@ fn a_line_typed_while_a_turn_runs_is_worked_into_it_at_the_next_pass() {
     assert!(
         second > first,
         "the next request carries the steered line: {asked:?}"
+    );
+}
+
+#[test]
+fn a_steered_line_keeps_a_known_window_reading_present() {
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(50_000)),
+        Delta::Text("done".into()),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+    let mut steering = Steering::new(script, Tools::new());
+    steering.runner.model.window = Some(200_000);
+    steering.steer.say("take this route".into());
+
+    steering.turn("first").expect("a turn");
+
+    let left = steering.left();
+    assert!(!left.is_empty(), "the turn posted no reading");
+    assert!(
+        left.iter().all(Option::is_some),
+        "reading blinked: {left:?}"
     );
 }
 
@@ -467,7 +579,7 @@ fn a_provider_handed_over_mid_session_is_the_one_the_next_turn_is_sent_to() {
 }
 
 #[test]
-fn changing_model_replaces_its_limits_and_hides_the_old_exact_percentage() {
+fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     let script = Script::new(vec![vec![
         Delta::Carried(Carried::new(40_000)),
         Delta::Text("done".into()),
@@ -486,8 +598,13 @@ fn changing_model_replaces_its_limits_and_hides_the_old_exact_percentage() {
     assert_eq!(scripted.runner.model.window, Some(1_000_000));
     assert_eq!(
         scripted.runner.left(),
+        Some(99),
+        "the transcript was not re-estimated against the new window"
+    );
+    assert_eq!(
+        scripted.runner.load.calibrated(),
         None,
-        "the old model's exact usage was displayed against the new window"
+        "the old model's exact reading survived the model change"
     );
     assert!(
         scripted.runner.load.tokens() > 0,
@@ -496,7 +613,24 @@ fn changing_model_replaces_its_limits_and_hides_the_old_exact_percentage() {
 }
 
 #[test]
-fn changing_provider_hides_usage_reported_by_the_old_one() {
+fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
+    let script = Script::new(vec![vec![
+        Delta::Carried(Carried::new(40_000)),
+        Delta::Stopped(StopReason::Yielded),
+    ]]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+    scripted.runner.model.window = Some(200_000);
+    scripted.turn("go").expect("a measured turn");
+    assert_eq!(scripted.runner.left(), Some(80));
+
+    scripted.runner.ask("unbounded", 4_096, None);
+
+    assert_eq!(scripted.runner.left(), None);
+    assert_eq!(scripted.runner.load.calibrated(), None);
+}
+
+#[test]
+fn changing_provider_reestimates_usage_reported_by_the_old_one() {
     let script = Script::new(vec![vec![
         Delta::Carried(Carried::new(40_000)),
         Delta::Text("done".into()),
@@ -510,7 +644,12 @@ fn changing_provider_hides_usage_reported_by_the_old_one() {
 
     scripted.runner.serve(Box::new(Elsewhere));
 
-    assert_eq!(scripted.runner.left(), None);
+    assert_eq!(scripted.runner.left(), Some(99));
+    assert_eq!(
+        scripted.runner.load.calibrated(),
+        None,
+        "the old provider's exact reading survived the provider change"
+    );
     assert!(
         scripted.runner.load.tokens() > 0,
         "the transcript stopped counting"

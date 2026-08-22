@@ -14,6 +14,13 @@ foreground while the rest of the transcript stays in the quiet it was in, so
 what lights is what a click there opens. <kbd>Ctrl+O</kbd> still reaches every
 result the session cut, wherever the pointer is.
 
+**The prompt keeps what matters visible without giving up the line you wrote.**
+It always reports remaining-window state — in the top border when framed, in the
+existing status row when bare, and as `window unknown` until a model supplies a
+denominator. The running-command count shows when it can be pointed at, prose
+wraps on whole words, and a paste over 1,000 characters stands as one atomic
+label while copy and send retain its exact text.
+
 ## [0.18.0] - 2026-08-21
 
 ### Added

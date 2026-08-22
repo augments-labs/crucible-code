@@ -3,4 +3,4 @@ source: crates/crucible-tui/src/prompt/tests.rs
 expression: "dump(&prompt.rows(columns, glyphs), columns)"
 ---
 <Accent>›</> hello                
-<Accent>ask before edits</>
+<Accent>ask bef</><Quiet>  </><Quiet>window unknown</>

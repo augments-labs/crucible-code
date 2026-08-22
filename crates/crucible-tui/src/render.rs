@@ -71,6 +71,46 @@ pub struct Caret {
     pub column: usize,
 }
 
+/// Prompt rows replaced together, including the one row that can be pointed.
+#[derive(Debug, Clone, Copy)]
+pub struct PromptRows<'a> {
+    /// The resting rows of the prompt component.
+    rows: &'a [Row],
+    /// Where the terminal cursor belongs inside them.
+    caret: Caret,
+    /// A relative row and that row in its pointed palette state.
+    pointed: Option<(usize, &'a Row)>,
+}
+
+impl<'a> PromptRows<'a> {
+    /// A prompt replacement, with an optional pointed form of one of its rows.
+    ///
+    /// An out-of-range target or one whose text differs from the resting row
+    /// is not a target. This keeps the renderer from associating an action with
+    /// a different visible row while letting a prompt with no surviving
+    /// command control use the same constructor. Returns `None` when the caret
+    /// or pointed target does not belong to these rows.
+    #[must_use]
+    pub fn new(rows: &'a [Row], caret: Caret, pointed: Option<(usize, &'a Row)>) -> Option<Self> {
+        let caret_row = rows.get(caret.row)?;
+        if caret.column > caret_row.columns() {
+            return None;
+        }
+        if pointed.is_some_and(|(at, row)| {
+            rows.get(at)
+                .is_none_or(|resting| resting.text() != row.text())
+        }) {
+            return None;
+        }
+
+        Some(Self {
+            rows,
+            caret,
+            pointed,
+        })
+    }
+}
+
 /// What is under a row of the window.
 ///
 /// The answer to a click, and the only thing that turns a row the terminal
@@ -157,6 +197,15 @@ pub struct Renderer<T: Terminal> {
     /// One bit rather than its column, because every motion on the same side of
     /// either edge should cost no layout and no frame.
     map_pointed: bool,
+    /// The row of the prompt that offers an action while the box is standing.
+    ///
+    /// Relative to the prompt band. The renderer owns the absolute placement,
+    /// so this is enough for it to decide whether a motion crossed the offer
+    /// without teaching it what the row means.
+    prompt_target: Option<usize>,
+    /// Whether a pointer transition is waiting for the prompt and fixed foot
+    /// to be replaced together.
+    pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
     /// Held rather than asked for per frame: a read costs a syscall, and
@@ -242,6 +291,8 @@ impl<T: Terminal> Renderer<T> {
             heading: None,
             crowned: None,
             map_pointed: false,
+            prompt_target: None,
+            pointed_changed: false,
             size,
             painted: Painted::new(),
             free: String::new(),
@@ -320,15 +371,24 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let on_map = |row| bands.foot.end.checked_sub(1) == Some(row);
         if let Pressed::Hovered { row, column } = arrived {
+            let lit = self.pointed();
+            let prompt_pointed = self.prompt_pointed();
             let over = !self.map.open()
                 && on_map(row)
                 && transcript_map::door(self.size.columns)
                     .is_some_and(|door| door.contains(&column));
-            let moved = self.pointing != Some(row);
             let crossed = over != self.map_pointed;
             self.pointing = Some(row);
             self.map_pointed = over;
-            if moved || crossed {
+            let changed =
+                lit != self.pointed() || prompt_pointed != self.prompt_pointed() || crossed;
+            if changed && self.prompt_target.is_some() {
+                // The caller has the pointable row in both of its palette
+                // states. It replaces that row, the rest of the prompt, and
+                // the map in one candidate rather than letting this write an
+                // intermediate frame.
+                self.pointed_changed = true;
+            } else if changed {
                 // One frame for both answers: main's cut-result offer is a fact
                 // about the row, while the map chip is a fact about crossing
                 // either horizontal edge inside its row.
@@ -402,6 +462,16 @@ impl<T: Terminal> Renderer<T> {
         }
     }
 
+    /// Whether a pointer transition is waiting for a pointable prompt redraw.
+    ///
+    /// Taken once. Motion within the same effective target sets no new
+    /// transition, so all-motion reporting does not turn into one frame per
+    /// cell. A transition already pending remains true until this takes it.
+    #[must_use]
+    pub fn pointed_changed(&mut self) -> bool {
+        std::mem::take(&mut self.pointed_changed)
+    }
+
     /// The rows showing the result the transcript cut short that the pointer is
     /// resting on. Empty where it is resting on nothing of the kind.
     ///
@@ -456,6 +526,15 @@ impl<T: Terminal> Renderer<T> {
         let head = self.record.covering(first, rows);
         let foot = self.record.covering(last, rows);
         (bands.transcript.start + head.start)..(bands.transcript.start + foot.end)
+    }
+
+    /// Whether the pointer is over the prompt row the caller marked pointable.
+    fn prompt_pointed(&self) -> bool {
+        let (Some(row), Some(target)) = (self.pointing, self.prompt_target) else {
+            return false;
+        };
+
+        matches!(self.aimed(row), Some(Aimed::Boxed(at)) if at == target)
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -742,12 +821,11 @@ impl<T: Terminal> Renderer<T> {
     /// therefore the rows that changed, and the caller redraws only when
     /// something moved.
     ///
-    /// The box alone. Anything a line has opened over it — a list, a plan, a
-    /// count of what is left — is [`Renderer::under`]'s, because the band this
-    /// fills is held to a share of the window and that share is a rule about a
-    /// long prompt rather than about what is standing above one. A caller that
-    /// sends both through here has the box thrown off the bottom of the screen
-    /// by whatever it opened.
+    /// The box alone. Anything a line has opened over it — a list or a plan —
+    /// is [`Renderer::under`]'s, because the band this fills is held to a share
+    /// of the window and that share is a rule about a long prompt rather than
+    /// about what is standing above one. A caller that must replace prompt,
+    /// standing foot, and transcript map together uses [`Renderer::replace`].
     ///
     /// An empty slice takes the box off, and the caret goes unread — which is
     /// what a component standing where the box was does on its way in, so that
@@ -781,6 +859,50 @@ impl<T: Terminal> Renderer<T> {
 
         paint(rows, &palette, self.size.columns, &mut self.standing.prompt);
         self.standing.prompted = Some(caret);
+        self.prompt_target = None;
+        self.pointed_changed = false;
+        self.draw()
+    }
+
+    /// Replaces everything standing at the foot in one frame.
+    ///
+    /// `prompt.pointed` names one prompt row and the same row in its pointed
+    /// palette state. The renderer chooses it from the pointer's absolute
+    /// window row; the caller remains the owner of the component and its words.
+    ///
+    /// # Errors
+    ///
+    /// `TerminalError::Io` if the terminal could not be written to.
+    pub fn replace(
+        &mut self,
+        prompt: PromptRows<'_>,
+        over: &[Row],
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        paint(
+            prompt.rows,
+            &palette,
+            self.size.columns,
+            &mut self.standing.prompt,
+        );
+        paint(over, &palette, self.size.columns, &mut self.standing.turn);
+        self.standing.prompted = Some(prompt.caret);
+        self.standing.turned = None;
+        self.prompt_target = prompt.pointed.map(|(at, _)| at);
+
+        if self.prompt_pointed()
+            && let Some((at, row)) = prompt.pointed
+            && let Some(shown) = self.standing.prompt.get_mut(at)
+        {
+            shown.clear();
+            row.clipped(self.size.columns).paint_into(&palette, shown);
+        }
+
+        self.pointed_changed = false;
         self.draw()
     }
 
@@ -956,6 +1078,8 @@ impl<T: Terminal> Renderer<T> {
         self.size = size;
         self.record.resized(size.columns);
         self.standing.clear();
+        self.prompt_target = None;
+        self.pointed_changed = false;
         self.unselects();
         self.map.close();
         self.map_pointed = false;
@@ -985,6 +1109,8 @@ impl<T: Terminal> Renderer<T> {
     pub fn empties(&mut self) -> Result<(), TerminalError> {
         self.record.empties();
         self.standing.clear();
+        self.prompt_target = None;
+        self.pointed_changed = false;
         self.unselects();
 
         // Every row of the band is showing a line that is no longer in the

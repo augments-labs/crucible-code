@@ -187,7 +187,7 @@ fn measured() -> Script {
 }
 
 #[test]
-fn a_session_picked_up_says_how_much_window_is_left_before_it_answers_again() {
+fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     // Everything the load measured belongs to this process, and a transcript
     // read off a disk arrives with none of it — so a session picked up used to
     // come back estimating, with the row saying nothing until the next answer
@@ -207,9 +207,10 @@ fn a_session_picked_up_says_how_much_window_is_left_before_it_answers_again() {
     drop(scripted.runner.pick_up(fresh, Transcript::new()));
     assert_eq!(
         scripted.runner.left(),
-        None,
-        "nothing has been measured yet"
+        Some(100),
+        "the fresh empty transcript was not estimated"
     );
+    assert_eq!(scripted.runner.load.calibrated(), None);
 
     drop(picking(&mut scripted, &sample, &id));
 
@@ -221,7 +222,7 @@ fn a_session_picked_up_says_how_much_window_is_left_before_it_answers_again() {
 }
 
 #[test]
-fn a_reading_taken_against_other_instructions_is_not_this_run_s_to_use() {
+fn a_reading_taken_against_other_instructions_is_reestimated_for_this_run() {
     // What a request carries includes its fixed content, and the reading covers
     // the two together. Sent under different instructions it describes neither,
     // so the estimate stands and the next answer measures this run for itself.
@@ -239,7 +240,12 @@ fn a_reading_taken_against_other_instructions_is_not_this_run_s_to_use() {
 
     drop(picking(&mut scripted, &sample, &id));
 
-    assert_eq!(scripted.runner.left(), None);
+    assert_eq!(scripted.runner.left(), Some(99));
+    assert_eq!(
+        scripted.runner.load.calibrated(),
+        None,
+        "the reading taken against other instructions was reused"
+    );
     assert!(
         scripted.runner.load.tokens() < 1_000,
         "nothing of the reading was taken: what came back is a few bytes of          transcript, counted at the rate a session with no report of its own uses"

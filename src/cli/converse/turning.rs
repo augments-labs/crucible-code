@@ -184,8 +184,8 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
-    /// How much of the model's window is left, or `None` where no window is
-    /// known and while room is being made.
+    /// How much of the model's window was left at the latest reading, or `None`
+    /// where no window is known.
     left: Option<u8>,
     /// Why room is being made, and `None` when it is not.
     ///
@@ -426,12 +426,12 @@ struct Drawn {
     doing: Doing,
     /// The count beside it.
     spent: Option<u64>,
-    /// The reading against the far end of it.
+    /// The remaining-window fact in the prompt belonging to this live foot.
     ///
     /// Part of what decides a redraw, because anything the row says and this
     /// value does not carry reaches the screen only when something else on the
-    /// row happens to change with it — a stale number, arriving late, on the
-    /// row somebody is reading to find out what is going on.
+    /// candidate happens to change with it — a stale number, arriving late, in
+    /// the prompt somebody is reading to find out what is going on.
     left: Option<u8>,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
@@ -456,12 +456,12 @@ struct Drawn {
 }
 
 impl Turning {
-    /// A turn that starts now.
-    pub(super) fn started() -> Self {
+    /// A turn that starts now, with the session's latest window reading.
+    pub(super) fn started(left: Option<u8>) -> Self {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
-            left: None,
+            left,
             making: None,
             part: 0,
             spent: None,
@@ -574,30 +574,24 @@ impl Turning {
             | Event::Retrying => Vec::new(),
         };
 
+        // These are facts rather than the activity word below. A turn asked to
+        // stop keeps reporting them until the response in flight is actually
+        // over, so freezing them would leave the next prompt with stale room.
+        match event {
+            Event::Carried { left } => self.left = *left,
+            Event::Compacting { why, part } => {
+                self.making = Some(*why);
+                self.part = *part;
+            }
+            Event::Compacted { .. } => self.making = None,
+            _ => {}
+        }
+
         // A turn that has been asked to stop is stopping whatever else it is
         // still reporting. The deltas already in flight arrive after the key,
         // and a row that went back to `writing` would be saying the key missed.
         if self.doing == Doing::Interrupting {
             return returned;
-        }
-
-        // How full the window is, kept whether or not a turn is running: the
-        // reading is on screen from the first frame of the session to the last,
-        // and the one moment it is not is while the number it would show is the
-        // one being replaced.
-        match event {
-            Event::Carried { left } => self.left = *left,
-            // Reported again as the notes are written, so what the row shows
-            // moves rather than sitting still for one request. The reading is
-            // taken away for the duration: the number it would show is the one
-            // being replaced.
-            Event::Compacting { why, part } => {
-                self.making = Some(*why);
-                self.part = *part;
-                self.left = None;
-            }
-            Event::Compacted { .. } => self.making = None,
-            _ => {}
         }
 
         self.doing = match event {
@@ -667,6 +661,12 @@ impl Turning {
 
         self.drawn = Some(now);
         moved
+    }
+
+    /// The latest session reading, carried into the turn and updated by
+    /// [`Event::Carried`] while it runs.
+    pub(super) const fn left(&self) -> Option<u8> {
+        self.left
     }
 
     /// The rows to put above the box, or none where the window has no room.
@@ -761,41 +761,11 @@ impl Turning {
 
         rows.extend(panel_rows);
 
-        // The window left, on a row of its own directly above the box — where it
-        // stands between turns — rather than against the end of the working row,
-        // so the one number that moves while a turn runs sits in the same place
-        // whether the turn is going or not.
-        if let Some(row) = left(self.left, columns) {
-            rows.push(row);
-        }
-
         rows.append(&mut panel);
         rows.push(Row::new());
 
         rows
     }
-}
-
-/// How much of the window is left, right-aligned on a row of its own.
-///
-/// The same row the prompt box draws between turns, so the number sits in the
-/// one place it is looked for whether a turn is running or not. Whole or not at
-/// all, for the reason that row says it: half a percentage is a number that is
-/// not the percentage. Nothing where no window is known, which is not a reading
-/// of zero.
-fn left(left: Option<u8>, columns: usize) -> Option<Row> {
-    let said = format!("{}% window left", left?);
-    let wide = crucible_tui::columns(&said);
-
-    if wide >= columns {
-        return None;
-    }
-
-    Some(
-        Row::new()
-            .then(Slot::Quiet, " ".repeat(columns - wide))
-            .then(Slot::Quiet, said),
-    )
 }
 
 /// The bar under the word while room is being made, or nothing where there is
