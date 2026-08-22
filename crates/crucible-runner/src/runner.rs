@@ -17,7 +17,7 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Attached, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode,
+    Ask, Attached, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event, Message, Mode,
     Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary,
     ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
@@ -1003,12 +1003,20 @@ impl Runner {
         answer: &mut Answer,
         listening: &mut Listening<'_>,
     ) -> Result<StopReason, TurnError> {
-        listening.counting.load.responding();
         // Both locals are the request's whole hold on the bytes: `resolved`
         // owns them, `attached` is what the provider borrows, and the pass
         // returning drops the pair. Nothing read here survives one request.
         let resolved = attachments::resolve(&self.transcript);
         let attached = resolved.attached();
+        // What the ceiling let through, not what the transcript refers to. An
+        // entry the pass aged out is a sentence by the time it gets here, and
+        // a sentence is text at the rate text is already charged at.
+        listening.counting.load.responding(
+            attached
+                .iter()
+                .filter(|one| matches!(one.content, Content::Bytes(_)))
+                .count(),
+        );
         let mut stream = self.provider.stream(
             self.request(listening.advertised, &attached),
             listening.cancel,
