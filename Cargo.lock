@@ -281,7 +281,7 @@ dependencies = [
 name = "crucible-auth"
 version = "0.18.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "crucible-core",
  "crucible-privacy",
  "getrandom 0.4.3",
@@ -386,7 +386,7 @@ dependencies = [
 name = "crucible-tui"
 version = "0.18.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "crossterm",
  "insta",
  "syntect",

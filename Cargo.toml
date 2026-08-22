@@ -134,7 +134,7 @@ ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
 # selected ChatGPT account id from that bounded claim set; this decoder is
 # already present through rustls and avoids growing a second, partial codec at
 # the credential boundary.
-base64 = "=0.22.1"
+base64 = "=0.23.1"
 
 # OAuth PKCE and stable installation identifiers need bytes from the operating
 # system's cryptographic random source. This is the small cross-platform
