@@ -1,7 +1,8 @@
 //! What each model crucible offers accepts and produces.
 //!
-//! Generated. Do not edit: `scripts/models.sh` writes this file, and a test
-//! refuses a tree where the two disagree. What it is generated *from* is a
+//! Generated. Do not edit: `scripts/models.sh` writes this file, and what
+//! checks it is the diff that run leaves — a row changed by hand is a row
+//! the next run discards. What it is generated *from* is a
 //! public database of model limits, read over the network by a `curl` in that
 //! script rather than by anything here.
 //!
@@ -10,7 +11,9 @@
 //! name that merely resembles one is wrong by a factor nobody would notice until
 //! a session had already thrown half of itself away.
 
-/// What one model accepts and produces, in tokens.
+use crucible_core::{Modalities, Modality};
+
+/// What one model accepts and produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Facts {
     /// The provider it is asked of.
@@ -21,6 +24,9 @@ pub(crate) struct Facts {
     pub(crate) window: u32,
     /// The most one answer may produce, in tokens.
     pub(crate) output: u32,
+    /// What the model reads. Half of what may be attached; the
+    /// other half is what the provider can spell.
+    pub(crate) accepts: Modalities,
 }
 
 /// Every model this build knows the limits of, sorted so a diff reads.
@@ -30,71 +36,119 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "claude-fable-5",
         window: 1_000_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-haiku-4-5",
         window: 200_000,
         output: 64_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-opus-5",
         window: 1_000_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-sonnet-5",
         window: 1_000_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "moonshot",
         model: "k3",
         window: 1_048_576,
         output: 131_072,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "k3-256k",
         window: 262_144,
         output: 131_072,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "kimi-for-coding",
         window: 262_144,
         output: 262_144,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "kimi-for-coding-highspeed",
         window: 262_144,
         output: 262_144,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.5",
         window: 922_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-luna",
         window: 922_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-sol",
         window: 922_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-terra",
         window: 922_000,
         output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
 ];
