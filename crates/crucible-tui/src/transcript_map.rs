@@ -86,6 +86,14 @@ pub(crate) struct TranscriptMap {
     moved: bool,
     /// When the identity row comes back. None while closed or while held.
     rests: Option<Instant>,
+    /// Whether a standing panel has the bottom band.
+    ///
+    /// Set for the length of a panel stood over the prompt: the prompt is
+    /// covered then, and the row beside it goes blank with it, so what stands
+    /// is the panel and not a door that reports on a screen the panel owns.
+    /// The map itself is not closed or moved, only unpainted, and returns as
+    /// it was when the panel does.
+    covered: bool,
 }
 
 impl TranscriptMap {
@@ -191,6 +199,22 @@ impl TranscriptMap {
         self.moved = false;
         self.rests = None;
         was
+    }
+
+    /// Covers or uncovers the bottom row, around a panel stood over the prompt.
+    ///
+    /// The change reports whether the row is painted differently afterwards, so
+    /// a caller knows whether the frame is worth redrawing: covering an
+    /// uncovered map is, covering a covered one is not.
+    pub(crate) fn cover(&mut self, covered: bool) -> bool {
+        let changed = self.covered != covered;
+        self.covered = covered;
+        changed
+    }
+
+    /// Whether a panel has the bottom band, so the row is painted blank.
+    pub(crate) fn covered(&self) -> bool {
+        self.covered
     }
 }
 

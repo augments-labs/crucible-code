@@ -27,7 +27,8 @@ use crate::cli::Fatal;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
-use super::{Held, Terms, mode};
+use super::{Held, Terms, mode, picking};
+use crate::cli::Served;
 
 mod clear;
 mod effort;
@@ -294,11 +295,11 @@ pub(super) fn wanted(line: &str) -> Option<Wanted<'_>> {
 pub(super) fn live<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    wanted: Owned,
+    wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
     let style = terms.style();
-    let rest = match &wanted {
+    let rest = match wanted {
         Owned::Known { rest, .. } => rest.as_str(),
         Owned::Unknown => "",
     };
@@ -344,13 +345,38 @@ struct Still;
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    wanted: Owned,
+    current: &str,
+    _wanted: Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Option<(Served, String)>, Fatal> {
+    // A loop rather than a sequence, because "go back" returns to the picker,
+    // and a pick is only held once it has been confirmed.
+    loop {
+        let picked = model::picked_while(renderer, terms, current, while_waiting)?;
+        let picking::Taken::Took(selected) = picked else {
+            // Left, or no room for a panel: nothing is held.
+            return Ok(None);
+        };
+
+        if model::confirmed(renderer, terms, selected, while_waiting)? {
+            return Ok(Some(selected.parts()));
+        }
+        // "go back": round to the picker.
+    }
+}
+
+/// Applies a model picked mid-turn, at the start of the turn it was held for.
+///
+/// Reached from the loop, not the keyboard: the runner is back from the worker,
+/// and the pick made over the running turn is the one this turn is asked under.
+pub(super) fn apply_model<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+    provider: Served,
+    name: &str,
 ) -> Result<(), Fatal> {
-    let _ = (renderer, terms, wanted, while_waiting);
-    // The picker, the confirmation, and the holding of the pick are the next
-    // piece of this and are not stood yet.
-    Ok(())
+    model::apply(renderer, runner, terms, provider, name)
 }
 
 /// Stands why a command cannot run now over the box until escape closes it.

@@ -288,6 +288,31 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
 }
 
 #[test]
+fn a_model_picked_mid_turn_is_confirmed_then_held() {
+    // The answer is long enough that the turn is still running when the
+    // command is sent. `/model` cannot reach the runner on the worker, so its
+    // picker opens over the turn, the consequence of a switch is said and
+    // agreed to, and the pick is held for the turn the loop starts next.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("model-mid-turn", 100, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // The picker opens, then a step down and Enter picks a model that is not
+    // the one in force. What stands next is the consequence, said and asked
+    // about before anything is held.
+    window.types_and_catches("/model\r", "Model");
+    window.types_and_catches("\x1b[B\r", "cached for the current model");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     // A real SGR mouse click opens the control at the bottom right, then a
     // second gesture drags its current place to the first cell. The

@@ -35,9 +35,17 @@ const SAID: &str = concat!(
 const LEFT: &str = "cancelled, no model taken";
 
 #[derive(Clone, Copy)]
-struct Selected {
+pub(super) struct Selected {
     provider: Served,
     model: Model,
+}
+
+impl Selected {
+    /// The provider and the model's name, which is what a held pick is stored
+    /// as.
+    pub(super) fn parts(&self) -> (Served, String) {
+        (self.provider, self.model.name.to_owned())
+    }
 }
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
@@ -81,6 +89,114 @@ pub(super) fn run<T: Terminal>(
     }
 
     listed(renderer, runner, terms)
+}
+
+/// The picker, stood while a turn runs behind it.
+///
+/// The runner is on the worker, so which model is in force is handed in by
+/// name rather than read off it, and the drain is run once a pass so the turn
+/// goes on rendering under the panel. What comes back is the pick, not applied
+/// — the runner cannot be reached mid-turn, so it is held for the turn the
+/// loop starts next.
+pub(super) fn picked_while<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    current: &str,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Taken<Selected>, Fatal> {
+    let offered: Vec<_> = PROVIDERS
+        .into_iter()
+        .flat_map(|provider| {
+            provider
+                .models
+                .iter()
+                .copied()
+                .map(move |model| Selected { provider, model })
+        })
+        .collect();
+
+    let saying = if current.is_empty() {
+        format!("Nothing is being asked yet. {SAID}")
+    } else {
+        format!(
+            "{}/{current} is what is asked now. {SAID}",
+            terms.provider.get().unwrap_or("unselected")
+        )
+    };
+
+    let says: Vec<String> = offered
+        .iter()
+        .map(|selected| beside(*selected, terms.style().glyphs()))
+        .collect();
+
+    let shown: Vec<Offered<'_>> = offered
+        .iter()
+        .zip(&says)
+        .map(|(selected, says)| Offered {
+            name: selected.model.shown,
+            says,
+        })
+        .collect();
+
+    let panel = Panel {
+        title: "Model",
+        said: Some(&saying),
+        shown: &shown,
+        chosen: offered
+            .iter()
+            .position(|selected| {
+                Some(selected.provider.name) == terms.provider.get()
+                    && selected.model.name == current
+            })
+            .unwrap_or(0),
+        footer: "esc to cancel",
+    };
+
+    Ok(picking::pick_while(renderer, terms.style(), panel, while_waiting)?.of(&offered))
+}
+
+/// Whether a switch is confirmed, with the consequence said first.
+///
+/// The pick is held for the next turn rather than applied now, and the next
+/// turn is the one that re-reads the history against the new model — so that
+/// is said, and agreed to, before anything is held. `false` where the reader
+/// goes back to the picker instead.
+pub(super) fn confirmed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    selected: Selected,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<bool, Fatal> {
+    // The display name, not the slug: a person reads "Fable 5", and the
+    // provider/model spelling is what `--model` and the config are for.
+    let name = selected.model.shown;
+    let says = format!(
+        "This conversation is cached for the current model. Switching to {name} means the full history gets re-read on your next message."
+    );
+    let switch = format!("switch to {name}");
+    let rows = [
+        Offered {
+            name: "Yes",
+            says: &switch,
+        },
+        Offered {
+            name: "No",
+            says: "go back",
+        },
+    ];
+
+    let panel = Panel {
+        title: "Switch model?",
+        said: Some(&says),
+        shown: &rows,
+        chosen: 0,
+        footer: "esc to go back",
+    };
+
+    Ok(matches!(
+        picking::pick_while(renderer, terms.style(), panel, while_waiting)?,
+        picking::Picked::Took(0)
+    ))
 }
 
 /// The model named on the line, with its provider named, settled from the
@@ -224,6 +340,21 @@ fn beside(selected: Selected, glyphs: Glyphs) -> String {
 ///
 /// A failure to write does not undo the switch. What is lost is the part that
 /// outlives the process, and the line drawn says so.
+/// Applies a pick held from mid-turn, when the runner is this side's again.
+///
+/// The same applying as `taken`, named for the caller that has a provider and a
+/// model rather than a row off the panel: a pick made while the runner was on
+/// the worker is applied at the next turn's start through here.
+pub(super) fn apply<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+    selected: Served,
+    name: &str,
+) -> Result<(), Fatal> {
+    taken(selected, name, renderer, runner, terms)
+}
+
 fn taken<T: Terminal>(
     selected: Served,
     name: &str,

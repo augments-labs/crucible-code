@@ -53,7 +53,7 @@ use super::seen::{Answer, Asking, CAPACITY, Given, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::subscription::Subscriptions;
 use super::unasked;
-use super::{Fatal, Serving, standing};
+use super::{Fatal, Served, Serving, standing};
 use command::Ran;
 use expanding::Standing;
 use planning::Planning;
@@ -175,6 +175,14 @@ pub(crate) struct Terms {
     /// by reference, and taking them mutably for the one that changes this
     /// would put a `&mut` through every arm that does not.
     pub(crate) provider: Cell<Option<&'static str>>,
+    /// A model picked mid-turn, held for the turn the loop starts next.
+    ///
+    /// The runner is on the worker for the running turn's length, so a pick
+    /// made then cannot reach it — it is held here and applied at the next
+    /// turn's start, when the runner is this side's again. `/clear` takes it
+    /// with the rest of the session: a pick made for a session being left is
+    /// not one the new one asked for.
+    pub(crate) pending_model: Cell<Option<(Served, String)>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
     /// file on the command path.
@@ -634,12 +642,19 @@ fn unboxed<T: Terminal>(
 /// something pressed while it ran ends the session. `true` is the session
 /// leaving.
 fn ran<T: Terminal>(
-    runner: Runner,
+    mut runner: Runner,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Runner, bool), Fatal> {
+    // A model picked mid-turn is applied now, before the turn starts: the
+    // runner is this side's again, and the pick was made for the request about
+    // to go out rather than for the one already answered.
+    if let Some((provider, name)) = terms.pending_model.take() {
+        command::apply_model(renderer, &mut runner, terms, provider, &name)?;
+    }
+
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
@@ -704,12 +719,12 @@ impl Turn<'_, '_> {
     /// One pass over the turn: drain one event, then look at the keyboard.
     ///
     /// `false` where the worker has closed the channel and the turn is over.
-    fn step<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<bool, Fatal> {
-        if !self.drain(renderer)? {
-            return Ok(false);
+    fn step<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> bool {
+        if !self.drain(renderer) {
+            return false;
         }
-        self.keys(renderer)?;
-        Ok(true)
+        self.keys(renderer);
+        true
     }
 
     /// The events half of a pass, on its own so a panel standing mid-turn can
@@ -719,7 +734,7 @@ impl Turn<'_, '_> {
     /// is the panel's to read.
     ///
     /// `false` where the worker has closed the channel and the turn is over.
-    fn drain<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<bool, Fatal> {
+    fn drain<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> bool {
         match self.seen.recv_timeout(TICK) {
             Ok(one) => {
                 // Before it is drawn, because drawing consumes it. The row
@@ -784,7 +799,7 @@ impl Turn<'_, '_> {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Ok(false),
+            Err(RecvTimeoutError::Disconnected) => return false,
         }
 
         // Reaped and counted before the box is drawn again, because the row under
@@ -810,13 +825,13 @@ impl Turn<'_, '_> {
         }
         self.says.running = self.terms.leaving.count();
 
-        Ok(true)
+        true
     }
 
     /// The keyboard half of a pass: the loop over the keys pressed while the
     /// turn ran. On its own so `step` is `drain` and this, and a panel never
     /// reaches it — while a panel stands, the keyboard is the panel's.
-    fn keys<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<(), Fatal> {
+    fn keys<T: Terminal>(&mut self, renderer: &mut Renderer<T>) {
         // After the event rather than before it, so what the turn said is on
         // screen before the box is drawn back underneath it. A line finished
         // here is kept for the loop above: running it now would start a second
@@ -866,8 +881,6 @@ impl Turn<'_, '_> {
                 Err(problem) => *self.drawn = stop_if_failed(Err(problem), &self.terms.cancel),
             }
         }
-
-        Ok(())
     }
 
     /// Runs a slash command finished mid-turn, with the turn rendering behind
@@ -880,7 +893,7 @@ impl Turn<'_, '_> {
         command: command::Owned,
     ) -> Result<(), Fatal> {
         match command.class() {
-            command::MidTurn::Live => self.live(renderer, command),
+            command::MidTurn::Live => self.live(renderer, &command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
             command::MidTurn::Refused(why) => {
                 command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
@@ -900,14 +913,15 @@ impl Turn<'_, '_> {
     fn live<T: Terminal>(
         &mut self,
         renderer: &mut Renderer<T>,
-        command: command::Owned,
+        command: &command::Owned,
     ) -> Result<(), Fatal> {
         // The transcript advances while the panel stands, so the drain is run
         // once a pass. The keyboard is not the turn's here, which is why this
         // is `drain` rather than `step` — and why the hook is handed the
         // renderer rather than closing over it.
         command::live(renderer, self.terms, command, &mut |renderer| {
-            self.drain(renderer).map(|_| ())
+            self.drain(renderer);
+            Ok(())
         })
     }
 
@@ -923,9 +937,18 @@ impl Turn<'_, '_> {
         renderer: &mut Renderer<T>,
         command: command::Owned,
     ) -> Result<(), Fatal> {
-        command::deferred(renderer, self.terms, command, &mut |renderer| {
-            self.drain(renderer).map(|_| ())
-        })
+        // Which model is in force is read off the row under the box: the
+        // runner that would answer is on the worker, and the row was written
+        // from it before the turn began.
+        let current = self.says.model.clone();
+        let picked = command::deferred(renderer, self.terms, &current, command, &mut |renderer| {
+            self.drain(renderer);
+            Ok(())
+        })?;
+        if let Some(pick) = picked {
+            self.terms.pending_model.set(Some(pick));
+        }
+        Ok(())
     }
 }
 
@@ -1034,7 +1057,7 @@ fn take<T: Terminal>(
         leaving: &mut leaving,
         terms,
     };
-    while turn.step(renderer)? {}
+    while turn.step(renderer) {}
 
     // The turn is over, so what stood under it is taken back — the box, or the
     // view if Ctrl+O was pressed while the turn ran. What comes back next is

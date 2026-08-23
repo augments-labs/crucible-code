@@ -68,6 +68,11 @@ pub(super) fn run<T: Terminal>(
     // model with no memory of why.
     terms.revealed.forget();
 
+    // A model picked mid-turn was picked for the session being left, and is
+    // held on the session, so it goes with it rather than landing on the new
+    // one it was never chosen for.
+    terms.pending_model.take();
+
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
     if let Some(problem) = left.finish() {
@@ -149,6 +154,7 @@ mod tests {
             putting: crate::cli::seen::Putting::new(),
             leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
+            pending_model: std::cell::Cell::new(None),
             settings: crucible_config::Settings::default(),
             choosing: sample.root().join("unwritten-home.json"),
             logins: Store::in_home(&sample.root()),
