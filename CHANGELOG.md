@@ -47,6 +47,13 @@ list means backgrounding mid-turn, so the mouse is the way in. It stands the
 same list as between turns now. The count also stays live: a command that
 begins or ends while the turn waits on it no longer leaves a stale number.
 
+### Added
+
+**A picture named in the prompt goes with it.** Write the path and the file is
+sent as a picture rather than as text, with no question to answer first — you
+typed it. Where the model or the protocol will not take it, a line says which of
+the two said no and what changes the answer.
+
 ## [0.18.1] - 2026-08-22
 
 ### Fixed

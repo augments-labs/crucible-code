@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    Answer as Chosen, Answered, Cancel, Compacting, Event, Mode, Post as _, Question, Remember,
-    Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
+    Answer as Chosen, Answered, Attachment, Cancel, Compacting, Event, Mode, Post as _, Question,
+    Remember, Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -61,6 +61,7 @@ use turning::Turning;
 use typing::{Asked, Says};
 
 mod asking;
+mod attaching;
 mod command;
 mod expanding;
 mod leaving;
@@ -464,7 +465,9 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
-            let (back, leaving) = ran(runner, renderer, terms, Work::Turn(said), &mut held)?;
+            let attached = attaching::beside(renderer, &runner, &terms.workspace, &said)?;
+            let work = Work::Turn(said, attached);
+            let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
             runner = back;
 
             // Left after the trouble `ran` says rather than instead of it: a
@@ -549,7 +552,9 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let (back, leaving) = ran(runner, renderer, terms, Work::Turn(prompt), &mut held)?;
+        let attached = attaching::beside(renderer, &runner, &terms.workspace, &prompt)?;
+        let work = Work::Turn(prompt, attached);
+        let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
         runner = back;
 
         if leaving {
@@ -1137,9 +1142,9 @@ fn sent(
             // nothing else has posted the failure, so this is where it becomes
             // visible.
             let did = match work {
-                Work::Turn(prompt) => {
+                Work::Turn(prompt, attached) => {
                     if let Err(problem) =
-                        runner.turn(&prompt, &mut asking, &relay, &running, &steer)
+                        runner.turn(&prompt, attached, &mut asking, &relay, &running, &steer)
                     {
                         relay.post(Event::Failed { error: problem });
                     }
@@ -1175,8 +1180,9 @@ fn sent(
 /// to reach a screen somebody is watching. What told them apart before was
 /// which of three loops was drawing, and two of the three were worse.
 enum Work {
-    /// One prompt, and everything that follows from it until the agent yields.
-    Turn(String),
+    /// One prompt, the files it named, and everything that follows from it
+    /// until the agent yields.
+    Turn(String, Box<[Attachment]>),
     /// Room, made for the reason it names.
     Room(Compacting),
 }

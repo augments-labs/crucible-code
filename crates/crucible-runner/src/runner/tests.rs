@@ -76,6 +76,7 @@ impl Scripted {
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
         self.runner.turn(
             prompt,
+            Box::new([]),
             &mut self.says,
             &self.events,
             &self.cancel,
@@ -326,6 +327,7 @@ impl Steering {
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
         self.runner.turn(
             prompt,
+            Box::new([]),
             &mut self.says,
             &self.events,
             &Cancel::new(),

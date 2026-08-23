@@ -584,6 +584,46 @@ A run whose input or output is redirected gets no box: `crucible < prompts.txt`
 reads whole lines, one prompt each, and the mode is written in front of them
 instead.
 
+## Naming a picture in the prompt
+
+Write the path to a picture in the prompt and it goes with it:
+
+```
+what is wrong with this layout? screenshot.png
+```
+
+The file is sent as a picture rather than as text. Nothing else changes: the
+rest of the line is the prompt, and a path to anything crucible does not send as
+a picture — a source file, a log — is just a word in the sentence, which the
+`read` tool opens when the model asks for it.
+
+Nothing asks you first. Every other way a file reaches the model goes through a
+tool, and a tool is something the agent chose to run — which is the thing a
+permission question exists to put in front of you. Here you typed the path
+yourself, in the sentence you are sending. There is no second decision to make,
+and a question about a file you just named would be asking you to confirm the
+prompt you wrote.
+
+The bytes stay on disk. A transcript holds the path, and each request reads the
+file again — so the picture in front of the model is the file as it is now, and
+a session with twenty of them costs twenty paths rather than twenty pictures. A
+request carries at most 6 MB of files; over that, the oldest stop being attached
+and the model is told to read them again if it needs them.
+
+When a file cannot go, a line says which half said no:
+
+```
+! invoice.pdf is not attached: k3 does not read a pdf. /model picks one that does.
+```
+
+```
+! diagram.png is not attached: crucible's moonshot requests have no shape for an image. Nothing you type changes that — a later release adds the shape.
+```
+
+The first is about the model, and `/model` changes it. The second is about the
+protocol, and nothing you type does. A file over 6 MB on its own, or one whose
+bytes are not what its name claims, gets its own line and never costs a request.
+
 ## Commands
 
 A line starting with `/` is a command rather than a prompt. It is answered here,

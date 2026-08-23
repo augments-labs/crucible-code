@@ -37,7 +37,9 @@ use std::process::ExitCode;
 use clap::Parser;
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{ConfigError, Home, Settings};
-use crucible_core::{Cancel, CredentialError, Effort, PathError, Provider, Revealed, Workspace};
+use crucible_core::{
+    Cancel, CredentialError, Effort, Modalities, PathError, Provider, Revealed, Workspace,
+};
 use crucible_provider::EndpointError;
 use crucible_runner::SessionError;
 use crucible_tools::{Background, Ledger, Plan};
@@ -150,6 +152,20 @@ const PROVIDERS: [Served; 3] = [
         ],
     },
 ];
+
+/// What may be put in front of this model, on this provider.
+///
+/// Two halves, and neither is the answer alone: a model reads what it reads
+/// whichever protocol carries it, and a protocol carries what it has a shape
+/// for whatever the model would do with it. Offering the union would send a
+/// video to a request with no word for one.
+///
+/// `None` is not the empty set. It is the table never having heard of this
+/// model, which is a different thing from the model reading nothing, and the
+/// caller says so in different words.
+pub(crate) fn attachable(provider: &dyn Provider, model: &str) -> Option<Modalities> {
+    facts(provider.name(), model).map(|facts| facts.accepts.intersection(provider.spells()))
+}
 
 /// What this build knows about a model's limits, if it knows anything.
 ///

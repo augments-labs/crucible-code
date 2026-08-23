@@ -17,9 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Attached, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event, Message, Mode,
-    Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary,
-    ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event,
+    Message, Mode, Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer,
+    StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -426,6 +426,17 @@ impl Runner {
         self.model.window
     }
 
+    /// The provider this runner is asking, for the questions only it can answer.
+    ///
+    /// Handed out rather than answered here because what a caller wants of it
+    /// is a fact about a protocol — what shapes it has a word for — and the
+    /// runner drives `dyn Provider` precisely so it never has to know one.
+    /// Borrowed, so nothing can take it or hold it past the turn.
+    #[must_use]
+    pub fn provider(&self) -> &dyn Provider {
+        self.provider.as_ref()
+    }
+
     /// The vendor this session is writing to, by the name it is asked for on
     /// the command line and written down under.
     ///
@@ -565,11 +576,12 @@ impl Runner {
     /// goes back to the model as a result it can work around.
     // The cancel and the steer are both read off the thread the turn runs on,
     // and bundling them would drag the two through every signature the cancel
-    // already crosses. The lint counts to five; the turn needs six.
+    // already crosses. The lint counts to five; the turn needs seven.
     #[allow(clippy::too_many_arguments)]
     pub fn turn(
         &mut self,
         prompt: &str,
+        attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
@@ -591,7 +603,10 @@ impl Runner {
 
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
-        self.record(Message::said(prompt));
+        self.record(Message::User {
+            text: prompt.into(),
+            attachments,
+        });
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
