@@ -39,21 +39,6 @@ const BLOCK: usize = 8 * 1_024;
 /// Room kept for the pagination note while output lines are added.
 const NOTICE: usize = 128;
 
-/// What a file this tool cannot read is, and what would turn it into one it can.
-///
-/// A document is not a modality: no vendor this program speaks to accepts one
-/// of these on the wire, and the answer everywhere is to convert it to text
-/// first. The shell to do that with is already a tool, so what was missing was
-/// never the capability — it was that nothing said so, at the one moment the
-/// question is live.
-///
-/// Several programs per format, best first, because naming one that is not on
-/// this machine spends a turn and a permission prompt on a command that cannot
-/// work. What is actually installed decides which is named, and where none is,
-/// the answer says that rather than sending the model to find out.
-///
-/// An extension not on this list gets the plain refusal. A suggestion that does
-/// not fit costs more than none at all.
 /// One program that turns a document into text, and how to ask it to.
 struct Converter {
     /// The name a shell would find it under, with no platform suffix and no
