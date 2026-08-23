@@ -105,9 +105,12 @@ both panes at once, against a model's name or a provider's — somebody who type
 the one model, and neither should have to say which kind of name they just
 typed. Tab crosses between the panes, the up and down arrows walk whichever one
 the mark is in, the left and right arrows walk the rungs, Enter takes the model
-and the rung under it together, and Escape leaves everything as it was. Down a
-pipe, where nobody can walk a shelf, it writes the models out as the line that
-asks for each.
+and the rung under it together, and Escape leaves everything as it was. A mouse
+lights the row it is over, across the whole width of that pane, which is a
+different thing from the mark: the pointer says what you are reading, the mark
+says what Enter takes, and nothing you merely pass over is chosen. Down a pipe,
+where nobody can walk a shelf, it writes the models out as the line that asks
+for each.
 
 Taking a row off the models pane moves the session to whoever serves it first —
 a model belongs to the vendor that serves it, and the two change together. The
