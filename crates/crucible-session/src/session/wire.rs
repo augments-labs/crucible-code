@@ -10,11 +10,12 @@
 //! and the caller stops there rather than replaying a transcript with a hole
 //! in it.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use crucible_core::{
-    Calibration, Carried, Message, SessionId, Spend, StopReason, ToolCall, ToolId, ToolOutput,
-    ToolResult,
+    Attachment, Calibration, Carried, Message, Modality, SessionId, Spend, StopReason, ToolCall,
+    ToolId, ToolOutput, ToolResult,
 };
 use serde_json::{Value, json};
 
@@ -24,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 5;
+pub(crate) const FORMAT: u32 = 6;
 
 /// The formats this build reads, newest first.
 ///
@@ -41,7 +42,7 @@ pub(crate) const FORMAT: u32 = 5;
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[5, 4, 3];
+pub(crate) const READS: &[u32] = &[6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -187,7 +188,15 @@ pub(crate) struct Opening {
 /// One message as the line that records it.
 pub(crate) fn line(message: &Message) -> String {
     let value = match message {
-        Message::User(text) => json!({ "user": text.as_ref() }),
+        // Written without the key when there are no files, so a text-only
+        // session's log is byte for byte what format 5 wrote.
+        Message::User { text, attachments } if attachments.is_empty() => {
+            json!({ "user": text.as_ref() })
+        }
+        Message::User { text, attachments } => json!({
+            "user": text.as_ref(),
+            "attached": attachments.iter().map(attached).collect::<Vec<_>>(),
+        }),
         Message::Agent { text, calls, stop } => json!({
             "agent": text.as_ref(),
             "calls": calls.iter().map(called).collect::<Vec<_>>(),
@@ -206,7 +215,15 @@ pub(crate) fn message(line: &str) -> Option<Message> {
     let value: Value = serde_json::from_str(line).ok()?;
 
     if let Some(text) = value.get("user") {
-        return Some(Message::User(text.as_str()?.into()));
+        let attachments = match value.get("attached") {
+            Some(attached) => read(attached, attachment)?.into(),
+            None => Box::default(),
+        };
+
+        return Some(Message::User {
+            text: text.as_str()?.into(),
+            attachments,
+        });
     }
 
     if let Some(text) = value.get("agent") {
@@ -218,6 +235,96 @@ pub(crate) fn message(line: &str) -> Option<Message> {
     }
 
     Some(Message::ToolResults(read(value.get("results")?, result)?))
+}
+
+/// One attached file as it is written down.
+///
+/// The path and never the bytes. A log grows for the life of a session and is
+/// read back by a build that may not be this one; base64 in it would be the
+/// unbounded file the bound log exists to prevent, and a picture nobody can
+/// read without the session it came from.
+fn attached(attachment: &Attachment) -> Value {
+    json!({
+        "path": attachment.path.as_ref(),
+        "modality": modal(attachment.modality),
+        "media_type": attachment.media_type.as_ref(),
+        "hash": hashed(&attachment.hash),
+    })
+}
+
+fn attachment(value: &Value) -> Option<Attachment> {
+    Some(Attachment {
+        path: value.get("path")?.as_str()?.into(),
+        modality: modality(value.get("modality")?)?,
+        media_type: value.get("media_type")?.as_str()?.into(),
+        hash: hash(value.get("hash")?)?,
+    })
+}
+
+/// What kind of file it is, as the log spells it.
+///
+/// Spelled here rather than taken from [`Modality::as_str`], for the reason the
+/// rest of this shape is spelled here: those words answer to a generated model
+/// database, and a vocabulary that moved there would silently change what every
+/// log written afterwards says.
+fn modal(modality: Modality) -> &'static str {
+    match modality {
+        Modality::Text => "text",
+        Modality::Image => "image",
+        Modality::Pdf => "pdf",
+        Modality::Video => "video",
+        Modality::Audio => "audio",
+    }
+}
+
+/// A word this build has no name for makes the line unreadable, which is the
+/// opposite of what an unknown stop reason does one function below.
+///
+/// There is no `Unknown` to fall back to, and no useful guess: a file read as
+/// the wrong kind is a file sent to a model in a shape it did not agree to. A
+/// line nobody can read stops the replay, and stopping is the honest answer to
+/// a log this build does not understand.
+fn modality(value: &Value) -> Option<Modality> {
+    Some(match value.as_str()? {
+        "text" => Modality::Text,
+        "image" => Modality::Image,
+        "pdf" => Modality::Pdf,
+        "video" => Modality::Video,
+        "audio" => Modality::Audio,
+        _ => return None,
+    })
+}
+
+/// A hash as the log spells it: 64 lowercase hexadecimal characters.
+fn hashed(hash: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn hash(value: &Value) -> Option<[u8; 32]> {
+    let mut hash = [0; 32];
+    let mut written = value.as_str()?.bytes();
+
+    for byte in &mut hash {
+        *byte = (nibble(written.next()?)? << 4) | nibble(written.next()?)?;
+    }
+
+    // Anything left over is a hash of the wrong length, which is a line this
+    // build did not write and will not guess at.
+    written.next().is_none().then_some(hash)
+}
+
+/// Lowercase only: uppercase is spelling this file has never used, so a line
+/// carrying it came from somewhere other than a session log.
+fn nibble(written: u8) -> Option<u8> {
+    match written {
+        b'0'..=b'9' => Some(written - b'0'),
+        b'a'..=b'f' => Some(written - b'a' + 10),
+        _ => None,
+    }
 }
 
 /// How an answer ended, as the log spells it.
@@ -313,4 +420,72 @@ fn result(value: &Value) -> Option<ToolResult> {
             ToolOutput::ok(text)
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_core::{Attachment, Modality};
+
+    use super::*;
+
+    fn holiday() -> Attachment {
+        Attachment {
+            path: "pictures/holiday.png".into(),
+            modality: Modality::Image,
+            media_type: "image/png".into(),
+            hash: [0xab; 32],
+        }
+    }
+
+    #[test]
+    fn a_prompt_and_the_files_beside_it_survive_the_line_that_records_them() {
+        let asked = Message::User {
+            text: "what is in this".into(),
+            attachments: Box::new([holiday()]),
+        };
+
+        let read = message(&line(&asked));
+
+        assert_eq!(read.as_ref(), Some(&asked));
+    }
+
+    #[test]
+    fn every_modality_has_a_word_in_the_log_and_reads_back_as_itself() {
+        for modality in Modality::EVERY {
+            let attachment = Attachment {
+                modality,
+                ..holiday()
+            };
+            let written = Message::User {
+                text: "look".into(),
+                attachments: Box::new([attachment]),
+            };
+
+            assert_eq!(message(&line(&written)).as_ref(), Some(&written));
+        }
+    }
+
+    #[test]
+    fn a_prompt_with_nothing_attached_is_written_exactly_as_format_five_wrote_it() {
+        // The reason `attached` is left off rather than written empty: a
+        // text-only session's log must not change at all under format 6.
+        assert_eq!(line(&Message::said("hello")), r#"{"user":"hello"}"#);
+    }
+
+    #[test]
+    fn a_line_a_format_five_build_wrote_still_reads_as_the_prompt_it_recorded() {
+        // Frozen bytes, not a round trip: a round trip would agree with itself
+        // however the shape moved.
+        assert_eq!(
+            message(r#"{"user":"what did I ask"}"#),
+            Some(Message::said("what did I ask"))
+        );
+        assert!(readable(5), "a format 5 log must still replay");
+    }
+
+    #[test]
+    fn the_format_moves_with_the_line_shape() {
+        assert_eq!(FORMAT, 6);
+        assert!(readable(FORMAT));
+    }
 }

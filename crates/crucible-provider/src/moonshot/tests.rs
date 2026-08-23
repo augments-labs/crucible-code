@@ -25,12 +25,13 @@ fn provider(endpoint: Endpoint, body: &str, status: u16) -> (Moonshot, std::sync
 
 fn asking(text: &str) -> Request<'static> {
     let mut transcript = Transcript::new();
-    transcript.push(Message::User(text.into()));
+    transcript.push(Message::said(text));
 
     Request {
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],
+        attached: &[],
         max_tokens: 1024,
         system: None,
         effort: None,
@@ -186,16 +187,18 @@ fn a_cancelled_turn_is_never_sent() {
         "a request went out for a turn the user had abandoned"
     );
 }
-/// What a wire protocol declares is what its body writes, and until a body
-/// writes an attachment that is text and nothing else. A declaration that
-/// ran ahead of the body would be read as permission to send bytes this
-/// module has no shape for.
+/// What a wire protocol declares is what its body writes, which is now text and
+/// a picture. A declaration that ran ahead of the body would be read as
+/// permission to send bytes this module has no shape for — and one that lagged
+/// behind it would refuse a file at the prompt that the request could carry.
 #[test]
 fn moonshot_spells_no_more_than_its_body_can_write_today() {
     let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
 
     assert_eq!(
         provider.spells(),
-        Modalities::empty().insert(Modality::Text),
+        Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image),
     );
 }

@@ -45,6 +45,31 @@ const UNCALIBRATED: u64 = 3;
 /// two have to agree on, and the reserve is only as good as that agreement.
 const TOOL_RESULT_BYTES: u64 = 30_000;
 
+/// What one attached file is charged against the window, in tokens.
+///
+/// A picture's cost is not its byte size: every one of these vendors turns an
+/// image into a fixed grid of visual tokens and downscales anything larger, so
+/// a 3 MB screenshot and a 300 KB one land within a few hundred tokens of each
+/// other. What the three of them documented on 2026-08-23: one vendor charges
+/// `ceil(w/28) * ceil(h/28)`, capped at 1568 visual tokens on its standard tier
+/// and 4784 on its high-resolution one — 1296 for a 1000x1000 picture, 1560 for
+/// a full-HD screenshot; another charges 85 plus 170 a tile, which is 765 for
+/// the same 1000x1000. So a real picture costs somewhere between about 750 and
+/// about 2700, depending on whose model is reading it and how big it was.
+///
+/// **Deliberately at the bottom of that range rather than the middle.** This
+/// number is subtracted from what a vendor reported before the remainder
+/// calibrates the text rate, and subtracting more than the picture really cost
+/// would make text look cheaper every time somebody attached one — the
+/// direction that notices a full window too late. Under-subtracting leaves a
+/// little of the picture in the rate, which over-states, which compacts early.
+/// This module has always preferred that one.
+///
+/// Where it is wrong: an icon small enough to really cost less than this. The
+/// error is bounded by this number, it is in the safe direction, and the next
+/// response supersedes it with what the vendor actually charged.
+const PER_ATTACHMENT: u64 = 750;
+
 /// How many tool results one pass is expected to carry.
 ///
 /// Two, which is a judgement rather than a measurement: one answer plus a pair
@@ -114,6 +139,16 @@ pub(super) struct Load {
     sent_overhead_signature: u64,
     /// Content bytes in the request currently being answered.
     in_flight: u64,
+    /// Tokens charged for the files that request carries.
+    ///
+    /// What the ceiling admitted, not what the transcript refers to: a file
+    /// aged out of the request is not in front of the model and is not charged.
+    attached: u64,
+    /// The same, for the request the latest report covered.
+    ///
+    /// Its only use is to be taken back out of that report before the
+    /// remainder calibrates a rate for text.
+    sent_attached: u64,
     /// Bytes appended since, less the answer already counted by `spent`.
     appended: u64,
     /// System-instruction and advertised-tool bytes in the next request.
@@ -162,7 +197,8 @@ impl Load {
     }
 
     /// Opens another provider response over the request as it stands.
-    pub(super) fn responding(&mut self) {
+    pub(super) fn responding(&mut self, attached: usize) {
+        self.attached = PER_ATTACHMENT.saturating_mul(attached as u64);
         self.input_reported = false;
         self.current_spent = 0;
         self.output_seen = false;
@@ -190,6 +226,7 @@ impl Load {
         };
         self.sent_overhead = self.overhead;
         self.sent_overhead_signature = self.overhead_signature;
+        self.sent_attached = self.attached;
         self.appended = 0;
     }
 
@@ -283,12 +320,12 @@ impl Load {
         let estimated = match message {
             Message::Agent { .. } if self.output_reported => 0,
             Message::Agent { .. } if self.output_seen => self.unreported,
-            Message::Agent { .. } | Message::User(_) | Message::ToolResults(_) => bytes,
+            Message::Agent { .. } | Message::User { .. } | Message::ToolResults(_) => bytes,
         };
 
         self.bytes = self.bytes.saturating_add(bytes);
         self.appended = self.appended.saturating_add(estimated);
-        if matches!(message, Message::User(_) | Message::ToolResults(_)) {
+        if matches!(message, Message::User { .. } | Message::ToolResults(_)) {
             // The next response has not reported the request containing this
             // message, nor any output it may go on to produce.
             self.input_reported = false;
@@ -325,7 +362,7 @@ impl Load {
                     })
                     .sum::<usize>(),
             ),
-            Message::User(said) => said.len(),
+            Message::User { text: said, .. } => said.len(),
             Message::ToolResults(results) => results
                 .iter()
                 .map(|result| {
@@ -339,12 +376,31 @@ impl Load {
         }) as u64
     }
 
+    /// What the last report covered that was text, in tokens.
+    ///
+    /// The rate this file divides by is bytes against tokens, and an attached
+    /// file is enormous in one and small in the other. Its bytes are already
+    /// out of the byte measure — a message holds a reference, and
+    /// [`Self::bytes`] counts what a message holds. This takes the other side
+    /// out of the token measure, so what divides is text by text.
+    fn carried_text(&self) -> u64 {
+        self.carried.saturating_sub(self.sent_attached)
+    }
+
     /// The whole of what the next request would carry, in tokens.
+    ///
+    /// The files are in `carried` already, counted by the vendor rather than
+    /// estimated — so what is added here is only the ones the report has not
+    /// caught up with. A turn that attached a picture charges for it until the
+    /// answer says what it really cost; a turn whose oldest picture has just
+    /// aged out of the request adds nothing, and carries the older count for
+    /// one more turn rather than subtracting an estimate from a true number.
     #[must_use]
     pub(super) fn tokens(&self) -> u64 {
         self.carried
             .saturating_add(self.spent)
             .saturating_add(self.estimated())
+            .saturating_add(self.attached.saturating_sub(self.sent_attached))
     }
 
     /// What has been appended since the last response, in tokens.
@@ -377,7 +433,7 @@ impl Load {
         // request's true token count implies. Rounded up: this count protects a
         // request boundary, so dropping a fractional token would spend room the
         // runner does not know it has.
-        Self::ceiling(bytes.saturating_mul(self.carried), self.sent)
+        Self::ceiling(bytes.saturating_mul(self.carried_text()), self.sent)
     }
 
     /// Unreported request text at the deliberately cautious initial rate.
@@ -406,7 +462,7 @@ impl Load {
 
         // `bytes * carried / sent` — the bytes at the rate the last request's
         // true token count implies. As above, a conservative estimate rounds up.
-        Self::ceiling(bytes.saturating_mul(self.carried), self.sent)
+        Self::ceiling(bytes.saturating_mul(self.carried_text()), self.sent)
     }
 
     fn ceiling(numerator: u64, denominator: u64) -> u64 {

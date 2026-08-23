@@ -571,6 +571,7 @@ impl Turning {
             | Event::Compacted { .. }
             | Event::Wrote { .. }
             | Event::Steered { .. }
+            | Event::Aged { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -607,6 +608,7 @@ impl Turning {
             | Event::Spent { .. }
             | Event::Carried { .. }
             | Event::Steered { .. }
+            | Event::Aged { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };

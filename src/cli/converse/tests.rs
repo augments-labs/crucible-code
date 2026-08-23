@@ -523,7 +523,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     // still say anything is the drain after it. A test that let the poll run
     // would pass with the report after the loop deleted.
     let session = Session::onto("/nowhere".into(), Failing);
-    session.append(&crucible_core::Message::User("queued".into()));
+    session.append(&crucible_core::Message::said("queued"));
 
     let runner = Runner::new(
         Box::new(Script::new(vec![])),

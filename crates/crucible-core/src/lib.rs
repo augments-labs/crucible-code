@@ -47,8 +47,8 @@ pub use permission::{
     RuleError, Rules, Sensitivity, Settled, Target, Verdict, narrowest,
 };
 pub use provider::{
-    Calibration, Carried, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError,
-    ProviderLimit, Request, Spend, ToolSchema,
+    Attached, Calibration, Carried, Content, Delta, DeltaStream, Effort, EffortError, Provider,
+    ProviderError, ProviderLimit, Request, Spend, ToolSchema,
 };
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResult, SourceError};
@@ -57,5 +57,5 @@ pub use tool::{
     Account, Remembered, Summary, Tool, ToolArgs, ToolCall, ToolError, ToolOutput, Unwatched,
     Watch, Wrote,
 };
-pub use transcript::{Message, StopReason, ToolResult, Transcript};
+pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};

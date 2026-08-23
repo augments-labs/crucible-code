@@ -17,7 +17,7 @@ use super::{Session, SessionError, wire};
 use crate::sample::Sample;
 
 fn said(text: &str) -> Message {
-    Message::User(text.into())
+    Message::said(text)
 }
 
 fn calling(id: &str, name: &str, args: &str) -> Message {
@@ -289,7 +289,7 @@ fn a_compacted_session_replays_as_the_notes_and_what_they_did_not_replace() {
         .messages()
         .iter()
         .map(|message| match message {
-            Message::User(text) => text.as_ref(),
+            Message::User { text, .. } => text.as_ref(),
             _ => "",
         })
         .collect();

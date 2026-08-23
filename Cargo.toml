@@ -133,7 +133,10 @@ ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
 # already present through rustls and avoids growing a second, partial codec at
-# the credential boundary.
+# the credential boundary. The three wire protocols need the same codec the
+# other way, because every one of them carries an attached file as base64 text,
+# and this encoder appends into the body being built rather than returning a
+# second copy of a request's worth of bytes.
 base64 = "=0.23.1"
 
 # OAuth PKCE and stable installation identifiers need bytes from the operating
@@ -313,6 +316,12 @@ crucible-provider.workspace = true
 crucible-runner.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
+# The hash an attachment is recorded under, taken here because this is where a
+# file is attached and the runner compares it on every request afterwards. Both
+# sides read the same definition off `Attachment::hash`, and the crate is
+# already in the graph twice over — the session log and the credential store —
+# so this is the same version compiled once.
+sha2.workspace = true
 # One answer to read: GitHub names the newest release in a JSON body, and the
 # release check here is the only thing in this package that reads a wire format
 # at all. Already in the workspace for the session log and the configuration

@@ -145,7 +145,7 @@ fn read(path: &Path, workspace: &Workspace) -> Option<Recorded> {
             return None;
         }
 
-        if let Some(Message::User(text)) = wire::message(line.trim_end()) {
+        if let Some(Message::User { text, .. }) = wire::message(line.trim_end()) {
             let asked = single(&text);
 
             // A session whose first prompt was nothing but spaces has no row to

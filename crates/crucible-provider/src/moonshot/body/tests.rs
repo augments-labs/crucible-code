@@ -1,4 +1,6 @@
-use crucible_core::{Effort, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript};
+use crucible_core::{
+    Attached, Content, Effort, Modality, ToolArgs, ToolCall, ToolId, ToolOutput, Transcript,
+};
 
 use super::*;
 
@@ -10,6 +12,7 @@ fn request(transcript: Transcript) -> Request<'static> {
         model: "kimi-test",
         transcript: Box::leak(Box::new(transcript)),
         tools: &[],
+        attached: &[],
         max_tokens: 1024,
         system: None,
         effort: None,
@@ -18,8 +21,30 @@ fn request(transcript: Transcript) -> Request<'static> {
 
 fn said(text: &str) -> Transcript {
     let mut transcript = Transcript::new();
-    transcript.push(Message::User(text.into()));
+    transcript.push(Message::said(text));
     transcript
+}
+
+/// The four bytes a PNG starts with, which encode to `iVBORw==`.
+const PIXEL: &[u8] = &[0x89, b'P', b'N', b'G'];
+
+/// The line the runner writes in place of a file it did not send.
+const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
+     within its size limit: read it again if you need it.";
+
+/// A prompt the runner resolved one attachment for.
+fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+    // The transcript's own reference is deliberately absent: a provider reads
+    // what the runner resolved and never a path.
+    let mut request = request(said(text));
+    request.attached = Box::leak(Box::new([Attached {
+        message: 0,
+        index: 0,
+        media_type: "image/png",
+        modality: Modality::Image,
+        content,
+    }]));
+    request
 }
 
 /// One value by JSON pointer.
@@ -310,4 +335,63 @@ fn a_session_with_no_tools_sends_no_tools_field() {
     let body = build(&request(said("hello")));
 
     assert!(body.get("tools").is_none(), "an empty tool list was sent");
+}
+
+/// The shape this vendor's documentation described on 2026-08-23: an
+/// `image_url` part whose `image_url` is an object of its own holding a `data:`
+/// URL — one nesting deeper than the other two protocols, and the reason this
+/// is written out here rather than shared with them.
+#[test]
+fn an_image_is_a_nested_data_url_part_before_the_prompt() {
+    let body = build(&holding("what is in this", Content::Bytes(PIXEL)));
+
+    assert_eq!(
+        at(&body, "/messages/0/content"),
+        &json!([
+            {
+                "type": "image_url",
+                "image_url": { "url": "data:image/png;base64,iVBORw==" }
+            },
+            { "type": "text", "text": "what is in this" }
+        ]),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_file_that_was_not_sent_is_the_runners_sentence_in_its_place() {
+    let body = build(&holding("what is in this", Content::Instead(INSTEAD)));
+
+    assert_eq!(
+        at(&body, "/messages/0/content"),
+        &json!([
+            { "type": "text", "text": INSTEAD },
+            { "type": "text", "text": "what is in this" }
+        ]),
+        "the sentence is printed, not composed: {body}"
+    );
+}
+
+#[test]
+fn a_prompt_with_nothing_attached_is_the_string_it_always_was() {
+    let body = build(&request(said("hello")));
+
+    assert_eq!(at(&body, "/messages/0/content"), &json!("hello"), "{body}");
+}
+
+/// A prompt that named a file and said nothing else. The picture is the whole
+/// message, and an empty text part beside it is one this vendor refuses the
+/// request over rather than ignores.
+#[test]
+fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
+    let body = build(&holding("", Content::Bytes(PIXEL)));
+
+    assert_eq!(
+        at(&body, "/messages/0/content"),
+        &json!([{
+            "type": "image_url",
+            "image_url": { "url": "data:image/png;base64,iVBORw==" }
+        }]),
+        "{body}"
+    );
 }

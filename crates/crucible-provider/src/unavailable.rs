@@ -62,12 +62,13 @@ mod tests {
 
     fn asking() -> Request<'static> {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User("hello".into()));
+        transcript.push(Message::said("hello"));
 
         Request {
             model: "",
             transcript: Box::leak(Box::new(transcript)),
             tools: &[],
+            attached: &[],
             max_tokens: 1024,
             system: None,
             effort: None,

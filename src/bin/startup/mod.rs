@@ -533,7 +533,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
         if let Some(id) = session.id() {
             planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
         }
-        session.append(&crucible_core::Message::User(TITLE.into()));
+        session.append(&crucible_core::Message::said(TITLE));
         if let Some(trouble) = session.finish() {
             return Err(StartupError::Record(trouble));
         }

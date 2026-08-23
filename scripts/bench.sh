@@ -46,7 +46,7 @@ cd "$(dirname "$0")/.."
 readonly BUDGETS=(
     "startup|bench-first-frame|first frame <= 20 ms p95"
     "startup|bench-first-input|first input <= 60 ms p95"
-    "mem|bench-session-rss|peak RSS after a 20-turn session <= 35 MB"
+    "mem|bench-session-rss|peak RSS after a 20-turn session, pictures or none <= 35 MB"
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"

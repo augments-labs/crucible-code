@@ -324,7 +324,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
                     .map(|result| result.output.text().len())
                     .collect::<Vec<_>>(),
             ),
-            Message::User(_) | Message::Agent { .. } => None,
+            Message::User { .. } | Message::Agent { .. } => None,
         })
         .flatten()
         .collect();
@@ -389,7 +389,7 @@ fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     assert!(scripted.said().contains("carried on"));
     assert!(
         scripted.runner.transcript().messages().iter().any(
-            |message| matches!(message, Message::User(said) if said.contains("notes to self"))
+            |message| matches!(message, Message::User { text: said, .. } if said.contains("notes to self"))
         ),
         "the active turn did not become a recap"
     );
@@ -471,7 +471,7 @@ fn the_recap_stands_where_the_messages_it_replaced_were() {
 
     assert!(
         scripted.runner.transcript().messages().iter().any(
-            |message| matches!(message, Message::User(said) if said.contains("notes to self"))
+            |message| matches!(message, Message::User { text: said, .. } if said.contains("notes to self"))
         ),
         "the recap is not standing in the transcript"
     );
@@ -686,11 +686,11 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
     let recap = standing
         .iter()
         .position(
-            |message| matches!(message, Message::User(said) if said.contains("notes to self")),
+            |message| matches!(message, Message::User { text: said, .. } if said.contains("notes to self")),
         )
         .expect("the recap is standing");
     assert!(
-        matches!(standing.get(recap + 1), Some(Message::User(_))),
+        matches!(standing.get(recap + 1), Some(Message::User { .. })),
         "what follows the recap does not open a turn"
     );
 }

@@ -43,10 +43,11 @@
 //! the session file get the still line rather than a frame of a moving one.
 
 use std::fmt;
+use std::path::Path;
 
 use crucible_core::{
-    Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason, Summary,
-    ToolCall, ToolId, ToolOutput,
+    Attachment, Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason,
+    Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
 };
 use crucible_tools::Ended;
 use crucible_tui::{
@@ -79,10 +80,19 @@ const UNDER: &str = "  ";
 /// them would move the whole block sideways between one call and the next.
 const NUMBER: usize = 3;
 
+/// What stands where a file's kind stands, on the row saying a request went out
+/// without it.
+///
+/// The content was not carried and the file has not moved, so it can be looked
+/// at again. Nothing here names the ceiling: what a reader can act on is asking
+/// again, and what they cannot act on is a number.
+const AGAIN: &str = "not sent, can be read again";
+
 /// Draws one event.
 pub(crate) fn event<T: Terminal>(
     renderer: &mut Renderer<T>,
     event: Event,
+    workspace: &Workspace,
     style: Style,
     kept: &mut Kept,
 ) -> Result<(), TerminalError> {
@@ -170,6 +180,11 @@ pub(crate) fn event<T: Terminal>(
         // One block: the row that says what came back, and under it the lines a
         // call that changed a file moved. No row parts them, because a reader
         // asking what the call did is asking both halves of the same question.
+        // Under the answer it is about rather than under the prompt that sent
+        // the files: what happened is that this request went out without them,
+        // and the reader is being told at the moment it did.
+        Event::Aged { files } => aged(renderer, &files, workspace, style),
+
         Event::ToolFinished { call, output } => came_back(renderer, kept, &call, output, style),
 
         // The tail is settled either way; an answer that stopped early is
@@ -299,6 +314,96 @@ pub(crate) fn queued<T: Terminal>(
     renderer.landmark();
     renderer.present(&crucible_tui::Prompt::committed(
         said,
+        columns,
+        style.glyphs(),
+        style.palette().bands(),
+    ))
+}
+
+/// Names the files a prompt sent, on rows under it.
+///
+/// Under rather than beside: what was asked is one block and the files went
+/// with it, so they belong inside that block rather than in one of their own.
+/// Called with the block still open, straight after the line.
+///
+/// Reached from both places a committed prompt is drawn, which is why it is
+/// here rather than in either of them. A row a live prompt gets and a replayed
+/// one does not is not a transcript that remembers, it is two transcripts.
+pub(crate) fn attached<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    attachments: &[Attachment],
+    workspace: &Workspace,
+    style: Style,
+) -> Result<(), TerminalError> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    let named: Vec<(String, &str)> = attachments
+        .iter()
+        .map(|one| (names(one, workspace), one.modality.as_str()))
+        .collect();
+
+    rows(renderer, &named, style)
+}
+
+/// Names the files a request went out without, where its answer arrives.
+///
+/// Said as it happens rather than kept: the answer that follows had less to
+/// look at than the one before it, and this is the row that says which file it
+/// stopped seeing. It names no ceiling and asks for nothing — a ceiling met by
+/// ageing is the design working, and the only move left to a reader who still
+/// wants that file looked at is to say so again.
+pub(crate) fn aged<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    attachments: &[Attachment],
+    workspace: &Workspace,
+    style: Style,
+) -> Result<(), TerminalError> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    let named: Vec<(String, &str)> = attachments
+        .iter()
+        .map(|one| (names(one, workspace), AGAIN))
+        .collect();
+
+    // Settled first because a retry posts this again, and the second reading
+    // must land after whatever the first answer had already put on the row.
+    renderer.settle()?;
+    rows(renderer, &named, style)
+}
+
+/// Names a file the way every other path this program prints is named:
+/// relative to the root where it is under it, whole where it is not.
+///
+/// A row is clipped from its end, so an absolute path would spend the width on
+/// the part every file in the workspace shares and cut the part that says which
+/// one.
+fn names(attachment: &Attachment, workspace: &Workspace) -> String {
+    let path = Path::new(&*attachment.path);
+    written(path.strip_prefix(workspace.root()).unwrap_or(path))
+}
+
+/// One row per file, each already named and already said what it is.
+///
+/// Borrowed rather than built twice: the rows are composed from words this side
+/// chose, because the crate that draws them is told nothing about a modality
+/// and has no business learning.
+fn rows<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    named: &[(String, &str)],
+    style: Style,
+) -> Result<(), TerminalError> {
+    let files: Vec<(&str, &str)> = named
+        .iter()
+        .map(|(name, what)| (name.as_str(), *what))
+        .collect();
+
+    let columns = renderer.columns();
+    renderer.present(&crucible_tui::Prompt::attached(
+        &files,
         columns,
         style.glyphs(),
         style.palette().bands(),

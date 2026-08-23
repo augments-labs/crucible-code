@@ -2,6 +2,24 @@ use crucible_core::{ToolOutput, ToolResult};
 
 use super::*;
 
+/// A prompt of `bytes` bytes that also named one file.
+///
+/// The file's own bytes are nowhere in it — a message holds a reference, and
+/// that is the half of `C3` this module gets for free from the shape of the
+/// type rather than from arithmetic.
+fn attaching(bytes: usize) -> Message {
+    Message::User {
+        text: "x".repeat(bytes).into(),
+        attachments: vec![crucible_core::Attachment {
+            path: "/holiday.png".into(),
+            modality: crucible_core::Modality::Image,
+            media_type: "image/png".into(),
+            hash: [0; 32],
+        }]
+        .into(),
+    }
+}
+
 /// A tool result of `bytes` bytes, for filling a transcript.
 fn results(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
@@ -24,7 +42,7 @@ fn nothing_has_been_reported_so_the_load_is_what_was_appended_at_a_cautious_rate
 #[test]
 fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
     let mut load = Load::default();
-    load.recorded(&Message::User("x".repeat(300).into()));
+    load.recorded(&Message::said("x".repeat(300)));
     let tools = [ToolSchema {
         name: "read",
         schema: Box::leak("s".repeat(536).into_boxed_str()),
@@ -41,9 +59,9 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
 #[test]
 fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     let mut load = Load::default();
-    load.recorded(&Message::User("request".into()));
+    load.recorded(&Message::said("request"));
     load.requesting(Some("system one"), &[]);
-    load.responding();
+    load.responding(0);
     load.carried(Carried::new(100));
     assert_eq!(load.left(Some(200), 0), Some(50));
 
@@ -59,13 +77,13 @@ fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
 #[test]
 fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
     let mut load = Load::default();
-    load.recorded(&Message::User("x".repeat(300).into()));
+    load.recorded(&Message::said("x".repeat(300)));
     let tools = [ToolSchema {
         name: "read",
         schema: Box::leak("s".repeat(536).into_boxed_str()),
     }];
     load.requesting(Some(&"i".repeat(60)), &tools);
-    load.responding();
+    load.responding(0);
 
     load.carried(Carried::new(1_000));
 
@@ -142,7 +160,7 @@ fn a_response_supersedes_the_last_one_rather_than_adding_to_it() {
     // The transcript goes whole to the provider every time, so the next
     // response's input already includes the preceding response's output and
     // everything appended after it. Neither may remain beside the new count.
-    load.responding();
+    load.responding(0);
     load.carried(Carried::new(104_000));
 
     assert_eq!(load.tokens(), 104_000, "old output was counted twice");
@@ -164,7 +182,7 @@ fn locally_estimated_tool_output_updates_an_older_exact_percentage() {
 fn response_growth_is_estimated_until_output_usage_catches_up() {
     let mut load = Load::default();
     load.recorded(&results(200_000));
-    load.responding();
+    load.responding(0);
     load.carried(Carried::new(50_000));
     load.produced(40_000);
     assert_eq!(load.left(Some(200_000), 0), Some(70));
@@ -177,7 +195,7 @@ fn response_growth_is_estimated_until_output_usage_catches_up() {
 fn a_late_input_report_preserves_unreported_response_growth() {
     let mut load = Load::default();
     load.recorded(&results(200_000));
-    load.responding();
+    load.responding(0);
     load.produced(40_000);
 
     // Input and output counts are independent wire facts. An input count that
@@ -210,7 +228,7 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
 fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording() {
     let mut load = Load::default();
     load.recorded(&results(400_000));
-    load.responding();
+    load.responding(0);
     load.carried(Carried::new(100_000));
 
     // The provider counted the first 400 bytes exactly, then another 200 bytes
@@ -333,4 +351,89 @@ fn a_window_is_full_once_there_is_no_room_left_for_another_exchange() {
     // And never, where no window is known: nothing here decides a session is
     // full against a number nobody stated.
     assert!(!load.full(None, 36_000));
+}
+
+/// `C3`. A session that attached a 3 MB screenshot must go on estimating text
+/// at the rate its own text established, and the two sides fail differently:
+/// the file's bytes would move the divisor by a factor of thirty, and the
+/// tokens the vendor charged for the picture would move the numerator the other
+/// way. Both are corrected, so what is left is text against text.
+///
+/// The tolerance is the residual: the flat charge is deliberately below what a
+/// real picture costs, so a little of the picture stays in the rate. Five per
+/// cent is what that comes to beside a transcript of this size, and the
+/// direction is the one this module has always preferred — an estimate that
+/// leans high compacts early, which costs context nobody sees go rather than
+/// the turn.
+#[test]
+fn a_three_megabyte_screenshot_does_not_move_the_rate_the_text_established() {
+    // 90 KB of prompt, which is a session that has been going a while.
+    const TEXT: usize = 90_000;
+    // What that text alone truly cost, and what this vendor's own table says
+    // the picture beside it cost: a 1000x1000 image, read on 2026-08-23.
+    const TEXT_TOKENS: u64 = 30_000;
+    const PICTURE_TOKENS: u64 = 1_296;
+
+    let mut plain = Load::default();
+    plain.recorded(&Message::said("x".repeat(TEXT)));
+    plain.responding(0);
+    plain.carried(Carried::new(TEXT_TOKENS));
+
+    let mut holding = Load::default();
+    holding.recorded(&attaching(TEXT));
+    holding.responding(1);
+    holding.carried(Carried::new(TEXT_TOKENS + PICTURE_TOKENS));
+
+    let (text, with_picture) = (plain.bytes_to_tokens(3_000), holding.bytes_to_tokens(3_000));
+
+    assert!(
+        with_picture >= text,
+        "text got cheaper because a picture was attached: {with_picture} < {text}"
+    );
+    assert!(
+        with_picture * 100 <= text * 102,
+        "the picture moved the rate by more than two per cent: {with_picture} vs {text}"
+    );
+}
+
+/// The other half of `C3`, on its own so a later edit that puts an
+/// attachment's bytes back into the byte measure fails here and says why.
+#[test]
+fn what_a_file_weighs_is_not_what_the_transcript_weighs() {
+    let mut plain = Load::default();
+    plain.recorded(&Message::said("x".repeat(300)));
+
+    let mut holding = Load::default();
+    holding.recorded(&attaching(300));
+
+    assert_eq!(
+        holding.tokens(),
+        plain.tokens(),
+        "a message that named a file weighs more than the same message without one"
+    );
+}
+
+/// The charge follows what the request carried, which is what `T-RESOLVE`'s
+/// ageing decides — not what the transcript still refers to.
+#[test]
+fn an_attachment_aged_out_of_the_request_stops_being_charged() {
+    let mut load = Load::default();
+    load.recorded(&Message::said("what is in these"));
+
+    load.responding(2);
+    let both = load.tokens();
+
+    // The turn after, the ceiling admitted one of the two.
+    load.responding(1);
+
+    assert_eq!(
+        both,
+        load.tokens() + PER_ATTACHMENT,
+        "the file the request left behind is still being charged for"
+    );
+
+    // And a turn that carried neither is back to the text alone.
+    load.responding(0);
+
+    assert_eq!(both, load.tokens() + PER_ATTACHMENT * 2);
 }

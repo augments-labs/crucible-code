@@ -12,7 +12,9 @@
 //! *text* rather than as an object, and how hard to think is a field beside
 //! `model` rather than an object of its own.
 
-use crucible_core::{Message, Request, StopReason, ToolCall, ToolResult, ToolSchema};
+use crucible_core::{
+    Attached, Content, Message, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+};
 #[cfg(test)]
 use serde_json::{Value, json};
 
@@ -74,8 +76,8 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
         });
     }
 
-    for message in request.transcript.messages() {
-        append(messages, message);
+    for (nth, message) in request.transcript.messages().iter().enumerate() {
+        append(messages, message, nth, request.attached);
     }
 }
 
@@ -84,11 +86,33 @@ fn write_messages(messages: &mut Array<'_>, request: &Request<'_>) {
 /// Appends rather than maps because the counts differ both ways: a turn that
 /// called three tools is answered by three messages, and a turn cut short is
 /// two.
-fn append(messages: &mut Array<'_>, message: &Message) {
+fn append(messages: &mut Array<'_>, message: &Message, nth: usize, attached: &[Attached<'_>]) {
     match message {
-        Message::User(text) => messages.object(|message| {
+        Message::User { text, .. } => messages.object(|message| {
             message.text("role", "user");
-            message.text("content", text);
+
+            let mut files = attached.iter().filter(|one| one.message == nth).peekable();
+            if files.peek().is_none() {
+                message.text("content", text);
+                return;
+            }
+
+            // Parts rather than a string, and the picture ahead of the words,
+            // which is the order every one of these protocols asks for. The
+            // words are one prompt behind however many files it named.
+            message.array("content", |content| {
+                for one in files {
+                    content.object(|part| write_attached(part, one));
+                }
+                // A prompt that named a file and said nothing else is the
+                // picture alone, rather than a part carrying no words.
+                if !text.is_empty() {
+                    content.object(|part| {
+                        part.text("type", "text");
+                        part.text("text", text);
+                    });
+                }
+            });
         }),
         Message::Agent { text, calls, stop } => {
             // Both fields are optional and one of them has to be there. A model
@@ -138,6 +162,34 @@ fn append(messages: &mut Array<'_>, message: &Message) {
             for result in results {
                 messages.object(|message| write_result(message, result));
             }
+        }
+    }
+}
+
+/// One attached file, or the line standing where it would have been.
+///
+/// The sentence is printed rather than composed: the runner is the only thing
+/// that knows which of its three reasons applies, and a part that invented its
+/// own wording would be a fourth.
+///
+/// The URL is an object of its own rather than the string the neighbouring
+/// protocol takes — one nesting deeper, for the same bytes, which is why the
+/// three of these are written out separately instead of shared.
+fn write_attached(part: &mut Object<'_>, attached: &Attached<'_>) {
+    match attached.content {
+        Content::Bytes(bytes) => {
+            part.text("type", "image_url");
+            part.object("image_url", |url| {
+                url.prefixed_encoded(
+                    "url",
+                    &format!("data:{};base64,", attached.media_type),
+                    bytes,
+                );
+            });
+        }
+        Content::Instead(line) => {
+            part.text("type", "text");
+            part.text("text", line);
         }
     }
 }

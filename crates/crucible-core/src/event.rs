@@ -11,7 +11,7 @@
 use crate::ids::{ToolId, TurnId};
 use crate::provider::{ProviderError, Spend};
 use crate::tool::{Summary, ToolCall, ToolError, ToolOutput, Wrote};
-use crate::transcript::StopReason;
+use crate::transcript::{Attachment, StopReason};
 
 /// Why a turn ended badly.
 ///
@@ -197,6 +197,25 @@ pub enum Event {
         error: TurnError,
     },
 
+    /// Files a request went out without.
+    ///
+    /// A request has a ceiling and a transcript does not, so the older
+    /// attachments lose their bytes rather than the turn losing its answer.
+    /// That is the design working, and it is invisible: without this the
+    /// answers quietly get less to look at with nothing on screen saying so.
+    ///
+    /// Posted once per request rather than once per turn. A retry is a second
+    /// answer that went out short, and a reader watching it arrive is owed the
+    /// same sentence about it.
+    Aged {
+        /// The attachments whose content was not carried, in transcript order.
+        ///
+        /// The attachment rather than its path, so what a reader is shown and
+        /// what a backtrace may print stay the two different things
+        /// [`Attachment`]'s own `Debug` already keeps apart.
+        files: Box<[Attachment]>,
+    },
+
     /// A line typed while the turn ran was worked into it.
     ///
     /// Posted where the line joins the turn — between one pass and the next —
@@ -255,6 +274,27 @@ mod tests {
         .unwrap();
 
         assert!(matches!(rx.recv().unwrap(), Event::TurnStarted { .. }));
+    }
+
+    #[test]
+    fn what_a_request_went_out_without_says_no_path() {
+        // The event crosses a channel and can end up in a panic payload, and a
+        // path names directories and usually the person. It carries the
+        // attachment itself so that the redaction is the one already written
+        // for it, rather than a second one that can disagree.
+        let event = Event::Aged {
+            files: Box::new([Attachment {
+                path: "/home/aged-debug-canary/holiday.png".into(),
+                modality: crate::Modality::Image,
+                media_type: "image/png".into(),
+                hash: [0; 32],
+            }]),
+        };
+
+        let shown = format!("{event:?}");
+
+        assert!(!shown.contains("aged-debug-canary"), "{shown}");
+        assert!(shown.contains("Image"), "{shown}");
     }
 
     #[test]

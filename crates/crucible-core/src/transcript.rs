@@ -2,7 +2,10 @@
 //!
 //! One transcript per session, held in memory and sent to the provider on
 //! every turn. It grows for the life of the session, so it owns its text
-//! rather than borrowing, and nothing on the render path copies it.
+//! rather than borrowing, and nothing on the render path copies it. A file
+//! attached to a prompt is the one thing it does not own: it holds the path and
+//! the bytes stay on disk, because what the transcript holds it holds for every
+//! turn that follows.
 //!
 //! A turn is one prompt plus the exchange until the agent yields, so turns are
 //! delimited by [`Message::User`]: everything after one, until the next, is
@@ -11,7 +14,54 @@
 use std::fmt;
 
 use crate::ids::ToolId;
+use crate::modality::Modality;
 use crate::tool::{ToolCall, ToolOutput};
+
+/// A file the user put in front of the model, named rather than carried.
+///
+/// The bytes stay on disk. A transcript is held whole for the life of a
+/// session and is what the memory budget bounds, so a picture that lives in it
+/// is a picture paid for on every turn after the one that sent it; a path is
+/// paid for once. What reads the file is the request being built, and it is
+/// read again for each one.
+///
+/// `hash` is taken when the file is attached and is the record of what was
+/// sent. A session read back later can compare it and say the file has changed
+/// since, rather than quietly sending different bytes under the same prompt. It
+/// is not a cache key: nothing is stored under it and nothing looks a file up
+/// by it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Attachment {
+    /// Where the file is, already resolved against the workspace.
+    pub path: Box<str>,
+    /// Which kind of content it is, which is what decides whether a model can
+    /// be sent it at all.
+    pub modality: Modality,
+    /// The media type the provider will label it with — `image/png` and its
+    /// like. Determined from the file rather than from its name.
+    pub media_type: Box<str>,
+    /// SHA-256 of the file's bytes as they were when it was attached.
+    pub hash: [u8; 32],
+}
+
+/// The path goes; the kind stays.
+///
+/// A path is user content — it names directories, and on most machines it names
+/// the person. What kind of file it was is a fact about the shape of the turn
+/// and gives away nothing about whose file it is, so a panic payload can still
+/// say an image was attached. The hash goes with the path: it is not reversible,
+/// but it confirms which file somebody was holding to anyone who already has a
+/// copy, and a backtrace is the wrong place to settle that.
+impl fmt::Debug for Attachment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Attachment")
+            .field("path", &"[redacted]")
+            .field("modality", &self.modality)
+            .field("media_type", &self.media_type)
+            .field("hash", &"[redacted]")
+            .finish()
+    }
+}
 
 /// One message in the transcript.
 ///
@@ -19,8 +69,14 @@ use crate::tool::{ToolCall, ToolOutput};
 /// so a new variant must break every provider that has not handled it.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Message {
-    /// What the user typed. Starts a turn.
-    User(Box<str>),
+    /// What the user typed, and the files they put beside it. Starts a turn.
+    User {
+        /// The prompt.
+        text: Box<str>,
+        /// The files named with it, in the order they were named. Empty for
+        /// almost every prompt, which is why [`Message::said`] exists.
+        attachments: Box<[Attachment]>,
+    },
 
     /// What the model produced: prose, tool calls, or both.
     Agent {
@@ -43,10 +99,28 @@ pub enum Message {
     ToolResults(Vec<ToolResult>),
 }
 
+impl Message {
+    /// A prompt with nothing attached to it.
+    ///
+    /// Most prompts are this, and the constructor is what keeps them reading
+    /// the way they did before a message could carry a file.
+    #[must_use]
+    pub fn said(text: impl Into<Box<str>>) -> Self {
+        Self::User {
+            text: text.into(),
+            attachments: Box::new([]),
+        }
+    }
+}
+
 impl fmt::Debug for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::User(_) => f.debug_tuple("User").field(&"[redacted]").finish(),
+            Self::User { attachments, .. } => f
+                .debug_struct("User")
+                .field("text", &"[redacted]")
+                .field("attachments", attachments)
+                .finish(),
             Self::Agent { calls, stop, .. } => f
                 .debug_struct("Agent")
                 .field("text", &"[redacted]")
@@ -263,7 +337,7 @@ impl Transcript {
     pub fn turns(&self) -> usize {
         self.messages
             .iter()
-            .filter(|message| matches!(message, Message::User(_)))
+            .filter(|message| matches!(message, Message::User { .. }))
             .count()
     }
 
@@ -309,13 +383,13 @@ mod tests {
     #[test]
     fn turns_are_counted_by_user_prompts() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User("first".into()));
+        transcript.push(Message::said("first"));
         transcript.push(Message::Agent {
             text: "answer".into(),
             calls: Vec::new(),
             stop: Some(StopReason::Yielded),
         });
-        transcript.push(Message::User("second".into()));
+        transcript.push(Message::said("second"));
 
         assert_eq!(transcript.turns(), 2);
         assert_eq!(transcript.len(), 3);
@@ -374,8 +448,8 @@ mod tests {
     #[test]
     fn a_transcript_that_forgot_has_nothing_in_it_and_no_turns_behind_it() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User("said".into()));
-        transcript.push(Message::User("said again".into()));
+        transcript.push(Message::said("said"));
+        transcript.push(Message::said("said again"));
 
         transcript.forget();
 
@@ -388,7 +462,7 @@ mod tests {
     #[test]
     fn transcript_debug_redacts_prompts_answers_and_tool_results() {
         let mut transcript = Transcript::new();
-        transcript.push(Message::User("prompt-debug-canary".into()));
+        transcript.push(Message::said("prompt-debug-canary"));
         transcript.push(Message::Agent {
             text: "answer-debug-canary".into(),
             calls: Vec::new(),
@@ -409,5 +483,39 @@ mod tests {
             assert!(!shown.contains(canary), "{shown}");
         }
         assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn debug_redacts_an_attachments_path_along_with_the_prompt_it_came_with() {
+        // A path is the user's content as much as the prompt is: it names
+        // directories, and on a home machine it usually names the person.
+        let message = Message::User {
+            text: "what is in this".into(),
+            attachments: Box::new([Attachment {
+                path: "/home/path-debug-canary/holiday.png".into(),
+                modality: Modality::Image,
+                media_type: "image/png".into(),
+                hash: [0; 32],
+            }]),
+        };
+
+        let shown = format!("{message:?}");
+
+        assert!(!shown.contains("path-debug-canary"), "{shown}");
+        assert!(!shown.contains("what is in this"), "{shown}");
+        // What it may say is that there is one, and what kind: that is the
+        // shape of the turn rather than anything the user wrote.
+        assert!(shown.contains("Image"), "{shown}");
+    }
+
+    #[test]
+    fn a_prompt_with_nothing_attached_reads_as_one() {
+        assert_eq!(
+            Message::said("go"),
+            Message::User {
+                text: "go".into(),
+                attachments: Box::new([]),
+            }
+        );
     }
 }

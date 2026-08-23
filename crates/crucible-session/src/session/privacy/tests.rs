@@ -14,7 +14,7 @@ use crate::session::Session;
 fn record(sample: &Sample) -> PathBuf {
     let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
     let path = session.path().to_owned();
-    session.append(&Message::User("hello".into()));
+    session.append(&Message::said("hello"));
 
     // Dropping is what waits for the queue, so the file is complete after it.
     drop(session);

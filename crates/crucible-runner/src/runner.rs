@@ -17,9 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 use crucible_core::{
-    Ask, Cancel, Compacting, Delta, DeltaStream, Effort, Event, Message, Mode, Permission, Post,
-    Provider, ProviderError, Request, Room, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolSchema, Transcript, TurnError, TurnId,
+    Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event,
+    Message, Mode, Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer,
+    StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -27,6 +27,7 @@ use crucible_session::Session;
 use crate::tools::Tools;
 
 mod answer;
+pub mod attachments;
 mod compaction;
 mod load;
 mod work;
@@ -425,6 +426,17 @@ impl Runner {
         self.model.window
     }
 
+    /// The provider this runner is asking, for the questions only it can answer.
+    ///
+    /// Handed out rather than answered here because what a caller wants of it
+    /// is a fact about a protocol — what shapes it has a word for — and the
+    /// runner drives `dyn Provider` precisely so it never has to know one.
+    /// Borrowed, so nothing can take it or hold it past the turn.
+    #[must_use]
+    pub fn provider(&self) -> &dyn Provider {
+        self.provider.as_ref()
+    }
+
     /// The vendor this session is writing to, by the name it is asked for on
     /// the command line and written down under.
     ///
@@ -564,11 +576,12 @@ impl Runner {
     /// goes back to the model as a result it can work around.
     // The cancel and the steer are both read off the thread the turn runs on,
     // and bundling them would drag the two through every signature the cancel
-    // already crosses. The lint counts to five; the turn needs six.
+    // already crosses. The lint counts to five; the turn needs seven.
     #[allow(clippy::too_many_arguments)]
     pub fn turn(
         &mut self,
         prompt: &str,
+        attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
         events: &dyn Post,
         cancel: &Cancel,
@@ -590,7 +603,10 @@ impl Runner {
 
         self.turn = turn;
         events.post(Event::TurnStarted { turn: self.turn });
-        self.record(Message::User(prompt.into()));
+        self.record(Message::User {
+            text: prompt.into(),
+            attachments,
+        });
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
@@ -684,7 +700,7 @@ impl Runner {
             // and so it cannot land while a tool call is out.
             for line in steer.take() {
                 events.post(Event::Steered { line: line.clone() });
-                self.record(Message::User(line.into()));
+                self.record(Message::said(line));
                 events.post(Event::Carried {
                     left: self.load.left(counting.window, counting.reserve),
                 });
@@ -1002,10 +1018,33 @@ impl Runner {
         answer: &mut Answer,
         listening: &mut Listening<'_>,
     ) -> Result<StopReason, TurnError> {
-        listening.counting.load.responding();
-        let mut stream = self
-            .provider
-            .stream(self.request(listening.advertised), listening.cancel)?;
+        // Both locals are the request's whole hold on the bytes: `resolved`
+        // owns them, `attached` is what the provider borrows, and the pass
+        // returning drops the pair. Nothing read here survives one request.
+        let resolved = attachments::resolve(&self.transcript);
+        let attached = resolved.attached();
+        // What the ceiling let through, not what the transcript refers to. An
+        // entry the pass aged out is a sentence by the time it gets here, and
+        // a sentence is text at the rate text is already charged at.
+        listening.counting.load.responding(
+            attached
+                .iter()
+                .filter(|one| matches!(one.content, Content::Bytes(_)))
+                .count(),
+        );
+        // Once per request rather than once per turn. Going out short is a
+        // fact about the request rather than about the turn, and a retry sends
+        // a second one — a reader watching that answer arrive is owed the same
+        // sentence about it.
+        let aged = resolved.aged(&self.transcript);
+        if !aged.is_empty() {
+            listening.events.post(Event::Aged { files: aged });
+        }
+
+        let mut stream = self.provider.stream(
+            self.request(listening.advertised, &attached),
+            listening.cancel,
+        )?;
 
         Self::hear(
             stream.as_mut(),
@@ -1159,7 +1198,11 @@ impl Runner {
     /// are built per pass — a tool the model looked up mid-turn belongs in the
     /// next request — and a `Request` borrows for as long as the caller holds
     /// them.
-    fn request<'a>(&'a self, advertised: &'a [ToolSchema]) -> Request<'a> {
+    fn request<'a>(
+        &'a self,
+        advertised: &'a [ToolSchema],
+        attached: &'a [Attached<'a>],
+    ) -> Request<'a> {
         Request {
             model: &self.model.name,
             transcript: &self.transcript,
@@ -1167,6 +1210,7 @@ impl Runner {
             max_tokens: self.model.max_tokens,
             system: self.model.system.as_deref(),
             effort: self.model.effort,
+            attached,
         }
     }
 }
