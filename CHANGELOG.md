@@ -30,6 +30,12 @@ that is actually on your machine, ready for `bash` to run; where you have none,
 the answer says which to install. A file whose name says nothing about it is
 refused as before.
 
+**A converted document's pictures can be looked at.** Where the converter named
+is one that writes them out, the refusal says so: the pictures land beside the
+text in `converted-media/`, and each is a file you can name in a prompt on a
+model that reads pictures. A converter that flattens a picture into its caption
+promises nothing about one.
+
 ## [0.19.0] - 2026-08-23
 
 ### Added
