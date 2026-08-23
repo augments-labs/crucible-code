@@ -363,6 +363,7 @@ fn stood<T: Terminal>(
         models: all.clone(),
         providers: 0,
         rungs: 0,
+        pointer: None,
     };
 
     picking::shelve(
@@ -458,6 +459,7 @@ fn stood<T: Terminal>(
                 pane: standing.pane,
                 keys: (&long, &short),
                 norung: &norung,
+                pointer: standing.pointer,
             };
 
             (

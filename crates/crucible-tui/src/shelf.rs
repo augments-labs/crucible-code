@@ -61,6 +61,14 @@ const SEARCHING: usize = 3;
 /// Where the search line opens, counted from the left of the window.
 const TYPED_AT: usize = 10;
 
+/// The row the panes' frame opens on, counted the same way as [`SEARCHING`]:
+/// the title, its blank, the search frame's three rows, and its blank.
+const PANED: usize = 6;
+
+/// What the panes' frame costs above the first row inside it: the top, the
+/// header, and the rule under it.
+const HEADED: usize = 3;
+
 /// Where the track's first rung opens.
 const RUNG_AT: usize = 12;
 
@@ -162,6 +170,28 @@ pub struct Shelf<'a> {
     pub keys: (&'a str, &'a str),
     /// What the track says where `rungs` is empty.
     pub norung: &'a str,
+    /// Where the pointer is resting: a row of what [`Shelf::within`] answered,
+    /// and a column of the window.
+    ///
+    /// `None` is a pointer that has never been reported, which is every session
+    /// on a terminal that says nothing about the mouse. Nothing here moves a
+    /// mark — what the pointer is over and what the keys are on are two
+    /// different things, and a reader whose hand is on the mouse is still owed
+    /// the row the arrows left.
+    pub pointer: Option<(usize, usize)>,
+}
+
+/// What the pointer is resting on, in the shelf's own terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Under {
+    /// Nothing the shelf lights up.
+    Nothing,
+    /// The line the query is typed into, or either rule of its frame.
+    Searching,
+    /// A row of the pane of providers, counted from the first row inside it.
+    Provider(usize),
+    /// A row of the pane of models, counted the same way.
+    Model(usize),
 }
 
 impl Shelf<'_> {
@@ -176,12 +206,18 @@ impl Shelf<'_> {
         }
         let body = room - CHROME;
 
+        // Worked out once and handed down, because two of the four things it
+        // decides are on different rows of the same picture: a frame drawn in
+        // the accent and a band drawn under a name are one answer about where
+        // the pointer is, and asking twice is how the two come to disagree.
+        let under = self.under(columns, body);
+
         let mut rows = Vec::with_capacity(room);
         rows.push(self.titled(columns));
         rows.push(Row::new());
-        rows.extend(self.searched(columns, glyphs));
+        rows.extend(self.searched(columns, glyphs, under));
         rows.push(Row::new());
-        rows.extend(self.paned(columns, body, glyphs));
+        rows.extend(self.paned(columns, body, glyphs, under));
         rows.push(Row::new());
         rows.push(self.tracked(columns, glyphs));
         rows.push(Row::new());
@@ -208,6 +244,41 @@ impl Shelf<'_> {
         }
     }
 
+    /// What the pointer is resting on, given the size the shelf is drawn at.
+    ///
+    /// Worked out from the layout rather than remembered from it, which is what
+    /// keeps it true when the window changes under a pointer that has not
+    /// moved: the row it is on means whatever this size puts there.
+    ///
+    /// A folded shelf has no pane of providers to rest on — its providers are
+    /// words on one header row, and a band drawn across that row would light
+    /// all of them to say one.
+    fn under(&self, columns: usize, body: usize) -> Under {
+        let Some((row, column)) = self.pointer else {
+            return Under::Nothing;
+        };
+
+        if (SEARCHING - 1..=SEARCHING + 1).contains(&row) {
+            return Under::Searching;
+        }
+
+        let Some(at) = row.checked_sub(PANED + HEADED).filter(|at| *at < body) else {
+            return Under::Nothing;
+        };
+
+        let apart = columns >= FOLDS_AT;
+        if apart && (1..=SERVES).contains(&column) {
+            return Under::Provider(at);
+        }
+
+        let opens = if apart { SERVES + 2 } else { 1 };
+        if (opens..columns.saturating_sub(1)).contains(&column) {
+            return Under::Model(at);
+        }
+
+        Under::Nothing
+    }
+
     /// The name of the panel, and what is in force drawn away from it.
     fn titled(&self, columns: usize) -> Row {
         let mut row = Row::new();
@@ -222,9 +293,22 @@ impl Shelf<'_> {
     }
 
     /// The framed line the query is typed into.
-    fn searched(&self, columns: usize, glyphs: Glyphs) -> [Row; 3] {
+    ///
+    /// The one frame on the shelf that changes colour, and it changes for the
+    /// one reason a reader would want it to: a field is a thing to put a
+    /// pointer in, and the accent under the pointer says which one this is. The
+    /// panes' own frames stay quiet at every moment -- they divide the picture
+    /// rather than offer anything, and a border that lit up would be answering
+    /// a question nobody asked of it.
+    fn searched(&self, columns: usize, glyphs: Glyphs, under: Under) -> [Row; 3] {
+        let frame = if under == Under::Searching {
+            Slot::Accent
+        } else {
+            Slot::Quiet
+        };
+
         let mut line = Row::new();
-        line.push(Slot::Accent, glyphs.vertical());
+        line.push(frame, glyphs.vertical());
         line.push(Slot::Quiet, " Search");
 
         let room = columns - TYPED_AT - 1;
@@ -239,12 +323,12 @@ impl Shelf<'_> {
             line.push(Slot::Plain, clip(self.query, room));
         }
         line.pad(columns - 1);
-        line.push(Slot::Accent, glyphs.vertical());
+        line.push(frame, glyphs.vertical());
 
         [
-            ruled(glyphs.top(), columns - 2, glyphs),
+            ruled(glyphs.top(), columns - 2, glyphs, frame),
             line.clipped(columns),
-            ruled(glyphs.bottom(), columns - 2, glyphs),
+            ruled(glyphs.bottom(), columns - 2, glyphs, frame),
         ]
     }
 
@@ -254,7 +338,7 @@ impl Shelf<'_> {
     /// own beside the models; below that they fold into the header of the one
     /// frame that is left, because two panes down there cost more in borders
     /// and padding than they return.
-    fn paned(&self, columns: usize, body: usize, glyphs: Glyphs) -> Vec<Row> {
+    fn paned(&self, columns: usize, body: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
         let apart = columns >= FOLDS_AT;
         let inside = if apart {
             columns - SERVES - 3
@@ -272,11 +356,11 @@ impl Shelf<'_> {
         ));
 
         let mut header = Row::new();
-        header.push(Slot::Accent, glyphs.vertical());
+        header.push(Slot::Quiet, glyphs.vertical());
         if apart {
             header.push(Slot::Quiet, clip("  Providers", SERVES));
             header.pad(SERVES + 1);
-            header.push(Slot::Accent, glyphs.vertical());
+            header.push(Slot::Quiet, glyphs.vertical());
             header.push(Slot::Quiet, clip("  Models", inside));
 
             // How many of how many, against the right edge of the pane it
@@ -291,7 +375,7 @@ impl Shelf<'_> {
             header = header.join(self.folded(inside, glyphs));
         }
         header.pad(columns - 1);
-        header.push(Slot::Accent, glyphs.vertical());
+        header.push(Slot::Quiet, glyphs.vertical());
         rows.push(header.clipped(columns));
 
         rows.push(joined(
@@ -302,19 +386,19 @@ impl Shelf<'_> {
             glyphs,
         ));
 
-        let serving = self.serving(body, apart, glyphs);
-        let stocking = self.stocking(body, inside, glyphs);
+        let serving = self.serving(body, apart, glyphs, under);
+        let stocking = self.stocking(body, inside, glyphs, under);
         for (beside, stocked) in serving.into_iter().zip(stocking) {
             let mut row = Row::new();
-            row.push(Slot::Accent, glyphs.vertical());
+            row.push(Slot::Quiet, glyphs.vertical());
             if apart {
                 row = row.join(beside);
                 row.pad(SERVES + 1);
-                row.push(Slot::Accent, glyphs.vertical());
+                row.push(Slot::Quiet, glyphs.vertical());
             }
             row = row.join(stocked);
             row.pad(columns - 1);
-            row.push(Slot::Accent, glyphs.vertical());
+            row.push(Slot::Quiet, glyphs.vertical());
             rows.push(row.clipped(columns));
         }
 
@@ -358,7 +442,7 @@ impl Shelf<'_> {
     }
 
     /// Each row of the pane of providers, padded to its width.
-    fn serving(&self, body: usize, apart: bool, glyphs: Glyphs) -> Vec<Row> {
+    fn serving(&self, body: usize, apart: bool, glyphs: Glyphs, under: Under) -> Vec<Row> {
         if !apart {
             return vec![Row::new(); body];
         }
@@ -367,16 +451,20 @@ impl Shelf<'_> {
         (0..body)
             .map(|at| {
                 let mut row = Row::new();
+                // Nothing is lit under the last provider. A pane is padded to
+                // the bottom of the window and the rows doing that padding are
+                // the frame's inside rather than anything to point at.
+                let on = under == Under::Provider(at) && self.providers.len() > from + at;
                 match self.providers.get(from + at) {
                     None => {}
                     Some(provider) => {
                         let marked = from + at == self.provider;
-                        row.push(Slot::Plain, " ");
+                        row.push(lit(on, Slot::Plain), " ");
                         row.push(
-                            Slot::Accent,
+                            lit(on, Slot::Accent),
                             if marked { glyphs.caret() } else { " " }.to_owned(),
                         );
-                        row.push(Slot::Plain, " ");
+                        row.push(lit(on, Slot::Plain), " ");
                         let count = match provider.count {
                             Some(count) => count.to_string(),
                             None => glyphs.dot().to_owned(),
@@ -384,18 +472,21 @@ impl Shelf<'_> {
                         let ends = SERVES - 1;
                         let name = ends - wide(&count) - 1;
                         row.push(
-                            if marked && self.pane == Pane::Providers {
-                                Slot::Strong
-                            } else {
-                                Slot::Plain
-                            },
+                            lit(
+                                on,
+                                if marked && self.pane == Pane::Providers {
+                                    Slot::Strong
+                                } else {
+                                    Slot::Plain
+                                },
+                            ),
                             clip(provider.name, name.saturating_sub(LEADING)),
                         );
-                        row.pad(ends - wide(&count));
-                        row.push(Slot::Quiet, count);
+                        row.fill(lit(on, Slot::Plain), ends - wide(&count));
+                        row.push(lit(on, Slot::Quiet), count);
                     }
                 }
-                row.pad(SERVES);
+                row.fill(lit(on, Slot::Plain), SERVES);
                 row.clipped(SERVES)
             })
             .collect()
@@ -406,7 +497,7 @@ impl Shelf<'_> {
     /// More models than rows shows the ones that fit and says how many it did
     /// not on the last of them — a count of models left, never of rows, because
     /// the row saying it is one of the rows.
-    fn stocking(&self, body: usize, inside: usize, glyphs: Glyphs) -> Vec<Row> {
+    fn stocking(&self, body: usize, inside: usize, glyphs: Glyphs, under: Under) -> Vec<Row> {
         if self.models.is_empty() {
             let mut said = Row::new();
             said.pad(LEADING);
@@ -432,7 +523,15 @@ impl Shelf<'_> {
 
         (0..body)
             .map(|at| match self.models.get(from + at) {
-                Some(one) if at < shown => self.stocked(one, from + at, ends, glyphs),
+                Some(one) if at < shown => self.stocked(
+                    one,
+                    Marks {
+                        marked: from + at == self.model,
+                        lit: under == Under::Model(at),
+                    },
+                    ends,
+                    glyphs,
+                ),
                 _ if at == shown && left > 0 => {
                     let mut row = Row::new();
                     row.pad(LEADING);
@@ -445,30 +544,33 @@ impl Shelf<'_> {
     }
 
     /// One model's row, against the columns the pane settled.
-    fn stocked(&self, one: &Stocked<'_>, at: usize, ends: Ends, glyphs: Glyphs) -> Row {
-        let marked = at == self.model;
+    fn stocked(&self, one: &Stocked<'_>, marks: Marks, ends: Ends, glyphs: Glyphs) -> Row {
+        let Marks { marked, lit: on } = marks;
 
         let mut row = Row::new();
-        row.push(Slot::Plain, " ");
+        row.push(lit(on, Slot::Plain), " ");
         row.push(
-            Slot::Accent,
+            lit(on, Slot::Accent),
             if marked { glyphs.caret() } else { " " }.to_owned(),
         );
-        row.push(Slot::Plain, " ");
+        row.push(lit(on, Slot::Plain), " ");
         row.push(
-            if marked && self.pane == Pane::Models {
-                Slot::Strong
-            } else {
-                Slot::Plain
-            },
+            lit(
+                on,
+                if marked && self.pane == Pane::Models {
+                    Slot::Strong
+                } else {
+                    Slot::Plain
+                },
+            ),
             clip(one.name, ends.name.saturating_sub(LEADING)),
         );
 
         // Left to right, in the order the columns sit: who serves it reads as a
         // word and starts where the others on the pane start.
         if let (Some(opens), false) = (ends.by, one.by.is_empty()) {
-            row.pad(opens);
-            row.push(Slot::Quiet, clip(one.by, SERVED_BY));
+            row.fill(lit(on, Slot::Plain), opens);
+            row.push(lit(on, Slot::Quiet), clip(one.by, SERVED_BY));
         }
 
         // Right-justified, because what it is worth comparing against is the
@@ -476,22 +578,25 @@ impl Shelf<'_> {
         // different lengths only line up at one end.
         if let (Some(opens), false) = (ends.window, one.window.is_empty()) {
             let said = clip(one.window, WINDOW);
-            row.pad(opens + WINDOW - wide(&said));
-            row.push(Slot::Quiet, said);
+            row.fill(lit(on, Slot::Plain), opens + WINDOW - wide(said));
+            row.push(lit(on, Slot::Quiet), said);
         }
 
         // What is in force wins the last column outright. Both belong to this
         // row alone, and the one that is news is the one saying the session is
         // already asking this — a note about a rung is still true tomorrow.
         if let Some(opens) = ends.note {
-            row.pad(opens);
+            row.fill(lit(on, Slot::Plain), opens);
             if one.now {
-                row.push(Slot::DoneMark, format!("{} now", glyphs.stepping().0));
+                row.push(
+                    lit(on, Slot::DoneMark),
+                    format!("{} now", glyphs.stepping().0),
+                );
             } else {
-                row.push(Slot::Quiet, clip(one.note, ends.inside - opens));
+                row.push(lit(on, Slot::Quiet), clip(one.note, ends.inside - opens));
             }
         }
-        row.pad(ends.inside);
+        row.fill(lit(on, Slot::Plain), ends.inside);
         row.clipped(ends.inside)
     }
 
@@ -552,6 +657,27 @@ impl Shelf<'_> {
     }
 }
 
+/// What is true of one row of a pane beyond what is written on it.
+#[derive(Debug, Clone, Copy)]
+struct Marks {
+    /// Whether the keyboard's mark is on it.
+    marked: bool,
+    /// Whether the pointer is resting on it.
+    lit: bool,
+}
+
+/// The slot a span takes, given whether the pointer is resting on its row.
+///
+/// One slot for a whole row rather than a slot per span, because the ground is
+/// the point of it: a ground that changed halfway along would be two rectangles
+/// where the reader is being shown one row. What that costs is the difference
+/// between a name and the count beside it, which is not a difference anybody is
+/// reading while their pointer is on the row -- and the row the arrows are on
+/// still carries its mark, so the two never have to be told apart by colour.
+const fn lit(on: bool, slot: Slot) -> Slot {
+    if on { Slot::Pointed } else { slot }
+}
+
 /// Where each column at the right of a model's row opens.
 ///
 /// Settled once for the pane rather than once for every row on it, because a
@@ -603,24 +729,29 @@ impl Ends {
 }
 
 /// A rule from one edge to the other, with no joint in the middle of it.
-fn ruled(ends: (&str, &str), inside: usize, glyphs: Glyphs) -> Row {
+fn ruled(ends: (&str, &str), inside: usize, glyphs: Glyphs, slot: Slot) -> Row {
     Row::new()
-        .then(Slot::Accent, ends.0)
-        .then(Slot::Accent, glyphs.horizontal().repeat(inside))
-        .then(Slot::Accent, ends.1)
+        .then(slot, ends.0)
+        .then(slot, glyphs.horizontal().repeat(inside))
+        .then(slot, ends.1)
 }
 
 /// The same, with the joint the panes meet at where they meet.
+///
+/// Quiet at every moment, which is the whole of what the panes' frame is for:
+/// it says where one pane stops and the other starts, and it has nothing else
+/// to say at any point in the reading. The accent is spent on the two things
+/// that do -- the mark walking a pane, and the field a pointer is resting in.
 fn joined(ends: (&str, &str), joint: &str, apart: bool, inside: usize, glyphs: Glyphs) -> Row {
     if !apart {
-        return ruled(ends, inside, glyphs);
+        return ruled(ends, inside, glyphs, Slot::Quiet);
     }
     Row::new()
-        .then(Slot::Accent, ends.0)
-        .then(Slot::Accent, glyphs.horizontal().repeat(SERVES))
-        .then(Slot::Accent, joint)
-        .then(Slot::Accent, glyphs.horizontal().repeat(inside))
-        .then(Slot::Accent, ends.1)
+        .then(Slot::Quiet, ends.0)
+        .then(Slot::Quiet, glyphs.horizontal().repeat(SERVES))
+        .then(Slot::Quiet, joint)
+        .then(Slot::Quiet, glyphs.horizontal().repeat(inside))
+        .then(Slot::Quiet, ends.1)
 }
 
 /// The first row on screen, given where the mark is.

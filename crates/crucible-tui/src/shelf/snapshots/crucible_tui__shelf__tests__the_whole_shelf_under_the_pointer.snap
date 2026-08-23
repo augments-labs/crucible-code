@@ -1,6 +1,6 @@
 ---
 source: crates/crucible-tui/src/shelf/tests.rs
-expression: "picture(&shelf(&providers, &models).within(100, 30, Glyphs::Unicode), 100)"
+expression: "picture(&shelf.within(100, 30, Glyphs::Unicode), 100)"
 ---
 <Strong>Model</>                                                          <Quiet>now  anthropic/claude-sonnet-5 · high</>
 
@@ -13,7 +13,7 @@ expression: "picture(&shelf(&providers, &models).within(100, 30, Glyphs::Unicode
 <Quiet>├</><Quiet>─────────────────────</><Quiet>┼</><Quiet>────────────────────────────────────────────────────────────────────────────</><Quiet>┤</>
 <Quiet>│</> <Accent>›</> All             <Quiet>4</> <Quiet>│</> <Accent>›</> <Strong>claude-sonnet-5</>                              <Quiet>Anthropic</>       <Quiet>1M</>  <DoneMark>← now</>   <Quiet>│</>
 <Quiet>│</> <Accent> </> Anthropic       <Quiet>3</> <Quiet>│</> <Accent> </> claude-opus-5                                <Quiet>Anthropic</>     <Quiet>200K</>          <Quiet>│</>
-<Quiet>│</> <Accent> </> MoonshotAI      <Quiet>1</> <Quiet>│</> <Accent> </> claude-haiku-4-5                             <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Quiet>│</>
+<Quiet>│</> <Accent> </> MoonshotAI      <Quiet>1</> <Quiet>│</><Pointed> </><Pointed> </><Pointed> </><Pointed>claude-haiku-4-5</><Pointed>                             </><Pointed>Anthropic</><Pointed>     </><Pointed>200K</><Pointed>  </><Pointed>no rung</><Pointed> </><Quiet>│</>
 <Quiet>│</> <Accent> </> OpenAI          <Quiet>·</> <Quiet>│</> <Accent> </> a model whose name nobody would type twice,  <Quiet>MoonshotAI</>       <Quiet>—</>  <Quiet>a model </><Quiet>│</>
 <Quiet>│</>                     <Quiet>│</>                                                                            <Quiet>│</>
 <Quiet>│</>                     <Quiet>│</>                                                                            <Quiet>│</>

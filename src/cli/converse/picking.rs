@@ -272,6 +272,13 @@ pub(super) struct Standing<M> {
     pub(super) providers: usize,
     /// How many rungs the strip has. None at all is a model that takes none.
     pub(super) rungs: usize,
+    /// Where the pointer is resting, in the shelf's own rows and the window's
+    /// columns, or `None` where it is resting on nothing the shelf drew.
+    ///
+    /// Beside the marks and never one of them. A pointer says what a reader is
+    /// looking at and a mark says what the next key acts on, and a hand crossing
+    /// the window on its way somewhere else has chosen nothing.
+    pub(super) pointer: Option<(usize, usize)>,
 }
 
 /// Stands a shelf over the whole window and reads keys until one is taken.
@@ -344,6 +351,19 @@ fn searching<M>(arrived: Pressed, standing: &mut Standing<M>) -> Moved {
         Pressed::Key(Key::Enter) => Moved::Took,
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
+        // Where the pointer is, rather than what is under it: which row of
+        // which pane a place falls on is a fact about the picture, and the
+        // picture is laid out a layer up. A report per cell that lands on the
+        // same cell costs nothing -- the rows come back the same and a frame is
+        // written only where its text changed.
+        Pressed::Hovered { row, column } => {
+            let next = (row != usize::MAX).then_some((row, column));
+            if standing.pointer == next {
+                return Moved::Still;
+            }
+            standing.pointer = next;
+            Moved::Redraw
+        }
         Pressed::Tab => {
             standing.pane = match standing.pane {
                 Pane::Providers => Pane::Models,

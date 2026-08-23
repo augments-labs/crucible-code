@@ -500,6 +500,7 @@ fn a_shelf_fits_the_window_it_stands_in() {
         pane: Pane::Models,
         keys: (PROSE, LONG),
         norung: LONG,
+        pointer: None,
     };
     down("a shelf", |columns, room, glyphs| {
         shelf.within(columns, room, glyphs)

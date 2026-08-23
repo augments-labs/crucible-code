@@ -109,6 +109,7 @@ fn standing() -> Standing<&'static str> {
         models: vec!["first", "second", "third", "fourth"],
         providers: 4,
         rungs: 5,
+        pointer: None,
     }
 }
 
@@ -307,4 +308,75 @@ fn escape_leaves_the_shelf_and_the_wheel_moves_nothing_on_it() {
         Moved::Still
     );
     assert_eq!(shelf.model, 0);
+}
+
+#[test]
+fn the_pointer_is_remembered_and_only_a_new_place_is_worth_a_frame() {
+    // A terminal reporting full motion sends a press per cell crossed, and most
+    // of them land where the last one did. Answering every one with a redraw
+    // would be a frame per cell for a picture that came back the same.
+    let mut shelf = standing();
+
+    assert_eq!(
+        searching(Pressed::Hovered { row: 9, column: 5 }, &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.pointer, Some((9, 5)));
+
+    assert_eq!(
+        searching(Pressed::Hovered { row: 9, column: 5 }, &mut shelf),
+        Moved::Still
+    );
+
+    assert_eq!(
+        searching(Pressed::Hovered { row: 9, column: 6 }, &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.pointer, Some((9, 6)));
+}
+
+#[test]
+fn a_pointer_that_has_left_puts_the_row_it_was_lighting_out() {
+    // Nowhere is a place too. A pointer gone off the shelf is reported as one
+    // past every row it drew, and the row it was lighting has to go out --
+    // otherwise a hand at rest on the transcript still claims a model.
+    let mut shelf = standing();
+    searching(Pressed::Hovered { row: 9, column: 5 }, &mut shelf);
+
+    assert_eq!(
+        searching(
+            Pressed::Hovered {
+                row: usize::MAX,
+                column: usize::MAX
+            },
+            &mut shelf
+        ),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.pointer, None);
+}
+
+#[test]
+fn the_pointer_moves_no_mark_and_takes_nothing() {
+    // Two different questions: what a reader is looking at, and what the next
+    // key acts on. A hand crossing the window on its way somewhere else has
+    // chosen nothing, and enter after it takes what the arrows left.
+    let mut shelf = standing();
+    searching(Pressed::Down, &mut shelf);
+    let walked = (shelf.pane, shelf.provider, shelf.model, shelf.rung);
+
+    searching(Pressed::Hovered { row: 9, column: 5 }, &mut shelf);
+    searching(
+        Pressed::Hovered {
+            row: 11,
+            column: 40,
+        },
+        &mut shelf,
+    );
+
+    assert_eq!(
+        (shelf.pane, shelf.provider, shelf.model, shelf.rung),
+        walked
+    );
+    assert_eq!(searching(Pressed::Key(Key::Enter), &mut shelf), Moved::Took);
 }

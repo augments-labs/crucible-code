@@ -126,6 +126,7 @@ fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'
         pane: Pane::Models,
         keys: KEYS,
         norung: "no rung",
+        pointer: None,
     }
 }
 
@@ -407,4 +408,144 @@ fn the_whole_shelf_folded() {
         &shelf(&providers, &models).within(58, 24, Glyphs::Unicode),
         58
     ));
+}
+
+#[test]
+fn a_provider_under_the_pointer_is_lit_across_the_whole_pane() {
+    // The whole width of the pane, not the width of the name in it. A ground
+    // that stopped where the text stopped would be a ragged edge down the
+    // middle of the panel, and what the reader is being told is which row their
+    // hand is on -- which is the row, all of it.
+    let providers = serving();
+    let models = stocked();
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY + 1, 5));
+
+    let rows = shelf.within(100, 30, Glyphs::Unicode);
+    let lit = rows
+        .get(BODY + 1)
+        .expect("the row the pointer is on")
+        .clipped(SERVES + 1);
+
+    assert_eq!(lit.columns(), SERVES + 1);
+    let mut slots = lit.kinds();
+    assert_eq!(slots.next(), Some(Slot::Quiet), "{:?}", lit.text());
+    assert!(slots.all(|slot| slot == Slot::Pointed), "{:?}", lit.text());
+}
+
+#[test]
+fn a_lit_row_leaves_the_pane_beside_it_dark() {
+    // Two panes, and the pointer is in one of them. A hand resting on a model
+    // says nothing about the provider drawn level with it, and lighting both
+    // would be the panel claiming a pair that nothing has chosen.
+    let providers = serving();
+    let models = stocked();
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY, 40));
+
+    let rows = shelf.within(100, 30, Glyphs::Unicode);
+    let row = rows.get(BODY).expect("the row the pointer is on");
+    let beside = row.clipped(SERVES + 1);
+
+    assert!(
+        beside.kinds().all(|slot| slot != Slot::Pointed),
+        "{:?}",
+        beside.text()
+    );
+    assert!(
+        row.kinds().any(|slot| slot == Slot::Pointed),
+        "{:?}",
+        row.text()
+    );
+}
+
+#[test]
+fn the_rows_padding_a_pane_to_the_bottom_are_not_something_to_point_at() {
+    // A pane is padded to the bottom of the window whatever it holds, and those
+    // rows are the frame's inside rather than anything a reader can take. A
+    // ground under one would offer a row that answers to nothing.
+    let providers = serving();
+    let models = stocked();
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY + providers.len(), 5));
+
+    let rows = shelf.within(100, 30, Glyphs::Unicode);
+    let row = rows
+        .get(BODY + providers.len())
+        .expect("a row padding the pane");
+
+    assert!(
+        row.kinds().all(|slot| slot != Slot::Pointed),
+        "{:?}",
+        row.text()
+    );
+}
+
+#[test]
+fn the_panes_are_framed_quietly_wherever_the_pointer_is() {
+    // The frame says where one pane stops and the other starts, and it has
+    // nothing else to say at any moment of the reading. The accent is spent on
+    // the two things that do: the mark walking a pane, and the field a pointer
+    // is resting in.
+    let providers = serving();
+    let models = stocked();
+
+    for pointer in [
+        None,
+        Some((BODY, 5)),
+        Some((BODY, 40)),
+        Some((SEARCHING, 8)),
+    ] {
+        let mut shelf = shelf(&providers, &models);
+        shelf.pointer = pointer;
+        let rows = shelf.within(100, 30, Glyphs::Unicode);
+
+        for at in [HEADER - 1, HEADER + 1, 25] {
+            let row = rows.get(at).expect("a rule of the panes' frame");
+            assert!(
+                row.kinds().all(|slot| slot == Slot::Quiet),
+                "{pointer:?} at {at}: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_search_field_is_framed_quietly_until_the_pointer_is_in_it() {
+    // The one frame that answers to the pointer, because it is the one a reader
+    // reaches for with the mouse rather than the arrows: a field is a place to
+    // click, and nothing else on the shelf is.
+    let providers = serving();
+    let models = stocked();
+
+    for at in [SEARCHING - 1, SEARCHING, SEARCHING + 1] {
+        let mut shelf = shelf(&providers, &models);
+        let rows = shelf.within(100, 30, Glyphs::Unicode);
+        let quiet = rows.get(at).expect("a row of the search frame");
+        assert!(
+            quiet.kinds().all(|slot| slot != Slot::Accent),
+            "{at}: {:?}",
+            quiet.text()
+        );
+
+        shelf.pointer = Some((at, 8));
+        let rows = shelf.within(100, 30, Glyphs::Unicode);
+        let row = rows.get(at).expect("a row of the search frame");
+        assert!(
+            row.kinds().any(|slot| slot == Slot::Accent),
+            "{at}: {:?}",
+            row.text()
+        );
+    }
+}
+
+#[test]
+fn the_whole_shelf_under_the_pointer() {
+    let providers = serving();
+    let models = stocked();
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY + 2, 40));
+
+    insta::assert_snapshot!(picture(&shelf.within(100, 30, Glyphs::Unicode), 100));
 }

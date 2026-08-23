@@ -120,6 +120,7 @@ pub(super) fn stand_while<T: Terminal, S>(
 ) -> Result<Ended, Fatal> {
     let mut changed = true;
     let mut while_waiting = while_waiting;
+    let mut resting = None;
 
     loop {
         while_waiting(renderer)?;
@@ -139,6 +140,26 @@ pub(super) fn stand_while<T: Terminal, S>(
         // which is what lets a reader select across a component that has
         // never heard of one.
         let Some(arrived) = renderer.pressed()? else {
+            // A hover is one of the things answered there, and a component
+            // that lights a row under the pointer is the only party that
+            // knows which row that is. So where the pointer has come to rest
+            // somewhere inside what this component drew, it is asked -- and
+            // only where that place is not the one it was already told about,
+            // since a terminal reports the pointer once per cell and every
+            // report would otherwise be a frame.
+            let now = pointing(renderer);
+            if now != resting {
+                resting = now;
+                // A pointer that has left is news too: the row it was lighting
+                // has to go out. There is no press for *nowhere* and none is
+                // wanted -- a place past every row a component answered with is
+                // one it draws nothing at, and it reads that off the same
+                // number it reads every other place off.
+                let (row, column) = now.unwrap_or((usize::MAX, usize::MAX));
+                if keys(Pressed::Hovered { row, column }, state) == Moved::Redraw {
+                    changed = true;
+                }
+            }
             continue;
         };
 
@@ -191,6 +212,21 @@ pub(super) fn stand_while<T: Terminal, S>(
             Moved::Took => return over(renderer, Ended::Took),
             Moved::Left => return over(renderer, Ended::Left),
         }
+    }
+}
+
+/// Where the pointer rests inside what a standing component drew.
+///
+/// The row is the component's own, counted from the first row it answered with,
+/// so a component can read it against the rows it laid out without knowing
+/// which band of the window they went into. `None` for a pointer resting
+/// anywhere else -- the transcript above, the head, a band nothing is standing
+/// in -- which a component reads as *nothing of mine is under it*.
+fn pointing<T: Terminal>(renderer: &Renderer<T>) -> Option<(usize, usize)> {
+    let (row, column) = renderer.pointer()?;
+    match renderer.aimed(row) {
+        Some(Aimed::Stood(row)) => Some((row, column)),
+        _ => None,
     }
 }
 
