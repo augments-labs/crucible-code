@@ -18,6 +18,11 @@ use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, changing};
 use crate::sample::Sample;
 
+/// What the model these tests ask reads: prose and the pictures they attach.
+const READS: Modalities = Modalities::empty()
+    .insert(Modality::Text)
+    .insert(Modality::Image);
+
 mod compaction;
 mod pick_up;
 
@@ -49,6 +54,7 @@ impl Scripted {
                     name: "claude-test".into(),
                     max_tokens: 1024,
                     window: None,
+                    accepts: Some(READS),
                     system: None,
                     effort: None,
                 },
@@ -102,7 +108,33 @@ impl Scripted {
             .try_iter()
             .filter_map(|event| match event {
                 Event::Aged { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
-                Event::TurnStarted { .. }
+                Event::Unread { .. }
+                | Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
+                | Event::Retrying
+                | Event::Steered { .. }
+                | Event::TurnFinished { .. }
+                | Event::Spent { .. }
+                | Event::Failed { .. } => None,
+            })
+            .collect()
+    }
+
+    /// The files each request went out without because the model does not read
+    /// them, one entry per request, each in transcript order.
+    fn unread(&self) -> Vec<Vec<Box<str>>> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Unread { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
+                Event::Aged { .. }
+                | Event::TurnStarted { .. }
                 | Event::Delta { .. }
                 | Event::ToolRequested { .. }
                 | Event::ToolFinished { .. }
@@ -133,6 +165,7 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -167,6 +200,7 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -191,6 +225,7 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -214,6 +249,7 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
@@ -350,6 +386,7 @@ impl Steering {
                     name: "claude-test".into(),
                     max_tokens: 1024,
                     window: None,
+                    accepts: Some(READS),
                     system: None,
                     effort: None,
                 },
@@ -633,7 +670,9 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     scripted.turn("go").expect("a measured turn");
     assert_eq!(scripted.runner.left(), Some(72));
 
-    scripted.runner.ask("other", 4096, Some(1_000_000));
+    scripted
+        .runner
+        .ask("other", 4096, Some(1_000_000), Some(READS));
 
     assert_eq!(scripted.runner.model(), "other");
     assert_eq!(scripted.runner.model.max_tokens, 4096);
@@ -665,7 +704,7 @@ fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
     scripted.turn("go").expect("a measured turn");
     assert_eq!(scripted.runner.left(), Some(77));
 
-    scripted.runner.ask("unbounded", 4_096, None);
+    scripted.runner.ask("unbounded", 4_096, None, Some(READS));
 
     assert_eq!(scripted.runner.left(), None);
     assert_eq!(scripted.runner.load.calibrated(), None);
@@ -1387,6 +1426,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Compacted { .. }
             | Event::Retrying
             | Event::Aged { .. }
+            | Event::Unread { .. }
             | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1542,6 +1582,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Compacted { .. }
             | Event::Retrying
             | Event::Aged { .. }
+            | Event::Unread { .. }
             | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1664,4 +1705,36 @@ fn a_retry_says_again_which_attachments_it_went_out_without() {
         panic!("the request that was dropped, and the one that replaced it");
     };
     assert_eq!(first, second);
+}
+
+#[test]
+fn a_picture_a_model_does_not_read_is_named_where_its_answer_arrives() {
+    // Not the ceiling: this file would not have gone out at any size. The
+    // reader is owed a different sentence for it, because asking again is the
+    // one move that cannot help.
+    let sample = Sample::new("unread-kind");
+    let under = sample.workspace().root().to_path_buf();
+
+    let mut scripted = Scripted::new(
+        Script::new(vec![saying("looking")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    scripted.runner.model.accepts = Some(Modalities::empty().insert(Modality::Text));
+
+    let one = file(&under, "chart.png", &[3; 64]);
+    let named = one.path.clone();
+
+    scripted
+        .turning("what is in this", vec![one].into())
+        .expect("the turn to have run");
+
+    // Only the one drain: reading the channel twice would leave the second
+    // reader nothing, and which of the two rows this file belongs on is
+    // settled a layer down, where the request is resolved.
+    let posted = scripted.unread();
+    let [unread] = posted.as_slice() else {
+        panic!("one request went out, and it went out without the picture");
+    };
+    assert_eq!(unread, &[named]);
 }

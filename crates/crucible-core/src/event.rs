@@ -197,7 +197,7 @@ pub enum Event {
         error: TurnError,
     },
 
-    /// Files a request went out without.
+    /// Files a request went out without, because it had no room for them.
     ///
     /// A request has a ceiling and a transcript does not, so the older
     /// attachments lose their bytes rather than the turn losing its answer.
@@ -213,6 +213,23 @@ pub enum Event {
         /// The attachment rather than its path, so what a reader is shown and
         /// what a backtrace may print stay the two different things
         /// [`Attachment`]'s own `Debug` already keeps apart.
+        files: Box<[Attachment]>,
+    },
+
+    /// Files a request went out without, because the model does not read them.
+    ///
+    /// A transcript outlives a model: a picture named while one model was being
+    /// asked is still there when another is, and a provider with no word for a
+    /// kind writes it as something it is not rather than refusing it. So the
+    /// bytes stay behind, and the answer that arrives has not seen them.
+    ///
+    /// Apart from [`Event::Aged`] because the two differ in the one part a
+    /// reader can act on: an aged file goes out if it is asked for again, and
+    /// this one does not go out until the model does.
+    ///
+    /// Posted once per request, for the reason [`Event::Aged`] is.
+    Unread {
+        /// The attachments whose content was not carried, in transcript order.
         files: Box<[Attachment]>,
     },
 

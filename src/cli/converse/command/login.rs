@@ -589,7 +589,7 @@ fn taken<T: Terminal>(
     // the one in force: sending the old vendor's name to the new one is the
     // mismatch the refusal would otherwise arrive with.
     if changed {
-        runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None);
+        runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None, None);
     }
 
     let said = if runner.model().is_empty() {

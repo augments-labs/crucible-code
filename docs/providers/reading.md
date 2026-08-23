@@ -25,5 +25,20 @@ by the protocol crucible speaks to that provider, and each of the three has its
 own way of spelling a picture — Anthropic Messages an `image` block, OpenAI
 Responses an `input_image` part, Moonshot a `data:` URL inside an `image_url`.
 
-crucible writes text. A model reading more than text is a fact about the model,
-and this page records it because it is worth knowing when you choose one.
+A model reading a kind that its provider's protocol has no shape for is a kind
+crucible does not send. Both halves have to agree, and the narrower of the two is
+the answer: a picture goes out only where the model reads pictures *and* the
+protocol has a way to write one.
+
+## Changing model in a session
+
+A session's transcript outlives the model being asked. Switch with `/model` to a
+model that reads less and the files already in the transcript stay behind: each
+request goes out without them, and a row per file arrives with the answer saying
+the model does not read it. Nothing is lost — switch back and the next request
+carries them again.
+
+That is a different row from the one a request too full to carry everything
+draws. The full one offers the file again, because asking again is what makes
+room for it. This one does not, because neither the file nor its kind has
+changed and the only thing that would is the model.

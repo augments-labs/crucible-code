@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crucible_core::{
     Ask, Attached, Attachment, Cancel, Compacting, Content, Delta, DeltaStream, Effort, Event,
-    Message, Mode, Permission, Post, Provider, ProviderError, Request, Room, Spend, Steer,
-    StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
+    Message, Modalities, Mode, Permission, Post, Provider, ProviderError, Request, Room, Spend,
+    Steer, StopReason, Summary, ToolCall, ToolSchema, Transcript, TurnError, TurnId,
 };
 
 use crucible_session::Session;
@@ -127,6 +127,18 @@ pub struct Model {
     /// without a proactive bound rather than against a number this loop made
     /// up. The wiring above resolves it; this crate is handed the result.
     pub window: Option<u32>,
+    /// What this model reads, where anybody knows.
+    ///
+    /// The model's half of what may be attached, and only that half: what a
+    /// provider can put in a request is the provider's own answer, asked of it
+    /// here rather than resolved above, because what a module can write today
+    /// and what a vendor's table says are two facts that diverge.
+    ///
+    /// `None` is no answer rather than a permissive one. An attachment nothing
+    /// can say this model reads is stood down and carries a line saying so —
+    /// the alternative is bytes labelled with a shape the request has no word
+    /// for, which is a wrong request rather than a refused one.
+    pub accepts: Option<Modalities>,
     /// The system prompt, if the session has one.
     pub system: Option<Box<str>>,
     /// How hard to think, where somebody said. `None` leaves it to the vendor.
@@ -463,10 +475,17 @@ impl Runner {
     /// not meaningful against either the new tokenizer or its window, so the
     /// transcript is recounted as a conservative estimate until the new model
     /// reports an exact request size of its own.
-    pub fn ask(&mut self, model: &str, max_tokens: u32, window: Option<u32>) {
+    pub fn ask(
+        &mut self,
+        model: &str,
+        max_tokens: u32,
+        window: Option<u32>,
+        accepts: Option<Modalities>,
+    ) {
         self.model.name = model.into();
         self.model.max_tokens = max_tokens;
         self.model.window = window;
+        self.model.accepts = accepts;
         self.load.reestimated();
     }
 
@@ -1008,6 +1027,20 @@ impl Runner {
         }
     }
 
+    /// What an attachment has to be for this request to carry its bytes.
+    ///
+    /// Both halves, and the narrower of the two decides: the model's, which the
+    /// wiring above resolved from a table, and the provider's, which is what
+    /// this build can actually write into a request. A model that reads video
+    /// and a protocol module with no word for one leave nothing between them,
+    /// and a set with nothing in it is the honest answer to that.
+    fn carries(&self) -> Modalities {
+        self.model
+            .accepts
+            .unwrap_or_else(Modalities::empty)
+            .intersection(self.provider.spells())
+    }
+
     /// One request, read to the end, recording nothing either way.
     ///
     /// Separate from [`Self::listen`] because what a failed response leaves in
@@ -1021,7 +1054,7 @@ impl Runner {
         // Both locals are the request's whole hold on the bytes: `resolved`
         // owns them, `attached` is what the provider borrows, and the pass
         // returning drops the pair. Nothing read here survives one request.
-        let resolved = attachments::resolve(&self.transcript);
+        let resolved = attachments::resolve(&self.transcript, self.carries());
         let attached = resolved.attached();
         // What the ceiling let through, not what the transcript refers to. An
         // entry the pass aged out is a sentence by the time it gets here, and
@@ -1039,6 +1072,13 @@ impl Runner {
         let aged = resolved.aged(&self.transcript);
         if !aged.is_empty() {
             listening.events.post(Event::Aged { files: aged });
+        }
+        // Beside it rather than folded into it: a file the model does not read
+        // stayed behind for a reason the reader answers differently, and a row
+        // that said one thing about both would be wrong about one of them.
+        let unread = resolved.unread(&self.transcript);
+        if !unread.is_empty() {
+            listening.events.post(Event::Unread { files: unread });
         }
 
         let mut stream = self.provider.stream(

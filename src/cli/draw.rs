@@ -88,6 +88,14 @@ const NUMBER: usize = 3;
 /// again, and what they cannot act on is a number.
 const AGAIN: &str = "not sent, can be read again";
 
+/// What stands where a file's kind stands, on the row saying the model being
+/// asked does not read it.
+///
+/// It offers nothing, because asking again would produce the same file of the
+/// same kind. What a reader can act on is the model, so that is the word the
+/// row leaves them holding.
+const UNREAD: &str = "not sent, this model does not read it";
+
 /// Draws one event.
 pub(crate) fn event<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -183,7 +191,8 @@ pub(crate) fn event<T: Terminal>(
         // Under the answer it is about rather than under the prompt that sent
         // the files: what happened is that this request went out without them,
         // and the reader is being told at the moment it did.
-        Event::Aged { files } => aged(renderer, &files, workspace, style),
+        Event::Aged { files } => without(renderer, &files, AGAIN, workspace, style),
+        Event::Unread { files } => without(renderer, &files, UNREAD, workspace, style),
 
         Event::ToolFinished { call, output } => came_back(renderer, kept, &call, output, style),
 
@@ -351,12 +360,16 @@ pub(crate) fn attached<T: Terminal>(
 ///
 /// Said as it happens rather than kept: the answer that follows had less to
 /// look at than the one before it, and this is the row that says which file it
-/// stopped seeing. It names no ceiling and asks for nothing — a ceiling met by
-/// ageing is the design working, and the only move left to a reader who still
-/// wants that file looked at is to say so again.
-pub(crate) fn aged<T: Terminal>(
+/// stopped seeing. The word beside each name is the caller's, because the two
+/// reasons a file stays behind leave a reader holding different moves and the
+/// row has one line to say which.
+///
+/// It names no ceiling and asks for nothing — a file left behind is the design
+/// working, and what to do about it is the reader's.
+pub(crate) fn without<T: Terminal>(
     renderer: &mut Renderer<T>,
     attachments: &[Attachment],
+    word: &str,
     workspace: &Workspace,
     style: Style,
 ) -> Result<(), TerminalError> {
@@ -366,7 +379,7 @@ pub(crate) fn aged<T: Terminal>(
 
     let named: Vec<(String, &str)> = attachments
         .iter()
-        .map(|one| (names(one, workspace), AGAIN))
+        .map(|one| (names(one, workspace), word))
         .collect();
 
     // Settled first because a retry posts this again, and the second reading

@@ -274,6 +274,7 @@ mod tests {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::TurnFinished { .. }
@@ -492,6 +493,7 @@ mod tests {
                 | Event::Compacted { .. }
                 | Event::Retrying
                 | Event::Aged { .. }
+                | Event::Unread { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }

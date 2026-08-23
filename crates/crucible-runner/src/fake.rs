@@ -121,10 +121,13 @@ impl Provider for Script {
     /// A stand-in spells what every real provider here spells today.
     ///
     /// It is not a wire protocol, so it has nothing of its own to declare; what
-    /// it must not do is differ, or a test would be exercising a capability no
-    /// provider has.
+    /// it must not do is claim more, or a test would be exercising a capability
+    /// no provider has. Pictures are in because all three wires write one; a
+    /// PDF is not, because only two of them do.
     fn spells(&self) -> Modalities {
-        Modalities::empty().insert(Modality::Text)
+        Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
     }
 
     fn stream(
