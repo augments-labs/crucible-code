@@ -1629,7 +1629,9 @@ fn shown<T: Terminal>(
     let style = terms.style();
 
     match one {
-        Seen::Turn(event) => draw::event(renderer, event, style, &mut held.kept)?,
+        Seen::Turn(event) => {
+            draw::event(renderer, event, &terms.workspace, style, &mut held.kept)?;
+        }
         Seen::Question { call, sensitivity } => {
             // A durable rule cannot live in either project configuration file:
             // both names can arrive with a checkout, whatever an ignore rule

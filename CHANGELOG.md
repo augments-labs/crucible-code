@@ -54,6 +54,11 @@ sent as a picture rather than as text, with no question to answer first — you
 typed it. Where the model or the protocol will not take it, a line says which of
 the two said no and what changes the answer.
 
+**A request that could not carry every picture says which ones it left.** A row
+per file arrives with the answer, naming what the model did not get to look at
+and saying it can be read again. The older pictures lose their bytes rather than
+the turn losing its answer, so the only thing to do about it is to ask again.
+
 ## [0.18.1] - 2026-08-22
 
 ### Fixed

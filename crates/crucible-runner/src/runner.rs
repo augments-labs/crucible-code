@@ -1032,6 +1032,15 @@ impl Runner {
                 .filter(|one| matches!(one.content, Content::Bytes(_)))
                 .count(),
         );
+        // Once per request rather than once per turn. Going out short is a
+        // fact about the request rather than about the turn, and a retry sends
+        // a second one — a reader watching that answer arrive is owed the same
+        // sentence about it.
+        let aged = resolved.aged(&self.transcript);
+        if !aged.is_empty() {
+            listening.events.post(Event::Aged { files: aged });
+        }
+
         let mut stream = self.provider.stream(
             self.request(listening.advertised, &attached),
             listening.cancel,

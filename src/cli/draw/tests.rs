@@ -1,13 +1,21 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
+use std::path::Path;
+
 use crucible_core::{
-    Change, Command, Diff, Line, ProviderError, Question, Summary, Target, ToolArgs, ToolId,
-    TurnError, TurnId, Workspace,
+    Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
+    ToolArgs, ToolId, TurnError, TurnId, Workspace, written,
 };
 use crucible_tui::Recording;
 
 use super::*;
 use crate::cli::kept::Whole;
+
+/// The directory a drawn path is named against. Only the rows about an
+/// attachment measure a name from it; every other event names no file.
+fn here() -> Workspace {
+    Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace")
+}
 
 /// A terminal wide enough that the compact ceilings are what bound a line,
 /// rather than the window.
@@ -44,6 +52,7 @@ fn returning<T: Terminal>(renderer: &mut Renderer<T>, kept: &mut Kept, text: &st
             call: ToolId::new("a"),
             output: ToolOutput::ok(text),
         },
+        &here(),
         Style::plain(),
         kept,
     )
@@ -74,6 +83,7 @@ fn drawn(problem: &str) -> String {
                 problem: problem.into(),
             }),
         },
+        &here(),
         Style::plain(),
         &mut Kept::default(),
     )
@@ -94,6 +104,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
             call: call(name, args),
             summary: Summary::new(summary),
         },
+        &here(),
         Style::plain(),
         &mut Kept::default(),
     )
@@ -189,6 +200,7 @@ fn the_line_hanging_under_a_call_is_quiet() {
             call: ToolId::new("a"),
             output: ToolOutput::ok("128 lines"),
         },
+        &here(),
         style,
         &mut Kept::default(),
     )
@@ -761,7 +773,7 @@ fn transcript(turn: Vec<Beat>) -> String {
 
     for beat in turn {
         match beat {
-            Beat::Draw(drawing) => event(&mut renderer, drawing, style, &mut kept),
+            Beat::Draw(drawing) => event(&mut renderer, drawing, &here(), style, &mut kept),
             Beat::Answered(said) => returned(&mut renderer, said, style),
         }
         .expect("the turn to draw");
@@ -994,6 +1006,7 @@ fn a_change_reaches_the_terminal_on_the_ground_that_says_which_way_it_went() {
             call: ToolId::new("a"),
             output: ToolOutput::ok("changed one.rs, 1 replacements").showing(changed()),
         },
+        &here(),
         style,
         &mut Kept::default(),
     )
@@ -1045,6 +1058,7 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
             call: ToolId::new("a"),
             text: crucible_core::Wrote::new("   Compiling crucible-core v0.5.0\n"),
         },
+        &here(),
         Style::plain(),
         &mut kept,
     )
@@ -1260,4 +1274,48 @@ fn a_session_that_hid_nothing_writes_nothing_on_its_way_out() {
     // report, and spending that row saying so is the one cost this line exists
     // to avoid.
     assert_eq!(parted(&Parting::Nothing), "");
+}
+
+/// One picture, named where a workspace file would be.
+fn picture(under: &Path, name: &str) -> Attachment {
+    Attachment {
+        path: under.join(name).to_string_lossy().into_owned().into(),
+        modality: Modality::Image,
+        media_type: "image/png".into(),
+        hash: [0; 32],
+    }
+}
+
+/// What the terminal ends up with when a request goes out without `files`.
+fn ageing(files: Box<[Attachment]>) -> String {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+
+    event(
+        &mut renderer,
+        Event::Aged { files },
+        &here(),
+        Style::plain(),
+        &mut Kept::default(),
+    )
+    .expect("the rows to draw");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_file_a_request_went_out_without_is_named_where_the_answer_arrives() {
+    // Ageing is the ceiling working rather than failing, and it is invisible
+    // from the answer: without these rows the replies quietly get less to look
+    // at and nothing on screen says which file they stopped seeing.
+    let root = here().root().to_path_buf();
+    let screen = ageing(Box::new([
+        picture(&root, "holiday.png"),
+        picture(&root, "receipt.png"),
+    ]));
+
+    assert!(screen.contains("holiday.png"), "{screen}");
+    assert!(screen.contains("receipt.png"), "{screen}");
+    // Named the way the row under the prompt named it, which is why the root
+    // it is under is not on the row.
+    assert!(!screen.contains(&written(&root)), "{screen}");
 }

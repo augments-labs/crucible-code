@@ -1,16 +1,18 @@
 //! What the turn loop does, over a provider that answers from a script and
 //! tools that answer from a field.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Approved, Carried, Change, Diff, Line, Modalities, Modality, ProviderError, Sensitivity,
-    SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput, Verdict,
-    Watch,
+    Approved, Attachment, Carried, Change, Diff, Line, Modalities, Modality, ProviderError,
+    Sensitivity, SessionId, Spend, Summary, Target, Tool, ToolArgs, ToolError, ToolId, ToolOutput,
+    Verdict, Watch,
 };
+
+use sha2::{Digest as _, Sha256};
 
 use super::*;
 use crate::fake::{Fixed, Says, Script, Sent, changing};
@@ -74,14 +76,47 @@ impl Scripted {
     }
 
     fn turn(&mut self, prompt: &str) -> Result<StopReason, TurnError> {
+        self.turning(prompt, Box::new([]))
+    }
+
+    /// The same, for a prompt that named files.
+    fn turning(
+        &mut self,
+        prompt: &str,
+        attachments: Box<[Attachment]>,
+    ) -> Result<StopReason, TurnError> {
         self.runner.turn(
             prompt,
-            Box::new([]),
+            attachments,
             &mut self.says,
             &self.events,
             &self.cancel,
             &self.steer,
         )
+    }
+
+    /// The files each request went out without, one entry per request that
+    /// went out short, each in transcript order.
+    fn aged(&self) -> Vec<Vec<Box<str>>> {
+        self.seen
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Aged { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
+                Event::TurnStarted { .. }
+                | Event::Delta { .. }
+                | Event::ToolRequested { .. }
+                | Event::ToolFinished { .. }
+                | Event::Wrote { .. }
+                | Event::Carried { .. }
+                | Event::Compacting { .. }
+                | Event::Compacted { .. }
+                | Event::Retrying
+                | Event::Steered { .. }
+                | Event::TurnFinished { .. }
+                | Event::Spent { .. }
+                | Event::Failed { .. } => None,
+            })
+            .collect()
     }
 
     fn said(&self) -> String {
@@ -97,6 +132,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Aged { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -130,6 +166,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Aged { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -153,6 +190,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Aged { .. }
                 | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -175,6 +213,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Aged { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
@@ -1347,6 +1386,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::Aged { .. }
             | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1501,6 +1541,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::Aged { .. }
             | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
@@ -1524,4 +1565,103 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .collect();
 
     assert_eq!(kept, [None]);
+}
+
+/// Writes a file and returns the attachment naming it.
+fn file(under: &Path, name: &str, bytes: &[u8]) -> Attachment {
+    let path = under.join(name);
+    std::fs::write(&path, bytes).expect("a temporary file");
+    Attachment {
+        path: path.to_string_lossy().into_owned().into(),
+        modality: Modality::Image,
+        media_type: "image/png".into(),
+        hash: Sha256::digest(bytes).into(),
+    }
+}
+
+#[test]
+fn attachments_a_request_went_out_without_are_named_as_it_goes() {
+    // The design working is invisible from the answer: the model is handed a
+    // sentence where a picture was and says something a little vaguer. Without
+    // this the reader has no way to know which file it did not get to look at.
+    let sample = Sample::new("aged-over");
+    let under = sample.workspace().root().to_path_buf();
+    let third = attachments::CEILING / 3 + 1;
+
+    let mut scripted = Scripted::new(
+        Script::new(vec![saying("looking")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    let files: Vec<Attachment> = ["first.png", "second.png", "third.png", "fourth.png"]
+        .iter()
+        .map(|name| file(&under, name, &vec![7; third]))
+        .collect();
+    let named: Vec<Box<str>> = files.iter().map(|one| one.path.clone()).collect();
+
+    scripted
+        .turning("what is in these", files.into())
+        .expect("the turn to have run");
+
+    let posted = scripted.aged();
+    let [aged] = posted.as_slice() else {
+        panic!("one request went out, and it went out short");
+    };
+    let [first, second, ..] = named.as_slice() else {
+        panic!("four files were attached");
+    };
+    assert_eq!(aged, &[first.clone(), second.clone()]);
+}
+
+#[test]
+fn attachments_that_all_fit_leave_nothing_to_say() {
+    // Nothing happened to them, so nothing is said. A row per turn reporting
+    // that everything was carried is a row that is always there and never read.
+    let sample = Sample::new("aged-under");
+    let under = sample.workspace().root().to_path_buf();
+
+    let mut scripted = Scripted::new(
+        Script::new(vec![saying("looking")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    scripted
+        .turning(
+            "what is in this",
+            vec![file(&under, "one.png", &[1; 16])].into(),
+        )
+        .expect("the turn to have run");
+
+    assert!(scripted.aged().is_empty());
+}
+
+#[test]
+fn a_retry_says_again_which_attachments_it_went_out_without() {
+    // Once per request rather than once per turn: a retry is a second answer
+    // built from a second short request, and a reader watching it arrive is
+    // owed the same sentence about it.
+    let sample = Sample::new("aged-retry");
+    let under = sample.workspace().root().to_path_buf();
+    let third = attachments::CEILING / 3 + 1;
+
+    let mut scripted = Scripted::new(
+        Script::dropping(1, vec![saying("done")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    let files: Vec<Attachment> = ["first.png", "second.png", "third.png", "fourth.png"]
+        .iter()
+        .map(|name| file(&under, name, &vec![7; third]))
+        .collect();
+
+    scripted
+        .turning("what is in these", files.into())
+        .expect("the turn to have run");
+
+    // One reading of the channel, because each of these drains it.
+    let posted = scripted.aged();
+    let [first, second] = posted.as_slice() else {
+        panic!("the request that was dropped, and the one that replaced it");
+    };
+    assert_eq!(first, second);
 }

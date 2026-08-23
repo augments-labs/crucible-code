@@ -110,6 +110,26 @@ fn instead(attachment: &Attachment, why: &str) -> Carried {
 }
 
 impl Resolved {
+    /// The attachments this request went out without, in transcript order.
+    ///
+    /// Read back out of the transcript rather than off the line that stood in
+    /// for them: that line is written for the model, and what a reader is owed
+    /// is the file it was written about.
+    pub(crate) fn aged(&self, transcript: &Transcript) -> Box<[Attachment]> {
+        self.0
+            .iter()
+            .filter(|held| matches!(held.carried, Carried::Instead(_)))
+            .filter_map(|held| {
+                let Some(Message::User { attachments, .. }) =
+                    transcript.messages().get(held.message)
+                else {
+                    return None;
+                };
+                attachments.get(held.index).cloned()
+            })
+            .collect()
+    }
+
     /// What the request borrows, in transcript order.
     pub(crate) fn attached(&self) -> Vec<Attached<'_>> {
         self.0
