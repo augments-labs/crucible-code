@@ -142,14 +142,16 @@ is the model's.
 - **Open sets are traits, closed sets are enums.** Providers and tools are open —
   adding one must not edit `core`. Events, verdicts and errors are core-owned
   enums *because* a new variant should break every `match`.
-- **A generated file is held to its input by a test that rewrites it.** Two
-  are: `schema/crucible-code-schema.json` against the parser it is generated
-  from, and `src/cli/models.rs` against `src/cli/models.json`, the slice of the
-  model database it was read from. Each test rewrites its file before it fails,
-  so a stale one fails once and is green the second time with the file changed
-  underneath you: read the diff before you commit it. They are the only things a
-  run of `scripts/check.sh` writes; everything else about that script only
-  reads.
+- **A generated file is held to its input by a test that rewrites it** where
+  the input is in the repository. One is: `schema/crucible-code-schema.json`
+  against the parser it is generated from. The test rewrites the file before it
+  fails, so a stale one fails once and is green the second time with the file
+  changed underneath you: read the diff before you commit it. It is the only
+  thing a run of `scripts/check.sh` writes; everything else about that script
+  only reads. `src/cli/models.rs` is generated too and is held differently,
+  because its input is served over the network and no copy is kept here: what
+  holds it is the diff `scripts/models.sh` leaves, and the tests beside the
+  catalogue in `src/cli.rs` that say every model crucible offers has a row.
 - **The schema has a second home, and it does not follow this one.**
   SchemaStore serves its own copy, and nothing in this
   repository can make that one move. A release that changes the file owes a pull
