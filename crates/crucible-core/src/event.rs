@@ -142,13 +142,14 @@ pub enum Event {
     /// socket the provider closed while the tools ran.
     Retrying,
 
-    /// How much of the model's window is left, where a window is known.
+    /// How much usable room remains before compaction, where a window is known.
     ///
-    /// `None` where none is: nothing draws a fraction of a number nobody
-    /// stated, and a session on a model this build has never heard of is one
-    /// where the reading is simply absent.
+    /// The room reserved for the answer and its tool results is outside this
+    /// percentage, so zero is the safe compaction boundary rather than the
+    /// model's literal last token. `None` where no window is known: nothing draws
+    /// a fraction of a number nobody stated.
     Carried {
-        /// The percentage still free, rounded down.
+        /// The usable percentage still free, rounded down.
         left: Option<u8>,
     },
 

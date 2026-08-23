@@ -150,7 +150,7 @@ impl<'a> Draft<'a> {
     }
 }
 
-/// A remaining-window reading, unknown or bounded to a percentage.
+/// A usable-window reading, unknown or bounded to a percentage.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Remaining(Option<u8>);
 
@@ -763,7 +763,7 @@ impl Prompt<'_> {
         }
     }
 
-    /// The remaining-window fact in its full spelling.
+    /// The usable-window fact in its full spelling.
     fn reading(&self) -> String {
         self.left.get().map_or_else(
             || "window unknown".to_owned(),
@@ -771,7 +771,7 @@ impl Prompt<'_> {
         )
     }
 
-    /// The longest remaining-window spelling a bare row can hold.
+    /// The longest usable-window spelling a bare row can hold.
     fn bare_reading(&self, columns: usize) -> String {
         let full = self.reading();
         if width::columns(&full) <= columns {

@@ -56,8 +56,9 @@ const RESULTS_PER_PASS: u64 = 2;
 
 /// What one turn is counting, carried together through the read path.
 ///
-/// Three numbers that are only ever wanted at once — what the turn has
-/// produced, what its next request would carry, and how much the model accepts.
+/// Four numbers that are only ever wanted at once — what the turn has
+/// produced, what its next request would carry, how much the model accepts, and
+/// how much of that must remain free for the exchange in progress.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct Counting {
     /// What the turn has produced so far, every response added up.
@@ -66,6 +67,15 @@ pub(super) struct Counting {
     pub(super) load: Load,
     /// How much this model accepts, where anybody knows.
     pub(super) window: Option<u32>,
+    /// Room kept free for the exchange in progress.
+    pub(super) reserve: u64,
+}
+
+impl Counting {
+    /// How much usable room remains before the compaction boundary.
+    pub(super) fn left(&self) -> Option<u8> {
+        self.load.left(self.window, self.reserve)
+    }
 }
 
 /// What the next request would carry.
@@ -406,16 +416,23 @@ impl Load {
             .unwrap_or(0)
     }
 
-    /// How much of the window is left, as a percentage, where one is known.
+    /// How much usable room is left before compaction, as a percentage.
     ///
-    /// Rounded down, so a reading of `1%` is never drawn over a window that has
-    /// already run out.
+    /// The reserve is outside the usable window: it is the room the exchange in
+    /// progress may still need for its answer and tool results. This makes the
+    /// reading reach zero at the same boundary [`Self::full`] uses. The usable
+    /// capacity is the denominator, so a fresh ordinary session still reads as
+    /// one hundred percent.
+    ///
+    /// Rounded down, so a reading of `1%` is never drawn over a usable window
+    /// that has already run out.
     #[must_use]
-    pub(super) fn left(&self, window: Option<u32>) -> Option<u8> {
+    pub(super) fn left(&self, window: Option<u32>, reserve: u64) -> Option<u8> {
         let window = u64::from(window?);
-        let used = self.tokens().min(window);
+        let usable = window.saturating_sub(reserve);
+        let used = self.tokens().min(usable);
 
-        u8::try_from((window - used) * 100 / window.max(1)).ok()
+        u8::try_from((usable - used) * 100 / usable.max(1)).ok()
     }
 
     /// Whether there is no longer room for another exchange.

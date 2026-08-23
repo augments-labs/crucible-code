@@ -35,7 +35,7 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
     // 300 transcript bytes + 60 instructions + 4 name + 536 schema + the
     // conservative 64-byte provider wrapper, at three bytes per token.
     assert_eq!(load.tokens(), 322);
-    assert_eq!(load.left(Some(200_000)), Some(99));
+    assert_eq!(load.left(Some(200_000), 0), Some(99));
 }
 
 #[test]
@@ -45,11 +45,11 @@ fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     load.requesting(Some("system one"), &[]);
     load.responding();
     load.carried(Carried::new(100));
-    assert_eq!(load.left(Some(200)), Some(50));
+    assert_eq!(load.left(Some(200), 0), Some(50));
 
     load.requesting(Some("system two"), &[]);
 
-    assert_eq!(load.left(Some(200)), Some(20));
+    assert_eq!(load.left(Some(200), 0), Some(20));
     assert!(
         load.tokens() > 100,
         "the replacement overhead disappeared from the estimate"
@@ -70,7 +70,7 @@ fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
     load.carried(Carried::new(1_000));
 
     assert_eq!(load.tokens(), 1_000, "request overhead was counted twice");
-    assert_eq!(load.left(Some(2_000)), Some(50));
+    assert_eq!(load.left(Some(2_000), 0), Some(50));
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn agent_prose_is_estimated_when_an_existing_transcript_is_recounted() {
     });
 
     assert_eq!(load.tokens(), 1_000);
-    assert_eq!(load.left(Some(200_000)), Some(99));
+    assert_eq!(load.left(Some(200_000), 0), Some(99));
 }
 
 #[test]
@@ -152,11 +152,11 @@ fn a_response_supersedes_the_last_one_rather_than_adding_to_it() {
 fn locally_estimated_tool_output_updates_an_older_exact_percentage() {
     let mut load = Load::default();
     load.carried(Carried::new(50_000));
-    assert_eq!(load.left(Some(200_000)), Some(75));
+    assert_eq!(load.left(Some(200_000), 0), Some(75));
 
     load.recorded(&results(30_000));
 
-    assert_eq!(load.left(Some(200_000)), Some(69));
+    assert_eq!(load.left(Some(200_000), 0), Some(69));
     assert!(load.tokens() > 50_000, "the estimate stopped counting");
 }
 
@@ -167,10 +167,10 @@ fn response_growth_is_estimated_until_output_usage_catches_up() {
     load.responding();
     load.carried(Carried::new(50_000));
     load.produced(40_000);
-    assert_eq!(load.left(Some(200_000)), Some(70));
+    assert_eq!(load.left(Some(200_000), 0), Some(70));
 
     load.spent(Spend::new(10_000));
-    assert_eq!(load.left(Some(200_000)), Some(70));
+    assert_eq!(load.left(Some(200_000), 0), Some(70));
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn a_late_input_report_preserves_unreported_response_growth() {
     // seen, so those bytes remain estimated at the new four-byte rate.
     load.carried(Carried::new(50_000));
 
-    assert_eq!(load.left(Some(200_000)), Some(70));
+    assert_eq!(load.left(Some(200_000), 0), Some(70));
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn unreported_response_output_is_estimated_when_it_is_recorded() {
     // The six-byte result ID is part of the calibration, so 3 000 bytes of
     // prose conservatively round up to 999 tokens at that request's rate.
     assert_eq!(load.tokens(), 1_999);
-    assert_eq!(load.left(Some(200_000)), Some(99));
+    assert_eq!(load.left(Some(200_000), 0), Some(99));
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording()
         100_150,
         "the exact prefix was estimated again"
     );
-    assert_eq!(load.left(Some(200_000)), Some(49));
+    assert_eq!(load.left(Some(200_000), 0), Some(49));
     assert!(!load.full(Some(100_151), 0));
 }
 
@@ -241,10 +241,10 @@ fn an_estimate_has_a_conservative_window_percentage() {
     // 50 006 bytes at the cautious three-byte rate round up to 16 669 tokens.
     // The percentage rounds down in turn, so it never claims the fractional
     // room the estimate has already reserved.
-    assert_eq!(load.left(Some(200_000)), Some(91));
+    assert_eq!(load.left(Some(200_000), 0), Some(91));
 
     load.carried(Carried::new(50_000));
-    assert_eq!(load.left(Some(200_000)), Some(75));
+    assert_eq!(load.left(Some(200_000), 0), Some(75));
 }
 
 #[test]
@@ -252,8 +252,8 @@ fn how_much_is_left_is_nothing_at_all_where_no_window_is_known() {
     let mut load = Load::default();
     load.carried(Carried::new(50_000));
 
-    assert_eq!(load.left(None), None);
-    assert_eq!(load.left(Some(200_000)), Some(75));
+    assert_eq!(load.left(None, 0), None);
+    assert_eq!(load.left(Some(200_000), 0), Some(75));
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn a_window_already_over_full_reads_as_none_left_rather_than_wrapping() {
     let mut load = Load::default();
     load.carried(Carried::new(300_000));
 
-    assert_eq!(load.left(Some(200_000)), Some(0));
+    assert_eq!(load.left(Some(200_000), 0), Some(0));
 }
 
 #[test]
@@ -277,6 +277,24 @@ fn bytes_become_tokens_at_the_rate_the_last_response_proved() {
     load.recorded(&results(400_000));
     load.carried(Carried::new(100_000));
     assert_eq!(load.bytes_to_tokens(40_000), 10_000);
+}
+
+#[test]
+fn the_reading_reaches_zero_at_the_same_reserve_boundary_as_compaction() {
+    let mut load = Load::default();
+    load.carried(Carried::new(164_000));
+
+    assert_eq!(load.left(Some(200_000), 36_000), Some(0));
+    assert!(load.full(Some(200_000), 36_000));
+}
+
+#[test]
+fn the_reading_is_a_percentage_of_the_room_the_transcript_may_use() {
+    let mut load = Load::default();
+
+    assert_eq!(load.left(Some(200_000), 36_000), Some(100));
+    load.carried(Carried::new(82_000));
+    assert_eq!(load.left(Some(200_000), 36_000), Some(50));
 }
 
 #[test]

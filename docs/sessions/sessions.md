@@ -183,10 +183,15 @@ it. crucible shows how much is left against the end of the row a turn runs on:
 ✳ writing (1m 12s · ↓ 4.1k · esc to stop)                     10% window left
 ```
 
-The reading is there from the first frame of a session to the last. It is
-missing in two cases, and neither is a reading of zero: crucible does not know
-how much that model accepts, or it is making room right now and the number would
-be the one being replaced.
+The percentage measures the part of the window the transcript may still use.
+Room reserved for the answer and its tool results is outside it, so `0%` is the
+safe compaction boundary — not the model's literal last token. A fresh session
+still begins at `100%`, and automatic compaction begins at `0%` while that
+reserve remains available.
+
+Where crucible does not know how much the model accepts, the prompt says `window
+unknown` rather than inventing a percentage. While room is being made, the last
+reading remains until the compacted transcript replaces it.
 
 When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down

@@ -309,7 +309,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        [Some(62), Some(24), Some(0), Some(62)]
+        [Some(62), Some(24), Some(0), Some(0), Some(62)]
     );
 
     let sizes: Vec<usize> = scripted

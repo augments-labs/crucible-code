@@ -231,7 +231,7 @@ fn unreported_response_growth_updates_the_conservative_window_reading() {
 
     scripted.turn(&"x".repeat(200_000)).expect("a turn");
 
-    assert_eq!(scripted.left(), [Some(75), Some(70)]);
+    assert_eq!(scripted.left(), [Some(72), Some(66)]);
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn large_streamed_tool_identity_arguments_and_late_spend_move_the_known_reading(
 
     assert_eq!(
         scripted.left(),
-        [Some(75), Some(73), Some(68), Some(74), Some(72)]
+        [Some(72), Some(70), Some(65), Some(70), Some(69)]
     );
 }
 
@@ -589,7 +589,7 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
     scripted.runner.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(75));
+    assert_eq!(scripted.runner.left(), Some(72));
 
     scripted.runner.ask("other", 4096, Some(1_000_000));
 
@@ -621,7 +621,7 @@ fn changing_to_a_model_with_no_known_window_clears_the_numeric_reading() {
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
     scripted.runner.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(80));
+    assert_eq!(scripted.runner.left(), Some(77));
 
     scripted.runner.ask("unbounded", 4_096, None);
 
@@ -640,7 +640,7 @@ fn changing_provider_reestimates_usage_reported_by_the_old_one() {
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
     scripted.runner.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(75));
+    assert_eq!(scripted.runner.left(), Some(72));
 
     scripted.runner.serve(Box::new(Elsewhere));
 

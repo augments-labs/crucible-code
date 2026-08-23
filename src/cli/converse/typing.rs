@@ -652,7 +652,7 @@ pub(super) struct Says {
     /// How many commands are still running. Read per frame rather than per turn,
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
-    /// How much of the model's window is left at the latest known reading.
+    /// How much usable room remains before compaction at the latest reading.
     /// `None` makes the prompt say that the reading is unknown.
     pub(super) left: Option<u8>,
 }
