@@ -11,7 +11,8 @@ Notable changes to crucible. Format follows
 **A picture named in the prompt goes with it.** Write the path and the file is
 sent as a picture rather than as text, with no question to answer first — you
 typed it. Where the model or the protocol will not take it, a line says which of
-the two said no and what changes the answer.
+the two said no and what changes the answer — [what a model can
+read](docs/providers/reading.md) is the table that decides.
 
 **A request that could not carry every picture says which ones it left.** A row
 per file arrives with the answer, naming what the model did not get to look at
