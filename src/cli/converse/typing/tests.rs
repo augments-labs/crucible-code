@@ -714,9 +714,13 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Key(Key::Eof)), Meant::Editing(Key::Eof));
     assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
 
-    for arrived in [Pressed::Up, Pressed::Down, Pressed::Cycle, Pressed::Ignored] {
+    for arrived in [Pressed::Up, Pressed::Down, Pressed::Ignored] {
         assert_eq!(meant(arrived.clone()), Meant::Ignored, "{arrived:?}");
     }
+
+    // Shift+Tab is not one of them: a mode stepped to mid-turn is held for the
+    // next turn rather than dropped, which is what  carries here.
+    assert_eq!(meant(Pressed::Cycle), Meant::Cycle);
 }
 
 #[test]

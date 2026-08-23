@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x24 cursor 20,4 scrolled 0
+|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
+|                                                                                |
+|› start it                                                                      |
+|                                                                                |
+|● Bash(sleep 30)                                                                |
+|  └ (no output yet) (+2 lines · ctrl+o to expand)                               |
+|                                                                                |
+|the quick brown fox jumps                                                       |
+|                                                                                |
+|✻ writing (0s · ↓ 4 · esc to interrupt)                                         |
+|                                                                                |
+|                                                                  window unknown|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|allow edits on · 1 command                               anthropic/claude-test-1|
+|                                                               transcript map → |

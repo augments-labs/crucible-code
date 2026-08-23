@@ -729,6 +729,9 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // Nothing is picked mid-turn at startup: the slot is empty until a
         // `/model` over a running turn fills it.
         pending_model: Cell::new(None),
+        // And no mode is stepped to mid-turn: the slot is empty until a
+        // shift+tab over a running turn fills it.
+        pending_mode: Cell::new(None),
         settings: settings.clone(),
         choosing: crucible_config::user(&home),
 

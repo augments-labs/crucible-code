@@ -73,6 +73,10 @@ pub(super) fn run<T: Terminal>(
     // one it was never chosen for.
     terms.pending_model.take();
 
+    // A mode stepped to mid-turn was stepped for the session being left, and
+    // goes with it rather than landing on the new one it was never chosen for.
+    terms.pending_mode.take();
+
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
     if let Some(problem) = left.finish() {
@@ -155,6 +159,7 @@ mod tests {
             leaving: crucible_tools::Background::new(),
             provider: std::cell::Cell::new(Some("anthropic")),
             pending_model: std::cell::Cell::new(None),
+            pending_mode: std::cell::Cell::new(None),
             settings: crucible_config::Settings::default(),
             choosing: sample.root().join("unwritten-home.json"),
             logins: Store::in_home(&sample.root()),

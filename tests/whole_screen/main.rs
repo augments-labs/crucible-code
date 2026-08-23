@@ -288,6 +288,28 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
 }
 
 #[test]
+fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
+    // The turn is still running when shift+tab is pressed. The mode the running
+    // turn is decided under cannot change mid-turn — the runner holding it is
+    // on the worker — so the step is held for the next turn, and the row under
+    // the box says which mode that is.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("mode-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // Shift+Tab: from the running mode one step on.
+    window.types_and_catches("\x1b[Z", "allow edits on");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_model_picked_mid_turn_is_confirmed_then_held() {
     // The answer is long enough that the turn is still running when the
     // command is sent. `/model` cannot reach the runner on the worker, so its

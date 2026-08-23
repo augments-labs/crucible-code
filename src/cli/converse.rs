@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
-    Answer as Chosen, Answered, Cancel, Compacting, Event, Post as _, Question, Remember, Revealed,
-    Room, Sensitivity, ToolCall, Verdict, Workspace,
+    Answer as Chosen, Answered, Cancel, Compacting, Event, Mode, Post as _, Question, Remember,
+    Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
@@ -183,6 +183,16 @@ pub(crate) struct Terms {
     /// with the rest of the session: a pick made for a session being left is
     /// not one the new one asked for.
     pub(crate) pending_model: Cell<Option<(Served, String)>>,
+    /// A mode shift+tab stepped to mid-turn, held for the turn the loop starts
+    /// next.
+    ///
+    /// The runner holding the mode is on the worker for a running turn's
+    /// length, so a step made then cannot reach it — it is held here and put
+    /// on the runner at the next turn's start, when the runner is this side's
+    /// again. The row under the box says the step at once, marked for the next
+    /// turn, so the press is not dead and the row is not a lie about the mode
+    /// the running turn is decided under.
+    pub(crate) pending_mode: Cell<Option<Mode>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
     /// file on the command path.
@@ -655,6 +665,13 @@ fn ran<T: Terminal>(
         command::apply_model(renderer, &mut runner, terms, provider, &name)?;
     }
 
+    // A mode stepped to mid-turn is put on the runner now, before the turn
+    // starts: the runner is this side's again, and the step was made for the
+    // requests about to go out rather than for the one already decided.
+    if let Some(mode) = terms.pending_mode.take() {
+        runner.switch(mode);
+    }
+
     let took = take(runner, renderer, terms, work, held)?;
     let style = terms.style();
 
@@ -859,6 +876,7 @@ impl Turn<'_, '_> {
                     style: self.terms.style(),
                     cancel: &self.terms.cancel,
                     steer: &self.terms.steer,
+                    terms: self.terms,
                     leaving: self.leaving,
                 },
             ) {

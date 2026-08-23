@@ -33,7 +33,7 @@ use std::borrow::Cow;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, Effort};
+use crucible_core::{Cancel, Effort, Mode};
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
@@ -54,7 +54,7 @@ use super::mode::tone;
 use super::planning::Planning;
 use super::queueing;
 use super::turning::Turning;
-use super::{Prompts, Retained};
+use super::{Prompts, Retained, Terms};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -655,6 +655,13 @@ pub(super) struct Says {
     /// How much usable room remains before compaction at the latest reading.
     /// `None` makes the prompt say that the reading is unknown.
     pub(super) left: Option<u8>,
+    /// The mode in force, kept as a value so shift+tab can step off it while
+    /// the runner that owns it is away.
+    ///
+    /// Mid-turn the sentence above is the only thing of it drawn, and a step
+    /// reads the mode rather than the sentence — which is why the value is
+    /// kept beside its words instead of the words being parsed back.
+    pub(super) running_mode: Mode,
 }
 
 impl Says {
@@ -669,6 +676,16 @@ impl Says {
             asking: Some(notice),
             ..self.clone()
         }
+    }
+
+    /// The same rows, saying the mode shift+tab just stepped to.
+    ///
+    /// In the words the running mode would be said in, with its tone — the one
+    /// difference is that the step lands on the next turn rather than this
+    /// one, which is a fact of the mode's timing, not of how the row reads.
+    fn cycling(&mut self, mode: Mode) {
+        self.mode = Cow::Borrowed(mode.sentence());
+        self.tone = tone(mode);
     }
 }
 
@@ -791,6 +808,7 @@ pub(super) fn during<T: Terminal>(
         style,
         cancel,
         steer,
+        terms,
         leaving,
     } = during;
     let mut moved = false;
@@ -882,6 +900,19 @@ pub(super) fn during<T: Terminal>(
             // handed the same press. What is left to say is that the picture no
             // longer matches, which is what the redraw below reads.
             Meant::Resized => moved = true,
+
+            // Stepped to on this side and held for the next turn: the mode the
+            // running turn is decided under was settled before it ran, so the
+            // step cannot reach the runner on the worker — it goes into the
+            // pending slot, and the row under the box says which mode that is,
+            // marked for the turn it lands on. The step is read off the slot's
+            // last value, or off the running mode the row was frozen with.
+            Meant::Cycle => {
+                let next = terms.pending_mode.get().unwrap_or(says.running_mode).next();
+                terms.pending_mode.set(Some(next));
+                says.cycling(next);
+                moved = true;
+            }
 
             Meant::Interrupt => {
                 cancel.request();
@@ -1176,8 +1207,13 @@ enum Meant {
         /// Whether the notch was towards the top of the session.
         back: bool,
     },
-    /// An arrow through a list there is none of, a mode step. Neither has
-    /// anything to act on while a turn is running.
+    /// Shift+Tab: the mode the next turn runs under, stepped to and held. The
+    /// runner holding the mode is on the worker for this turn's length, so the
+    /// step is taken here and applied when the runner is back — not ignored,
+    /// as it was, which was a key that did nothing.
+    Cycle,
+    /// An arrow through a list there is none of. It has nothing to act on while
+    /// a turn is running.
     Ignored,
 }
 
@@ -1229,8 +1265,11 @@ fn meant(arrived: Pressed) -> Meant {
         // means nothing before it.
         // The two halves of a drag among them, for the reason the box gives:
         // the selection was offered every press first, so neither arrives.
-        Pressed::Cycle
-        | Pressed::Explain
+        // Shift+Tab steps the mode the next turn runs under, held until the
+        // runner is back: the running turn's mode was decided before it ran,
+        // and a step that moved nothing now would be a key that did nothing.
+        Pressed::Cycle => Meant::Cycle,
+        Pressed::Explain
         | Pressed::Up
         | Pressed::Down
         | Pressed::Dragged { .. }
@@ -1292,6 +1331,13 @@ pub(super) struct During<'a> {
     /// stops being one. The two are what a mid-turn Enter means, and this is the
     /// half the turn in front of it reads.
     pub(super) steer: &'a crucible_core::Steer,
+    /// Where a mode stepped to mid-turn is held until the runner is back.
+    ///
+    /// The runner holding the mode is on the worker for the turn's length, so
+    /// a shift+tab pressed at it steps a pending slot here instead, and the
+    /// row under the box says which mode that is — marked for the next turn,
+    /// so the press is not dead and the running turn's mode is not lied about.
+    pub(super) terms: &'a Terms,
     /// When Ctrl-C was last pressed against an empty line, if it is still the
     /// last key pressed.
     ///
@@ -1350,6 +1396,7 @@ pub(super) fn saying(runner: &Runner) -> Says {
         tone: tone(mode),
         asking: None,
         left: runner.left(),
+        running_mode: mode,
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.
         running: 0,
