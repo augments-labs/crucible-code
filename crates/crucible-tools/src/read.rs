@@ -39,10 +39,242 @@ const BLOCK: usize = 8 * 1_024;
 /// Room kept for the pagination note while output lines are added.
 const NOTICE: usize = 128;
 
+/// What a file this tool cannot read is, and what would turn it into one it can.
+///
+/// A document is not a modality: no vendor this program speaks to accepts one
+/// of these on the wire, and the answer everywhere is to convert it to text
+/// first. The shell to do that with is already a tool, so what was missing was
+/// never the capability — it was that nothing said so, at the one moment the
+/// question is live.
+///
+/// Several programs per format, best first, because naming one that is not on
+/// this machine spends a turn and a permission prompt on a command that cannot
+/// work. What is actually installed decides which is named, and where none is,
+/// the answer says that rather than sending the model to find out.
+///
+/// An extension not on this list gets the plain refusal. A suggestion that does
+/// not fit costs more than none at all.
+/// One program that turns a document into text, and how to ask it to.
+struct Converter {
+    /// The name a shell would find it under, with no platform suffix and no
+    /// directory. What a command line must actually say is worked out at the
+    /// point of use, because on two of the three platforms this is not on the
+    /// `PATH` and the answer is an absolute path.
+    program: &'static str,
+    /// What follows the program, with `{}` where the file's own name goes.
+    arguments: &'static str,
+}
+
+/// One kind of file this tool cannot read, and what would convert it.
+struct Document {
+    /// The extension, lowercase and without its dot.
+    suffix: &'static str,
+    /// What to call it in the sentence a person or a model reads.
+    what: &'static str,
+    /// What converts it, best first.
+    converters: &'static [Converter],
+}
+
+/// What a file this tool cannot read is, and what would turn it into one it can.
+///
+/// A document is not a modality: no vendor this program speaks to accepts one
+/// of these on the wire, and the answer everywhere is to convert it to text
+/// first. The shell to do that with is already a tool, so what was missing was
+/// never the capability — it was that nothing said so, at the one moment the
+/// question is live.
+///
+/// Several programs per format, and the order is what survives rather than what
+/// is likeliest: `pandoc` keeps headings, lists and tables as Markdown, and the
+/// others flatten a document into prose. Naming one that is not on this machine
+/// would spend a turn and a permission prompt on a command that cannot run, so
+/// what is installed decides which is named, and where none is, the answer says
+/// that rather than sending the model to find out.
+///
+/// `textutil` is macOS's own and is on no other platform, so it needs no
+/// condition around it — the lookup finds it there and nowhere else. Every
+/// entry that is not `pandoc` loses the pictures, charts and layout, which is
+/// the honest ceiling on reading a document this way.
+///
+/// `pandoc` is told to extract media rather than only mention it. Left to
+/// itself it writes a picture's *reference* into the Markdown and never writes
+/// the picture, so the file it names is not there — and a link to nothing reads
+/// exactly like a link to something, which costs a call to find out. Extracted,
+/// the pictures are files, and a file is a thing the agent has somewhere to go
+/// with.
+///
+/// An extension not on this list gets the plain refusal. A suggestion that does
+/// not fit costs more than none at all.
+const CONVERTED: &[Document] = &[
+    Document {
+        suffix: "docx",
+        what: "a Word document",
+        converters: &[
+            Converter {
+                program: "pandoc",
+                arguments: "{} --extract-media=converted-media -o converted.md",
+            },
+            Converter {
+                program: "textutil",
+                arguments: "-convert txt {}",
+            },
+            Converter {
+                program: "soffice",
+                arguments: "--headless --convert-to txt {}",
+            },
+        ],
+    },
+    Document {
+        suffix: "odt",
+        what: "an OpenDocument text document",
+        converters: &[
+            Converter {
+                program: "pandoc",
+                arguments: "{} --extract-media=converted-media -o converted.md",
+            },
+            Converter {
+                program: "textutil",
+                arguments: "-convert txt {}",
+            },
+            Converter {
+                program: "soffice",
+                arguments: "--headless --convert-to txt {}",
+            },
+        ],
+    },
+    Document {
+        suffix: "rtf",
+        what: "a rich text document",
+        converters: &[
+            Converter {
+                program: "pandoc",
+                arguments: "{} --extract-media=converted-media -o converted.md",
+            },
+            Converter {
+                program: "textutil",
+                arguments: "-convert txt {}",
+            },
+            Converter {
+                program: "soffice",
+                arguments: "--headless --convert-to txt {}",
+            },
+        ],
+    },
+    Document {
+        suffix: "epub",
+        what: "an e-book",
+        converters: &[Converter {
+            program: "pandoc",
+            arguments: "{} --extract-media=converted-media -o converted.md",
+        }],
+    },
+    Document {
+        suffix: "xlsx",
+        what: "a spreadsheet",
+        converters: &[
+            Converter {
+                program: "soffice",
+                arguments: "--headless --convert-to csv {}",
+            },
+            Converter {
+                program: "xlsx2csv",
+                arguments: "{} converted.csv",
+            },
+        ],
+    },
+    Document {
+        suffix: "xls",
+        what: "a spreadsheet",
+        converters: &[Converter {
+            program: "soffice",
+            arguments: "--headless --convert-to csv {}",
+        }],
+    },
+    Document {
+        suffix: "ods",
+        what: "a spreadsheet",
+        converters: &[Converter {
+            program: "soffice",
+            arguments: "--headless --convert-to csv {}",
+        }],
+    },
+    Document {
+        suffix: "pptx",
+        what: "a slide deck",
+        converters: &[Converter {
+            program: "soffice",
+            arguments: "--headless --convert-to txt {}",
+        }],
+    },
+    Document {
+        suffix: "odp",
+        what: "a slide deck",
+        converters: &[Converter {
+            program: "soffice",
+            arguments: "--headless --convert-to txt {}",
+        }],
+    },
+    Document {
+        suffix: "pdf",
+        what: "a PDF",
+        converters: &[
+            Converter {
+                program: "pdftotext",
+                arguments: "{} converted.txt",
+            },
+            Converter {
+                program: "soffice",
+                arguments: "--headless --convert-to txt {}",
+            },
+        ],
+    },
+];
+
+/// What to say after the refusal, where the name says what the file is.
+///
+/// Matched on the name rather than the bytes on purpose: this is reached only
+/// once the file has already failed to decode, so the extension is being asked
+/// what somebody meant by it, not what the file is.
+fn conversion(requested: &str, named: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let suffix = requested.rsplit_once('.')?.1.to_ascii_lowercase();
+    let document = CONVERTED.iter().find(|known| known.suffix == suffix)?;
+    let what = document.what;
+
+    let found = document
+        .converters
+        .iter()
+        .find_map(|converter| Some((named(converter.program)?, converter.arguments)));
+
+    if let Some((program, arguments)) = found {
+        let spelled = if program.contains(' ') {
+            format!("\"{program}\"")
+        } else {
+            program
+        };
+        let arguments = arguments.replace("{}", requested);
+        return Some(format!(
+            ". It is {what} — convert it and read what comes out, for example: {spelled} {arguments}"
+        ));
+    }
+
+    let programs = document
+        .converters
+        .iter()
+        .map(|converter| converter.program)
+        .collect::<Vec<_>>()
+        .join(" or ");
+    Some(format!(
+        ". It is {what}, and nothing installed here converts one — {programs} would."
+    ))
+}
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments. The provider moves it out before sending the rest as the schema.
+///
+/// What the tool will not do is stated here rather than left to be discovered,
+/// which is the same reason every ceiling below is written beside the argument
+/// that reaches it: a bound met is one wasted call, and a bound read is none.
 const SCHEMA: &str = r#"{
-  "description": "Reads a text file from the workspace and returns it with line numbers.",
+  "description": "Reads a text file from the workspace and returns it with line numbers. Only text: a Word document, spreadsheet, slide deck, e-book or PDF must be converted with a command first, and the answer says which one where the file's name gives it away.",
   "type": "object",
   "properties": {
     "path": {
@@ -112,12 +344,14 @@ impl Read {
                 Ok(NextLine::End) => break,
                 Ok(NextLine::Cancelled) => return Err(ToolError::Cancelled(NAME)),
                 // Not text. That is an answer the model should have, not a
-                // breakdown of the mechanism.
+                // breakdown of the mechanism — and where the name says what the
+                // file is, the answer carries the next move as well.
                 Err(problem) if problem.kind() == ErrorKind::InvalidData => {
-                    return Ok((
-                        ToolOutput::failed(format!("{requested} is not a text file")),
-                        0,
-                    ));
+                    let mut said = format!("{requested} is not a text file");
+                    if let Some(how) = conversion(requested, crate::program::installed) {
+                        said.push_str(&how);
+                    }
+                    return Ok((ToolOutput::failed(said), 0));
                 }
                 Err(source) => {
                     return Err(ToolError::Io {
@@ -494,6 +728,89 @@ mod tests {
 
         assert!(output.is_failed());
         assert_eq!(output.text(), "blob.bin is not a text file");
+    }
+
+    #[test]
+    fn a_document_names_a_converter_that_is_actually_installed() {
+        let said = conversion("report.docx", |program| {
+            (program == "soffice").then(|| program.to_owned())
+        })
+        .expect("a docx is a document this knows");
+
+        assert_eq!(
+            said,
+            ". It is a Word document \u{2014} convert it and read what comes out, \
+             for example: soffice --headless --convert-to txt report.docx"
+        );
+    }
+
+    #[test]
+    fn the_first_converter_installed_is_the_one_named() {
+        let said = conversion("report.docx", |program| Some(program.to_owned()))
+            .expect("a docx is a document this knows");
+
+        assert!(
+            said.ends_with("pandoc report.docx --extract-media=converted-media -o converted.md"),
+            "said: {said}"
+        );
+    }
+
+    #[test]
+    fn a_document_with_nothing_to_convert_it_says_so_rather_than_a_command_that_fails() {
+        let said = conversion("budget.xlsx", |_| None).expect("an xlsx is a document this knows");
+
+        assert_eq!(
+            said,
+            ". It is a spreadsheet, and nothing installed here converts one \u{2014} \
+             soffice or xlsx2csv would."
+        );
+    }
+
+    #[test]
+    fn the_suggestion_reads_the_name_whatever_case_it_is_written_in() {
+        let said = conversion("BUDGET.XLSX", |program| {
+            (program == "soffice").then(|| program.to_owned())
+        })
+        .expect("an extension is the same word however it is shouted");
+
+        assert!(
+            said.ends_with("soffice --headless --convert-to csv BUDGET.XLSX"),
+            "said: {said}"
+        );
+    }
+
+    #[test]
+    fn a_name_that_says_nothing_is_offered_nothing() {
+        assert!(conversion("core.dump", |program| Some(program.to_owned())).is_none());
+        assert!(conversion("blob", |program| Some(program.to_owned())).is_none());
+    }
+
+    #[test]
+    fn a_document_that_is_not_text_carries_its_next_move_into_the_answer() {
+        let sample = Sample::new("read-document");
+        sample.write_bytes("report.docx", &[0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
+
+        let output = read(&sample, r#"{"path":"report.docx"}"#);
+
+        assert!(output.is_failed());
+        assert!(
+            output
+                .text()
+                .starts_with("report.docx is not a text file. It is a Word document"),
+            "said: {}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn a_binary_nobody_can_name_gets_the_refusal_and_no_guess() {
+        let sample = Sample::new("read-unnamed");
+        sample.write_bytes("core.dump", &[0xff, 0xfe, 0x00, 0x01]);
+
+        let output = read(&sample, r#"{"path":"core.dump"}"#);
+
+        assert!(output.is_failed());
+        assert_eq!(output.text(), "core.dump is not a text file");
     }
 
     #[test]

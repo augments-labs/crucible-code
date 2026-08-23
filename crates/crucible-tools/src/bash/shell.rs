@@ -24,6 +24,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::program::on_path;
+
 /// What to say when there is no shell to run anything with.
 ///
 /// Read by somebody who has to fix it, so it names the thing to install rather
@@ -81,22 +83,6 @@ pub(super) fn find(lookup: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf>
         )
     })
     .find(|candidate| candidate.is_file())
-}
-
-/// The first absolute directory on the PATH holding `program`.
-///
-/// Absolute is the whole of the check. An empty element is what a `PATH` picks
-/// up from a shell profile that appended to an unset variable, and a relative
-/// one is rarer and worse; both mean "resolve this against wherever you happen
-/// to be", and where this program happens to be is a directory the model can
-/// write to. A directory that cannot be named from the root is not one crucible
-/// takes a shell from.
-fn on_path(lookup: impl Fn(&str) -> Option<OsString>, program: &str) -> Option<PathBuf> {
-    let path = lookup("PATH")?;
-    std::env::split_paths(&path)
-        .filter(|directory| directory.is_absolute())
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
 }
 
 // Unix only: what they pin is the arm above them, and a Windows machine

@@ -78,6 +78,7 @@ mod grep;
 mod ledger;
 mod lookup;
 mod plan;
+mod program;
 mod read;
 #[cfg(test)]
 mod sample;

@@ -24,6 +24,12 @@ MoonshotAI's have none, and the line saying so arrives at the prompt rather than
 as a refusal you paid for. Nothing counts pages — the size a request may carry
 is what decides.
 
+**A document `read` cannot open says what would turn it into text.** A Word
+document, spreadsheet, slide deck, e-book or PDF is refused with a converter
+that is actually on your machine, ready for `bash` to run; where you have none,
+the answer says which to install. A file whose name says nothing about it is
+refused as before.
+
 ## [0.19.0] - 2026-08-23
 
 ### Added
