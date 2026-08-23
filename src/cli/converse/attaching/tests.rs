@@ -104,10 +104,7 @@ fn an_external_picture_is_imported_for_the_session() {
         panic!("the user-selected external picture is attached")
     };
 
-    assert!(
-        one.path
-            .starts_with(imported.to_str().expect("a text path"))
-    );
+    assert!(one.path.starts_with(&written(&imported)));
     assert_eq!(
         fs::read(one.path.as_ref()).expect("the imported bytes"),
         PNG

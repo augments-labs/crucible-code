@@ -57,6 +57,14 @@ allow = [
     "ISC",
     "Unicode-3.0",
 
+    # Native clipboard access brings two platform families with licences this
+    # tree did not need before. `clipboard-win` and its `error-code` dependency
+    # use Boost's permissive licence; the Wayland graph's hash table uses zlib's.
+    # Both permit use, modification and binary redistribution with attribution,
+    # impose no copyleft, and leave this binary's MIT terms intact.
+    "BSL-1.0",
+    "Zlib",
+
     # The odd one out, and worth knowing why it is here. `webpki-roots` carries
     # Mozilla's root certificate store, which is data rather than code, so it
     # is under the Linux Foundation's licence for datasets instead of a
