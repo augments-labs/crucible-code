@@ -33,7 +33,7 @@ use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
 use crucible_core::{
@@ -58,7 +58,7 @@ use command::Ran;
 use expanding::Standing;
 use planning::Planning;
 use turning::Turning;
-use typing::Asked;
+use typing::{Asked, Says};
 
 mod asking;
 mod command;
@@ -670,6 +670,174 @@ fn ran<T: Terminal>(
 /// the runner owns the session, and the session's log is finished by a thread
 /// its `Drop` waits for. Leaving early would drop the join handle and detach
 /// all three, and the process would exit over a log still being written.
+/// One turn, on the thread that draws it.
+///
+/// The pieces the loop over a turn's events needs, in one value so a slash
+/// command opened mid-turn can drive the same loop: a panel that keeps the
+/// transcript rendering behind it calls [`Turn::step`] between the keys it
+/// reads, and each step is one pass of what the loop below does — drain what
+/// the worker reported, then look at the keyboard.
+struct Turn<'a, 'h> {
+    /// What the turn says is happening, row by row.
+    turning: &'a mut Turning,
+    /// The session's held state, lent for the turn.
+    held: &'a mut Held<'h>,
+    /// The row under the box, kept current as the count under it moves.
+    says: &'a mut Says,
+    /// Where the worker's events arrive.
+    seen: &'a mut Inbox,
+    /// The two channels a question is answered down.
+    answering: &'a Answering,
+    /// Whether the terminal is still being written to, or the last write
+    /// failed and the rest of the turn is only being drained.
+    drawn: &'a mut Result<(), Fatal>,
+    /// What the keys read while the turn ran asked for.
+    meanwhile: &'a mut typing::Meanwhile,
+    /// When Ctrl-C was last pressed against an empty line, if it is still the
+    /// last key pressed.
+    leaving: &'a mut Option<Instant>,
+    /// The terms every turn is taken on.
+    terms: &'a Terms,
+}
+
+impl Turn<'_, '_> {
+    /// One pass over the turn: drain one event, then look at the keyboard.
+    ///
+    /// `false` where the worker has closed the channel and the turn is over.
+    fn step<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<bool, Fatal> {
+        match self.seen.recv_timeout(TICK) {
+            Ok(one) => {
+                // Before it is drawn, because drawing consumes it. The row
+                // above the box says what the turn is doing, and this is the
+                // only place that can be read off.
+                let mut returned = Vec::new();
+                let mut terminal = false;
+                if let Seen::Turn(event) = &one {
+                    terminal = matches!(event, Event::TurnFinished { .. } | Event::Failed { .. });
+                    returned = self.turning.saw(event);
+                }
+
+                // And a line the turn says it worked in stops waiting behind
+                // it. The turn is the only side that knows which lines it
+                // reached — one typed a moment too late is still queued and
+                // still owed its own turn — so the panel is corrected here,
+                // where the turn says what it took, and nowhere earlier.
+                if let Seen::Turn(Event::Steered { line }) = &one
+                    && self.held.queued.steered(line)
+                {
+                    self.turning.queueing(
+                        self.held.queued.waiting_all(),
+                        renderer.columns(),
+                        self.terms.style(),
+                    );
+                }
+
+                // And the line of a call whose tool has answered is written
+                // before the event that ended it is drawn, so that the result
+                // hangs under the call it answers. It goes out through its own
+                // door rather than through `shown`, which is already at the
+                // arguments this project allows one function.
+                for (call, said) in returned {
+                    if terminal {
+                        // No result follows a terminal event. Remove the exact
+                        // retained live call after committing its heading so it
+                        // cannot leak into a later expansion.
+                        self.held.kept.abandoned(&call);
+                    }
+                    if self.drawn.is_ok() {
+                        *self.drawn = stop_if_failed(
+                            draw::returned(renderer, &said, self.terms.style())
+                                .map_err(Fatal::from),
+                            &self.terms.cancel,
+                        );
+                    }
+                }
+
+                if self.drawn.is_ok() {
+                    *self.drawn = stop_if_failed(
+                        shown(one, renderer, self.terms, self.held, self.answering),
+                        &self.terms.cancel,
+                    );
+                } else if matches!(one, Seen::Question { .. } | Seen::Asked { .. }) {
+                    // Nothing is drawn and nothing is read once the terminal
+                    // has failed, and both kinds of question still have to be
+                    // answered or the worker waits for ever. A refusal and
+                    // nobody-answered are what a drawing thread that has
+                    // stopped means, said out loud rather than by going quiet.
+                    let _ = self.answering.reply.send(verdict(None));
+                    let _ = self.answering.give.send(None);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Ok(false),
+        }
+
+        // Reaped and counted before the box is drawn again, because the row under
+        // it says how many commands are still running and a command that has
+        // exited is not one of them. A number that only moved when something else
+        // on the row did would be exactly the stale fact this row exists to
+        // report.
+        //
+        // And said, the way one that ended between turns is said: a command that
+        // finished while the turn ran is otherwise a count that moved with no
+        // line to say why, and the reader is owed the line the moment there is
+        // room for it rather than after the turn. The model is told separately,
+        // at the top of its next turn.
+        if self.drawn.is_ok() {
+            for ended in self.terms.leaving.reap() {
+                *self.drawn = stop_if_failed(
+                    draw::gone(renderer, &ended, self.terms.style()).map_err(Fatal::from),
+                    &self.terms.cancel,
+                );
+            }
+        } else {
+            drop(self.terms.leaving.reap());
+        }
+        self.says.running = self.terms.leaving.count();
+
+        // After the event rather than before it, so what the turn said is on
+        // screen before the box is drawn back underneath it. A line finished
+        // here is kept for the loop above: running it now would start a second
+        // turn inside this one.
+        // Not read once the session is leaving. The turn is still stopping and
+        // this loop still has to drain it, but nothing typed into a box on its
+        // way off the screen can change where the session goes.
+        if self.drawn.is_ok()
+            && self.held.answers.keys
+            && matches!(*self.meanwhile, typing::Meanwhile::Nothing)
+        {
+            match typing::during(
+                renderer,
+                typing::During {
+                    background: &self.terms.leaving,
+                    editor: &mut self.held.editor,
+                    queued: &mut self.held.queued,
+                    turning: self.turning,
+                    planning: &mut self.held.planning,
+                    kept: &mut self.held.kept,
+                    opened: &mut self.held.opened,
+                    viewing: &mut self.held.viewing,
+                    listing: &mut self.held.listing,
+                    says: self.says,
+                    style: self.terms.style(),
+                    cancel: &self.terms.cancel,
+                    steer: &self.terms.steer,
+                    leaving: self.leaving,
+                },
+            ) {
+                // Kept rather than acted on. The turn has been asked to stop
+                // and this loop is what notices it has: leaving here would drop
+                // the join handle below and take the process out over a session
+                // log still being written.
+                Ok(asked) => *self.meanwhile = asked,
+                Err(problem) => *self.drawn = stop_if_failed(Err(problem), &self.terms.cancel),
+            }
+        }
+
+        Ok(true)
+    }
+}
+
 fn take<T: Terminal>(
     mut runner: Runner,
     renderer: &mut Renderer<T>,
@@ -764,128 +932,18 @@ fn take<T: Terminal>(
     // looked at between deltas. The queue itself is bounded too: adjacent
     // deltas already waiting are drawn together, and a provider that outruns a
     // slow terminal meets backpressure instead of growing process memory.
-    loop {
-        match seen.recv_timeout(TICK) {
-            Ok(one) => {
-                // Before it is drawn, because drawing consumes it. The row
-                // above the box says what the turn is doing, and this is the
-                // only place that can be read off.
-                let mut returned = Vec::new();
-                let mut terminal = false;
-                if let Seen::Turn(event) = &one {
-                    terminal = matches!(event, Event::TurnFinished { .. } | Event::Failed { .. });
-                    returned = turning.saw(event);
-                }
-
-                // And a line the turn says it worked in stops waiting behind
-                // it. The turn is the only side that knows which lines it
-                // reached — one typed a moment too late is still queued and
-                // still owed its own turn — so the panel is corrected here,
-                // where the turn says what it took, and nowhere earlier.
-                if let Seen::Turn(Event::Steered { line }) = &one
-                    && held.queued.steered(line)
-                {
-                    turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
-                }
-
-                // And the line of a call whose tool has answered is written
-                // before the event that ended it is drawn, so that the result
-                // hangs under the call it answers. It goes out through its own
-                // door rather than through `shown`, which is already at the
-                // arguments this project allows one function.
-                for (call, said) in returned {
-                    if terminal {
-                        // No result follows a terminal event. Remove the exact
-                        // retained live call after committing its heading so it
-                        // cannot leak into a later expansion.
-                        held.kept.abandoned(&call);
-                    }
-                    if drawn.is_ok() {
-                        drawn = stop_if_failed(
-                            draw::returned(renderer, &said, terms.style()).map_err(Fatal::from),
-                            &terms.cancel,
-                        );
-                    }
-                }
-
-                if drawn.is_ok() {
-                    drawn = stop_if_failed(
-                        shown(one, renderer, terms, held, &answering),
-                        &terms.cancel,
-                    );
-                } else if matches!(one, Seen::Question { .. } | Seen::Asked { .. }) {
-                    // Nothing is drawn and nothing is read once the terminal
-                    // has failed, and both kinds of question still have to be
-                    // answered or the worker waits for ever. A refusal and
-                    // nobody-answered are what a drawing thread that has
-                    // stopped means, said out loud rather than by going quiet.
-                    let _ = answering.reply.send(verdict(None));
-                    let _ = answering.give.send(None);
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-
-        // Reaped and counted before the box is drawn again, because the row under
-        // it says how many commands are still running and a command that has
-        // exited is not one of them. A number that only moved when something else
-        // on the row did would be exactly the stale fact this row exists to
-        // report.
-        //
-        // And said, the way one that ended between turns is said: a command that
-        // finished while the turn ran is otherwise a count that moved with no
-        // line to say why, and the reader is owed the line the moment there is
-        // room for it rather than after the turn. The model is told separately,
-        // at the top of its next turn.
-        if drawn.is_ok() {
-            for ended in terms.leaving.reap() {
-                drawn = stop_if_failed(
-                    draw::gone(renderer, &ended, terms.style()).map_err(Fatal::from),
-                    &terms.cancel,
-                );
-            }
-        } else {
-            drop(terms.leaving.reap());
-        }
-        says.running = terms.leaving.count();
-
-        // After the event rather than before it, so what the turn said is on
-        // screen before the box is drawn back underneath it. A line finished
-        // here is kept for the loop above: running it now would start a second
-        // turn inside this one.
-        // Not read once the session is leaving. The turn is still stopping and
-        // this loop still has to drain it, but nothing typed into a box on its
-        // way off the screen can change where the session goes.
-        if drawn.is_ok() && held.answers.keys && matches!(meanwhile, typing::Meanwhile::Nothing) {
-            match typing::during(
-                renderer,
-                typing::During {
-                    background: &terms.leaving,
-                    editor: &mut held.editor,
-                    queued: &mut held.queued,
-                    turning: &mut turning,
-                    planning: &mut held.planning,
-                    kept: &mut held.kept,
-                    opened: &mut held.opened,
-                    viewing: &mut held.viewing,
-                    listing: &mut held.listing,
-                    says: &mut says,
-                    style: terms.style(),
-                    cancel: &terms.cancel,
-                    steer: &terms.steer,
-                    leaving: &mut leaving,
-                },
-            ) {
-                // Kept rather than acted on. The turn has been asked to stop
-                // and this loop is what notices it has: leaving here would drop
-                // the join handle below and take the process out over a session
-                // log still being written.
-                Ok(asked) => meanwhile = asked,
-                Err(problem) => drawn = stop_if_failed(Err(problem), &terms.cancel),
-            }
-        }
-    }
+    let mut turn = Turn {
+        turning: &mut turning,
+        held,
+        says: &mut says,
+        seen: &mut seen,
+        answering: &answering,
+        drawn: &mut drawn,
+        meanwhile: &mut meanwhile,
+        leaving: &mut leaving,
+        terms,
+    };
+    while turn.step(renderer)? {}
 
     // The turn is over, so what stood under it is taken back — the box, or the
     // view if Ctrl+O was pressed while the turn ran. What comes back next is
