@@ -106,11 +106,14 @@ the one model, and neither should have to say which kind of name they just
 typed. Tab crosses between the panes, the up and down arrows walk whichever one
 the mark is in, the left and right arrows walk the rungs, Enter takes the model
 and the rung under it together, and Escape leaves everything as it was. A mouse
-lights the row it is over, across the whole width of that pane, which is a
-different thing from the mark: the pointer says what you are reading, the mark
-says what Enter takes, and nothing you merely pass over is chosen. Down a pipe,
-where nobody can walk a shelf, it writes the models out as the line that asks
-for each.
+lights the row it is over, across the whole width of that pane; passing over a
+row chooses nothing, and clicking one puts the mark on it. Clicking a model the
+mark is already on takes it, so a double click picks one outright — and a
+provider is never taken that way, because it narrows the models beside it rather
+than being an answer itself. The rung stays on the arrow keys, which is what
+keeps taking the model and saying how hard it should think one visit. Down a
+pipe, where nobody can walk a shelf, it writes the models out as the line that
+asks for each.
 
 Taking a row off the models pane moves the session to whoever serves it first —
 a model belongs to the vendor that serves it, and the two change together. The

@@ -14,8 +14,8 @@ provider's, the providers beside the models they serve, and the rungs the marked
 model takes on a strip underneath. A rung is asked of a model, so choosing one
 and then being sent elsewhere to say how hard it should think was the same
 question put twice; `/effort` is still the way to change the rung on its own. A
-mouse lights the row it is over without moving the mark, which is still what
-Enter takes.
+mouse lights the row it is over and a click marks it, so a double click takes a
+model outright.
 
 ## [0.21.1] - 2026-08-23
 
