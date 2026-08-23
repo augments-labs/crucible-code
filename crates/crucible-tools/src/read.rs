@@ -39,7 +39,8 @@ const BLOCK: usize = 8 * 1_024;
 /// Room kept for the pagination note while output lines are added.
 const NOTICE: usize = 128;
 
-/// One program that turns a document into text, and how to ask it to.
+/// One program that turns a file into something a model can take in, and how to
+/// ask it to.
 struct Converter {
     /// The name a shell would find it under, with no platform suffix and no
     /// directory. What a command line must actually say is worked out at the
@@ -55,17 +56,88 @@ struct Converter {
     /// alt text or nothing at all. The refusal says so only where this is set,
     /// so a converter that flattens a diagram is never described as keeping it.
     extracts: bool,
+    /// A program run first, whose answer decides an argument of this one.
+    ///
+    /// `ffprobe` before `ffmpeg`, and nothing before a document converter:
+    /// converting a document needs no measurement, and sampling a video does.
+    /// One frame a second is thirty frames of a clip and seven thousand of a
+    /// recording, so a rate suggested without a duration is a guess — and the
+    /// guess that is wrong fills a directory and is discovered afterwards.
+    ///
+    /// Looked up the same way as the converter's own program rather than
+    /// assumed to be spellable: `ffprobe` ships in the same package and lands
+    /// in the same directory, but on two of the three platforms that directory
+    /// is not on the `PATH`, and a bare name there is a command line the shell
+    /// cannot run. Where it is named and not found, the whole converter is
+    /// passed over — half a suggestion is worse than the next one down.
+    measure: Option<Measure>,
 }
 
-/// One kind of file this tool cannot read, and what would convert it.
-struct Document {
+/// The program that answers what a converter needs to know first, and what to
+/// ask it.
+struct Measure {
+    /// The name a shell would find it under, as [`Converter::program`].
+    program: &'static str,
+    /// What follows it, with `{}` where the file's own name goes.
+    arguments: &'static str,
+}
+
+/// What a file this tool cannot read turns into, once something on this machine
+/// has been pointed at it.
+///
+/// Two, and a match rather than a flag, so a third arrives as a compiler error
+/// in every place a sentence is written rather than as a document sentence
+/// about something that is not a document.
+enum Becomes {
+    /// Text, which the model reads back.
+    Text,
+    /// Pictures, which the model looks at — attached to a prompt, the way any
+    /// other picture is.
+    Pictures,
+}
+
+/// One kind of file this tool cannot read, and what would turn it into one it
+/// can.
+struct Unreadable {
     /// The extension, lowercase and without its dot.
     suffix: &'static str,
     /// What to call it in the sentence a person or a model reads.
     what: &'static str,
-    /// What converts it, best first.
+    /// What it turns into, which decides which sentence is written about it.
+    becomes: Becomes,
+    /// What does the turning, best first.
     converters: &'static [Converter],
 }
+
+/// What pulls frames out of a video, shared by every video suffix.
+///
+/// One entry, because one program does this and the alternatives are that same
+/// program under another name. Named rather than repeated six times: a rate
+/// that is right for `.mp4` is right for `.mkv`, and six copies of it is six
+/// chances for one to drift.
+///
+/// The frame cap and the rate are numbers in a suggestion, not policy in code.
+/// crucible samples nothing, installs nothing and chooses no frames — the same
+/// bargain as every other converter here. What the cap is *for* is that a
+/// request carries about that many pictures, so a command that extracted
+/// everything would spend a minute of video on 1 800 files of which twenty
+/// could be looked at.
+const SAMPLED: &[Converter] = &[Converter {
+    program: "ffmpeg",
+    arguments: "-i {} -vf fps=1 -frames:v 20 frame-%03d.jpg",
+    extracts: false,
+    measure: Some(Measure {
+        program: "ffprobe",
+        arguments: "-v error -show_entries format=duration -of csv=p=0 {}",
+    }),
+}];
+
+/// The directory an extracting converter is told to write pictures into.
+///
+/// Named here and asked for in an `arguments` template, which is two places for
+/// one fact. `every_converter_that_extracts_asks_for_the_directory_the_sentence_names`
+/// is what keeps them the same one.
+const EXTRACTED_INTO: &str = "converted-media";
 
 /// What a file this tool cannot read is, and what would turn it into one it can.
 ///
@@ -94,153 +166,216 @@ struct Document {
 /// the pictures are files, and a file is a thing the agent has somewhere to go
 /// with.
 ///
+/// A video is on the list for the same reason and by a different road. Nothing
+/// crucible speaks to reads one, and everything it speaks to reads a picture —
+/// so the answer is not a converter at all but a sampler, and what comes out is
+/// attached rather than read back. It is the same shape: what the file is, and
+/// what on this machine would do something about it.
+///
 /// An extension not on this list gets the plain refusal. A suggestion that does
 /// not fit costs more than none at all.
-/// The directory an extracting converter is told to write pictures into.
-///
-/// Named here and asked for in an `arguments` template, which is two places for
-/// one fact. `every_converter_that_extracts_asks_for_the_directory_the_sentence_names`
-/// is what keeps them the same one.
-const EXTRACTED_INTO: &str = "converted-media";
-
-const CONVERTED: &[Document] = &[
-    Document {
+const UNREADABLE: &[Unreadable] = &[
+    Unreadable {
         suffix: "docx",
         what: "a Word document",
+        becomes: Becomes::Text,
         converters: &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
                 extracts: true,
+                measure: None,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
                 extracts: false,
+                measure: None,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
                 extracts: false,
+                measure: None,
             },
         ],
     },
-    Document {
+    Unreadable {
         suffix: "odt",
         what: "an OpenDocument text document",
+        becomes: Becomes::Text,
         converters: &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
                 extracts: true,
+                measure: None,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
                 extracts: false,
+                measure: None,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
                 extracts: false,
+                measure: None,
             },
         ],
     },
-    Document {
+    Unreadable {
         suffix: "rtf",
         what: "a rich text document",
+        becomes: Becomes::Text,
         converters: &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
                 extracts: true,
+                measure: None,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
                 extracts: false,
+                measure: None,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
                 extracts: false,
+                measure: None,
             },
         ],
     },
-    Document {
+    Unreadable {
         suffix: "epub",
         what: "an e-book",
+        becomes: Becomes::Text,
         converters: &[Converter {
             program: "pandoc",
             arguments: "{} --extract-media=converted-media -o converted.md",
             extracts: true,
+            measure: None,
         }],
     },
-    Document {
+    Unreadable {
         suffix: "xlsx",
         what: "a spreadsheet",
+        becomes: Becomes::Text,
         converters: &[
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to csv {}",
                 extracts: false,
+                measure: None,
             },
             Converter {
                 program: "xlsx2csv",
                 arguments: "{} converted.csv",
                 extracts: false,
+                measure: None,
             },
         ],
     },
-    Document {
+    Unreadable {
         suffix: "xls",
         what: "a spreadsheet",
+        becomes: Becomes::Text,
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to csv {}",
             extracts: false,
+            measure: None,
         }],
     },
-    Document {
+    Unreadable {
         suffix: "ods",
         what: "a spreadsheet",
+        becomes: Becomes::Text,
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to csv {}",
             extracts: false,
+            measure: None,
         }],
     },
-    Document {
+    Unreadable {
         suffix: "pptx",
         what: "a slide deck",
+        becomes: Becomes::Text,
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to txt {}",
             extracts: false,
+            measure: None,
         }],
     },
-    Document {
+    Unreadable {
         suffix: "odp",
         what: "a slide deck",
+        becomes: Becomes::Text,
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to txt {}",
             extracts: false,
+            measure: None,
         }],
     },
-    Document {
+    Unreadable {
+        suffix: "mp4",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
+        suffix: "mov",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
+        suffix: "mkv",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
+        suffix: "webm",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
+        suffix: "avi",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
+        suffix: "m4v",
+        what: "a video",
+        becomes: Becomes::Pictures,
+        converters: SAMPLED,
+    },
+    Unreadable {
         suffix: "pdf",
         what: "a PDF",
+        becomes: Becomes::Text,
         converters: &[
             Converter {
                 program: "pdftotext",
                 arguments: "{} converted.txt",
                 extracts: false,
+                measure: None,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
                 extracts: false,
+                measure: None,
             },
         ],
     },
@@ -253,49 +388,92 @@ const CONVERTED: &[Document] = &[
 /// what somebody meant by it, not what the file is.
 fn conversion(requested: &str, named: impl Fn(&str) -> Option<String>) -> Option<String> {
     let suffix = requested.rsplit_once('.')?.1.to_ascii_lowercase();
-    let document = CONVERTED.iter().find(|known| known.suffix == suffix)?;
-    let what = document.what;
+    let known = UNREADABLE.iter().find(|one| one.suffix == suffix)?;
+    let what = known.what;
 
-    let found = document
-        .converters
-        .iter()
-        .find_map(|converter| Some((named(converter.program)?, converter)));
-
-    if let Some((program, converter)) = found {
-        let spelled = if program.contains(' ') {
-            format!("\"{program}\"")
-        } else {
-            program
+    // A converter whose measurement is missing is passed over rather than
+    // suggested half-spelled, so `found` answers for the whole command line and
+    // not only its first word.
+    let found = known.converters.iter().find_map(|converter| {
+        let program = command(&named(converter.program)?, converter.arguments, requested);
+        let measured = match &converter.measure {
+            Some(measure) => Some(command(
+                &named(measure.program)?,
+                measure.arguments,
+                requested,
+            )),
+            None => None,
         };
-        let arguments = converter.arguments.replace("{}", requested);
+        Some((program, measured, converter))
+    });
+
+    let Some((command, measured, converter)) = found else {
+        let programs = known
+            .converters
+            .iter()
+            .map(|converter| converter.program)
+            .collect::<Vec<_>>()
+            .join(" or ");
+        // The measuring program is left out: it arrives with the one named, and
+        // an answer about what to install should name one thing to install.
+        let doing = match known.becomes {
+            Becomes::Text => "converts one",
+            Becomes::Pictures => "pulls frames out of one",
+        };
+        return Some(format!(
+            ". It is {what}, and nothing installed here {doing} — {programs} would."
+        ));
+    };
+
+    Some(match known.becomes {
         // Said only where the converter actually found is one that extracts. A
         // document whose whole content is a diagram converts to a heading and a
         // caption, and the pictures beside the text are the half that survives
         // it — but promising them of `soffice`, which reduces a picture to its
         // alt text, would send the model looking for files that are not there.
-        let extracted = if converter.extracts {
+        Becomes::Text => {
+            let extracted = if converter.extracts {
+                format!(
+                    ", and its pictures come out beside it into {EXTRACTED_INTO}/ \
+                     where each one can be attached to a prompt and looked at"
+                )
+            } else {
+                String::new()
+            };
             format!(
-                ", and its pictures come out beside it into {EXTRACTED_INTO}/ \
-                 where each one can be attached to a prompt and looked at"
+                ". It is {what} — convert it and read what comes out{extracted}, \
+                 for example: {command}"
             )
-        } else {
-            String::new()
-        };
-        return Some(format!(
-            ". It is {what} — convert it and read what comes out{extracted}, \
-             for example: {spelled} {arguments}"
-        ));
-    }
+        }
+        // Two commands and a rule for choosing between the rates they allow,
+        // because the wrong rate is not an error — it is a directory of files
+        // covering the first twenty seconds of a two-hour recording, and
+        // finding that out costs the turn that ran it.
+        Becomes::Pictures => {
+            let measured = measured.unwrap_or_default();
+            format!(
+                ". It is {what} — nothing here reads one and everything here reads \
+                 a picture, so pull frames out and attach those. {measured} says how \
+                 long it is, and {command} takes one a second and stops at twenty, \
+                 which is about as many as one request carries. Sample a long \
+                 recording sparsely rather than sampling the start of it."
+            )
+        }
+    })
+}
 
-    let programs = document
-        .converters
-        .iter()
-        .map(|converter| converter.program)
-        .collect::<Vec<_>>()
-        .join(" or ");
-    Some(format!(
-        ". It is {what}, and nothing installed here converts one — {programs} would."
-    ))
+/// One command line, with the file's own name in it and the program spelled the
+/// way a shell here would have to be told.
+///
+/// Quoted where the spelling has a space in it, which is what an absolute path
+/// under `Program Files` is and what a bare name never is.
+fn command(program: &str, arguments: &str, requested: &str) -> String {
+    let spelled = if program.contains(' ') {
+        format!("\"{program}\"")
+    } else {
+        program.to_owned()
+    };
+    format!("{spelled} {}", arguments.replace("{}", requested))
 }
 
 /// The root `description` is the tool's own; everything below it describes the
@@ -305,7 +483,7 @@ fn conversion(requested: &str, named: impl Fn(&str) -> Option<String>) -> Option
 /// which is the same reason every ceiling below is written beside the argument
 /// that reaches it: a bound met is one wasted call, and a bound read is none.
 const SCHEMA: &str = r#"{
-  "description": "Reads a text file from the workspace and returns it with line numbers. Only text: a Word document, spreadsheet, slide deck, e-book or PDF must be converted with a command first, and the answer says which one where the file's name gives it away.",
+  "description": "Reads a text file from the workspace and returns it with line numbers. Only text: a Word document, spreadsheet, slide deck, e-book, PDF or video must be turned into text or pictures by a command first, and the answer says which one where the file's name gives it away.",
   "type": "object",
   "properties": {
     "path": {
@@ -816,7 +994,7 @@ mod tests {
     /// reader only finds out about after running it.
     #[test]
     fn every_converter_that_extracts_asks_for_the_directory_the_sentence_names() {
-        for document in CONVERTED {
+        for document in UNREADABLE {
             for converter in document.converters {
                 assert_eq!(
                     converter.extracts,
@@ -825,6 +1003,68 @@ mod tests {
                     converter.program,
                     converter.arguments
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn a_video_says_to_pull_frames_out_and_attach_them() {
+        let said = conversion("clip.mp4", |program| Some(program.to_owned()))
+            .expect("an mp4 is a file this knows");
+
+        assert_eq!(
+            said,
+            ". It is a video \u{2014} nothing here reads one and everything here reads a \
+             picture, so pull frames out and attach those. ffprobe -v error \
+             -show_entries format=duration -of csv=p=0 clip.mp4 says how long it is, \
+             and ffmpeg -i clip.mp4 -vf fps=1 -frames:v 20 frame-%03d.jpg takes one a \
+             second and stops at twenty, which is about as many as one request \
+             carries. Sample a long recording sparsely rather than sampling the start \
+             of it."
+        );
+    }
+
+    #[test]
+    fn a_video_with_nothing_to_sample_it_names_the_one_program_to_install() {
+        let said = conversion("clip.mkv", |_| None).expect("an mkv is a file this knows");
+
+        assert_eq!(
+            said,
+            ". It is a video, and nothing installed here pulls frames out of one \
+             \u{2014} ffmpeg would."
+        );
+    }
+
+    /// Half a suggestion is worse than the next one down, and worse still than
+    /// none: a rate picked without a duration is picked blind, and the model
+    /// finds that out by filling a directory.
+    #[test]
+    fn a_converter_whose_measure_is_missing_is_not_suggested_at_all() {
+        let said = conversion("clip.mov", |program| {
+            (program == "ffmpeg").then(|| program.to_owned())
+        })
+        .expect("a mov is a file this knows");
+
+        assert!(!said.contains("frames:v"), "said: {said}");
+        assert!(said.ends_with("ffmpeg would."), "said: {said}");
+    }
+
+    /// The rate and the cap are the two numbers that decide whether running the
+    /// suggestion is worth a turn, and both live in a template rather than in
+    /// code. A row that lost either would still produce a fluent sentence, and
+    /// the sentence would name a command that fills a directory.
+    #[test]
+    fn every_sampling_suggestion_carries_a_rate_a_cap_and_something_to_measure_with() {
+        for known in UNREADABLE {
+            if !matches!(known.becomes, Becomes::Pictures) {
+                continue;
+            }
+            assert!(!known.converters.is_empty(), "{} has none", known.suffix);
+            for converter in known.converters {
+                let arguments = converter.arguments;
+                assert!(arguments.contains("fps="), "{arguments}");
+                assert!(arguments.contains("-frames:v "), "{arguments}");
+                assert!(converter.measure.is_some(), "{}", converter.program);
             }
         }
     }

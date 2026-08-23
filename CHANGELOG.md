@@ -36,6 +36,12 @@ text in `converted-media/`, and each is a file you can name in a prompt on a
 model that reads pictures. A converter that flattens a picture into its caption
 promises nothing about one.
 
+**A video is read as the frames pulled out of it.** `read` refuses one by
+naming `ffmpeg` to sample it and `ffprobe` to say how long it is first, so the
+rate is chosen from the duration rather than guessed — and the frames that come
+out are pictures, which every model crucible offers can look at. Both are found
+where a package manager documents its shims, not only on the `PATH`.
+
 ## [0.19.0] - 2026-08-23
 
 ### Added
