@@ -45,16 +45,29 @@ const ALL: &str = "All";
 /// Both halves named, because the line reads all four names a row has and
 /// nothing on screen says which one a match came off. Somebody who only knew it
 /// searched models would never try a vendor's name in it.
-const HINT: &str = "a model, or whoever serves it";
+const HINT: &str = "a model, or a vendor";
 
 /// What the pane of models says where the query left nothing on it.
-const NOTHING: &str = "nothing here answers to that";
+///
+/// The way out is named beside the fact, because an empty pane under a line
+/// with words in it is the one place here where a reader can be stuck without
+/// knowing which key gets them out. Built from the glyph set for the dash: a
+/// terminal without one draws a hollow square in the middle of the sentence.
+fn nothing(glyphs: Glyphs) -> String {
+    format!("nothing matches {} backspace to widen it", glyphs.dash())
+}
 
 /// What the row of a model whose provider serves no rung says at its end.
 const NO_RUNG: &str = "no rung";
 
 /// What the strip says where the marked model serves no rung.
-const SERVES_NONE: &str = "this model takes none";
+///
+/// Whose doing it is, and not the shelf's: a rung is offered by whoever serves
+/// the model, so a strip that only said *none* would read as something this
+/// panel had decided.
+fn serves_none(glyphs: Glyphs) -> String {
+    format!("no rung {} its vendor serves none", glyphs.dash())
+}
 
 /// What the strip says while a turn runs.
 ///
@@ -246,7 +259,10 @@ fn named<T: Terminal>(
         provider
     };
 
-    taken(provider, &model, renderer, runner, terms)
+    // Dropped for the same reason `apply` drops it: `/model provider/name`
+    // names one thing and takes it or says why not, and there is no second half
+    // waiting behind this one.
+    taken(provider, &model, renderer, runner, terms).map(drop)
 }
 
 /// The keys, under the panes they work on, long and short.
@@ -259,10 +275,13 @@ fn named<T: Terminal>(
 fn keys(glyphs: Glyphs) -> (String, String) {
     let (up, down) = glyphs.walking();
     let (left, right) = glyphs.stepping();
+    let dot = glyphs.dot();
 
     (
-        format!("{up}{down} model   {left}{right} effort   tab pane   enter take   esc leave"),
-        format!("{up}{down} {left}{right} tab enter esc"),
+        format!(
+            "tab pane {dot} {up}{down} model {dot} {left}{right} effort {dot} enter takes both {dot} esc to cancel"
+        ),
+        format!("tab {dot} {up}{down} {dot} {left}{right} {dot} enter {dot} esc"),
     )
 }
 
@@ -292,13 +311,27 @@ fn stood<T: Terminal>(
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
     // the same way is one that can be walked without reading each of them.
-    let now = match current {
+    // Labelled, because a slug on its own at the far end of the title row is a
+    // name with nothing saying what it is the name of. The rung rides with it:
+    // both are what the next turn would be asked under, and the shelf below
+    // offers to change either.
+    let asked = match current {
         "" => NOTHING_ASKED.to_owned(),
-        name => format!("{}/{name}", terms.provider.get().unwrap_or("unselected")),
+        name => {
+            let slug = format!("{}/{name}", terms.provider.get().unwrap_or("unselected"));
+            match track {
+                Track::Offered(Some(effort)) => {
+                    format!("{slug} {} {}", glyphs.dot(), effort.as_str())
+                }
+                _ => slug,
+            }
+        }
     };
+    let now = format!("now  {asked}");
+    let nothing = nothing(glyphs);
     let norung = match track {
-        Track::Offered(_) => SERVES_NONE,
-        Track::Refused => HELD,
+        Track::Offered(_) => serves_none(glyphs),
+        Track::Refused => HELD.to_owned(),
     };
 
     // Opened on the one in force, so the first key moves off a known place
@@ -417,13 +450,14 @@ fn stood<T: Terminal>(
                 providers: &serving,
                 provider: standing.provider,
                 models: &stocked,
+                held: all.len(),
                 model: standing.model,
                 rungs: &rungs,
                 rung: standing.rung,
-                nothing: NOTHING,
+                nothing: &nothing,
                 pane: standing.pane,
                 keys: (&long, &short),
-                norung,
+                norung: &norung,
             };
 
             (
@@ -452,13 +486,19 @@ fn applied<T: Terminal>(
     runner: &mut Runner,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    taken(
+    // A rung is asked of a model, so a model that was refused has no rung to
+    // ask for. Going on would reach `/effort`, which finds the session still
+    // without a provider and says it has no model at all -- a second warning,
+    // about a second missing thing, under the one that named the real one.
+    if !taken(
         selected.provider,
         selected.model.name,
         renderer,
         runner,
         terms,
-    )?;
+    )? {
+        return Ok(());
+    }
 
     let Some(effort) = rung.and_then(|at| selected.model.rungs.get(at).copied()) else {
         return Ok(());
@@ -491,21 +531,31 @@ pub(super) fn apply<T: Terminal>(
     selected: Served,
     name: &str,
 ) -> Result<(), Fatal> {
-    taken(selected, name, renderer, runner, terms)
+    // The answer is dropped rather than passed on: there is no rung behind this
+    // caller to stop, and the line saying what went wrong has already been
+    // drawn by the time it comes back.
+    taken(selected, name, renderer, runner, terms).map(drop)
 }
 
+/// Whether the model is the one the next turn will be asked for.
+///
+/// `false` is a provider that could not be reached, said in one line and
+/// nothing applied. It is not an error to the caller -- the reader has been
+/// told, and the session is exactly where it was -- but it is the difference
+/// between a model taken and a model refused, and only the caller knows what it
+/// was about to do next.
 fn taken<T: Terminal>(
     selected: Served,
     name: &str,
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
     terms: &Terms,
-) -> Result<(), Fatal> {
+) -> Result<bool, Fatal> {
     let provider = selected.name;
     if terms.provider.get() != Some(provider) {
         let set = match (terms.serving)(selected, &terms.logins.read()) {
             Ok(set) => set,
-            Err(problem) => return say(renderer, &format!("! {problem}")),
+            Err(problem) => return refused(renderer, &problem).map(|()| false),
         };
         runner.serve(set.provider);
         terms.provider.set(Some(provider));
@@ -533,7 +583,7 @@ fn taken<T: Terminal>(
     let written = remember::asking(&terms.choosing, provider)
         .and_then(|()| remember::choosing(&terms.choosing, provider, name));
     let Err(problem) = written else {
-        return Ok(());
+        return Ok(true);
     };
 
     renderer.commit(&format!("! {problem}"))?;
@@ -543,6 +593,23 @@ fn taken<T: Terminal>(
     let rows: Vec<Row> = fold("asked for this session only", renderer.columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))
+        .collect();
+
+    renderer.present(&rows)?;
+    Ok(true)
+}
+
+/// Says why nothing was taken, in the one colour this program keeps for that.
+///
+/// Louder than the quiet line a command answers with, because the two say
+/// opposite things: a quiet line is a command that did what was asked, and this
+/// is one that did not. Wrapped rather than clipped -- a provider's name and the
+/// two ways out of this are the whole sentence, and half of it is advice to
+/// nowhere.
+fn refused<T: Terminal>(renderer: &mut Renderer<T>, problem: &Fatal) -> Result<(), Fatal> {
+    let rows: Vec<Row> = fold(&format!("! {problem}"), renderer.columns())
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Trouble, row))
         .collect();
 
     Ok(renderer.present(&rows)?)
@@ -605,16 +672,16 @@ mod tests {
         assert_eq!(
             keys(Glyphs::Unicode),
             (
-                "\u{2191}\u{2193} model   \u{2190}\u{2192} effort   tab pane   enter take   esc leave"
+                "tab pane \u{b7} \u{2191}\u{2193} model \u{b7} \u{2190}\u{2192} effort \u{b7} enter takes both \u{b7} esc to cancel"
                     .to_owned(),
-                "\u{2191}\u{2193} \u{2190}\u{2192} tab enter esc".to_owned(),
+                "tab \u{b7} \u{2191}\u{2193} \u{b7} \u{2190}\u{2192} \u{b7} enter \u{b7} esc".to_owned(),
             )
         );
         assert_eq!(
             keys(Glyphs::Ascii),
             (
-                "^v model   <> effort   tab pane   enter take   esc leave".to_owned(),
-                "^v <> tab enter esc".to_owned(),
+                "tab pane - ^v model - <> effort - enter takes both - esc to cancel".to_owned(),
+                "tab - ^v - <> - enter - esc".to_owned(),
             )
         );
     }
@@ -628,6 +695,23 @@ mod tests {
                 name: "old".into(),
                 max_tokens: 17,
                 window: Some(99),
+                accepts: None,
+                system: None,
+                effort: None,
+            },
+            Session::nowhere(),
+        )
+    }
+
+    /// A runner with nothing to ask, as a run with no credential anywhere gets.
+    fn unasked() -> crucible_runner::Runner {
+        crucible_runner::Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            RunnerModel {
+                name: "".into(),
+                max_tokens: 17,
+                window: None,
                 accepts: None,
                 system: None,
                 effort: None,
@@ -650,6 +734,36 @@ mod tests {
             .expect("a served model");
 
         Selected { provider, model }
+    }
+
+    #[test]
+    fn a_row_whose_provider_cannot_be_reached_takes_nothing_and_says_it_once() {
+        // One sentence, and the one that names what is actually missing. Going
+        // on to the rung reaches `/effort`, which finds no provider set and
+        // says the session has no model at all -- a second warning, about a
+        // different missing thing, printed under the first and contradicting
+        // the model still in force.
+        // The machine the reader is on: no key for anything, so no provider was
+        // resolved and no model was ever asked for.
+        let terms = plain();
+        terms.provider.set(None);
+        let mut runner = unasked();
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        applied(
+            row("moonshot", "k3"),
+            Some(0),
+            &mut renderer,
+            &mut runner,
+            &terms,
+        )
+        .expect("the row to be answered");
+
+        let written = renderer.terminal().written().to_string();
+        assert!(written.contains("! "), "{written}");
+        assert!(!written.contains("No model selected"), "{written}");
+        assert!(!written.contains("No models available"), "{written}");
+        assert!(runner.model().is_empty(), "{}", runner.model());
     }
 
     #[test]
