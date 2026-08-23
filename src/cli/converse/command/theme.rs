@@ -198,7 +198,7 @@ pub(super) fn run<T: Terminal>(
     }
 
     if keys {
-        match chosen(renderer, terms)? {
+        match chosen(renderer, terms, &mut |_| Ok(()))? {
             Picked::Took(Chose::Interface(at)) => {
                 let (choice, name, _) = EVERY.get(at).copied().unwrap_or(EVERY[0]);
                 return taken(choice, name, renderer, terms);
@@ -213,6 +213,43 @@ pub(super) fn run<T: Terminal>(
     }
 
     listed(renderer, terms)
+}
+
+/// The panel, stood while a turn runs behind it.
+///
+/// The pick is read and applied exactly as between turns — the same `chosen`,
+/// the same `taken` — with the transcript kept moving by `while_waiting`, run
+/// once a pass so the turn's text goes on arriving under the picker.
+pub(super) fn live<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    said: &str,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<(), Fatal> {
+    // A theme named on the line is taken without the panel, the way it is
+    // between turns — the panel is for choosing, and a name is already chosen.
+    if !said.is_empty() {
+        if let Some((choice, name, _)) = EVERY.iter().find(|(_, name, _)| *name == said) {
+            return taken(*choice, name, renderer, terms);
+        }
+        if crucible_tui::syntax::every_theme()
+            .iter()
+            .any(|named| named == said)
+        {
+            return reading(said, renderer, terms);
+        }
+        return mistyped(said, renderer, terms);
+    }
+
+    match chosen(renderer, terms, while_waiting)? {
+        Picked::Took(Chose::Interface(at)) => {
+            let (choice, name, _) = EVERY.get(at).copied().unwrap_or(EVERY[0]);
+            taken(choice, name, renderer, terms)
+        }
+        Picked::Took(Chose::Code(named)) => reading(&named, renderer, terms),
+        Picked::Left => say(renderer, LEFT),
+        Picked::Cramped => listed(renderer, terms),
+    }
 }
 
 /// What came off the panel.
@@ -295,7 +332,11 @@ const LIST: usize = 40;
 const BETWEEN: usize = 3;
 
 /// Stands the panel where the prompt box was, and says what came off it.
-fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Picked, Fatal> {
+fn chosen<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Picked, Fatal> {
     let was = terms.style();
     let ground = was.ground();
     let themes = crucible_tui::syntax::every_theme();
@@ -313,7 +354,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
         themes,
     };
 
-    let ended = region::stand(
+    let ended = region::stand_while(
         renderer,
         // The preview: both axes as the mark is standing on them, so moving on
         // either one visibly changes the column on the right.
@@ -324,6 +365,7 @@ fn chosen<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<Pick
             (laid(standing, style, columns, room), None)
         },
         walking,
+        while_waiting,
     )?;
 
     // Nothing to put back: the preview never writes `terms.style`. What the

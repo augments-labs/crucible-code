@@ -726,6 +726,12 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         // command can change, because `/login` is what fills it in on a machine
         // that started with nothing.
         provider: Cell::new(launch.serving.map(|one| one.name)),
+        // Nothing is picked mid-turn at startup: the slot is empty until a
+        // `/model` over a running turn fills it.
+        pending_model: Cell::new(None),
+        // And no mode is stepped to mid-turn: the slot is empty until a
+        // shift+tab over a running turn fills it.
+        pending_mode: Cell::new(None),
         settings: settings.clone(),
         choosing: crucible_config::user(&home),
 

@@ -90,12 +90,39 @@ pub(super) fn stand<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
+    stand_while(renderer, style, state, laid, keys, |_| Ok(()))
+}
+
+/// [`stand`], with something to do on each pass before a key is waited on.
+///
+/// Between turns there is nothing to do — nothing moves while nobody types —
+/// so `stand` passes a no-op. Mid-turn there is: the worker goes on reporting
+/// while a panel stands, and the transcript would freeze over the box it opened
+/// from if nothing drained it. The hook is that drain, run once per pass so a
+/// turn's text keeps arriving behind what it is standing under.
+#[allow(clippy::too_many_arguments)]
+// Six is the one over clippy's limit, and each is a distinct thing the loop
+// owns: the terminal, the style under the mark, the state, the layout, the
+// keys, and the drain a mid-turn panel runs to keep the transcript moving.
+// Bundling them into a struct would name them once and force every caller to
+// build it — several callers, one argument — for a type that exists only to
+// satisfy the count.
+pub(super) fn stand_while<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+    while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Ended, Fatal> {
     let mut changed = true;
+    let mut while_waiting = while_waiting;
 
     loop {
+        while_waiting(renderer)?;
         if changed {
             let (rows, caret) = laid(state, renderer.columns(), renderer.rows());
             // Asked per frame rather than taken once, because one caller
@@ -201,6 +228,11 @@ fn drawn<T: Terminal>(
         column: 0,
     });
 
+    // The row beside the box is the panel's too while the panel stands: the
+    // box is covered, and the `transcript map` door on it reports on a screen
+    // the panel owns, so the band goes blank with the box. Up on the way in,
+    // back on the way out — covered and uncovered in the same place the box is.
+    renderer.cover_map()?;
     renderer.live(&[], Caret::default(), style.palette())?;
     renderer.under(rows, Some(caret), style.palette())?;
     Ok(true)

@@ -237,6 +237,125 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
 }
 
 #[test]
+fn a_command_that_cannot_run_mid_turn_says_so_on_a_panel() {
+    // The answer is long enough that the turn is still running when the
+    // command is sent: a short one ends first and the command lands at the
+    // at-rest box, which is the between-turns path rather than this one.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("refuse-command-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    // The first word of the answer proves the turn is running: the command is
+    // backgrounded and counted, and the answer to it is still arriving. The
+    // spinner keeps the screen beating, so the text is caught rather than
+    // waited out to a stillness that does not come.
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // `/logout` removes the key the request now in flight is signed with, so
+    // it is the command that must not run mid-turn. What stands instead names
+    // it and says why, over the box and the working row.
+    window.types_and_catches("/logout\r", "/logout");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_theme_panel_opens_while_a_turn_is_still_running() {
+    // The answer is long enough that the turn is still running when the
+    // command is sent. `/theme` moves nothing but the screen, so its picker
+    // opens over the box with the turn going on behind it.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("theme-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    // The first word of the answer proves the turn is running before the
+    // command is sent.
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // The picker stands over the box: its title row is the stable mark, and
+    // the theme list under it is what choosing moves through.
+    window.types_and_catches("/theme\r", "Theme");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
+    // The turn is still running when shift+tab is pressed. The mode the running
+    // turn is decided under cannot change mid-turn — the runner holding it is
+    // on the worker — so the step is held for the next turn, and the row under
+    // the box says which mode that is.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("mode-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // Shift+Tab: from the running mode one step on.
+    window.types_and_catches("\x1b[Z", "allow edits on");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_slash_typed_mid_turn_opens_the_command_list() {
+    // The turn is still running when `/` is typed. The command list the line
+    // opens is the same one the prompt would open between turns, stood above
+    // the box while the turn goes on writing behind it.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("list-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // `/` typed into the box opens the list above it.
+    window.types_and_catches("/", "/clear");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_model_picked_mid_turn_is_confirmed_then_held() {
+    // The answer is long enough that the turn is still running when the
+    // command is sent. `/model` cannot reach the runner on the worker, so its
+    // picker opens over the turn, the consequence of a switch is said and
+    // agreed to, and the pick is held for the turn the loop starts next.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("model-mid-turn", 100, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // The picker opens, then a step down and Enter picks a model that is not
+    // the one in force. What stands next is the consequence, said and asked
+    // about before anything is held.
+    window.types_and_catches("/model\r", "Model");
+    window.types_and_catches("\x1b[B\r", "cached for the current model");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     // A real SGR mouse click opens the control at the bottom right, then a
     // second gesture drags its current place to the first cell. The

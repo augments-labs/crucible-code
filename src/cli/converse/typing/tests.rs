@@ -714,9 +714,17 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Key(Key::Eof)), Meant::Editing(Key::Eof));
     assert_eq!(meant(Pressed::Key(Key::Left)), Meant::Editing(Key::Left));
 
-    for arrived in [Pressed::Up, Pressed::Down, Pressed::Cycle, Pressed::Ignored] {
-        assert_eq!(meant(arrived.clone()), Meant::Ignored, "{arrived:?}");
-    }
+    assert_eq!(meant(Pressed::Ignored), Meant::Ignored);
+
+    // The arrows walk the command list a -started line has open, which is
+    // the one list a running turn can stand. A line that is not one has no
+    // list, and the arm it reaches leaves the box alone.
+    assert_eq!(meant(Pressed::Up), Meant::Arrow { back: true });
+    assert_eq!(meant(Pressed::Down), Meant::Arrow { back: false });
+
+    // Shift+Tab is not one of them: a mode stepped to mid-turn is held for the
+    // next turn rather than dropped, which is what  carries here.
+    assert_eq!(meant(Pressed::Cycle), Meant::Cycle);
 }
 
 #[test]
@@ -790,6 +798,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
         Footing {
             turning: &turning,
             planning: &planning,
+            opened_list: &Opened::default(),
         },
         &says,
         Style::plain(),
@@ -828,6 +837,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
         Footing {
             turning: &turning,
             planning: &planning,
+            opened_list: &Opened::default(),
         },
         &says,
         Style::plain(),

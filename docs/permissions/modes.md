@@ -59,14 +59,20 @@ the row is read at all.
 ## Stepping it while you type
 
 <kbd>Shift-Tab</kbd> steps to the next mode and wraps round: `ask`, then
-`allowEdits`, then `fullAccess`, then `ask` again. It is reachable only while a
-prompt is being typed, which is what keeps it from changing anything mid-turn:
-no call is ever decided under a mode other than the one that was on screen when
-the turn started.
+`allowEdits`, then `fullAccess`, then `ask` again. The row under the box says
+which mode that landed in and the box changes colour with it, and the same key
+steps out again — a mode reached by one key is left by two more.
 
-Every step takes effect on the press, `fullAccess` included. The row under the
-box says which mode that landed in and the box changes colour with it, and the
-same key steps out again — a mode reached by one key is left by two more.
+While a prompt is being typed, every step takes effect on the press, and it is
+the next call that is decided under it. While a turn is running, a step is held
+for the turn that starts after: the turn in flight was decided under the mode
+that was on screen when it began, and nothing about it is reopened mid-turn. So
+no call is ever decided under a mode other than the one that was on screen when
+its turn started — the step you make over a running turn is the mode the *next*
+one runs under.
+
+A step changes one thing and no others. The rules you wrote hold exactly as
+they did, and anything already allowed for the session stays allowed.
 
 A step changes one thing and no others. The rules you wrote hold exactly as
 they did, and anything already allowed for the session stays allowed.

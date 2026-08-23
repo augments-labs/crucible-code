@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+60x24 cursor 22,0 scrolled 0
+|…/and-something-below-that-again/workspace                  |
+|────────────────────────────────────────────────────────────|
+|                                                            |
+|› interface     code   (← → )                               |
+|                                                            |
+|Theme                                                       |
+|                                                            |
+|› auto                                                      |
+|  follow the terminal's own background                      |
+|                                                            |
+|  dark                                                      |
+|  for a dark background                                     |
+|  · 4 more                                                  |
+|                                                            |
+| 31   fn summarize(users: &[User]) -> String {              |
+| 32 -     let active = users.len();                         |
+| 32 +     let active = users.iter().filter(alive).count();  |
+| 33       format!("{active} active") // the answer          |
+| 34   }                                                     |
+|                                                            |
+|1337                                                        |
+|                                                            |
+|enter takes it · esc puts back the one in force             |
+|                                                            |

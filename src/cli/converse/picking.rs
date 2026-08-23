@@ -104,7 +104,19 @@ impl Picked {
 pub(super) fn pick<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    panel: Panel<'_>,
+) -> Result<Picked, Fatal> {
+    pick_while(renderer, style, panel, &mut |_| Ok(()))
+}
+
+/// [`pick`], with the turn's drain run once a pass so the transcript keeps
+/// moving while the panel stands over a turn. Between turns there is nothing
+/// to drain, so `pick` passes a no-op.
+pub(super) fn pick_while<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
     mut panel: Panel<'_>,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Picked, Fatal> {
     let count = panel.shown.len();
     if count == 0 {
@@ -113,7 +125,7 @@ pub(super) fn pick<T: Terminal>(
 
     let mut at = panel.chosen.min(count - 1);
 
-    let ended = region::stand(
+    let ended = region::stand_while(
         renderer,
         |_| style,
         &mut at,
@@ -122,6 +134,7 @@ pub(super) fn pick<T: Terminal>(
             (panel.within(columns, rows, style.glyphs()), None)
         },
         |arrived, at| moving(arrived, at, count),
+        while_waiting,
     )?;
 
     Ok(Picked::ended(ended, at))

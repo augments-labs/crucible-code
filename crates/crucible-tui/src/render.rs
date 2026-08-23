@@ -955,6 +955,12 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn settle(&mut self) -> Result<(), TerminalError> {
+        // Whatever covered the bottom row comes down with the panel being
+        // torn down: the map was only unpainted for the panel's length, never
+        // closed, so it returns as it was. A no-op where nothing was covered —
+        // the row is already what it is painted as.
+        self.map.cover(false);
+
         // Text held back for a shape that never arrived is text, and this is
         // the last moment it can be written: the reader below is about to be
         // dropped, and with it anything it was still holding.
@@ -1438,11 +1444,19 @@ impl<T: Terminal> Renderer<T> {
         }
         self.standing.prompt = prompt;
 
-        let map = self.map.row().cloned().unwrap_or_else(|| {
-            transcript_map::resting(self.size.columns, self.glyphs, self.map_pointed)
-        });
+        // A panel stood over the prompt takes the row beside it too: the box
+        // is covered, and a door that reports on the screen the panel owns
+        // would read as belonging to a screen that is not the one standing. The
+        // map is only unpainted, not closed, and returns as it was.
         if let Some(at) = (!bands.foot.is_empty()).then(|| bands.foot.end - 1) {
-            self.painted.paint(at, &map, &self.palette);
+            if self.map.covered() {
+                self.painted.blank(at);
+            } else {
+                let map = self.map.row().cloned().unwrap_or_else(|| {
+                    transcript_map::resting(self.size.columns, self.glyphs, self.map_pointed)
+                });
+                self.painted.paint(at, &map, &self.palette);
+            }
         }
 
         let (row, column) = self.parked(&bands);
@@ -1457,6 +1471,32 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
+    }
+
+    /// Takes the bottom row for a standing panel, painting it blank.
+    ///
+    /// Called as a panel goes up and its reverse as it comes down, so the
+    /// `transcript map` door never shares the band with a panel that owns the
+    /// rest of the bottom. The map is not closed, only unpainted for the
+    /// panel's length.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError`] if the frame could not be written.
+    pub fn cover_map(&mut self) -> Result<(), TerminalError> {
+        self.map.cover(true);
+        self.map_pointed = false;
+        self.draw()
+    }
+
+    /// Returns the bottom row, with the panel it was covered for gone.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError`] if the frame could not be written.
+    pub fn uncover_map(&mut self) -> Result<(), TerminalError> {
+        self.map.cover(false);
+        self.draw()
     }
 
     /// Where the cursor goes, in window rows and columns.

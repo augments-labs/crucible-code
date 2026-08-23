@@ -72,6 +72,8 @@ pub(super) fn plain() -> Terms {
         // file inside the same absent tree so nothing a test types reaches a
         // configuration anybody keeps.
         provider: Cell::new(Some("anthropic")),
+        pending_model: Cell::new(None),
+        pending_mode: Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: unwritten.join("config.json"),
 

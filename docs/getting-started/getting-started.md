@@ -617,6 +617,21 @@ this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
 
+### A command typed while a turn runs
+
+Most commands are for the space between turns, but a few can act over a running
+one. Typing `/` while a turn runs opens the same command list the prompt opens,
+stood above the box, and the arrows walk it as they do there. What happens on
+Enter depends on the command:
+
+- **`/theme` and `/help`** are screen-only, and run at once, panel and all,
+  with the transcript going on behind them.
+- **`/model`** cannot reach the runner answering this turn, so it is picked and
+  confirmed now but held for the turn that starts after.
+- The rest — `/clear`, `/logout`, `/resume` and the like — move the session
+  itself, which a running turn owns, so they are refused and say so on a panel
+  rather than act partway through one.
+
 `/theme` stands a list of themes where the prompt box was, with a specimen
 beside it drawn in whatever your marks are standing on. Moving a mark redraws
 it, so the choice is made by looking rather than by reading a name. Enter takes

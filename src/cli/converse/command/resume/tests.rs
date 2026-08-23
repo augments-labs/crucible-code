@@ -63,6 +63,8 @@ fn terms(sample: &Sample) -> Terms {
         putting: crate::cli::seen::Putting::new(),
         leaving: crucible_tools::Background::new(),
         provider: std::cell::Cell::new(Some("anthropic")),
+        pending_model: std::cell::Cell::new(None),
+        pending_mode: std::cell::Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
