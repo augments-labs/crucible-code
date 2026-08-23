@@ -549,3 +549,93 @@ fn the_whole_shelf_under_the_pointer() {
 
     insta::assert_snapshot!(picture(&shelf.within(100, 30, Glyphs::Unicode), 100));
 }
+
+#[test]
+fn nothing_a_pane_says_about_itself_is_something_to_point_at() {
+    // Three rows that are not models: the line saying a query matched nothing,
+    // the count of what is scrolled past, and the blanks below either. A ground
+    // under one of them offers a row that answers to nothing, which is a worse
+    // lie than no ground at all.
+    let providers = serving();
+    let crowded = many();
+
+    for (models, at) in [(Vec::new(), 0), (crowded.clone(), 0), (crowded, 20)] {
+        let mut shelf = shelf(&providers, &models);
+        shelf.pointer = Some((BODY + at, 40));
+        let rows = shelf.within(100, 30, Glyphs::Unicode);
+        let row = rows.get(BODY + at).expect("a row of the pane");
+
+        // The one case that is a model: a crowded shelf's first row.
+        let takeable = !models.is_empty() && at == 0;
+        assert_eq!(
+            row.kinds().any(|slot| slot == Slot::Pointed),
+            takeable,
+            "{at}: {:?}",
+            row.text()
+        );
+    }
+}
+
+#[test]
+fn the_folded_strip_of_providers_is_read_rather_than_pointed_at() {
+    // Folded, the providers are a row of words rather than a pane of rows, and
+    // a ground under one word would be a rectangle the width of that word --
+    // which is the ragged edge the whole-column rule exists to refuse. It is
+    // walked with tab and the arrows there, as it always was.
+    let providers = serving();
+    let models = stocked();
+
+    for at in [HEADER, HEADER + 1] {
+        let mut shelf = shelf(&providers, &models);
+        shelf.pointer = Some((at, 5));
+        let rows = shelf.within(58, 24, Glyphs::Unicode);
+        let row = rows.get(at).expect("a row of the folded shelf");
+
+        assert!(
+            row.kinds().all(|slot| slot != Slot::Pointed),
+            "{at}: {:?}",
+            row.text()
+        );
+    }
+}
+
+#[test]
+fn a_pointer_anywhere_at_any_width_draws_a_shelf_that_still_fits() {
+    // The pointer is a place in a window that has just been resized, so every
+    // width has to survive being pointed at everywhere -- including the widths
+    // where a pane is too narrow to hold one and the columns it would have been
+    // in belong to something else.
+    let providers = serving();
+    let models = many();
+
+    // The widths either side of every decision the layout makes, rather than
+    // every width: what a pointer changes is which slot a span takes and never
+    // how wide it is, so what is being watched here is the arithmetic that
+    // decides which pane a column is in -- and that only turns over at the
+    // folding width and at the edges of the panes.
+    let widths = [
+        NARROWEST,
+        NARROWEST + 1,
+        FOLDS_AT - 1,
+        FOLDS_AT,
+        FOLDS_AT + 1,
+        100,
+        120,
+    ];
+
+    for columns in widths {
+        for at in 0..34 {
+            for column in [0, 1, SERVES, SERVES + 1, SERVES + 2, columns] {
+                let mut shelf = shelf(&providers, &models);
+                shelf.pointer = Some((at, column));
+                for row in shelf.within(columns, 30, Glyphs::Unicode) {
+                    assert!(
+                        row.columns() <= columns,
+                        "{columns} columns, pointed at {at}:{column}: {:?}",
+                        row.text()
+                    );
+                }
+            }
+        }
+    }
+}
