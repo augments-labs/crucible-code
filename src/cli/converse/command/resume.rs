@@ -154,7 +154,13 @@ fn picking<T: Terminal>(
     // Both of these are what a session picked up on the command line gets, and
     // for the same reason: what it already said, and what it costs to carry,
     // are facts about the session rather than about which way reached it.
-    super::super::replaying::replayed(renderer, runner, &mut held.kept, terms.style())?;
+    super::super::replaying::replayed(
+        renderer,
+        runner,
+        &terms.workspace,
+        &mut held.kept,
+        terms.style(),
+    )?;
     super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
 }
 

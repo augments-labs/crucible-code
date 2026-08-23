@@ -376,7 +376,13 @@ pub(crate) fn converse<T: Terminal>(
     // Before the first prompt, because a session picked up on the command line
     // reaches this loop the same way one picked up by `/resume` does, and the
     // question is about the session rather than about how it was reached.
-    replaying::replayed(renderer, &runner, &mut held.kept, terms.style())?;
+    replaying::replayed(
+        renderer,
+        &runner,
+        &terms.workspace,
+        &mut held.kept,
+        terms.style(),
+    )?;
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
@@ -465,7 +471,7 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
-            let attached = attaching::beside(renderer, &runner, &terms.workspace, &said)?;
+            let attached = attaching::beside(renderer, &runner, &terms.workspace, &said, style)?;
             let work = Work::Turn(said, attached);
             let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
             runner = back;
@@ -552,7 +558,8 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let attached = attaching::beside(renderer, &runner, &terms.workspace, &prompt)?;
+        let attached =
+            attaching::beside(renderer, &runner, &terms.workspace, &prompt, terms.style())?;
         let work = Work::Turn(prompt, attached);
         let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
         runner = back;

@@ -1247,3 +1247,85 @@ fn a_count_that_does_not_fit_makes_the_status_row_no_door() {
     assert!(!rows.iter().any(|row| row.text().contains("command")));
     assert!(!box_of.counting(1, rows.len() - 1));
 }
+
+/// One file, as the caller hands it over: what it is called, and what it is.
+const PICTURE: (&str, &str) = ("screenshots/holiday.png", "image");
+
+#[test]
+fn a_file_sent_with_a_line_is_named_on_a_row_under_it() {
+    // Indented past the mark, so the row reads as belonging to the line above
+    // rather than as a second line somebody typed.
+    let rows = Prompt::attached(&[PICTURE], 60, Glyphs::Unicode, false);
+
+    assert_eq!(
+        rows_of(&rows),
+        vec!["  · screenshots/holiday.png — image".to_owned()]
+    );
+}
+
+#[test]
+fn every_file_sent_with_a_line_gets_a_row_of_its_own() {
+    let files = [
+        PICTURE,
+        ("notes/receipt.pdf", "pdf"),
+        ("diagrams/wiring.jpg", "image"),
+    ];
+    let rows = Prompt::attached(&files, 60, Glyphs::Unicode, false);
+
+    assert_eq!(
+        rows_of(&rows),
+        vec![
+            "  · screenshots/holiday.png — image".to_owned(),
+            "  · notes/receipt.pdf — pdf".to_owned(),
+            "  · diagrams/wiring.jpg — image".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn a_line_that_sent_no_files_draws_nothing_under_itself() {
+    assert!(Prompt::attached(&[], 60, Glyphs::Unicode, true).is_empty());
+}
+
+#[test]
+fn the_row_naming_a_file_spells_itself_for_the_set_in_force() {
+    // Both marks it uses differ between the sets, so a terminal without the
+    // glyphs gets a row that still parts the name from what it is.
+    let rows = Prompt::attached(&[PICTURE], 60, Glyphs::Ascii, false);
+
+    assert_eq!(
+        rows_of(&rows),
+        vec!["  - screenshots/holiday.png -- image".to_owned()]
+    );
+}
+
+#[test]
+fn the_row_naming_a_file_takes_the_ground_the_line_above_it_took() {
+    // The file was part of what was sent, so it is on the band rather than
+    // under it: a row that dropped the ground would cut the block in two.
+    for columns in 20..=60 {
+        for row in Prompt::attached(&[PICTURE], columns, Glyphs::Unicode, true) {
+            assert_eq!(
+                row.columns(),
+                columns,
+                "row short of the last column at {columns}: {:?}",
+                row.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_row_naming_a_file_never_reaches_past_the_last_column() {
+    // Clipped rather than wrapped: a path is one thing to read, and a window
+    // too narrow for it is answered by showing what fits.
+    for columns in WIDTHS {
+        for row in Prompt::attached(&[PICTURE], columns, Glyphs::Unicode, false) {
+            assert!(
+                row.columns() <= columns,
+                "row past the last column at {columns}: {:?}",
+                row.text()
+            );
+        }
+    }
+}

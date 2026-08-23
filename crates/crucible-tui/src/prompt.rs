@@ -575,6 +575,60 @@ impl Prompt<'_> {
             .collect()
     }
 
+    /// The rows the files sent with a line are named on, under it.
+    ///
+    /// One row each, indented past the mark so the block reads as one thing
+    /// somebody sent rather than as a stack of separate lines. Each is handed
+    /// over already decided: what the file is called, and what it is. Choosing
+    /// those two words is the caller's, because they come off a domain this
+    /// crate is not told about.
+    ///
+    /// No picture is drawn. What is on screen is this process's to account for,
+    /// and putting an image on it is a separate question nobody has answered.
+    #[must_use]
+    pub fn attached(
+        files: &[(&str, &str)],
+        columns: usize,
+        glyphs: Glyphs,
+        banded: bool,
+    ) -> Vec<Row> {
+        let indent = width::columns(glyphs.caret()) + 1;
+        let dot = glyphs.dot();
+        // The dot and the space after it. Everything past them is the file.
+        let opening = width::columns(dot) + 1;
+        let room = columns.saturating_sub(indent + opening);
+
+        // A window with no room for any of the name draws none of these. The
+        // row would be an indent and a mark saying a file is there without
+        // saying which, and the line above has already degraded to its own mark
+        // by this width — a reader at four columns is not reading either.
+        if room == 0 {
+            return Vec::new();
+        }
+
+        files
+            .iter()
+            .map(|(name, what)| {
+                // Clipped rather than broken: a path is one thing to read, and
+                // a second row of it under the first reads as a second file.
+                let said = format!("{name} {} {what}", glyphs.dash());
+                let mut row = Row::new()
+                    .then(Slot::Prompt, " ".repeat(indent))
+                    .then(Slot::PromptMark, dot)
+                    .then(Slot::Prompt, " ")
+                    .then(Slot::Prompt, width::clip(&said, room).to_owned());
+
+                // The same ground the line above took, for the same reason it
+                // reaches the last column there: the file went with the words,
+                // and a row that dropped the band would cut the block in two.
+                if banded {
+                    row.fill(Slot::Prompt, columns);
+                }
+                row
+            })
+            .collect()
+    }
+
     /// The rows the line is typed on, inside the frame.
     ///
     /// The mark goes on the first of them and the ones under it are indented to

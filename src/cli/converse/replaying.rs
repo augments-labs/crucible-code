@@ -34,7 +34,7 @@
 //! the type, so a call that changed a file replays as the result it returned
 //! rather than as the lines it moved.
 
-use crucible_core::{Message, RECAP};
+use crucible_core::{Message, RECAP, Workspace};
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
@@ -66,6 +66,7 @@ const NOTES: &str = "notes on everything before this";
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
+    workspace: &Workspace,
     kept: &mut Kept,
     style: Style,
 ) -> Result<(), Fatal> {
@@ -76,8 +77,13 @@ pub(super) fn replayed<T: Terminal>(
     renderer.commit("")?;
     renderer.present(&opened(renderer.columns(), style))?;
 
+    let against = Replay {
+        runner,
+        workspace,
+        style,
+    };
     for message in runner.transcript().messages() {
-        said(renderer, runner, kept, message, style)?;
+        said(renderer, &against, kept, message)?;
     }
 
     // Whatever the last message left live, ended: a session whose last turn was
@@ -104,6 +110,19 @@ fn rule(columns: usize, style: Style) -> Row {
     Row::new().then(Slot::Quiet, style.glyphs().horizontal().repeat(columns))
 }
 
+/// What a whole replay is drawn against, and what does not change while it
+/// runs: the session being put back, the root a file it named is named
+/// against, and the dress the renderer is already wearing.
+///
+/// One value rather than three parameters carried down the walk — what changes
+/// from one call to the next is the message, and this is everything that does
+/// not.
+struct Replay<'a> {
+    runner: &'a Runner,
+    workspace: &'a Workspace,
+    style: Style,
+}
+
 /// One message, put back the way it went down.
 ///
 /// The arms are in the order a turn produces them, which is the order the
@@ -111,12 +130,12 @@ fn rule(columns: usize, style: Style) -> Row {
 /// in the same order the turn did, and the picture is the picture.
 fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    against: &Replay<'_>,
     kept: &mut Kept,
     message: &Message,
-    style: Style,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
+    let style = against.style;
 
     match message {
         // The notes a compaction left standing, under a line saying whose words
@@ -132,7 +151,13 @@ fn said<T: Terminal>(
         // What was asked, in the row the box commits when it is typed: the mark,
         // the ground behind it, the break at the column rather than at a space.
         // A reader finds their own words the way they left them.
-        Message::User { text: said, .. } => draw::queued(renderer, said, style)?,
+        Message::User {
+            text: said,
+            attachments,
+        } => {
+            draw::queued(renderer, said, style)?;
+            draw::attached(renderer, attachments, against.workspace, style)?;
+        }
 
         Message::Agent { text, calls, stop } => {
             if !text.trim().is_empty() {
@@ -150,7 +175,7 @@ fn said<T: Terminal>(
             // answered. What the call was about is asked of the tool that owns
             // the arguments, the same way it was asked the first time.
             for call in calls {
-                let line = draw::called(call, &runner.about(call));
+                let line = draw::called(call, &against.runner.about(call));
 
                 // Named before the row that answers it goes down, the same way
                 // the turn named it: the expansion carries the call's line, and
@@ -204,6 +229,13 @@ mod tests {
     use crate::cli::kept::Whole;
 
     use super::*;
+
+    /// The directory the run is in, which is what a replayed path is named
+    /// against. Nothing here attaches a file, so it is only ever the root a
+    /// name is measured from.
+    fn here() -> Workspace {
+        Workspace::open(std::env::current_dir().expect("a directory")).expect("a workspace")
+    }
 
     /// A runner with the real `read` tool on it, so what a call is about is
     /// answered by the tool that owns the arguments rather than invented here.
@@ -269,7 +301,7 @@ mod tests {
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(style.palette());
 
-        replayed(&mut renderer, &runner, &mut Kept::default(), style)
+        replayed(&mut renderer, &runner, &here(), &mut Kept::default(), style)
             .expect("a recording cannot fail");
 
         renderer.terminal().written().to_string()
@@ -282,7 +314,7 @@ mod tests {
         let mut renderer = Renderer::new(Recording::new(columns, 24));
         renderer.wears(Style::plain().palette());
 
-        replayed(&mut renderer, &runner, &mut kept, Style::plain())
+        replayed(&mut renderer, &runner, &here(), &mut kept, Style::plain())
             .expect("a recording cannot fail");
 
         (kept, renderer)

@@ -258,6 +258,17 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
     across("a committed prompt", |columns, glyphs| {
         Prompt::committed(PROSE, columns, glyphs, true)
     });
+    across("the files a prompt sent", |columns, glyphs| {
+        Prompt::attached(
+            &[
+                ("screenshots/holiday.png", "image"),
+                ("notes/the quarterly receipt.pdf", "pdf"),
+            ],
+            columns,
+            glyphs,
+            true,
+        )
+    });
 }
 
 #[test]

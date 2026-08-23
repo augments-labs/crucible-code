@@ -14,6 +14,8 @@ use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use sha2::{Digest as _, Sha256};
 
 use crate::cli::attachable;
+use crate::cli::draw;
+use crate::cli::style::Style;
 
 /// What a prompt turned out to be carrying.
 pub(super) struct Attaching {
@@ -59,11 +61,17 @@ pub(super) fn beside<T: Terminal>(
     runner: &Runner,
     workspace: &Workspace,
     prompt: &str,
+    style: Style,
 ) -> Result<Box<[Attachment]>, TerminalError> {
     let Attaching {
         attachments,
         refusals,
     } = attaching(workspace, runner.provider(), runner.model(), prompt);
+
+    // Before the refusals, because this is the line's own block closing over
+    // what went with it, and a refusal is the next thing to read rather than
+    // part of it.
+    draw::attached(renderer, &attachments, workspace, style)?;
 
     for said in &refusals {
         let columns = renderer.columns();

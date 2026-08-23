@@ -3,14 +3,21 @@ use std::sync::mpsc;
 
 use crucible_core::{
     Ask, Cancel, Delta, DeltaStream, Event, Message, Modalities, Modality, Provider, ProviderError,
-    Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Verdict, Workspace,
+    Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript, Verdict, Workspace,
+    written,
 };
 use crucible_runner::{Model, Runner, Session, Tools};
 
-use crate::cli::fake::Script;
-use crate::cli::sample::Sample;
+use crucible_tui::{Glyphs, Recording, Renderer};
 
-use super::{Attaching, attaching};
+use crate::cli::draw;
+use crate::cli::fake::Script;
+use crate::cli::kept::Kept;
+use crate::cli::sample::Sample;
+use crate::cli::style::Style;
+
+use super::super::replaying::replayed;
+use super::{Attaching, attaching, beside};
 
 /// The eight bytes every PNG starts with.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -368,5 +375,74 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
         runner.transcript().messages().first(),
         Some(&Message::said(prompt)),
         "a prompt that named no file is the message it was before one could",
+    );
+}
+
+/// A runner whose provider answers to a real name and can spell a picture, so
+/// the intersection lets one through. Nothing here sends a request.
+fn sending() -> Runner {
+    Runner::new(
+        Box::new(spelling("anthropic")),
+        Tools::new(),
+        Model {
+            name: "claude-opus-5".into(),
+            max_tokens: 64,
+            window: None,
+            system: None,
+            effort: None,
+        },
+        Session::nowhere(),
+    )
+}
+
+#[test]
+fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_screen() {
+    let sample = Sample::new("attaching-on-both-paths");
+    let workspace = holding(&sample, "holiday.png", PNG);
+    let prompt = "what is in holiday.png";
+    let style = Style::drawn(Glyphs::Unicode);
+
+    // Live: the line goes down, and what went with it goes under it.
+    let runner = sending();
+    let mut live = Renderer::new(Recording::new(120, 24));
+    live.wears(style.palette());
+    draw::queued(&mut live, prompt, style).expect("a recording cannot fail");
+    let attachments =
+        beside(&mut live, &runner, &workspace, prompt, style).expect("a recording cannot fail");
+
+    // Replayed: the same message, back out of a transcript.
+    let mut transcript = Transcript::new();
+    transcript.push(Message::User {
+        text: prompt.into(),
+        attachments,
+    });
+    let back = sending().resuming(transcript);
+    let mut replay = Renderer::new(Recording::new(120, 24));
+    replay.wears(style.palette());
+    replayed(&mut replay, &back, &workspace, &mut Kept::default(), style)
+        .expect("a recording cannot fail");
+
+    // The file is named the way every other path this program prints is: by
+    // what it is called under the root, not by where the root happens to be.
+    let named = "holiday.png \u{2014} image";
+    let live = live.terminal().written().to_string();
+    let replayed = replay.terminal().written().to_string();
+
+    assert!(
+        live.contains(named),
+        "the file went with the line and the line said so: {live:?}",
+    );
+    assert!(
+        replayed.contains(named),
+        "a transcript that remembers says it again on the way back: {replayed:?}",
+    );
+
+    // Wide enough here for the whole resolved path to have fitted, so its
+    // absence is the row having been named against the root rather than the
+    // row having been clipped.
+    let root = written(&sample.root());
+    assert!(
+        !live.contains(&root) && !replayed.contains(&root),
+        "a row names the file, not where the workspace sits: {root:?}",
     );
 }

@@ -43,10 +43,11 @@
 //! the session file get the still line rather than a frame of a moving one.
 
 use std::fmt;
+use std::path::Path;
 
 use crucible_core::{
-    Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason, Summary,
-    ToolCall, ToolId, ToolOutput,
+    Attachment, Change, Compacted, Compacting, Diff, Event, Question, Sensitivity, StopReason,
+    Summary, ToolCall, ToolId, ToolOutput, Workspace, written,
 };
 use crucible_tools::Ended;
 use crucible_tui::{
@@ -299,6 +300,57 @@ pub(crate) fn queued<T: Terminal>(
     renderer.landmark();
     renderer.present(&crucible_tui::Prompt::committed(
         said,
+        columns,
+        style.glyphs(),
+        style.palette().bands(),
+    ))
+}
+
+/// Names the files a prompt sent, on rows under it.
+///
+/// Under rather than beside: what was asked is one block and the files went
+/// with it, so they belong inside that block rather than in one of their own.
+/// Called with the block still open, straight after the line.
+///
+/// Reached from both places a committed prompt is drawn, which is why it is
+/// here rather than in either of them. A row a live prompt gets and a replayed
+/// one does not is not a transcript that remembers, it is two transcripts.
+pub(crate) fn attached<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    attachments: &[Attachment],
+    workspace: &Workspace,
+    style: Style,
+) -> Result<(), TerminalError> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    // Named the way every other path this program prints is named: relative to
+    // the root where it is under it, whole where it is not. A row is clipped
+    // from its end, so an absolute path would spend the width on the part every
+    // file in the workspace shares and cut the part that says which one.
+    let named: Vec<(String, &str)> = attachments
+        .iter()
+        .map(|one| {
+            let path = Path::new(&*one.path);
+            (
+                written(path.strip_prefix(workspace.root()).unwrap_or(path)),
+                one.modality.as_str(),
+            )
+        })
+        .collect();
+
+    // Borrowed rather than built twice: the rows are composed from words this
+    // side chose, because the crate that draws them is told nothing about a
+    // modality and has no business learning.
+    let files: Vec<(&str, &str)> = named
+        .iter()
+        .map(|(name, what)| (name.as_str(), *what))
+        .collect();
+
+    let columns = renderer.columns();
+    renderer.present(&crucible_tui::Prompt::attached(
+        &files,
         columns,
         style.glyphs(),
         style.palette().bands(),
