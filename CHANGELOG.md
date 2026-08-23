@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-24
+
 ### Changed
 
 **`/model` searches, and takes the effort with the model.** The picker is now a
@@ -2698,7 +2700,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/augments-labs/crucible-code/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/augments-labs/crucible-code/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/augments-labs/crucible-code/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/augments-labs/crucible-code/compare/v0.20.0...v0.20.1
