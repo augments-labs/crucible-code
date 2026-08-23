@@ -18,6 +18,12 @@ per file arrives with the answer, naming what the model did not get to look at
 and saying it can be read again. The older pictures lose their bytes rather than
 the turn losing its answer, so the only thing to do about it is to ask again.
 
+**A PDF named in the prompt goes with it too, where the protocol has a shape for
+one.** Anthropic and OpenAI requests carry it as the document each of them reads;
+MoonshotAI's have none, and the line saying so arrives at the prompt rather than
+as a refusal you paid for. Nothing counts pages — the size a request may carry
+is what decides.
+
 ## [0.19.0] - 2026-08-23
 
 ### Added

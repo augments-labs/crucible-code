@@ -147,7 +147,11 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
     let sample = Sample::new("attaching-provider-half");
     let workspace = holding(&sample, "invoice.pdf", PDF);
 
-    // The model reads a PDF; this protocol has no shape for one yet.
+    // The model reads a PDF, and this stands for a protocol with no shape for
+    // one -- which is what every one of them was until the release that wrote
+    // the block, and what a fourth would be on the day it is added. What is
+    // under test is which half of the intersection the sentence names, and
+    // only a provider that refuses can name that half.
     let Attaching {
         attachments,
         refusals,
@@ -163,6 +167,32 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
         refusals,
         vec![
             "invoice.pdf is not attached: crucible's anthropic requests have no shape for a pdf. \
+             Nothing you type changes that — a later release adds the shape."
+                .to_owned()
+        ],
+    );
+}
+
+/// The one protocol crucible speaks that carries no document, against the
+/// models it serves -- none of which reads a PDF either. Both halves refuse,
+/// and the provider's sentence is the one that reaches the reader because the
+/// provider is asked first: `/model` is no fix here, and a sentence offering
+/// it would send somebody around a menu that cannot help them.
+#[test]
+fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
+    let sample = Sample::new("attaching-moonshot-pdf");
+    let workspace = holding(&sample, "invoice.pdf", PDF);
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(&workspace, &spelling("moonshot"), "k3", "read invoice.pdf");
+
+    assert!(attachments.is_empty(), "nothing goes with the prompt");
+    assert_eq!(
+        refusals,
+        vec![
+            "invoice.pdf is not attached: crucible's moonshot requests have no shape for a pdf. \
              Nothing you type changes that — a later release adds the shape."
                 .to_owned()
         ],

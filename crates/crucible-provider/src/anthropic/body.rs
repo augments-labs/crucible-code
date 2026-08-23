@@ -9,7 +9,9 @@
 //! builds a request may be one bad assumption away from taking the process
 //! down.
 
-use crucible_core::{Attached, Content, Message, Request, StopReason, ToolResult, ToolSchema};
+use crucible_core::{
+    Attached, Content, Message, Modality, Request, StopReason, ToolResult, ToolSchema,
+};
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
@@ -167,7 +169,7 @@ fn write_message(
 fn write_attached(block: &mut Object<'_>, attached: &Attached<'_>) {
     match attached.content {
         Content::Bytes(bytes) => {
-            block.text("type", "image");
+            block.text("type", spelling(attached.modality));
             block.object("source", |source| {
                 source.text("type", "base64");
                 source.text("media_type", attached.media_type);
@@ -178,6 +180,21 @@ fn write_attached(block: &mut Object<'_>, attached: &Attached<'_>) {
             block.text("type", "text");
             block.text("text", line);
         }
+    }
+}
+
+/// The word above the source, which is the whole of the difference between the
+/// two blocks this protocol carries bytes in: a `document` and an `image` are
+/// the same `base64` source under two names.
+///
+/// Every modality is spelled out rather than caught by a wildcard, so a sixth
+/// one added to the enum arrives here as a compiler error rather than as a
+/// picture. What keeps the other three from reaching this at all is `spells()`,
+/// which names the two this answers and is tested against it.
+const fn spelling(modality: Modality) -> &'static str {
+    match modality {
+        Modality::Pdf => "document",
+        Modality::Text | Modality::Image | Modality::Video | Modality::Audio => "image",
     }
 }
 
@@ -229,16 +246,29 @@ mod tests {
     const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
          within its size limit: read it again if you need it.";
 
-    /// A prompt the runner resolved one attachment for.
+    /// The five bytes a PDF starts with, which encode to `JVBERi0=`.
+    const PAGES: &[u8] = b"%PDF-";
+
+    /// A prompt the runner resolved one picture for.
     fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+        carrying(text, "image/png", Modality::Image, content)
+    }
+
+    /// A prompt the runner resolved one attachment of a stated kind for.
+    fn carrying(
+        text: &str,
+        media_type: &'static str,
+        modality: Modality,
+        content: Content<'static>,
+    ) -> Request<'static> {
         // The transcript's own reference is deliberately absent: a provider
         // reads what the runner resolved and never a path.
         let mut request = request(said(text));
         request.attached = Box::leak(Box::new([Attached {
             message: 0,
             index: 0,
-            media_type: "image/png",
-            modality: Modality::Image,
+            media_type,
+            modality,
             content,
         }]));
         request
@@ -542,6 +572,36 @@ mod tests {
                     }
                 },
                 { "type": "text", "text": "what is in this" }
+            ]),
+            "{body}"
+        );
+    }
+
+    /// The shape this vendor's documentation described on 2026-08-23: the same
+    /// `source` a picture travels in, under `document` instead of `image`. The
+    /// word above the source is the whole of the difference, and it is the one
+    /// thing a request carrying a PDF gets wrong if this block is a picture's.
+    #[test]
+    fn a_pdf_is_a_document_block_before_the_prompt() {
+        let body = build(&carrying(
+            "what does this say",
+            "application/pdf",
+            Modality::Pdf,
+            Content::Bytes(PAGES),
+        ));
+
+        assert_eq!(
+            at(&body, "/messages/0/content"),
+            &json!([
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "JVBERi0="
+                    }
+                },
+                { "type": "text", "text": "what does this say" }
             ]),
             "{body}"
         );

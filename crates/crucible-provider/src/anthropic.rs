@@ -94,12 +94,15 @@ impl Provider for Anthropic {
     }
 
     fn spells(&self) -> Modalities {
-        // Messages spells an attachment as an `image` or `document` block.
-        // This module writes the first; a document is a `source` shape of its
-        // own and is not offered until it is written.
+        // Messages spells an attachment as an `image` or `document` block, and
+        // this module writes both. What a document holds beyond a PDF -- plain
+        // text, and a vendor-side conversion -- is not offered, because a
+        // modality is what is declared here and a PDF is the only one that
+        // block carries.
         Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
+            .insert(Modality::Pdf)
     }
 
     fn stream(
@@ -343,8 +346,8 @@ mod tests {
         );
     }
 
-    /// What a wire protocol declares is what its body writes, which is now text and
-    /// a picture. A declaration that ran ahead of the body would be read as
+    /// What a wire protocol declares is what its body writes, which is now text, a
+    /// picture and a PDF. A declaration that ran ahead of the body would be read as
     /// permission to send bytes this module has no shape for — and one that lagged
     /// behind it would refuse a file at the prompt that the request could carry.
     #[test]
@@ -355,7 +358,8 @@ mod tests {
             provider.spells(),
             Modalities::empty()
                 .insert(Modality::Text)
-                .insert(Modality::Image),
+                .insert(Modality::Image)
+                .insert(Modality::Pdf),
         );
     }
 }
