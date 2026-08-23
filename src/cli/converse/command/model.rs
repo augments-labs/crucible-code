@@ -364,6 +364,7 @@ fn stood<T: Terminal>(
         providers: 0,
         rungs: 0,
         pointer: None,
+        lit: None,
     };
 
     picking::shelve(
@@ -462,10 +463,14 @@ fn stood<T: Terminal>(
                 pointer: standing.pointer,
             };
 
-            (
-                shelf.within(columns, room, glyphs),
-                Some(shelf.caret(columns, glyphs)),
-            )
+            let rows = shelf.within(columns, room, glyphs);
+            let caret = shelf.caret(columns, glyphs);
+            // Read off the shelf that was just drawn rather than worked out
+            // again when a click arrives: what the pointer is over is a fact
+            // about a picture, and this is the moment there is one.
+            standing.lit = shelf.resting(columns, room);
+
+            (rows, Some(caret))
         },
         while_waiting,
     )

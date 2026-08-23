@@ -639,3 +639,90 @@ fn a_pointer_anywhere_at_any_width_draws_a_shelf_that_still_fits() {
         }
     }
 }
+
+#[test]
+fn what_is_resting_under_the_pointer_is_what_the_shelf_lit() {
+    // One reading behind both answers. A caller that worked the place out a
+    // second time would be a second reading of a picture that has been
+    // narrowed, scrolled and folded — and the day the two disagree is the day a
+    // click takes a row other than the one the reader can see lit.
+    let providers = serving();
+    let models = stocked();
+
+    for (at, resting) in [
+        (0, Resting::Model(0)),
+        (2, Resting::Model(2)),
+        (3, Resting::Model(3)),
+    ] {
+        let mut shelf = shelf(&providers, &models);
+        shelf.pointer = Some((BODY + at, 40));
+
+        assert_eq!(shelf.resting(100, 30), Some(resting));
+        let rows = shelf.within(100, 30, Glyphs::Unicode);
+        assert!(
+            rows.get(BODY + at)
+                .expect("the row the pointer is on")
+                .kinds()
+                .any(|slot| slot == Slot::Pointed)
+        );
+    }
+
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY + 2, 5));
+    assert_eq!(shelf.resting(100, 30), Some(Resting::Provider(2)));
+}
+
+#[test]
+fn a_pane_that_has_scrolled_rests_on_the_model_rather_than_the_row() {
+    // The fourth row of a pane showing its ninth model. What a caller can take
+    // is counted into what it handed over, because the rows are this shelf's
+    // and it is the only party that knows how far they have moved.
+    let providers = serving();
+    let models = many();
+    let mut shelf = shelf(&providers, &models);
+    shelf.model = models.len() - 1;
+
+    let room = CHROME + 5;
+    shelf.pointer = Some((BODY, 40));
+    let first = shelf
+        .resting(100, room)
+        .expect("the top row of a scrolled pane");
+
+    assert_ne!(first, Resting::Model(0), "the pane has scrolled past it");
+    let Resting::Model(first) = first else {
+        panic!("a model, not a provider")
+    };
+
+    // And the row beside the row is the model beside the model.
+    shelf.pointer = Some((BODY + 1, 40));
+    assert_eq!(shelf.resting(100, room), Some(Resting::Model(first + 1)));
+}
+
+#[test]
+fn nothing_rests_on_a_row_that_is_not_a_row_to_take() {
+    // Exactly the rows that carry no ground, said the other way round: a
+    // caller asking what a click would take is owed nothing wherever a reader
+    // was shown nothing.
+    let providers = serving();
+    let models = stocked();
+
+    for pointer in [
+        None,
+        Some((0, 5)),
+        Some((SEARCHING, 8)),
+        Some((HEADER, 5)),
+        Some((BODY + models.len(), 40)),
+        Some((BODY + providers.len(), 5)),
+        Some((27, 20)),
+    ] {
+        let mut shelf = shelf(&providers, &models);
+        shelf.pointer = pointer;
+        assert_eq!(shelf.resting(100, 30), None, "{pointer:?}");
+    }
+
+    // And a shelf with no room to stand rests on nothing at any place at all.
+    let mut shelf = shelf(&providers, &models);
+    shelf.pointer = Some((BODY, 40));
+    assert_eq!(shelf.resting(100, CHROME), None);
+    assert_eq!(shelf.resting(NARROWEST - 1, 30), None);
+}

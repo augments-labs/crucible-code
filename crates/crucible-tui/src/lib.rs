@@ -75,7 +75,7 @@ pub use prompt::{CommandCount, Draft, Prompt, Remaining};
 pub use render::{Aimed, Caret, PromptRows, Renderer};
 pub use row::Row;
 pub use running::{Command, Running};
-pub use shelf::{Pane, Serving, Shelf, Stocked};
+pub use shelf::{Pane, Resting, Serving, Shelf, Stocked};
 pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};

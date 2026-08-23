@@ -24,7 +24,7 @@
 //! last, so the key that went too far is the key that goes further.
 
 use crucible_tui::{
-    Caret, Editor, Head, Key, Ladder, Pane, Panel, Pressed, Renderer, Row, Terminal, Typed,
+    Caret, Editor, Head, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal, Typed,
 };
 
 use crate::cli::Fatal;
@@ -279,6 +279,16 @@ pub(super) struct Standing<M> {
     /// looking at and a mark says what the next key acts on, and a hand crossing
     /// the window on its way somewhere else has chosen nothing.
     pub(super) pointer: Option<(usize, usize)>,
+    /// Which row the last frame lit under that pointer, written here by the
+    /// frame that drew it.
+    ///
+    /// A click reads this rather than working the place out a second time.
+    /// Where the pointer is is a fact about the window; which row that is is a
+    /// fact about a picture that has been narrowed, scrolled and folded to a
+    /// width, and the party that knows all three is the one that just drew it.
+    /// Reading it back is also the whole of what stops a click from taking a
+    /// row other than the one the reader can see lit.
+    pub(super) lit: Option<Resting>,
 }
 
 /// Stands a shelf over the whole window and reads keys until one is taken.
@@ -364,6 +374,19 @@ fn searching<M>(arrived: Pressed, standing: &mut Standing<M>) -> Moved {
             standing.pointer = next;
             Moved::Redraw
         }
+        // A click takes what is lit, and never what is under the place the
+        // click reports. On a terminal answering motion the two are one place,
+        // because the pointer crossed the row before the button went down; on
+        // one that is not, what is on screen is what the reader chose. So a
+        // click arriving where nothing is lit lights it and stops there, and
+        // the next one takes it.
+        Pressed::Clicked { row, column } => {
+            if standing.pointer != Some((row, column)) {
+                standing.pointer = Some((row, column));
+                return Moved::Redraw;
+            }
+            clicked(standing)
+        }
         Pressed::Tab => {
             standing.pane = match standing.pane {
                 Pane::Providers => Pane::Models,
@@ -391,6 +414,45 @@ fn searching<M>(arrived: Pressed, standing: &mut Standing<M>) -> Moved {
             typed(answered, rewrites, standing)
         }
         _ => Moved::Still,
+    }
+}
+
+/// Puts the mark on the row the pointer is lighting, and says what moved.
+///
+/// A first click marks and a second takes, which is the two steps the keys are:
+/// the arrows put the mark somewhere, enter takes what it is on. It matters
+/// that they stay two, because the rung under the panes is taken with the model
+/// -- a click that took on sight would close the shelf before anybody could say
+/// how hard to think.
+///
+/// A provider is not one of the things that can be taken. It narrows what is
+/// beside it, the way it does under the arrows, and the two marks it governs go
+/// back to the top of a pane that is about to hold something else.
+fn clicked<M>(standing: &mut Standing<M>) -> Moved {
+    match standing.lit {
+        None => Moved::Still,
+        Some(Resting::Provider(at)) => {
+            // Two things change and either one is a frame: which provider the
+            // shelf is narrowed to, and which pane the arrows walk. The second
+            // shows -- it is the mark drawn strongly -- so a click landing on
+            // the row the mark is already on has still changed the picture, as
+            // long as it came from the other pane.
+            let crossed = standing.pane != Pane::Providers;
+            standing.pane = Pane::Providers;
+            if standing.provider == at {
+                return if crossed { Moved::Redraw } else { Moved::Still };
+            }
+            standing.provider = at;
+            standing.model = 0;
+            standing.rung = 0;
+            Moved::Redraw
+        }
+        Some(Resting::Model(at)) => {
+            let marked = standing.pane == Pane::Models && standing.model == at;
+            standing.pane = Pane::Models;
+            standing.model = at;
+            if marked { Moved::Took } else { Moved::Redraw }
+        }
     }
 }
 

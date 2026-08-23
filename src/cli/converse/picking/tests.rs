@@ -110,6 +110,7 @@ fn standing() -> Standing<&'static str> {
         providers: 4,
         rungs: 5,
         pointer: None,
+        lit: None,
     }
 }
 
@@ -379,4 +380,121 @@ fn the_pointer_moves_no_mark_and_takes_nothing() {
         walked
     );
     assert_eq!(searching(Pressed::Key(Key::Enter), &mut shelf), Moved::Took);
+}
+
+#[test]
+fn a_click_marks_the_row_it_is_lit_on_and_a_second_one_takes_it() {
+    // Two steps, the same two the keys are: the arrows put the mark somewhere
+    // and enter takes it. They stay two because the rung is taken with the
+    // model, and a click that took on sight would close the shelf before
+    // anybody could say how hard to think.
+    let mut shelf = standing();
+    shelf.pointer = Some((9, 40));
+    shelf.lit = Some(Resting::Model(2));
+
+    assert_eq!(
+        searching(Pressed::Clicked { row: 9, column: 40 }, &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.model, 2);
+    assert_eq!(shelf.pane, Pane::Models);
+
+    assert_eq!(
+        searching(Pressed::Clicked { row: 9, column: 40 }, &mut shelf),
+        Moved::Took
+    );
+    assert_eq!(shelf.model, 2);
+}
+
+#[test]
+fn a_click_takes_what_is_lit_and_lights_a_place_that_is_not() {
+    // A terminal that answers motion has already reported the pointer crossing
+    // the row, so the two places are one. A terminal that does not would
+    // otherwise have a click take whatever the last frame happened to light —
+    // which is a row somewhere else on the screen.
+    let mut shelf = standing();
+    shelf.pointer = Some((9, 40));
+    shelf.lit = Some(Resting::Model(3));
+
+    assert_eq!(
+        searching(
+            Pressed::Clicked {
+                row: 14,
+                column: 40
+            },
+            &mut shelf
+        ),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.pointer, Some((14, 40)));
+    assert_eq!(shelf.model, 0, "nothing was taken off a row nobody lit");
+}
+
+#[test]
+fn a_click_on_a_provider_narrows_the_pane_beside_it_and_never_takes() {
+    // A provider is not an answer. It says which models to show, the way it
+    // does under the arrows, and the two marks it governs go back to the top of
+    // a pane that is about to hold something else.
+    let mut shelf = standing();
+    shelf.model = 3;
+    shelf.rung = 4;
+    shelf.pointer = Some((11, 5));
+    shelf.lit = Some(Resting::Provider(2));
+
+    assert_eq!(
+        searching(Pressed::Clicked { row: 11, column: 5 }, &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.provider, 2);
+    assert_eq!(shelf.pane, Pane::Providers);
+    assert_eq!((shelf.model, shelf.rung), (0, 0));
+
+    // And clicking it again says so and stops, rather than taking a row that is
+    // not a model.
+    assert_eq!(
+        searching(Pressed::Clicked { row: 11, column: 5 }, &mut shelf),
+        Moved::Still
+    );
+    assert_eq!(shelf.provider, 2);
+}
+
+#[test]
+fn a_click_that_crosses_into_a_pane_is_a_frame_even_where_the_mark_is_already_there() {
+    // The pane the arrows walk moves with the click, and which pane that is
+    // shows: it is the mark drawn strongly. A click landing on the row the mark
+    // is already on has still changed the picture.
+    let mut shelf = standing();
+    shelf.provider = 2;
+    shelf.pane = Pane::Models;
+    shelf.pointer = Some((11, 5));
+    shelf.lit = Some(Resting::Provider(2));
+
+    assert_eq!(
+        searching(Pressed::Clicked { row: 11, column: 5 }, &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.pane, Pane::Providers);
+    assert_eq!(shelf.model, 0, "the pane was crossed, not renarrowed");
+}
+
+#[test]
+fn a_click_on_a_row_the_shelf_lit_nothing_on_moves_nothing() {
+    // The blanks padding a pane, the line saying a query matched nothing, the
+    // count of what is scrolled past. None of them is a row to take, and none
+    // of them lit, so a click on one is a click on the frame.
+    let mut shelf = standing();
+    shelf.pointer = Some((20, 40));
+    shelf.lit = None;
+
+    assert_eq!(
+        searching(
+            Pressed::Clicked {
+                row: 20,
+                column: 40
+            },
+            &mut shelf
+        ),
+        Moved::Still
+    );
+    assert_eq!((shelf.model, shelf.provider), (0, 0));
 }

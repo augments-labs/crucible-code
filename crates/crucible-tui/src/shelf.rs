@@ -181,6 +181,21 @@ pub struct Shelf<'a> {
     pub pointer: Option<(usize, usize)>,
 }
 
+/// Which row of the shelf the pointer is resting on, for a caller that has to
+/// answer for it.
+///
+/// A row a caller could take, and never one of the rows that only say something
+/// about the pane they are in: the line reporting that a query matched nothing,
+/// the count of what is scrolled past, the blanks padding a pane to the bottom
+/// of the window. None of those answers to a click, so none of them is here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resting {
+    /// A provider, by its place in the slice the shelf was handed.
+    Provider(usize),
+    /// A model, the same way.
+    Model(usize),
+}
+
 /// What the pointer is resting on, in the shelf's own terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Under {
@@ -223,6 +238,36 @@ impl Shelf<'_> {
         rows.push(Row::new());
         rows.push(self.keyed(columns));
         rows
+    }
+
+    /// Which provider or model the pointer is resting on, if it is on one.
+    ///
+    /// The same reading the drawing is made from, so what this answers and what
+    /// the reader can see lit are one fact rather than two that agree most of
+    /// the time. The size is taken again because a shelf is drawn against a
+    /// window rather than against itself, and a place means nothing without it.
+    ///
+    /// Counted into the slices this shelf was handed, not into the rows it drew
+    /// -- a pane that has scrolled is showing its fourth row and its ninth
+    /// model, and the caller is owed the one it could take.
+    #[must_use]
+    pub fn resting(&self, columns: usize, room: usize) -> Option<Resting> {
+        if columns < NARROWEST || room <= CHROME {
+            return None;
+        }
+        let body = room - CHROME;
+
+        match self.under(columns, body) {
+            Under::Nothing | Under::Searching => None,
+            Under::Provider(at) => {
+                let from = scrolled(self.provider, body, self.providers.len());
+                (from + at < self.providers.len()).then_some(Resting::Provider(from + at))
+            }
+            Under::Model(at) => {
+                let (from, shown, _) = self.stocking_at(body);
+                (at < shown).then_some(Resting::Model(from + at))
+            }
+        }
     }
 
     /// Where the terminal cursor belongs, inside the rows [`Shelf::within`]
@@ -441,6 +486,27 @@ impl Shelf<'_> {
         row.clipped(inside)
     }
 
+    /// Where the pane of models has scrolled to: the first model shown, how
+    /// many of them are, and how many are left below.
+    ///
+    /// A pane holding more than it can draw gives its last row up to the count
+    /// of what is past it, so what is shown is one short -- except where that
+    /// count would have been nothing, which is the width of a pane that ends
+    /// exactly at the bottom.
+    fn stocking_at(&self, body: usize) -> (usize, usize, usize) {
+        if self.models.len() <= body {
+            return (0, self.models.len(), 0);
+        }
+        let seen = body - 1;
+        let from = scrolled(self.model, seen, self.models.len());
+        let left = self.models.len() - from - seen;
+        if left == 0 {
+            (self.models.len() - body, body, 0)
+        } else {
+            (from, seen, left)
+        }
+    }
+
     /// Each row of the pane of providers, padded to its width.
     fn serving(&self, body: usize, apart: bool, glyphs: Glyphs, under: Under) -> Vec<Row> {
         if !apart {
@@ -507,18 +573,7 @@ impl Shelf<'_> {
             return rows;
         }
 
-        let (from, shown, left) = if self.models.len() <= body {
-            (0, self.models.len(), 0)
-        } else {
-            let seen = body - 1;
-            let from = scrolled(self.model, seen, self.models.len());
-            let left = self.models.len() - from - seen;
-            if left == 0 {
-                (self.models.len() - body, body, 0)
-            } else {
-                (from, seen, left)
-            }
-        };
+        let (from, shown, left) = self.stocking_at(body);
         let ends = Ends::across(inside, self.models.iter().any(|one| !one.by.is_empty()));
 
         (0..body)
