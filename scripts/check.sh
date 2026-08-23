@@ -139,7 +139,7 @@ fi
 # stale. Every other section here only reads the tree. Those two do not, and a
 # run that edited a tracked file has to say which file rather than leave it to
 # be found in `git status`.
-generated=(schema/crucible-code-schema.json src/cli/models.rs)
+generated=(schema/crucible-code-schema.json)
 before=()
 for file in "${generated[@]}"; do
     before+=("$(cksum "$file" 2>/dev/null || true)")

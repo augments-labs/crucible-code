@@ -685,6 +685,37 @@ fn accepting(one: Modality) -> Vec<&'static str> {
 }
 
 #[test]
+fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
+    // What is checked in cannot be reproduced here: the database it was read
+    // from is served over the network and this repository keeps no copy, so no
+    // test can say the numbers are right. This says the shape is, which is the
+    // half that goes wrong by hand — a model added to the catalogue and never
+    // read from the database is one crucible offers and knows no window for,
+    // and a row left behind by a model that was withdrawn is a limit nothing
+    // will ever be held to.
+    let offered: Vec<(&str, &str)> = PROVIDERS
+        .iter()
+        .flat_map(|one| one.models.iter().map(move |model| (one.name, model.name)))
+        .collect();
+
+    for (provider, model) in &offered {
+        assert!(
+            facts(provider, model).is_some(),
+            "{provider}/{model} is offered and has no row — run scripts/models.sh"
+        );
+    }
+
+    for row in models::FACTS {
+        assert!(
+            offered.contains(&(row.provider, row.model)),
+            "{}/{} has a row and is offered by nobody",
+            row.provider,
+            row.model
+        );
+    }
+}
+
+#[test]
 fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
     assert!(
         !models::FACTS.is_empty(),
