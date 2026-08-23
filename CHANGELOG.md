@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-08-23
+
 ### Added
 
 **A picture outside the workspace can be named in the prompt.** An absolute path
@@ -2685,6 +2687,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/augments-labs/crucible-code/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/augments-labs/crucible-code/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/augments-labs/crucible-code/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/augments-labs/crucible-code/compare/v0.19.0...v0.20.0
