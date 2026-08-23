@@ -892,7 +892,7 @@ impl Turn<'_, '_> {
                 // the panel for its length, which is why it is not `during`'s.
                 Ok(typing::Meanwhile::Command(command)) => {
                     if self.drawn.is_ok() {
-                        let ran = self.command(renderer, command);
+                        let ran = self.command(renderer, &command);
                         *self.drawn = stop_if_failed(ran, &self.terms.cancel);
                     }
                 }
@@ -909,10 +909,10 @@ impl Turn<'_, '_> {
     fn command<T: Terminal>(
         &mut self,
         renderer: &mut Renderer<T>,
-        command: command::Owned,
+        command: &command::Owned,
     ) -> Result<(), Fatal> {
         match command.class() {
-            command::MidTurn::Live => self.live(renderer, &command),
+            command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
             command::MidTurn::Refused(why) => {
                 command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
@@ -954,18 +954,32 @@ impl Turn<'_, '_> {
     fn deferred<T: Terminal>(
         &mut self,
         renderer: &mut Renderer<T>,
-        command: command::Owned,
+        command: &command::Owned,
     ) -> Result<(), Fatal> {
         // Which model is in force is read off the row under the box: the
         // runner that would answer is on the worker, and the row was written
         // from it before the turn began.
+        // The mode is a ladder shift+tab steps mid-turn; `/mode` is that step
+        // made by name, held the same way.
+        if matches!(command.command(), command::Command::Mode) {
+            let next = self
+                .terms
+                .pending_mode
+                .get()
+                .unwrap_or(self.says.running_mode)
+                .next();
+            self.terms.pending_mode.set(Some(next));
+            self.says.cycling(next);
+            return Ok(());
+        }
+
         let current = self.says.model.clone();
         let picked = command::deferred(renderer, self.terms, &current, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
-        if let Some(pick) = picked {
-            self.terms.pending_model.set(Some(pick));
+        if let Some(command::Kept::Model(provider, name)) = picked {
+            self.terms.pending_model.set(Some((provider, name)));
         }
         Ok(())
     }
