@@ -345,13 +345,25 @@ impl Runner {
         self.load.tokens()
     }
 
-    /// How much of the model's window is left, where a window is known.
+    /// How much usable room remains before compaction, where a window is known.
     ///
     /// The between-turn read of the same prompt fact [`Event::Carried`]
-    /// refreshes while a turn runs.
+    /// refreshes while a turn runs. The answer and tool-result reserve is not
+    /// shown as room the transcript may still consume: zero is the safe
+    /// compaction boundary, not the model's literal last token.
     #[must_use]
     pub fn left(&self) -> Option<u8> {
-        self.load.left(self.model.window)
+        self.load
+            .left(self.model.window, self.reserve(self.model.window))
+    }
+
+    /// Room that automatic compaction keeps free for an exchange in progress.
+    fn reserve(&self, window: Option<u32>) -> u64 {
+        if self.compacting.automatic {
+            load::reserve(self.model.max_tokens, window, self.compacting.reserve)
+        } else {
+            0
+        }
     }
 
     /// What this session was told to do when the window fills.
@@ -658,6 +670,7 @@ impl Runner {
             spent: Spend::NONE,
             load: self.load,
             window: self.model.window,
+            reserve: self.reserve(self.model.window),
         };
 
         let mut fruitless = 0;
@@ -673,7 +686,7 @@ impl Runner {
                 events.post(Event::Steered { line: line.clone() });
                 self.record(Message::User(line.into()));
                 events.post(Event::Carried {
-                    left: self.load.left(counting.window),
+                    left: self.load.left(counting.window, counting.reserve),
                 });
             }
 
@@ -694,11 +707,8 @@ impl Runner {
             // against can be corrected mid-turn: a window learned from a
             // response is a different window, and a reserve left behind would
             // be held against the figure that was just disproved.
-            let reserve = load::reserve(
-                self.model.max_tokens,
-                counting.window,
-                self.compacting.reserve,
-            );
+            let reserve = self.reserve(counting.window);
+            counting.reserve = reserve;
 
             if let Some(ceiling) = self.compacting.spend_ceiling
                 && counting.spent.tokens() >= ceiling
@@ -712,6 +722,13 @@ impl Runner {
             // loop, so it cannot run while a tool call is out, and the turn
             // carries on afterwards rather than ending.
             if self.compacting.automatic && counting.load.full(counting.window, reserve) {
+                // The prompt may itself have crossed the boundary, in which
+                // case no preceding load event exists. State the zero the same
+                // arithmetic reached before replacing it with the compaction
+                // activity, so the two cannot appear to disagree.
+                events.post(Event::Carried {
+                    left: counting.left(),
+                });
                 match self.made_room(Compacting::Full, events, cancel, &mut fruitless)? {
                     // Re-enter the boundary check against the reduced load.
                     // A prune that helped but did not help enough may still need
@@ -835,7 +852,7 @@ impl Runner {
 
             self.record(Message::ToolResults(results));
             events.post(Event::Carried {
-                left: self.load.left(counting.window),
+                left: self.load.left(counting.window, counting.reserve),
             });
 
             match went {
@@ -1073,7 +1090,7 @@ impl Runner {
                     // the percentage again as it grows rather than leaving the
                     // opening input count on screen for the whole response.
                     events.post(Event::Carried {
-                        left: counting.load.left(counting.window),
+                        left: counting.left(),
                     });
                 }
                 // Not added to the spend beside it, and not accumulated at
@@ -1106,7 +1123,7 @@ impl Runner {
                     }
 
                     events.post(Event::Carried {
-                        left: counting.load.left(counting.window),
+                        left: counting.left(),
                     });
                 }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
@@ -1118,9 +1135,9 @@ impl Runner {
 
     /// Updates the reading when unreported response bytes cross a percentage.
     fn output_grew(events: &dyn Post, counting: &mut Counting, bytes: usize) {
-        let before = counting.load.left(counting.window);
+        let before = counting.left();
         counting.load.produced(bytes);
-        let left = counting.load.left(counting.window);
+        let left = counting.left();
         if left != before {
             events.post(Event::Carried { left });
         }

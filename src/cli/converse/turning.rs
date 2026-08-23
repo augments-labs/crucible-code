@@ -184,8 +184,8 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
-    /// How much of the model's window was left at the latest reading, or `None`
-    /// where no window is known.
+    /// How much usable room remained before compaction at the latest reading,
+    /// or `None` where no window is known.
     left: Option<u8>,
     /// Why room is being made, and `None` when it is not.
     ///

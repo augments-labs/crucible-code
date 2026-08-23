@@ -8,6 +8,13 @@ Notable changes to crucible. Format follows
 
 ### Fixed
 
+**The remaining-window percentage now reaches zero at automatic compaction.**
+The room reserved for the next answer and its tool results was counted by the
+compaction boundary but not by the reading, so a 256k window visibly began
+making room at 13%. The percentage now measures the transcript's usable part of
+the window: `0%` is the same safe boundary that starts compaction, with the
+reserve still intact rather than the model's literal context exhausted.
+
 **The running-command count under the box answers a click while a turn is
 still running.** The count is the one thing on that row that can be acted on,
 but a click on it moved nothing until the turn ended — the key that opens the
