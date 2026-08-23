@@ -17,6 +17,12 @@ grep-searcher.workspace = true
 ignore.workspace = true
 serde_json.workspace = true
 
+# SHA-256 of a picture handed back, which is the record of what was attached: a
+# request reads the file again when it goes out, and a file changed since is a
+# line saying so rather than different bytes under the same answer. Already in
+# the tree — the runner compares the same digest at the other end.
+sha2.workspace = true
+
 # `kill` on a process group, which is how a command's whole pipeline is stopped
 # rather than the shell at the head of it. `std` signals the one child it
 # spawned; the negated group id reaches the rest, and there is no call in `std`

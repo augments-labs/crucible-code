@@ -298,7 +298,7 @@ fn carrying() -> Result<f64, ProbeError> {
     // refusal at the prompt draws a sentence and sends a request the ordinary
     // size, which would read as a session that cost nothing to carry pictures
     // -- the one wrong answer this probe could give without anybody noticing.
-    if largest < crucible_runner::attachments::CEILING as u64 {
+    if largest < crucible_core::CEILING as u64 {
         return Err(ProbeError::Unattached { largest });
     }
 

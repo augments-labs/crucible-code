@@ -1,11 +1,13 @@
 //! Reading a file.
 
+use std::fs;
 use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
 
 use crucible_core::{
-    Approved, Cancel, Remembered, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput,
-    Watch, Workspace,
+    Approved, Attachment, Cancel, Kind, Modality, Remembered, Sensitivity, Summary, Tool, ToolArgs,
+    ToolError, ToolOutput, Watch, Workspace, WorkspacePath, kind, written,
 };
+use sha2::{Digest as _, Sha256};
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
@@ -483,7 +485,7 @@ fn command(program: &str, arguments: &str, requested: &str) -> String {
 /// which is the same reason every ceiling below is written beside the argument
 /// that reaches it: a bound met is one wasted call, and a bound read is none.
 const SCHEMA: &str = r#"{
-  "description": "Reads a text file from the workspace and returns it with line numbers. Only text: a Word document, spreadsheet, slide deck, e-book, PDF or video must be turned into text or pictures by a command first, and the answer says which one where the file's name gives it away.",
+  "description": "Reads a text file from the workspace and returns it with line numbers. A picture comes back attached, to be looked at rather than read. A Word document, spreadsheet, slide deck, e-book, PDF or video must be turned into text or pictures by a command first, and the answer says which one where the file's name gives it away.",
   "type": "object",
   "properties": {
     "path": {
@@ -603,6 +605,69 @@ impl Read {
     }
 }
 
+impl Read {
+    /// The file as something to look at, where that is what it is.
+    ///
+    /// `None` means this is not a picture after all, and the caller goes on to
+    /// read it as text: a `.png` holding text gets the text, and a `.png`
+    /// holding something else gets the refusal the text reader already writes.
+    /// Guessing at either from the name would be a sentence about a file that
+    /// is not there.
+    ///
+    /// Only pictures. A PDF is attachable at a prompt and is deliberately not
+    /// handed back here: the model that cannot read one needs the sentence
+    /// naming a converter, and that sentence is worth more than an attachment
+    /// that would stand down on half the models crucible offers.
+    fn looked_at(
+        approved: &Approved,
+        kind: &Kind,
+        requested: &str,
+        path: &WorkspacePath,
+    ) -> Option<ToolOutput> {
+        // A match rather than an equality, so a modality added to the core enum
+        // arrives here as a compiler error asking whether `read` hands it back.
+        match kind.modality {
+            Modality::Image => {}
+            Modality::Text | Modality::Pdf | Modality::Video | Modality::Audio => return None,
+        }
+
+        // Asked of the metadata, so a file too large to carry is never read
+        // into this process to find that out.
+        let about = fs::metadata(path.as_path()).ok()?;
+        if about.len() > crucible_core::CEILING as u64 {
+            return Some(ToolOutput::failed(format!(
+                "{requested} is larger than the {} MB a request may carry, so it is not attached. \
+                 A smaller copy of it would be.",
+                crucible_core::CEILING / (1024 * 1024),
+            )));
+        }
+
+        let bytes = fs::read(path.as_path()).ok()?;
+        if !(kind.confirms)(&bytes) {
+            return None;
+        }
+
+        Some(
+            ToolOutput::ok(format!(
+                "{requested} is attached as {} rather than read as text.",
+                kind.spoken()
+            ))
+            .with_attachments(
+                approved,
+                [Attachment {
+                    // The resolved path, for the reason `seen` records one: the
+                    // request reads the file again when it goes out, and it
+                    // must find the file this call looked at.
+                    path: written(path.as_path()).into_boxed_str(),
+                    modality: kind.modality,
+                    media_type: kind.media_type.into(),
+                    hash: <[u8; 32]>::from(Sha256::digest(&bytes)),
+                }],
+            ),
+        )
+    }
+}
+
 impl Tool for Read {
     fn name(&self) -> &'static str {
         NAME
@@ -641,6 +706,18 @@ impl Tool for Read {
 
         if path.as_path().is_dir() {
             return Ok(ToolOutput::failed(format!("{requested} is a directory")));
+        }
+
+        // Asked before the file is opened for lines, because a picture is not
+        // made of them and nothing a decoder found in it would change the
+        // answer. A file that turns out not to be one falls through.
+        if let Some(output) =
+            kind(requested).and_then(|kind| Self::looked_at(&approved, kind, requested, &path))
+        {
+            if !output.is_failed() {
+                self.seen.record(path.as_path());
+            }
+            return Ok(output);
         }
 
         // Through the workspace rather than by name, so a last component
@@ -1114,6 +1191,91 @@ mod tests {
             "said: {}",
             output.text()
         );
+    }
+
+    /// The eight bytes that make a file a PNG, which is all `confirms` reads.
+    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+    #[test]
+    fn a_picture_is_handed_back_to_be_looked_at_rather_than_refused() {
+        let sample = Sample::new("read-picture");
+        sample.write_bytes("shot.png", PNG);
+
+        let output = read(&sample, r#"{"path":"shot.png"}"#);
+
+        assert!(!output.is_failed(), "{}", output.text());
+        let [attached] = output.attachments() else {
+            panic!("the picture did not come back: {}", output.text())
+        };
+        assert_eq!(attached.modality, Modality::Image);
+        assert_eq!(attached.media_type.as_ref(), "image/png");
+        assert!(attached.path.ends_with("shot.png"), "{}", attached.path);
+        assert_eq!(
+            output.text(),
+            "shot.png is attached as an image rather than read as text."
+        );
+    }
+
+    #[test]
+    fn a_picture_handed_back_is_a_file_the_agent_has_now_seen() {
+        // The same record a numbered read leaves. Being shown a file is being
+        // shown it, and `write` asks this ledger and not how it was shown.
+        let sample = Sample::new("read-picture-seen");
+        sample.write_bytes("shot.png", PNG);
+        let seen = Ledger::new();
+
+        reading(&sample, r#"{"path":"shot.png"}"#, &seen);
+
+        assert!(seen.holds(sample.workspace().existing("shot.png").unwrap().as_path()));
+    }
+
+    #[test]
+    fn a_file_named_a_picture_that_holds_text_is_read_as_the_text_it_is() {
+        // The name is what somebody meant, the bytes are what is there, and
+        // where they disagree the bytes win — a guess from the name would be a
+        // refusal about a file that reads perfectly well.
+        let sample = Sample::new("read-picture-liar");
+        sample.write("notes.png", "alpha\nbeta\n");
+
+        let output = read(&sample, r#"{"path":"notes.png"}"#);
+
+        assert!(!output.is_failed(), "{}", output.text());
+        assert!(output.attachments().is_empty());
+        assert!(output.text().contains("alpha"), "{}", output.text());
+    }
+
+    #[test]
+    fn a_picture_too_large_to_carry_is_refused_before_it_is_read() {
+        let sample = Sample::new("read-picture-large");
+        let mut bytes = PNG.to_vec();
+        bytes.resize(crucible_core::CEILING + 1, 0);
+        sample.write_bytes("huge.png", &bytes);
+
+        let output = read(&sample, r#"{"path":"huge.png"}"#);
+
+        assert!(output.is_failed());
+        assert_eq!(
+            output.text(),
+            "huge.png is larger than the 4 MB a request may carry, so it is not attached. A \
+             smaller copy of it would be."
+        );
+    }
+
+    #[test]
+    fn a_pdf_is_still_told_what_would_turn_it_into_something_readable() {
+        // Attachable at a prompt and deliberately not handed back here: the
+        // sentence naming a converter works on every model crucible offers,
+        // and an attachment does not.
+        // A real one: the header, then bytes no decoder makes text of, which
+        // is what sends it down the path that names a converter.
+        let sample = Sample::new("read-pdf");
+        sample.write_bytes("paper.pdf", &[b"%PDF-".as_slice(), &[0xff, 0xfe]].concat());
+
+        let output = read(&sample, r#"{"path":"paper.pdf"}"#);
+
+        assert!(output.is_failed());
+        assert!(output.attachments().is_empty());
+        assert!(output.text().contains("PDF"), "{}", output.text());
     }
 
     #[test]

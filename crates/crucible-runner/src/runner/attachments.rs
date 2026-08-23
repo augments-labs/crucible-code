@@ -23,28 +23,7 @@ use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
-use crucible_core::{Attached, Attachment, Content, Modalities, Modality, Transcript};
-
-/// The most raw attachment bytes one request may carry.
-///
-/// Not a vendor's limit — this one binds first. What a request peaks at is
-/// measured rather than derived: `scripts/bench.sh mem` runs a session at this
-/// ceiling every time it runs, and reads about three times this figure on top
-/// of what the session was already holding. The bytes, their base64 form and
-/// the serialized body are alive at once, and the last two each hold the
-/// encoding whole.
-///
-/// The figure this replaced was half as much again, from a reading of the code
-/// that counted one of those copies and not the other. At that size the same
-/// measurement swung between three times and four from run to run, which is the
-/// other half of why this one is lower — a reading that moves by seven
-/// megabytes needs somewhere to move to.
-///
-/// The worst a session is otherwise holding is its record full, at about 14 MB.
-/// This is deliberately below what the rest of the 35 MB in
-/// `performance-budgets.md` allows. A budget spent to its last megabyte is not
-/// a budget.
-pub const CEILING: usize = 4 * 1024 * 1024;
+use crucible_core::{Attached, Attachment, CEILING, Content, Modalities, Modality, Transcript};
 
 /// One request's worth of attachments, owned until the request returns.
 pub(crate) struct Resolved(Vec<Held>);

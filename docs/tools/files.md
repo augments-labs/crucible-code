@@ -37,6 +37,33 @@ than that something is wrong. A file that is not text says so too, rather than
 putting its bytes in the transcript — and where its name says what it is, the
 refusal says what would turn it into something readable.
 
+### A picture is looked at rather than read
+
+A `.png`, `.jpg`, `.gif` or `.webp` has no lines to number, so `read` hands the
+file back to be looked at instead:
+
+```
+shot.png is attached as an image rather than read as text.
+```
+
+The picture goes with the answer and the model sees it. Nothing is asked first:
+`read` is a read, and the file is one inside the workspace.
+
+Two things still stop it. A picture larger than the 4 MB one request carries is
+refused, because that is more than a request could carry whatever else it holds.
+And a model that does not read pictures gets the answer without the file and a
+row naming what stayed behind — [what a model can
+read](../providers/reading.md) is the table that decides.
+
+A file named `.png` whose bytes are not a PNG is read as text, and gets whatever
+the text reader makes of it. The name is what somebody meant by it; the bytes
+are what is there, and where they disagree the bytes win.
+
+A PDF is the exception, and deliberately: it is not handed back this way even on
+a model that reads one. What it gets is the refusal below, naming a converter —
+an answer that works on every model crucible offers, where an attachment works
+on two of the three.
+
 ### A document is read by converting it first
 
 `read` answers with text, and a Word document, a spreadsheet, a slide deck, an
@@ -68,10 +95,11 @@ heading becomes a line like any other, and a table becomes tab-separated rows.
 `--extract-media` is there because a picture is the one thing no converter turns
 into text. `pandoc` without it writes the *reference* and not the file, leaving
 a link to something that was never saved; with it the pictures come out beside
-the Markdown as ordinary files — and an ordinary file is one you can
-[name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt),
-on a model that reads pictures. That is the second half of reading a document:
-the words come out of the converter, and the diagram goes back in as a picture.
+the Markdown as ordinary files — and an ordinary file is one `read` hands back
+to be looked at, or that you can
+[name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt).
+That is the second half of reading a document: the words come out of the
+converter, and the diagram goes back in as a picture.
 
 Only `pandoc` is described that way, because only `pandoc` does it. The rest
 keep a picture's description, where it has one, and nothing else — so their
@@ -143,10 +171,8 @@ Three things are lost, and knowing which is what makes the frames readable:
   `-vf fps=1,scale=1280:-1` is the same command with the frames scaled down.
 
 crucible extracts nothing and chooses no frames. The commands are suggestions,
-run — if you allow it — by [`bash`](commands.md), and the pictures that come
-out are
-[named in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt)
-like any other.
+run — if you allow it — by [`bash`](commands.md), and the pictures that come out
+are read like any other.
 
 Reading is never asked about. It is allowed, or refused by a `deny`
 [rule](../permissions/rules.md), and the question is answered without being put
