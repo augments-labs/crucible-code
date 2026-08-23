@@ -492,6 +492,7 @@ fn a_shelf_fits_the_window_it_stands_in() {
         providers: &PROVIDERS,
         provider: 2,
         models: &MODELS,
+        held: 9_999,
         model: 1,
         rungs: &RUNGS,
         rung: 1,

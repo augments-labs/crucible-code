@@ -64,12 +64,12 @@ const TYPED_AT: usize = 10;
 /// Where the track's first rung opens.
 const RUNG_AT: usize = 12;
 
-/// What the marks in front of a row of the pane of models cost: a space, the
-/// mark, a space, the state, a space.
-const LEADING: usize = 5;
-
-/// The same for a row of the pane of providers, which has no state to say.
-const LEADING_BY: usize = 3;
+/// What the marks in front of a row cost: a space, the mark, a space.
+///
+/// The same on both panes. What is in force does not spend a column here — it
+/// is said at the right of the row it is true of, where the reader is already
+/// looking for what is different about one row.
+const LEADING: usize = 3;
 
 /// The widths of the columns at the right of a model's row, and the gap kept
 /// between each of them and whatever is drawn to its left.
@@ -144,6 +144,9 @@ pub struct Shelf<'a> {
     pub provider: usize,
     /// The models the query left, in the order the pane walks them.
     pub models: &'a [Stocked<'a>],
+    /// How many there were before the query narrowed them, which is what the
+    /// header counts against. Equal to `models.len()` where nothing is typed.
+    pub held: usize,
     /// Which of them the mark is on.
     pub model: usize,
     /// The rungs the marked model's provider serves, already narrowed. Empty is
@@ -208,13 +211,11 @@ impl Shelf<'_> {
     /// The name of the panel, and what is in force drawn away from it.
     fn titled(&self, columns: usize) -> Row {
         let mut row = Row::new();
-        row.push(Slot::Plain, "  ");
-        row.push(Slot::Strong, clip(self.title, columns.saturating_sub(4)));
+        row.push(Slot::Strong, clip(self.title, columns));
 
-        let room = columns.saturating_sub(row.columns() + 4);
+        let room = columns.saturating_sub(row.columns() + GAP);
         if wide(self.now) <= room {
-            let at = columns - 2 - wide(self.now);
-            row.pad(at);
+            row.pad(columns - wide(self.now));
             row.push(Slot::Quiet, self.now);
         }
         row.clipped(columns)
@@ -229,7 +230,11 @@ impl Shelf<'_> {
         let room = columns - TYPED_AT - 1;
         line.pad(TYPED_AT);
         if self.query.is_empty() {
-            line.push(Slot::Quiet, clip(self.hint, room));
+            // Two columns on: the one the cursor is standing in, and one to
+            // part it from the words. A hint drawn under the cursor is a line
+            // that looks like it already has something typed into it.
+            line.pad(TYPED_AT + GAP);
+            line.push(Slot::Quiet, clip(self.hint, room - GAP));
         } else {
             line.push(Slot::Plain, clip(self.query, room));
         }
@@ -269,10 +274,19 @@ impl Shelf<'_> {
         let mut header = Row::new();
         header.push(Slot::Accent, glyphs.vertical());
         if apart {
-            header.push(Slot::Quiet, clip(" Providers", SERVES));
+            header.push(Slot::Quiet, clip("  Providers", SERVES));
             header.pad(SERVES + 1);
             header.push(Slot::Accent, glyphs.vertical());
-            header.push(Slot::Quiet, clip(" Models", inside));
+            header.push(Slot::Quiet, clip("  Models", inside));
+
+            // How many of how many, against the right edge of the pane it
+            // counts: a number on its own says how many are here, and what
+            // somebody who has just typed wants is how many are not.
+            let counted = format!("{} of {}", self.models.len(), self.held);
+            if header.columns() + GAP + wide(&counted) <= columns - GAP {
+                header.pad(columns - GAP - wide(&counted));
+                header.push(Slot::Quiet, counted);
+            }
         } else {
             header = header.join(self.folded(inside, glyphs));
         }
@@ -316,19 +330,18 @@ impl Shelf<'_> {
 
     /// The providers, on the one header row a folded shelf has left for them.
     fn folded(&self, inside: usize, glyphs: Glyphs) -> Row {
+        let (opens, closes) = glyphs.bracketing();
+
         let mut row = Row::new();
+        row.push(Slot::Plain, "  ");
         for (at, provider) in self.providers.iter().enumerate() {
             if at > 0 {
                 row.push(Slot::Quiet, format!(" {} ", glyphs.dot()));
-            } else {
-                row.push(Slot::Plain, " ");
             }
             let marked = at == self.provider;
-            row.push(
-                Slot::Accent,
-                if marked { glyphs.caret() } else { " " }.to_owned(),
-            );
-            row.push(Slot::Plain, " ");
+            if marked {
+                row.push(Slot::Accent, opens);
+            }
             row.push(
                 if marked && self.pane == Pane::Providers {
                     Slot::Strong
@@ -337,6 +350,9 @@ impl Shelf<'_> {
                 },
                 provider.name,
             );
+            if marked {
+                row.push(Slot::Accent, closes);
+            }
         }
         row.clipped(inside)
     }
@@ -373,7 +389,7 @@ impl Shelf<'_> {
                             } else {
                                 Slot::Plain
                             },
-                            clip(provider.name, name.saturating_sub(LEADING_BY)),
+                            clip(provider.name, name.saturating_sub(LEADING)),
                         );
                         row.pad(ends - wide(&count));
                         row.push(Slot::Quiet, count);
@@ -419,7 +435,7 @@ impl Shelf<'_> {
                 Some(one) if at < shown => self.stocked(one, from + at, ends, glyphs),
                 _ if at == shown && left > 0 => {
                     let mut row = Row::new();
-                    row.pad(LEADING - 2);
+                    row.pad(LEADING);
                     row.push(Slot::Quiet, format!("{} {left} more", glyphs.dot()));
                     row.clipped(inside)
                 }
@@ -440,11 +456,6 @@ impl Shelf<'_> {
         );
         row.push(Slot::Plain, " ");
         row.push(
-            if one.now { Slot::DoneMark } else { Slot::Plain },
-            if one.now { glyphs.done() } else { " " }.to_owned(),
-        );
-        row.push(Slot::Plain, " ");
-        row.push(
             if marked && self.pane == Pane::Models {
                 Slot::Strong
             } else {
@@ -453,16 +464,32 @@ impl Shelf<'_> {
             clip(one.name, ends.name.saturating_sub(LEADING)),
         );
 
-        for (opens, text) in [
-            (ends.by, one.by),
-            (ends.window, one.window),
-            (ends.note, one.note),
-        ] {
-            let (Some(opens), false) = (opens, text.is_empty()) else {
-                continue;
-            };
+        // Left to right, in the order the columns sit: who serves it reads as a
+        // word and starts where the others on the pane start.
+        if let (Some(opens), false) = (ends.by, one.by.is_empty()) {
             row.pad(opens);
-            row.push(Slot::Quiet, clip(text, ends.inside - opens));
+            row.push(Slot::Quiet, clip(one.by, SERVED_BY));
+        }
+
+        // Right-justified, because what it is worth comparing against is the
+        // number on the row above and the row below, and two numbers of
+        // different lengths only line up at one end.
+        if let (Some(opens), false) = (ends.window, one.window.is_empty()) {
+            let said = clip(one.window, WINDOW);
+            row.pad(opens + WINDOW - wide(&said));
+            row.push(Slot::Quiet, said);
+        }
+
+        // What is in force wins the last column outright. Both belong to this
+        // row alone, and the one that is news is the one saying the session is
+        // already asking this — a note about a rung is still true tomorrow.
+        if let Some(opens) = ends.note {
+            row.pad(opens);
+            if one.now {
+                row.push(Slot::DoneMark, format!("{} now", glyphs.stepping().0));
+            } else {
+                row.push(Slot::Quiet, clip(one.note, ends.inside - opens));
+            }
         }
         row.pad(ends.inside);
         row.clipped(ends.inside)
@@ -470,30 +497,41 @@ impl Shelf<'_> {
 
     /// The track of rungs under both panes.
     ///
-    /// Every rung keeps a column for the mark whether it has it or not, so the
-    /// words do not slide sideways as the mark walks along them.
+    /// A ladder read left to right, low at one end and max at the other, with a
+    /// side of the mark closed around the rung in force.
     fn tracked(&self, columns: usize, glyphs: Glyphs) -> Row {
         let mut row = Row::new();
         row.push(Slot::Plain, "  ");
         row.push(Slot::Quiet, clip("Effort", columns.saturating_sub(4)));
-        row.pad(RUNG_AT);
 
         if self.rungs.is_empty() {
-            row.push(Slot::Quiet, clip(self.norung, columns - RUNG_AT - 2));
+            row.pad(RUNG_AT - 1);
+            row.push(Slot::Quiet, clip(self.norung, columns - RUNG_AT));
             return row.clipped(columns);
         }
+
+        // Every rung keeps a column of air each side of its word, and the
+        // marked one spends those two columns on the sides of the mark and
+        // takes another two for the air the mark pushed out. Widening the one
+        // word under the mark is the picture: the rung in force is the one the
+        // row has made room for, which a reader sees before reading anything.
+        let (opens, closes) = glyphs.bracketing();
+        row.pad(RUNG_AT - 1);
 
         for (at, rung) in self.rungs.iter().enumerate() {
             let marked = at == self.rung;
             if at > 0 {
-                row.push(Slot::Plain, "  ");
+                row.push(Slot::Plain, " ");
             }
-            row.push(
-                Slot::Accent,
-                if marked { glyphs.caret() } else { " " }.to_owned(),
-            );
+            if marked {
+                row.push(Slot::Accent, opens);
+            }
             row.push(Slot::Plain, " ");
             row.push(if marked { Slot::Strong } else { Slot::Quiet }, *rung);
+            row.push(Slot::Plain, " ");
+            if marked {
+                row.push(Slot::Accent, closes);
+            }
         }
         row.clipped(columns)
     }

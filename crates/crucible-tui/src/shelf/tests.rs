@@ -9,9 +9,12 @@ const CROWDED: &str = "a model whose name nobody would type twice, kept here bec
 const RUNGS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 const KEYS: (&str, &str) = (
-    "↑↓ model   ←→ effort   tab pane   enter take   esc leave",
-    "↑↓ ←→ tab enter esc",
+    "tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel",
+    "tab · ↑↓ · ←→ · enter · esc",
 );
+
+/// What the shelf holds unnarrowed, which the fixtures are a query's worth of.
+const HELD: usize = 12;
 
 const NAMES: [&str; 12] = [
     "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
@@ -108,17 +111,18 @@ fn many() -> Vec<Stocked<'static>> {
 fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'a> {
     Shelf {
         title: "Model",
-        now: "anthropic/claude-sonnet-5",
+        now: "now  anthropic/claude-sonnet-5 · high",
         query: "",
         typed: 0,
-        hint: "a model, or whoever serves it",
+        hint: "a model, or a vendor",
         providers,
         provider: 0,
         models,
+        held: HELD,
         model: 0,
         rungs: &RUNGS,
         rung: 2,
-        nothing: "nothing here answers to that",
+        nothing: "nothing matches — backspace to widen it",
         pane: Pane::Models,
         keys: KEYS,
         norung: "no rung",
@@ -303,7 +307,7 @@ fn a_query_that_left_nothing_says_so_where_a_model_row_would_have_been() {
     let rows = shelf(&providers, &[]).within(100, 30, Glyphs::Unicode);
 
     assert!(
-        said(&rows, BODY).contains("nothing here answers to that"),
+        said(&rows, BODY).contains("nothing matches"),
         "{:?}",
         said(&rows, BODY)
     );
@@ -343,10 +347,12 @@ fn a_provider_the_query_emptied_keeps_its_row_and_a_dot_where_its_count_was() {
 }
 
 #[test]
-fn the_row_in_force_is_the_one_carrying_the_done_mark() {
-    // Nothing is ever said by colour alone: the row in force carries a mark as
-    // well as a slot, because a terminal with no colour still has to say which
-    // model the next turn will be asked with.
+fn the_row_in_force_says_so_in_words_and_not_by_colour() {
+    // Nothing is ever said by colour alone: the row in force says so in words
+    // at the end of it, because a terminal with no colour still has to say
+    // which model the next turn will be asked with. It wins that column
+    // outright -- a note about a rung is still true tomorrow, and this is the
+    // one thing on the row that is only true now.
     let providers = serving();
     let models = stocked();
 
@@ -357,7 +363,7 @@ fn the_row_in_force_is_the_one_carrying_the_done_mark() {
         .find(|row| row.text().contains("claude-sonnet-5") && row.text().contains('│'))
         .expect("the row in force is drawn");
     assert!(force.kinds().any(|slot| slot == Slot::DoneMark));
-    assert!(force.text().contains('✓'), "{:?}", force.text());
+    assert!(force.text().contains("← now"), "{:?}", force.text());
 }
 
 #[test]

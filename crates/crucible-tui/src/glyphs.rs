@@ -214,6 +214,20 @@ impl Glyphs {
         }
     }
 
+    /// The pair that closes around one word of several, holding the mark.
+    ///
+    /// A pair rather than one mark repeated, and not [`Glyphs::stepping`]:
+    /// those are two keys named under a track, and these are two sides of one
+    /// word. A row of words with a mark only in front of one says which word
+    /// starts there; a word with a side on each of it says which word it is.
+    #[must_use]
+    pub fn bracketing(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("\u{2039}", "\u{203a}"),
+            Self::Ascii => ("<", ">"),
+        }
+    }
+
     /// The keys that walk down a list, drawn as marks: up, then down.
     ///
     /// A pair of its own rather than [`Glyphs::stepping`] read sideways. A list
@@ -482,6 +496,23 @@ mod tests {
         let (left, right) = Glyphs::Ascii.joining();
         for joint in [top, bottom, left, right] {
             assert_eq!(joint, Glyphs::Ascii.crossing(), "{joint:?}");
+        }
+    }
+
+    #[test]
+    fn the_pair_that_closes_around_a_word_is_one_column_a_side_in_both_sets() {
+        // The words on a track are laid out against fixed columns and the mark
+        // walks between them, so a side costing two columns in one set would
+        // shove every word after the marked one a place along -- and only on
+        // the terminal that has that set. Two sides that were the same mark
+        // would say a word starts and ends with the same thing, which is a
+        // picture with no left and no right in it.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (opens, closes) = glyphs.bracketing();
+
+            assert_eq!(columns(opens), 1, "{glyphs:?}: {opens:?}");
+            assert_eq!(columns(closes), 1, "{glyphs:?}: {closes:?}");
+            assert_ne!(opens, closes, "{glyphs:?}");
         }
     }
 

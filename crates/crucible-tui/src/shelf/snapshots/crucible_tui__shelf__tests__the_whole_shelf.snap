@@ -1,20 +1,21 @@
 ---
 source: crates/crucible-tui/src/shelf/tests.rs
+assertion_line: 395
 expression: "picture(&shelf(&providers, &models).within(100, 30, Glyphs::Unicode), 100)"
 ---
-  <Strong>Model</>                                                                  <Quiet>anthropic/claude-sonnet-5</>
+<Strong>Model</>                                                          <Quiet>now  anthropic/claude-sonnet-5 · high</>
 
 <Accent>╭</><Accent>──────────────────────────────────────────────────────────────────────────────────────────────────</><Accent>╮</>
-<Accent>│</><Quiet> Search</>  <Quiet>a model, or whoever serves it</>                                                            <Accent>│</>
+<Accent>│</><Quiet> Search</>    <Quiet>a model, or a vendor</>                                                                   <Accent>│</>
 <Accent>╰</><Accent>──────────────────────────────────────────────────────────────────────────────────────────────────</><Accent>╯</>
 
 <Accent>╭</><Accent>─────────────────────</><Accent>┬</><Accent>────────────────────────────────────────────────────────────────────────────</><Accent>╮</>
-<Accent>│</><Quiet> Providers</>           <Accent>│</><Quiet> Models</>                                                                     <Accent>│</>
+<Accent>│</><Quiet>  Providers</>          <Accent>│</><Quiet>  Models</>                                                            <Quiet>4 of 12</> <Accent>│</>
 <Accent>├</><Accent>─────────────────────</><Accent>┼</><Accent>────────────────────────────────────────────────────────────────────────────</><Accent>┤</>
-<Accent>│</> <Accent>›</> All             <Quiet>4</> <Accent>│</> <Accent>›</> <DoneMark>✓</> <Strong>claude-sonnet-5</>                            <Quiet>Anthropic</>     <Quiet>1M</>            <Accent>│</>
-<Accent>│</> <Accent> </> Anthropic       <Quiet>3</> <Accent>│</> <Accent> </>   claude-opus-5                              <Quiet>Anthropic</>     <Quiet>200K</>          <Accent>│</>
-<Accent>│</> <Accent> </> MoonshotAI      <Quiet>1</> <Accent>│</> <Accent> </>   claude-haiku-4-5                           <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Accent>│</>
-<Accent>│</> <Accent> </> OpenAI          <Quiet>·</> <Accent>│</> <Accent> </>   a model whose name nobody would type twic  <Quiet>MoonshotAI</>    <Quiet>—</>     <Quiet>a model </><Accent>│</>
+<Accent>│</> <Accent>›</> All             <Quiet>4</> <Accent>│</> <Accent>›</> <Strong>claude-sonnet-5</>                              <Quiet>Anthropic</>       <Quiet>1M</>  <DoneMark>← now</>   <Accent>│</>
+<Accent>│</> <Accent> </> Anthropic       <Quiet>3</> <Accent>│</> <Accent> </> claude-opus-5                                <Quiet>Anthropic</>     <Quiet>200K</>          <Accent>│</>
+<Accent>│</> <Accent> </> MoonshotAI      <Quiet>1</> <Accent>│</> <Accent> </> claude-haiku-4-5                             <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Accent>│</>
+<Accent>│</> <Accent> </> OpenAI          <Quiet>·</> <Accent>│</> <Accent> </> a model whose name nobody would type twice,  <Quiet>MoonshotAI</>       <Quiet>—</>  <Quiet>a model </><Accent>│</>
 <Accent>│</>                     <Accent>│</>                                                                            <Accent>│</>
 <Accent>│</>                     <Accent>│</>                                                                            <Accent>│</>
 <Accent>│</>                     <Accent>│</>                                                                            <Accent>│</>
@@ -29,6 +30,6 @@ expression: "picture(&shelf(&providers, &models).within(100, 30, Glyphs::Unicode
 <Accent>│</>                     <Accent>│</>                                                                            <Accent>│</>
 <Accent>╰</><Accent>─────────────────────</><Accent>┴</><Accent>────────────────────────────────────────────────────────────────────────────</><Accent>╯</>
 
-  <Quiet>Effort</>    <Accent> </> <Quiet>low</>  <Accent> </> <Quiet>medium</>  <Accent>›</> <Strong>high</>  <Accent> </> <Quiet>xhigh</>  <Accent> </> <Quiet>max</>
+  <Quiet>Effort</>    <Quiet>low</>   <Quiet>medium</>  <Accent>‹</> <Strong>high</> <Accent>›</>  <Quiet>xhigh</>   <Quiet>max</>
 
-  <Quiet>↑↓ model   ←→ effort   tab pane   enter take   esc leave</>
+  <Quiet>tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel</>

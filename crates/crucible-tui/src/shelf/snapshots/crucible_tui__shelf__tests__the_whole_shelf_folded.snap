@@ -1,20 +1,21 @@
 ---
 source: crates/crucible-tui/src/shelf/tests.rs
+assertion_line: 406
 expression: "picture(&shelf(&providers, &models).within(58, 24, Glyphs::Unicode), 58)"
 ---
-  <Strong>Model</>                        <Quiet>anthropic/claude-sonnet-5</>
+<Strong>Model</>                <Quiet>now  anthropic/claude-sonnet-5 · high</>
 
 <Accent>╭</><Accent>────────────────────────────────────────────────────────</><Accent>╮</>
-<Accent>│</><Quiet> Search</>  <Quiet>a model, or whoever serves it</>                  <Accent>│</>
+<Accent>│</><Quiet> Search</>    <Quiet>a model, or a vendor</>                         <Accent>│</>
 <Accent>╰</><Accent>────────────────────────────────────────────────────────</><Accent>╯</>
 
 <Accent>╭</><Accent>────────────────────────────────────────────────────────</><Accent>╮</>
-<Accent>│</> <Accent>›</> <Quiet>All</><Quiet> · </><Accent> </> <Quiet>Anthropic</><Quiet> · </><Accent> </> <Quiet>MoonshotAI</><Quiet> · </><Accent> </> <Quiet>OpenAI</>          <Accent>│</>
+<Accent>│</>  <Accent>‹</><Quiet>All</><Accent>›</><Quiet> · </><Quiet>Anthropic</><Quiet> · </><Quiet>MoonshotAI</><Quiet> · </><Quiet>OpenAI</>               <Accent>│</>
 <Accent>├</><Accent>────────────────────────────────────────────────────────</><Accent>┤</>
-<Accent>│</> <Accent>›</> <DoneMark>✓</> <Strong>claude-sonnet-5</>        <Quiet>Anthropic</>     <Quiet>1M</>            <Accent>│</>
-<Accent>│</> <Accent> </>   claude-opus-5          <Quiet>Anthropic</>     <Quiet>200K</>          <Accent>│</>
-<Accent>│</> <Accent> </>   claude-haiku-4-5       <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Accent>│</>
-<Accent>│</> <Accent> </>   a model whose name no  <Quiet>MoonshotAI</>    <Quiet>—</>     <Quiet>a model </><Accent>│</>
+<Accent>│</> <Accent>›</> <Strong>claude-sonnet-5</>          <Quiet>Anthropic</>       <Quiet>1M</>  <DoneMark>← now</>   <Accent>│</>
+<Accent>│</> <Accent> </> claude-opus-5            <Quiet>Anthropic</>     <Quiet>200K</>          <Accent>│</>
+<Accent>│</> <Accent> </> claude-haiku-4-5         <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Accent>│</>
+<Accent>│</> <Accent> </> a model whose name nobo  <Quiet>MoonshotAI</>       <Quiet>—</>  <Quiet>a model </><Accent>│</>
 <Accent>│</>                                                        <Accent>│</>
 <Accent>│</>                                                        <Accent>│</>
 <Accent>│</>                                                        <Accent>│</>
@@ -23,6 +24,6 @@ expression: "picture(&shelf(&providers, &models).within(58, 24, Glyphs::Unicode)
 <Accent>│</>                                                        <Accent>│</>
 <Accent>╰</><Accent>────────────────────────────────────────────────────────</><Accent>╯</>
 
-  <Quiet>Effort</>    <Accent> </> <Quiet>low</>  <Accent> </> <Quiet>medium</>  <Accent>›</> <Strong>high</>  <Accent> </> <Quiet>xhigh</>  <Accent> </> <Quiet>max</>
+  <Quiet>Effort</>    <Quiet>low</>   <Quiet>medium</>  <Accent>‹</> <Strong>high</> <Accent>›</>  <Quiet>xhigh</>   <Quiet>max</>
 
-  <Quiet>↑↓ ←→ tab enter esc</>
+  <Quiet>tab · ↑↓ · ←→ · enter · esc</>
