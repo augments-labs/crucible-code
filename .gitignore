@@ -27,3 +27,8 @@ target
 # insta writes a rejected picture beside the accepted one. It is the diff you
 # are being asked about, never something to commit.
 *.snap.new
+
+# The candidate an agreement gate formats before comparing it to the file it is
+# holding to account. It is renamed over that file or removed in the same test,
+# so one left behind is one a run did not finish.
+**/*.rs.new
