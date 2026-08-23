@@ -1,10 +1,11 @@
 //! What each model crucible offers accepts and produces.
 //!
-//! Generated. Do not edit: `scripts/models.sh` writes this file, and what
-//! checks it is the diff that run leaves — a row changed by hand is a row
-//! the next run discards. What it is generated *from* is a
-//! public database of model limits, read over the network by a `curl` in that
-//! script rather than by anything here.
+//! Generated. Do not edit: `scripts/models.sh` writes this file, and a test
+//! rewrites it and then fails wherever a row disagrees with `models.json`
+//! beside it, which is the slice of the database this was read from — so a
+//! row changed by hand is a row the next run of the suite discards. What that
+//! slice is a slice *of* is a public database of model limits, read over the
+//! network by a `curl` in that script rather than by anything here.
 //!
 //! Keyed on the model name exactly as crucible asks for it. A name not in this
 //! table has no answer here at all, which is deliberate: a window guessed from a
