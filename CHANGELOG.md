@@ -6,6 +6,26 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**Slash commands act while a turn is running.** A line starting with `/` is
+no longer only for the space between turns. Typing `/` over a running turn
+opens the command list above the box, walked with the arrows as at the prompt,
+and what Enter does depends on the command: `/theme` and `/help` run at
+once, panel and all, with the transcript going on behind them; `/model` is
+picked and confirmed now but applied to the next turn, since it cannot reach
+the runner answering this one; and the rest, which move the session a running
+turn owns, are refused with a panel that says why. A `Shift-Tab` pressed
+mid-turn now steps the permission mode the *next* turn runs under, held until
+the runner is back, rather than being dropped.
+
+### Fixed
+
+**A panel stood over the prompt clears the transcript map beside it.** The box
+was covered but the `transcript map` door on the same band was not, so a
+standing panel showed a door reporting on a screen it owned. The row goes blank
+with the box for the panel's length and returns as it was, for every panel.
+
 ### Fixed
 
 **The remaining-window percentage now reaches zero at automatic compaction.**
