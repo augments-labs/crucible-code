@@ -1610,6 +1610,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Clicked { .. }
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::PasteImage
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

@@ -7,6 +7,8 @@
 //! the user reads while they can still act on it.
 
 use std::fs;
+use std::io::{Cursor, Write as _};
+use std::path::{Path, PathBuf};
 
 use crucible_core::{Attachment, CEILING, Provider, Workspace, kind, written};
 use crucible_runner::Runner;
@@ -18,6 +20,7 @@ use crate::cli::draw;
 use crate::cli::style::Style;
 
 /// What a prompt turned out to be carrying.
+#[cfg(test)]
 pub(super) struct Attaching {
     /// The files it named that may be sent, in the order it named them.
     pub(super) attachments: Box<[Attachment]>,
@@ -26,6 +29,7 @@ pub(super) struct Attaching {
 }
 
 /// Reads the prompt for files, and decides about each one.
+#[cfg(test)]
 pub(super) fn attaching(
     workspace: &Workspace,
     provider: &dyn Provider,
@@ -35,8 +39,8 @@ pub(super) fn attaching(
     let mut attachments = Vec::new();
     let mut refusals = Vec::new();
 
-    for word in prompt.split_whitespace() {
-        match decide(workspace, provider, model, word) {
+    for word in names(prompt) {
+        match decide(workspace, provider, model, &word, None) {
             Named::Attached(one) => attachments.push(one),
             Named::Refused(said) => refusals.push(said),
             Named::Nothing => {}
@@ -63,10 +67,30 @@ pub(super) fn beside<T: Terminal>(
     prompt: &str,
     style: Style,
 ) -> Result<Box<[Attachment]>, TerminalError> {
-    let Attaching {
-        attachments,
-        refusals,
-    } = attaching(workspace, runner.provider(), runner.model(), prompt);
+    let imported = runner.session().id().map(|id| {
+        runner
+            .session()
+            .path()
+            .with_file_name("attachments")
+            .join(id.as_str())
+    });
+    let mut attachments = Vec::new();
+    let mut refusals = Vec::new();
+
+    for word in names(prompt) {
+        match decide(
+            workspace,
+            runner.provider(),
+            runner.model(),
+            &word,
+            imported.as_deref(),
+        ) {
+            Named::Attached(one) => attachments.push(one),
+            Named::Refused(said) => refusals.push(said),
+            Named::Nothing => {}
+        }
+    }
+    let attachments = attachments.into_boxed_slice();
 
     // Before the refusals, because this is the line's own block closing over
     // what went with it, and a refusal is the next thing to read rather than
@@ -87,6 +111,61 @@ pub(super) fn beside<T: Terminal>(
     Ok(attachments)
 }
 
+/// Imports the image on the operating-system clipboard and names it for the prompt.
+pub(super) fn clipboard(runner: &Runner) -> Result<String, String> {
+    let Some(id) = runner.session().id() else {
+        return Err("this session has nowhere durable to keep a clipboard image".to_owned());
+    };
+    let image = arboard::Clipboard::new()
+        .and_then(|mut clipboard| clipboard.get_image())
+        .map_err(|_| "the clipboard does not hold a readable image".to_owned())?;
+    let Some(expected) = image
+        .width
+        .checked_mul(image.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return Err("the clipboard image is too large to measure".to_owned());
+    };
+    if image.bytes.len() != expected {
+        return Err("the clipboard image has incomplete RGBA pixels".to_owned());
+    }
+    let width =
+        u32::try_from(image.width).map_err(|_| "the clipboard image is too wide".to_owned())?;
+    let height =
+        u32::try_from(image.height).map_err(|_| "the clipboard image is too tall".to_owned())?;
+    let pixels = image::RgbaImage::from_raw(width, height, image.bytes.into_owned())
+        .ok_or_else(|| "the clipboard image has invalid RGBA pixels".to_owned())?;
+    let mut bytes = Cursor::new(Vec::new());
+    pixels
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .map_err(|problem| format!("the clipboard image could not be encoded: {problem}"))?;
+    let bytes = bytes.into_inner();
+    if bytes.len() > CEILING {
+        return Err(format!(
+            "the clipboard image is larger than the {} MB one attachment may be",
+            CEILING / (1024 * 1024)
+        ));
+    }
+
+    let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
+    let directory = runner
+        .session()
+        .path()
+        .with_file_name("attachments")
+        .join(id.as_str());
+    let path = import(&directory, "png", hash, &bytes)
+        .map_err(|problem| format!("the clipboard image could not be imported: {problem}"))?;
+    let path = written(&path);
+    if path.contains(['\'', '"']) {
+        return Err(
+            "the clipboard attachment path contains a quote and cannot be put in the prompt"
+                .to_owned(),
+        );
+    }
+
+    Ok(format!("'{path}'"))
+}
+
 /// What one word in a prompt turned out to be.
 enum Named {
     /// A file to send.
@@ -105,11 +184,27 @@ enum Named {
 /// is nothing they can do anything about; what the model cannot read they fix
 /// with `/model`; what is too large they fix with a smaller copy. Reading the
 /// file comes last, because the three answers above it cost nothing.
-fn decide(workspace: &Workspace, provider: &dyn Provider, model: &str, word: &str) -> Named {
+fn decide(
+    workspace: &Workspace,
+    provider: &dyn Provider,
+    model: &str,
+    word: &str,
+    imported: Option<&Path>,
+) -> Named {
     let Some(kind) = kind(word) else {
         return Named::Nothing;
     };
-    let (Ok(path), Some(size)) = (workspace.existing(word), sized(workspace, word)) else {
+    let source = match workspace.existing(word) {
+        Ok(path) => Source::Workspace(path),
+        Err(_) if Path::new(word).is_absolute() => {
+            let Ok(path) = Path::new(word).canonicalize() else {
+                return Named::Nothing;
+            };
+            Source::External(path)
+        }
+        Err(_) => return Named::Nothing,
+    };
+    let Some(size) = sized(source.path()) else {
         return Named::Nothing;
     };
 
@@ -146,7 +241,7 @@ fn decide(workspace: &Workspace, provider: &dyn Provider, model: &str, word: &st
         ));
     }
 
-    let Ok(bytes) = fs::read(path.as_path()) else {
+    let Ok(bytes) = fs::read(source.path()) else {
         return Named::Nothing;
     };
     if !(kind.confirms)(&bytes) {
@@ -157,23 +252,127 @@ fn decide(workspace: &Workspace, provider: &dyn Provider, model: &str, word: &st
         ));
     }
 
+    let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
+    let path = match source {
+        Source::Workspace(path) => path.as_path().to_owned(),
+        Source::External(_) => {
+            let Some(directory) = imported else {
+                return Named::Refused(format!(
+                    "{word} is outside the workspace and this session has nowhere durable to import it."
+                ));
+            };
+            match import(directory, kind.extension, hash, &bytes) {
+                Ok(path) => path,
+                Err(problem) => {
+                    return Named::Refused(format!(
+                        "{word} could not be imported for this session: {problem}"
+                    ));
+                }
+            }
+        }
+    };
+
     Named::Attached(Attachment {
-        path: written(path.as_path()).into_boxed_str(),
+        path: written(&path).into_boxed_str(),
         modality: kind.modality,
         media_type: kind.media_type.into(),
-        hash: <[u8; 32]>::from(Sha256::digest(&bytes)),
+        hash,
     })
 }
 
-/// How large the named file is, or `None` where it is not a file at all.
-///
-/// Asked before the bytes are, so a file too large to send is never read. A
-/// directory named `pictures.png` answers `None` here and is a word in a
-/// sentence, which is what it was.
-fn sized(workspace: &Workspace, word: &str) -> Option<u64> {
-    let path = workspace.existing(word).ok()?;
-    let about = fs::metadata(path.as_path()).ok()?;
+/// A file already under agent reach, or one the user alone selected.
+enum Source {
+    Workspace(crucible_core::WorkspacePath),
+    External(PathBuf),
+}
 
+impl Source {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Workspace(path) => path.as_path(),
+            Self::External(path) => path,
+        }
+    }
+}
+
+/// Copies user-selected bytes somewhere a resumed session can still find them.
+fn import(
+    directory: &Path,
+    extension: &str,
+    hash: [u8; 32],
+    bytes: &[u8],
+) -> Result<PathBuf, std::io::Error> {
+    crucible_privacy::directory(directory).map_err(crucible_privacy::PrivacyError::into_io)?;
+    let name = format!("{}.{extension}", hex(&hash));
+    let destination = directory.join(name);
+
+    match crucible_privacy::create_write(&destination) {
+        Ok(mut file) => {
+            if let Err(problem) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+                drop(file);
+                let _ = fs::remove_file(&destination);
+                return Err(problem);
+            }
+            crucible_privacy::sync_parent(&destination)
+                .map_err(crucible_privacy::PrivacyError::into_io)?;
+        }
+        Err(problem) if problem.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !fs::read(&destination).is_ok_and(|existing| existing == bytes) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "the content-addressed destination holds different bytes",
+                ));
+            }
+        }
+        Err(problem) => return Err(problem.into_io()),
+    }
+
+    Ok(destination)
+}
+
+/// Lowercase hexadecimal, used as the stable name of imported bytes.
+fn hex(hash: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        out.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
+        out.push(char::from_digit(u32::from(byte & 0x0f), 16).unwrap_or('0'));
+    }
+    out
+}
+
+/// Prompt words, with a quoted path kept whole instead of split at its spaces.
+fn names(prompt: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut one = String::new();
+    let mut quote = None;
+
+    for character in prompt.chars() {
+        match (quote, character) {
+            (Some(open), close) if open == close => {
+                quote = None;
+                if !one.is_empty() {
+                    names.push(std::mem::take(&mut one));
+                }
+            }
+            (None, '\'' | '"') if one.is_empty() => quote = Some(character),
+            (None, character) if character.is_whitespace() => {
+                if !one.is_empty() {
+                    names.push(std::mem::take(&mut one));
+                }
+            }
+            (Some(_) | None, character) => one.push(character),
+        }
+    }
+    if !one.is_empty() {
+        names.push(one);
+    }
+
+    names
+}
+
+/// How large the named file is, or `None` where it is not a regular file.
+fn sized(path: &Path) -> Option<u64> {
+    let about = fs::metadata(path).ok()?;
     about.is_file().then_some(about.len())
 }
 

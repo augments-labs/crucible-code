@@ -164,6 +164,24 @@ stood for, so a snippet written with tabs is still indented -- on screen and in
 the prompt that is sent. Anything else a terminal can hide in a paste is left
 out, since drawn it would move a cursor this process had already placed.
 
+<kbd>Ctrl+V</kbd> between turns reads an image from the operating-system
+clipboard. It imports the PNG into the session's private attachment store and
+puts that attachment's quoted path in the box; ordinary text paste still uses
+the terminal's paste action. A clipboard image can therefore be sent without a
+file in the project, and a pasted image remains available to `--continue`.
+
+A path can do the same explicitly. A relative image path names a file in the
+workspace as before; an absolute image path outside it is imported rather than
+making that directory reachable to tools. Put single or double quotes around a
+path containing spaces, for example:
+
+```
+describe '/home/you/Pictures/Screenshots/Screen Shot.png'
+```
+
+The copy is content-addressed under crucible's session directory, so moving or
+deleting the original does not change what the transcript sends later.
+
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to — the provider,
