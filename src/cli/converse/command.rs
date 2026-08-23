@@ -226,16 +226,18 @@ impl Command {
     const fn mid_turn(self) -> MidTurn {
         match self {
             Self::Help | Self::Theme => MidTurn::Live,
-            Self::Model => MidTurn::Deferred,
+            // The mode is a ladder, not a picker: shift+tab steps it mid-turn,
+            // and the panel between turns. So mid-turn the key is the way in,
+            // and the command is told the same — stepped to and held for the
+            // turn the loop starts next, the change a running turn's gate
+            // cannot take.
+            Self::Model | Self::Mode => MidTurn::Deferred,
             Self::Effort => {
                 MidTurn::Refused("sets how hard it thinks, which the running turn has taken")
             }
             Self::Login => MidTurn::Refused("adds a key the request now in flight cannot use"),
             Self::Logout => {
                 MidTurn::Refused("removes the key the request now in flight is signed with")
-            }
-            Self::Mode => {
-                MidTurn::Refused("steps the mode, which the running tool call is gated by")
             }
             Self::Resume => MidTurn::Refused("leaves this session for an earlier one, mid-answer"),
             Self::Compact => {
@@ -342,26 +344,46 @@ struct Still;
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+/// What a deferred command leaves held for the next turn.
+pub(super) enum Kept {
+    /// A model picked and confirmed, to be applied when the runner is back.
+    Model(Served, String),
+}
+
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     current: &str,
-    _wanted: Owned,
+    wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
-) -> Result<Option<(Served, String)>, Fatal> {
-    // A loop rather than a sequence, because "go back" returns to the picker,
-    // and a pick is only held once it has been confirmed.
-    loop {
-        let picked = model::picked_while(renderer, terms, current, while_waiting)?;
-        let picking::Taken::Took(selected) = picked else {
-            // Left, or no room for a panel: nothing is held.
-            return Ok(None);
-        };
+) -> Result<Option<Kept>, Fatal> {
+    match &wanted {
+        // A loop rather than a sequence, because "go back" returns to the
+        // picker, and a pick is only held once it has been confirmed.
+        Owned::Known {
+            command: Command::Model,
+            ..
+        } => loop {
+            let picked = model::picked_while(renderer, terms, current, while_waiting)?;
+            let picking::Taken::Took(selected) = picked else {
+                // Left, or no room for a panel: nothing is held.
+                return Ok(None);
+            };
 
-        if model::confirmed(renderer, terms, selected, while_waiting)? {
-            return Ok(Some(selected.parts()));
-        }
-        // "go back": round to the picker.
+            if model::confirmed(renderer, terms, selected, while_waiting)? {
+                let (provider, name) = selected.parts();
+                return Ok(Some(Kept::Model(provider, name)));
+            }
+            // "go back": round to the picker.
+        },
+        // The mode is stepped by shift+tab, which is its own mid-turn way in;
+        // `/mode` here has no picker to stand, so it is the step the key would
+        // make, held for the next turn the same way. The loop holds it.
+        // `/mode` is stepped by shift+tab, which is its own mid-turn way in;
+        // it has no picker to stand here, so the step is the key's, held for
+        // the next turn the same way — and the loop holds it. Every other
+        // command the classifier does not route here holds nothing either.
+        _ => Ok(None),
     }
 }
 

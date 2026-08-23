@@ -264,6 +264,98 @@ fn a_command_that_cannot_run_mid_turn_says_so_on_a_panel() {
 }
 
 #[test]
+fn exit_mid_turn_is_refused_with_its_reason() {
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("exit-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // `/exit` ends the session a running turn owns, so it is refused and says
+    // why — it is not a word that names no command.
+    window.types_and_catches("/exit\r", "ends the session");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_refusal_closed_leaves_a_clean_box() {
+    // The turn runs on. `/exit` is refused, the panel closes on esc, and what
+    // the box comes back to is a clean one: no command list left standing over
+    // it, no `/` to erase, and Enter on a fresh `/` picks a command again.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("refusal-close", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("/exit\r", "ends the session");
+
+    // Esc closes the panel. The box it comes back to is empty, and the list is
+    // gone with it — nothing of the refused line is left standing.
+    window.types_and_catches("\x1b", "esc to interrupt");
+    let clean = window.picture();
+    assert!(
+        !clean.contains("/exit"),
+        "the refused line is gone:\n{clean}"
+    );
+    assert!(!clean.contains("/clear"), "no list is left open:\n{clean}");
+    // No snapshot: the answer streams on past the catch, so the frame esc's
+    // redraw lands in is not a fixed one. The assertions above are the
+    // behavior; a picture of it would be of whichever frame it caught.
+}
+
+#[test]
+fn a_command_picked_off_the_list_runs_the_marked_one() {
+    // `/ex` typed, the down arrow walked to a row, and Enter runs the row the
+    // mark is on — not the half-typed word. The list's mark is what a reader
+    // has chosen, and a running turn changes nothing about that.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("marked-command", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // `/ex` filters to `/exit`; Enter runs the marked row, which the refusal
+    // names. A bare-typed-word submission would name no command instead.
+    window.types_and_catches("/ex", "/exit");
+    window.types_and_catches("\r", "ends the session");
+}
+
+#[test]
+fn a_bare_slash_is_the_list_opener_not_a_command() {
+    // Enter on a box holding only `/` is a reader still choosing, not a
+    // submission: the line stays, the list stays open, and nothing is refused.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("bare-slash", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("/", "/clear");
+
+    // Enter on the bare slash: the list is still open and the box still holds
+    // the slash — nothing was submitted.
+    window.types_and_catches("\r", "/clear");
+    let still = window.picture();
+    assert!(!still.contains("names no command"), "no refusal:\n{still}");
+}
+
+#[test]
 fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // The answer is long enough that the turn is still running when the
     // command is sent. `/theme` moves nothing but the screen, so its picker
@@ -307,6 +399,25 @@ fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
     window.types_and_catches("\x1b[Z", "allow edits on");
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_mode_command_mid_turn_steps_the_mode_the_next_turn_runs_under() {
+    // `/mode` typed mid-turn is the shift+tab step made by name: the mode the
+    // running turn is decided under cannot change, so the step is held for the
+    // next turn and the row under the box says which mode it reached.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("mode-command-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // One step on from ask, the same as one shift+tab.
+    window.types_and_catches("/mode\r", "allow edits on");
 }
 
 #[test]

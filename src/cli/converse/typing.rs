@@ -642,7 +642,7 @@ pub(super) struct Says {
     /// Mid-turn the sentence above is the only thing of it drawn, and a step
     /// reads the mode rather than the sentence — which is why the value is
     /// kept beside its words instead of the words being parsed back.
-    pub(super) running_mode: Mode,
+    pub(crate) running_mode: Mode,
 }
 
 impl Says {
@@ -664,7 +664,7 @@ impl Says {
     /// In the words the running mode would be said in, with its tone — the one
     /// difference is that the step lands on the next turn rather than this
     /// one, which is a fact of the mode's timing, not of how the row reads.
-    fn cycling(&mut self, mode: Mode) {
+    pub(super) fn cycling(&mut self, mode: Mode) {
         self.mode = Cow::Borrowed(mode.sentence());
         self.tone = tone(mode);
     }
@@ -1005,11 +1005,36 @@ pub(super) fn during<T: Terminal>(
                     // it opens is stood from the turn's own loop, where the turn
                     // it stands over can be kept rendering — so the command is
                     // returned, and that loop runs it.
-                    let line = editor.text().to_owned();
-                    if let Some(owned) = command::owned(&line) {
+                    //
+                    // What Enter runs is the marked row where the list is open —
+                    // a line still being typed is a reader choosing, and the mark
+                    // is what they have chosen — and the typed word where it is
+                    // not. A bare `/` is the key that opens the list, not a
+                    // command, so it is never a submission.
+                    // A bare `/` is the key that opens the list, not a command:
+                    // it parses as a word that names none and is refused, which
+                    // is not what a reader pressing Enter while still choosing
+                    // meant. Only a line past the bare slash is ever submitted.
+                    let bare = editor.text() == "/";
+                    let marked = opened_list.chosen().filter(|_| !bare);
+                    let owned = if bare {
+                        None
+                    } else {
+                        marked
+                            .and_then(command::owned)
+                            .or_else(|| command::owned(editor.text()))
+                    };
+                    if let Some(owned) = owned {
                         editor.take();
+                        // The list the line had open goes with the line: the
+                        // box is cleared for the command, and a list left open
+                        // over an empty box would stand the panel's close back
+                        // into a menu of a line that is gone — and leave the
+                        // arrows walking it against a box that is not one.
+                        *opened_list = Opened::default();
                         return Ok(Meanwhile::Command(owned));
                     }
+                    let line = editor.text().to_owned();
                     steer.say(line);
                     notice = queue(editor, queued, turning, renderer.columns(), style);
                     moved = true;

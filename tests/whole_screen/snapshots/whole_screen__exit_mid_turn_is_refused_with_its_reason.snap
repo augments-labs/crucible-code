@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+60x24 cursor 22,0 scrolled 0
+|…/and-something-below-that-again/workspace                  |
+|│ Tips                                                     │|
+|│                                                          │|
+|│ · /          opens the command list                      │|
+|│ · \ enter    adds a line without sending                 │|
+|│ · shift+tab  steps the permission mode                   │|
+|│ · ctrl+c     clears the line typed so far                │|
+|╰──────────────────────────────────────────────────────────╯|
+|                                                            |
+|authentication: anthropic · environment variable ANTHROPIC_A|
+|                                                            |
+|› start it                                                  |
+|                                                            |
+|● Bash(sleep 30)                                            |
+|  └ (no output yet) (+2 lines · ctrl+o to expand)           |
+|                                                            |
+|the quick brown fox jumps                                   |
+|────────────────────────────────────────────────────────────|
+|                                                            |
+|/exit                                                       |
+|ends the session, turn and all                              |
+|                                                            |
+|esc to close                                                |
+|                                                            |
