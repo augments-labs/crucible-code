@@ -398,14 +398,21 @@ fn stepped<M>(standing: &mut Standing<M>, next: impl Fn(usize) -> Option<usize>)
 ///
 /// `rewrites` is whether the key changed what has been typed rather than only
 /// where the cursor is in it. A changed query is a different shelf and sends
-/// both marks back to the top of it; somebody pressing Home to fix the front of
+/// every mark back to the top of it; somebody pressing Home to fix the front of
 /// a word has not asked for the row under the mark to move.
+///
+/// The mark on the providers goes back with the other two, which is the whole
+/// of what stops a query from being answered by a pane that disagrees with it.
+/// Typing a vendor's name while the mark stands on a different vendor asks two
+/// questions whose answer is nothing at all -- and the reader can see the line
+/// they just typed, so it is the line that has to win.
 fn typed<M>(answered: Typed, rewrites: bool, standing: &mut Standing<M>) -> Moved {
     if answered == Typed::Ignored {
         return Moved::Still;
     }
 
     if rewrites {
+        standing.provider = 0;
         standing.model = 0;
         standing.rung = 0;
     }

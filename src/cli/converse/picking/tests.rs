@@ -220,11 +220,33 @@ fn a_key_that_changes_the_query_sends_the_marks_back_to_the_top() {
 }
 
 #[test]
+fn a_query_typed_against_a_marked_provider_sends_that_mark_back_too() {
+    // Somebody standing on one vendor who types another vendor's name has
+    // asked two questions with no answer between them, and the pane would win
+    // -- leaving a shelf that says nothing matches while the models plainly
+    // exist. The line is the thing they can see themselves having done, so the
+    // line is the one that has to win.
+    let mut shelf = standing();
+    shelf.provider = 3;
+    shelf.model = 2;
+    shelf.rung = 4;
+
+    assert_eq!(
+        searching(Pressed::Key(Key::Char('a')), &mut shelf),
+        Moved::Redraw
+    );
+    assert_eq!(shelf.provider, 0);
+    assert_eq!(shelf.model, 0);
+    assert_eq!(shelf.rung, 0);
+}
+
+#[test]
 fn a_key_that_only_moves_the_cursor_leaves_the_marks_where_they_are() {
     // Somebody pressing Home to fix the front of a word they mistyped has not
     // asked for the row under the mark to move.
     let mut shelf = standing();
     let _ = searching(Pressed::Key(Key::Char('k')), &mut shelf);
+    shelf.provider = 2;
     shelf.model = 2;
     shelf.rung = 1;
 
@@ -233,6 +255,7 @@ fn a_key_that_only_moves_the_cursor_leaves_the_marks_where_they_are() {
         Moved::Redraw
     );
     assert_eq!(shelf.query.text(), "k");
+    assert_eq!(shelf.provider, 2);
     assert_eq!(shelf.model, 2);
     assert_eq!(shelf.rung, 1);
 }
