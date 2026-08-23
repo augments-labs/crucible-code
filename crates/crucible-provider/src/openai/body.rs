@@ -14,7 +14,7 @@
 //! is nested under `reasoning` rather than named at the top of the body.
 
 use crucible_core::{
-    Attached, Content, Message, Request, StopReason, ToolCall, ToolResult, ToolSchema,
+    Attached, Content, Message, Modality, Request, StopReason, ToolCall, ToolResult, ToolSchema,
 };
 #[cfg(test)]
 use serde_json::Value;
@@ -169,16 +169,40 @@ fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Atta
 ///
 /// `detail` is left off. It is optional, and the endpoint's own default is a
 /// better answer than one this harness would have to guess per image.
+///
+/// `filename` is not optional beside base64, and is the attachment's place in
+/// the transcript rather than the name the person typed: a provider is handed
+/// what the runner resolved and never a path, and the prompt travelling beside
+/// it already says which file they meant.
 fn write_attached(part: &mut Object<'_>, attached: &Attached<'_>) {
     match attached.content {
-        Content::Bytes(bytes) => {
-            part.text("type", "input_image");
-            part.prefixed_encoded(
-                "image_url",
-                &format!("data:{};base64,", attached.media_type),
-                bytes,
-            );
-        }
+        // Every modality is spelled out rather than caught by a wildcard, so a
+        // sixth one added to the enum arrives here as a compiler error rather
+        // than as a picture. What keeps the other three from reaching this at
+        // all is `spells()`, which names the two this answers and is tested
+        // against it.
+        Content::Bytes(bytes) => match attached.modality {
+            Modality::Pdf => {
+                part.text("type", "input_file");
+                part.text(
+                    "filename",
+                    &format!("attachment-{}-{}.pdf", attached.message, attached.index),
+                );
+                part.prefixed_encoded(
+                    "file_data",
+                    &format!("data:{};base64,", attached.media_type),
+                    bytes,
+                );
+            }
+            Modality::Text | Modality::Image | Modality::Video | Modality::Audio => {
+                part.text("type", "input_image");
+                part.prefixed_encoded(
+                    "image_url",
+                    &format!("data:{};base64,", attached.media_type),
+                    bytes,
+                );
+            }
+        },
         Content::Instead(line) => {
             part.text("type", "input_text");
             part.text("text", line);

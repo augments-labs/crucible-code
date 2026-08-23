@@ -38,16 +38,29 @@ const PIXEL: &[u8] = &[0x89, b'P', b'N', b'G'];
 const INSTEAD: &str = "holiday.png is not attached to this request, to keep the request \
      within its size limit: read it again if you need it.";
 
-/// A prompt the runner resolved one attachment for.
+/// The five bytes a PDF starts with, which encode to `JVBERi0=`.
+const PAGES: &[u8] = b"%PDF-";
+
+/// A prompt the runner resolved one picture for.
 fn holding(text: &str, content: Content<'static>) -> Request<'static> {
+    carrying(text, "image/png", Modality::Image, content)
+}
+
+/// A prompt the runner resolved one attachment of a stated kind for.
+fn carrying(
+    text: &str,
+    media_type: &'static str,
+    modality: Modality,
+    content: Content<'static>,
+) -> Request<'static> {
     // The transcript's own reference is deliberately absent: a provider reads
     // what the runner resolved and never a path.
     let mut request = request(said(text));
     request.attached = Box::leak(Box::new([Attached {
         message: 0,
         index: 0,
-        media_type: "image/png",
-        modality: Modality::Image,
+        media_type,
+        modality,
         content,
     }]));
     request
@@ -364,6 +377,38 @@ fn an_image_is_a_data_url_part_before_the_prompt() {
                 "image_url": "data:image/png;base64,iVBORw=="
             },
             { "type": "input_text", "text": "what is in this" }
+        ]),
+        "{body}"
+    );
+}
+
+/// The shape this vendor's documentation described on 2026-08-23: an
+/// `input_file` part carrying the same `data:` URL a picture travels in, under
+/// `file_data` rather than `image_url`, beside a `filename` the endpoint
+/// requires of base64 and reads the kind from.
+///
+/// The name is the attachment's place in the transcript. A provider is handed
+/// what the runner resolved and never a path, so the file's own name is not
+/// here to send -- and the prompt beside it already says which file the person
+/// meant.
+#[test]
+fn a_pdf_is_an_input_file_part_before_the_prompt() {
+    let body = build(&carrying(
+        "what does this say",
+        "application/pdf",
+        Modality::Pdf,
+        Content::Bytes(PAGES),
+    ));
+
+    assert_eq!(
+        at(&body, "/input/0/content"),
+        &json!([
+            {
+                "type": "input_file",
+                "filename": "attachment-0-0.pdf",
+                "file_data": "data:application/pdf;base64,JVBERi0="
+            },
+            { "type": "input_text", "text": "what does this say" }
         ]),
         "{body}"
     );
