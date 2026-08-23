@@ -245,7 +245,7 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
     assert_eq!(
         refusals,
         vec![
-            "huge.png is larger than the 6 MB one attachment may be, so it is not attached. A \
+            "huge.png is larger than the 4 MB one attachment may be, so it is not attached. A \
              smaller copy of it would be."
                 .to_owned()
         ],

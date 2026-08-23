@@ -22,6 +22,15 @@
 //! record that grew with the session would show here and nowhere else, because
 //! twenty turns of prose never reach it. Its figures are reported beside the
 //! budget's and held to the same limit.
+//!
+//! A third session carries pictures. A transcript keeps a reference to every
+//! file a prompt named and the bytes live for exactly one request, so what a
+//! picture costs is a spike inside a request rather than a session that grows
+//! -- and a spike is the one thing a sampled reading can miss and a high-water
+//! mark cannot. Every prompt of that session names more megabytes than one
+//! request may carry, so every request in it is at the ceiling. Its own figure
+//! is reported beside the other two and held to the same limit, and the fixture
+//! refuses the measurement if no request ever arrived carrying the bytes.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -44,7 +53,7 @@ use std::process::{Child, Command, Stdio};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 #[cfg(target_os = "linux")]
@@ -100,6 +109,47 @@ const QUIET: Duration = Duration::from_millis(20);
 #[cfg(target_os = "linux")]
 const PROCESSES: usize = 64;
 
+/// The model the sampled session asks for.
+///
+/// Deliberately a name no table entry answers. Those twenty turns are the ones
+/// the budget has always been written about, and a real name would bring a real
+/// window with it and change what they measure.
+#[cfg(target_os = "linux")]
+const SAMPLED: &str = "bench";
+
+/// The model the picture session asks for.
+///
+/// A name this build does have an entry for, because what may be attached is
+/// what the model accepts times what the provider can spell, and a name the
+/// table has never heard of attaches nothing at all. The largest window any
+/// entry carries, so twenty turns of tool results stay far short of it and
+/// compaction -- which would replace the transcript the pictures hang off --
+/// cannot fire inside a measurement.
+#[cfg(target_os = "linux")]
+const LOOKING: &str = "claude-opus-5";
+
+/// Pictures every prompt of that session names.
+///
+/// More megabytes than one request may carry, so the oldest of them are not:
+/// every request in the session is *at* the ceiling rather than somewhere below
+/// it, and the reading is of the ceiling rather than of however many pictures
+/// happened to be lying around. Stated as a count of megabyte files rather than
+/// against the ceiling's own figure, so lowering that figure leaves this true.
+#[cfg(target_os = "linux")]
+const PICTURES: usize = 8;
+
+/// How large each of them is.
+#[cfg(target_os = "linux")]
+const PICTURE: usize = 1024 * 1024;
+
+/// What a PNG starts with.
+///
+/// The shipped process confirms the extension against the bytes before it
+/// attaches anything, and this is the whole of what that check reads. Nothing
+/// downstream decodes the rest: no vendor is on the other side of this wire.
+#[cfg(target_os = "linux")]
+const SIGNATURE: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
 /// What can go wrong in the probe itself.
 #[derive(Debug, thiserror::Error)]
 enum ProbeError {
@@ -126,6 +176,13 @@ enum ProbeError {
     #[error("bench-session-rss: local provider thread panicked")]
     ProviderPanicked,
 
+    #[cfg(target_os = "linux")]
+    #[error(
+        "bench-session-rss: the largest request carried {largest} bytes, which is under the \
+         attachment ceiling -- the pictures were not attached and the reading measures nothing"
+    )]
+    Unattached { largest: u64 },
+
     #[cfg(not(target_os = "linux"))]
     #[error("bench-session-rss: shipped-process RSS measurement requires Linux")]
     Unsupported,
@@ -141,6 +198,7 @@ struct Measurement {
     twenty: f64,
     filled: f64,
     crest: f64,
+    pictures: f64,
     pss: f64,
     slope: f64,
     threads: usize,
@@ -151,7 +209,7 @@ struct Measurement {
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Measurement, ProbeError> {
     let mut vendor = Vendor::start()?;
-    let scratch = Scratch::new(vendor.address())?;
+    let scratch = Scratch::new(vendor.address(), SAMPLED)?;
     let binary = beside("crucible")?;
     let mut running = Running::start(&binary, &scratch)?;
 
@@ -182,6 +240,8 @@ fn measure() -> Result<Measurement, ProbeError> {
     drop(running);
     vendor.finish()?;
 
+    let pictures = carrying()?;
+
     let turns = f64::from(u16::try_from(TURNS - 5).unwrap_or(u16::MAX));
     Ok(Measurement {
         peak: kibibytes(twenty.peak),
@@ -191,12 +251,58 @@ fn measure() -> Result<Measurement, ProbeError> {
         twenty: kibibytes(twenty.rss),
         filled: kibibytes(filled.rss),
         crest: kibibytes(filled.peak),
+        pictures,
         pss: kibibytes(twenty.pss),
         slope: kibibytes(twenty.rss.saturating_sub(five.rss)) / turns,
         threads: twenty.threads,
         fds: twenty.fds,
         processes: twenty.processes,
     })
+}
+
+/// The high-water mark of a session whose every request carried the ceiling.
+///
+/// Its own child, home and fixture rather than more turns of the one above: a
+/// prompt attaches nothing until the model is one this build knows the limits
+/// of, and the sampled session is run against a name on purpose unknown to the
+/// table. Twenty turns of the same shape as those, with the pictures named in
+/// every prompt alongside the file the read tool is pointed at, so this is a
+/// working session that also carries pictures rather than a session that only
+/// does.
+///
+/// What comes back is the peak, because that is where the bytes are. They are
+/// read, encoded, sent and dropped inside one request, and a reading taken
+/// between turns would find a transcript holding references and report that the
+/// pictures were free.
+#[cfg(target_os = "linux")]
+fn carrying() -> Result<f64, ProbeError> {
+    let mut vendor = Vendor::start()?;
+    let scratch = Scratch::new(vendor.address(), LOOKING)?;
+    let named = scratch.pictures()?;
+    let binary = beside("crucible")?;
+    let mut running = Running::start(&binary, &scratch)?;
+
+    running.until("ask mode on")?;
+    for turn in 1..=TURNS {
+        running.send(&format!("turn {turn}: read big.rs and describe {named}\r"))?;
+        running.until(&marker(turn))?;
+    }
+    let carried = Resource::read(running.id())?;
+
+    drop(running);
+    let largest = vendor.largest();
+    vendor.finish()?;
+
+    // Asked of the fixture rather than of the screen, because the bytes are
+    // what is being measured and the wire is where they can be counted. A
+    // refusal at the prompt draws a sentence and sends a request the ordinary
+    // size, which would read as a session that cost nothing to carry pictures
+    // -- the one wrong answer this probe could give without anybody noticing.
+    if largest < crucible_runner::attachments::CEILING as u64 {
+        return Err(ProbeError::Unattached { largest });
+    }
+
+    Ok(kibibytes(carried.peak))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -224,7 +330,7 @@ struct Scratch {
 
 #[cfg(target_os = "linux")]
 impl Scratch {
-    fn new(endpoint: &str) -> Result<Self, io::Error> {
+    fn new(endpoint: &str, model: &str) -> Result<Self, io::Error> {
         let base = std::env::temp_dir().join(format!("crucible-bench-rss-{}", std::process::id()));
         let home = base.join("home");
         let workspace = base.join("work");
@@ -235,7 +341,7 @@ impl Scratch {
         let config = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
              \"provider\": \"anthropic\",\n  \"providers\": {{\n    \
-             \"anthropic\": {{\"model\": \"bench\", \"baseUrl\": \"{endpoint}\"}}\n  \
+             \"anthropic\": {{\"model\": \"{model}\", \"baseUrl\": \"{endpoint}\"}}\n  \
              }},\n  \"output\": {{\"color\": \"never\"}}\n}}\n"
         );
         fs::write(home.join("config.json"), config)?;
@@ -251,6 +357,33 @@ impl Scratch {
             home,
             workspace,
         })
+    }
+
+    /// Plants the pictures, and returns the words a prompt names them by.
+    ///
+    /// Real files, because the only door an attachment comes through is a path
+    /// somebody typed: the shipped process resolves the word against the
+    /// workspace, confirms the signature against the extension, reads the bytes
+    /// and hashes them. A buffer synthesized in this probe would reach none of
+    /// that, and none of that is free.
+    fn pictures(&self) -> Result<String, io::Error> {
+        let mut bytes = vec![0_u8; PICTURE];
+        bytes
+            .get_mut(..SIGNATURE.len())
+            .ok_or_else(|| io::Error::other("a picture smaller than a PNG signature"))?
+            .copy_from_slice(SIGNATURE);
+
+        let mut named = String::with_capacity(PICTURES.saturating_mul(16));
+        for picture in 1..=PICTURES {
+            let name = format!("shot-{picture}.png");
+            fs::write(self.workspace.join(&name), &bytes)?;
+            if !named.is_empty() {
+                named.push(' ');
+            }
+            named.push_str(&name);
+        }
+
+        Ok(named)
     }
 }
 
@@ -268,6 +401,8 @@ struct Vendor {
     address: String,
     wake: SocketAddr,
     stopping: Arc<AtomicBool>,
+    /// The largest request body this fixture was sent, in bytes.
+    largest: Arc<AtomicU64>,
     serving: Option<JoinHandle<Result<(), io::Error>>>,
 }
 
@@ -279,20 +414,28 @@ impl Vendor {
         listener.set_nonblocking(true)?;
         let stopping = Arc::new(AtomicBool::new(false));
         let told = stopping.clone();
+        let largest = Arc::new(AtomicU64::new(0));
+        let counted = largest.clone();
         let serving = std::thread::Builder::new()
             .name("crucible-rss-provider".into())
-            .spawn(move || serve(&listener, &told))?;
+            .spawn(move || serve(&listener, &told, &counted))?;
 
         Ok(Self {
             address: format!("http://{wake}/v1/messages"),
             wake,
             stopping,
+            largest,
             serving: Some(serving),
         })
     }
 
     fn address(&self) -> &str {
         &self.address
+    }
+
+    /// The largest request body this fixture was sent, in bytes.
+    fn largest(&self) -> u64 {
+        self.largest.load(Ordering::Acquire)
     }
 
     fn finish(&mut self) -> Result<(), ProbeError> {
@@ -313,14 +456,18 @@ impl Drop for Vendor {
 }
 
 #[cfg(target_os = "linux")]
-fn serve(listener: &TcpListener, stopping: &AtomicBool) -> Result<(), io::Error> {
+fn serve(
+    listener: &TcpListener,
+    stopping: &AtomicBool,
+    largest: &AtomicU64,
+) -> Result<(), io::Error> {
     let mut requests = 0;
     while !stopping.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((mut connection, _)) => {
                 connection.set_nonblocking(false)?;
                 connection.set_read_timeout(Some(CEILING))?;
-                request(&mut connection)?;
+                largest.fetch_max(request(&mut connection)?, Ordering::AcqRel);
                 requests += 1;
                 // A measured turn is two requests -- the tool call, then the
                 // answer that follows its result. A fill turn is one, because
@@ -346,7 +493,7 @@ fn serve(listener: &TcpListener, stopping: &AtomicBool) -> Result<(), io::Error>
 }
 
 #[cfg(target_os = "linux")]
-fn request(connection: &mut TcpStream) -> Result<(), io::Error> {
+fn request(connection: &mut TcpStream) -> Result<u64, io::Error> {
     let mut read = BufReader::new(connection);
     let mut line = String::new();
     let mut bytes = 0;
@@ -386,7 +533,7 @@ fn request(connection: &mut TcpStream) -> Result<(), io::Error> {
             "request body ended before content-length",
         ));
     }
-    Ok(())
+    Ok(body)
 }
 
 #[cfg(target_os = "linux")]
@@ -699,7 +846,7 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
     let _ = write!(
         line,
         "{:.1} MB {LIMIT:.0} start={:.1} turn1={:.1} turn5={:.1} turn20={:.1} \
-         filled={:.1} crest={:.1} pss20={:.1} slope={:.3} \
+         filled={:.1} crest={:.1} pictures={:.1} pss20={:.1} slope={:.3} \
          threads={} fds={} processes={}",
         measured.peak,
         measured.start,
@@ -708,6 +855,7 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
         measured.twenty,
         measured.filled,
         measured.crest,
+        measured.pictures,
         measured.pss,
         measured.slope,
         measured.threads,
@@ -719,7 +867,7 @@ fn report(measured: Measurement) -> Result<(), io::Error> {
     io::stdout().flush()
 }
 
-/// Says which of the two readings went over, on stderr, where
+/// Says which of the three readings went over, on stderr, where
 /// `scripts/bench.sh` puts everything a human reads.
 ///
 /// The one line on stdout carries the twenty-turn figure whichever reading
@@ -731,8 +879,8 @@ fn over(measured: Measurement) -> Result<(), io::Error> {
     let _ = writeln!(
         line,
         "    FAIL peak {:.1} MB over twenty turns, {:.1} MB once the record was \
-         full (limit {LIMIT:.0} MB)",
-        measured.peak, measured.crest,
+         full, {:.1} MB carrying pictures at the ceiling (limit {LIMIT:.0} MB)",
+        measured.peak, measured.crest, measured.pictures,
     );
     io::stderr().write_all(line.as_bytes())
 }
@@ -752,13 +900,17 @@ fn main() -> ExitCode {
         }
     };
 
-    // Both readings, and the same limit for each. The first is the budget as
+    // Three readings, and the same limit for each. The first is the budget as
     // it is written; the second says the record's ceiling is what holds it, by
-    // taking it in a session long enough to have gone over that ceiling.
+    // taking it in a session long enough to have gone over that ceiling; the
+    // third says the attachment ceiling is what holds the bytes, by taking it
+    // in a session every request of which was at that ceiling. A budget with
+    // one number and three sessions under it is what keeps attachments part of
+    // what it bounds rather than a second budget beside it.
     if report(measured).is_err() {
         return ExitCode::FAILURE;
     }
-    if measured.peak > LIMIT || measured.crest > LIMIT {
+    if measured.peak > LIMIT || measured.crest > LIMIT || measured.pictures > LIMIT {
         let _ = over(measured);
         return ExitCode::FAILURE;
     }

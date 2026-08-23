@@ -607,7 +607,7 @@ prompt you wrote.
 The bytes stay on disk. A transcript holds the path, and each request reads the
 file again — so the picture in front of the model is the file as it is now, and
 a session with twenty of them costs twenty paths rather than twenty pictures. A
-request carries at most 6 MB of files; over that, the oldest stop being attached
+request carries at most 4 MB of files; over that, the oldest stop being attached
 and the model is told to read them again if it needs them.
 
 When a file cannot go, a line says which half said no:
@@ -621,7 +621,7 @@ When a file cannot go, a line says which half said no:
 ```
 
 The first is about the model, and `/model` changes it. The second is about the
-protocol, and nothing you type does. A file over 6 MB on its own, or one whose
+protocol, and nothing you type does. A file over 4 MB on its own, or one whose
 bytes are not what its name claims, gets its own line and never costs a request.
 
 ## Commands
