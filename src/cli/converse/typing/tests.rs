@@ -417,7 +417,7 @@ fn the_row_under_the_box_is_drawn_from_characters_every_terminal_has() {
         assert!(says.mode.is_ascii(), "{:?}", says.mode);
         assert!(says.keys.is_ascii(), "{:?}", says.keys);
 
-        let running = under(&engine(mode), Glyphs::Ascii);
+        let running = under(&engine(mode));
         assert!(running.keys.is_ascii(), "{:?}", running.keys);
     }
 }
@@ -766,20 +766,15 @@ fn ctrl_o_does_what_the_row_offering_it_says_while_the_turn_is_still_running() {
 }
 
 #[test]
-fn the_row_under_a_running_turn_names_the_key_that_interrupts_it() {
-    // The one place the key is printed beside the thing it acts on while a turn
-    // is the thing on screen. It earns the room the same way the mode's key
-    // does: nothing else says the row is a control at all.
-    let says = under(&engine(Mode::Ask), Glyphs::Unicode);
-
-    assert_eq!(says.keys, interrupting(Glyphs::Unicode));
-    assert!(says.keys.contains("esc"), "{:?}", says.keys);
-
-    // And says nothing about the key that no longer stops a turn. Naming it
-    // here is what would teach it twice: it does the same thing under a turn
-    // that it does at the prompt, and a row that mentions it mid turn is a row
-    // claiming otherwise.
-    assert!(!says.keys.contains("ctrl"), "{:?}", says.keys);
+fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
+    // Shift+Tab now works on this side while the runner is away, and Esc is
+    // already named on the working row above. The status row therefore stays
+    // the same across a turn rather than replacing the mode's control.
+    for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
+        let says = under(&engine(mode));
+        assert_eq!(says.mode, mode.sentence(), "{mode:?}");
+        assert_eq!(says.keys, CYCLE, "{mode:?}");
+    }
 }
 
 #[test]
@@ -859,20 +854,6 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
         "{:?}",
         footed.boxed
     );
-}
-
-#[test]
-fn what_parts_the_two_keys_under_a_running_turn_comes_out_of_the_glyph_set() {
-    // The row above the box parts its own segments with this mark, two rows
-    // away and out of the setting already. One of the two drawn from the
-    // setting and one written down would show as a hollow square beside a mark
-    // that came out right, on a screen where they are meant to read as a pair.
-    for (glyphs, said) in [
-        (Glyphs::Unicode, "(enter queues it · esc to interrupt)"),
-        (Glyphs::Ascii, "(enter queues it - esc to interrupt)"),
-    ] {
-        assert_eq!(under(&engine(Mode::Ask), glyphs).keys, said, "{glyphs:?}");
-    }
 }
 
 #[test]
