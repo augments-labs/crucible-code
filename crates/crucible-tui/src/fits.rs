@@ -42,6 +42,7 @@ use crate::plan::{Plan, State, Task};
 use crate::prompt::Prompt;
 use crate::row::Row;
 use crate::running::{Command, Running};
+use crate::shelf::{Pane, Serving, Shelf, Stocked};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
 
@@ -438,5 +439,82 @@ fn an_ask_fits_the_window_its_questions_are_put_in() {
     };
     down("an ask", |columns, room, glyphs| {
         asked.within(columns, room, glyphs).0
+    });
+}
+
+#[test]
+fn a_shelf_fits_the_window_it_stands_in() {
+    // The one component here that fills its room rather than giving rows up, so
+    // the sweep's height half is the one doing the work: a shelf that padded a
+    // row too far would put it in the band underneath.
+    //
+    // The fixtures are the states the arithmetic is least safe in — no models
+    // at all, no rungs at all, a provider the query emptied, and a note far too
+    // long for the column it is drawn in.
+    const PROVIDERS: [Serving<'static>; 3] = [
+        Serving {
+            name: LONG,
+            count: Some(4096),
+        },
+        Serving {
+            name: PROSE,
+            count: None,
+        },
+        Serving {
+            name: "All",
+            count: Some(0),
+        },
+    ];
+    const MODELS: [Stocked<'static>; 2] = [
+        Stocked {
+            name: LONG,
+            by: PROSE,
+            window: "1M",
+            note: PROSE,
+            now: true,
+        },
+        Stocked {
+            name: PROSE,
+            by: "",
+            window: LONG,
+            note: "",
+            now: false,
+        },
+    ];
+    const RUNGS: [&str; 2] = [LONG, "low"];
+
+    let shelf = Shelf {
+        title: PROSE,
+        now: LONG,
+        query: PROSE,
+        typed: 12,
+        hint: LONG,
+        providers: &PROVIDERS,
+        provider: 2,
+        models: &MODELS,
+        model: 1,
+        rungs: &RUNGS,
+        rung: 1,
+        nothing: PROSE,
+        pane: Pane::Models,
+        keys: (PROSE, LONG),
+        norung: LONG,
+    };
+    down("a shelf", |columns, room, glyphs| {
+        shelf.within(columns, room, glyphs)
+    });
+
+    let bare = Shelf {
+        providers: &[],
+        provider: 0,
+        models: &[],
+        model: 0,
+        rungs: &[],
+        rung: 0,
+        pane: Pane::Providers,
+        ..shelf
+    };
+    down("a shelf with nothing on it", |columns, room, glyphs| {
+        bare.within(columns, room, glyphs)
     });
 }
