@@ -87,6 +87,7 @@ fn marked(slot: Slot) -> Option<&'static str> {
         Slot::DoingMark => Some("DoingMark"),
         Slot::Done => Some("Done"),
         Slot::DoneMark => Some("DoneMark"),
+        Slot::Trouble => Some("Trouble"),
         Slot::Removed => Some("Removed"),
         Slot::RemovedNumber => Some("RemovedNumber"),
         Slot::Added => Some("Added"),

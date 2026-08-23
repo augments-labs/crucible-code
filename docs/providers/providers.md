@@ -96,16 +96,33 @@ reading every remaining line and answering none of them.
 turn on and writes it to `~/.crucible/config.json` under the provider this run
 is set up for, so the next run starts with it. It writes `provider` beside it, so
 the next run asks the same vendor rather than settling that question again from
-whichever keys the shell is carrying. `/model` on its own stands a panel
-of every provider this build serves beside a few of the models each offers,
-under the name of the one being asked now; down a pipe, where nobody can walk a
-panel, it writes that same list out as the line that asks for each.
+whichever keys the shell is carrying. `/model` on its own stands a shelf over
+the whole shell: a search line across the top, every provider this build serves
+in one pane beside the models in the other, and the rungs the marked model takes
+on a strip underneath, under the name of the one being asked now. Typing narrows
+both panes at once, against a model's name or a provider's — somebody who types
+`openai` wants everything that vendor serves, somebody who types `sonnet` wants
+the one model, and neither should have to say which kind of name they just
+typed. Tab crosses between the panes, the up and down arrows walk whichever one
+the mark is in, the left and right arrows walk the rungs, Enter takes the model
+and the rung under it together, and Escape leaves everything as it was. A mouse
+lights the row it is over, across the whole width of that pane; passing over a
+row chooses nothing, and clicking one puts the mark on it. Clicking a model the
+mark is already on takes it, so a double click picks one outright — and a
+provider is never taken that way, because it narrows the models beside it rather
+than being an answer itself. The rung stays on the arrow keys, which is what
+keeps taking the model and saying how hard it should think one visit. Down a
+pipe, where nobody can walk a shelf, it writes the models out as the line that
+asks for each.
 
-Taking a row off another provider's half of the panel moves the session there
-first — a model belongs to the vendor that serves it, and the two change
-together. A model the list does not carry is still named — what is offered is a
-shortcut past the vendor's documentation, and the vendor remains the authority
-on what it serves.
+Taking a row off the models pane moves the session to whoever serves it first —
+a model belongs to the vendor that serves it, and the two change together. The
+rung goes with them, because a rung is asked of a model: choosing one and then
+being sent somewhere else to say how hard it should think is the same question
+put twice. A model whose vendor serves no rung is taken with the rung left
+exactly as it was, and its row says so. A model the shelf does not carry is
+still named — what is offered is a shortcut past the vendor's documentation, and
+the vendor remains the authority on what it serves.
 
 A model belongs to the provider serving it. crucible never writes a name under
 one provider and sends it to another — the pairing is settled once, by
@@ -157,7 +174,10 @@ Mid-session, `/effort` stands a ladder over the rungs the model in force serves
 and `/effort <rung>` takes one outright. The ladder is a track with the rungs
 written under it,
 `Faster` at one end and `Smarter` at the other; the left and right arrows move
-the mark, Enter takes what is under it and Escape leaves it. It is stood over a
+the mark, Enter takes what is under it and Escape leaves it. The same rungs are
+on the strip beneath the shelf `/model` stands, so a session settling both at
+once settles them in one visit, and `/effort` is the way to change the rung
+without touching the model. It is stood over a
 model by name and asks which model is being asked first, since a rung is one
 word in one request and what it buys is that model's to say. Either way it applies from the next turn on and is written to
 `~/.crucible/config.json` beside the model, so the next run here asks for the
@@ -188,8 +208,8 @@ crucible is never told which rung that is, and neither is the model.
 
 ### The ladder holds what the model serves
 
-Which rungs a model takes is written down beside its name in the list `/model`
-offers, so the ladder is the model's rather than crucible's: `moonshot/k3` gets
+Which rungs a model takes is written down beside its name in the shelf `/model`
+stands, so the ladder is the model's rather than crucible's: `moonshot/k3` gets
 three rungs, `openai/gpt-5.5` gets four, and a model whose vendor serves none is
 told so instead of being offered a ladder that cannot be answered. A rung that
 is missing is missing rather than drawn and greyed — a row the arrows have to

@@ -135,6 +135,19 @@ pub enum Slot {
     Done,
     /// That task's mark.
     DoneMark,
+    /// A line saying something was refused, and nothing happened.
+    ///
+    /// The one slot that is not about what is on the row but about what is not:
+    /// a command that did what was asked answers quietly, and this is the same
+    /// shape of line saying the opposite. Ink and no ground -- a ground is what
+    /// a block of lines takes, and this is always one sentence.
+    ///
+    /// Red where a theme has red to spend, and the amber the diff already
+    /// borrows where it does not: the two colourblind tables move what a change
+    /// took out onto the amber for a reason that holds here word for word, and
+    /// a second hue nobody can see apart from the accent would be worse than
+    /// the one they can.
+    Trouble,
     /// A line a change took out, on a ground of its own.
     Removed,
     /// That line's number, and the sign beside it, on the same ground.
@@ -254,6 +267,8 @@ struct Tones {
     green: Ink,
     /// The widest permission mode, and the task under way.
     amber: Ink,
+    /// A line saying something was refused.
+    trouble: Ink,
     /// A line a change took out.
     removed: Ink,
     /// Its number and sign.
@@ -290,6 +305,14 @@ const DARK: Tones = Tones {
         exact: "\x1b[38;2;176;132;22m",
         indexed: "\x1b[38;5;136m",
         basic: "\x1b[33m",
+    },
+    // Held down off the brightest red on purpose: this table is also what a
+    // terminal that reported no ground at all gets, so the hue has to clear a
+    // white one as well, and a lighter red clears black and fails white.
+    trouble: Ink {
+        exact: "\x1b[38;2;224;88;88m",
+        indexed: "\x1b[38;5;167m",
+        basic: "\x1b[91m",
     },
     removed: Ink {
         exact: "\x1b[48;2;74;26;30;38;2;255;199;202m",
@@ -348,6 +371,11 @@ const LIGHT: Tones = Tones {
         indexed: "\x1b[38;5;94m",
         basic: "\x1b[33m",
     },
+    trouble: Ink {
+        exact: "\x1b[38;2;155;28;34m",
+        indexed: "\x1b[38;5;88m",
+        basic: "\x1b[31m",
+    },
     removed: Ink {
         exact: "\x1b[48;2;255;227;229;38;2;92;17;22m",
         indexed: "\x1b[48;5;224;38;5;52m",
@@ -404,6 +432,14 @@ const COLOURBLIND_DARK: Tones = Tones {
         indexed: "\x1b[38;5;215m",
         basic: "\x1b[33m",
     },
+    // The amber again, and deliberately the same bytes: this table's whole
+    // point is that the red-green axis carries nothing, and the two never share
+    // a row.
+    trouble: Ink {
+        exact: "\x1b[38;2;232;163;61m",
+        indexed: "\x1b[38;5;215m",
+        basic: "\x1b[33m",
+    },
     removed: Ink {
         exact: "\x1b[48;2;74;42;16;38;2;255;224;194m",
         indexed: "\x1b[48;5;58;38;5;223m",
@@ -444,6 +480,11 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         basic: "\x1b[34m",
     },
     amber: Ink {
+        exact: "\x1b[38;2;138;90;16m",
+        indexed: "\x1b[38;5;94m",
+        basic: "\x1b[33m",
+    },
+    trouble: Ink {
         exact: "\x1b[38;2;138;90;16m",
         indexed: "\x1b[38;5;94m",
         basic: "\x1b[33m",
@@ -496,6 +537,11 @@ const ANSI: Tones = Tones {
         exact: "\x1b[33m",
         indexed: "\x1b[33m",
         basic: "\x1b[33m",
+    },
+    trouble: Ink {
+        exact: "\x1b[31m",
+        indexed: "\x1b[31m",
+        basic: "\x1b[31m",
     },
     removed: Ink {
         exact: "\x1b[41;97m",
@@ -640,6 +686,7 @@ impl Slot {
                 indexed: "\x1b[9;90m",
                 basic: "\x1b[9;90m",
             },
+            Self::Trouble => tones.trouble,
             Self::Removed => tones.removed,
             Self::RemovedNumber => tones.removed_number,
             Self::Added => tones.added,

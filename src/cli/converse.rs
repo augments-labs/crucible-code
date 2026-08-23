@@ -1598,11 +1598,16 @@ fn heard(arrived: Pressed) -> Heard {
         //
         // And Ctrl+Y, which copies the line in the box: this question is what
         // the reader is answering, and no line is being typed behind it.
+        //
+        // And the key that crosses regions, which needs regions to cross: this
+        // question was put a row at a time precisely because there was no room
+        // for a panel, and a row at a time is not divided into anything.
         Pressed::Key(_)
         | Pressed::Up
         | Pressed::Down
         | Pressed::Background
         | Pressed::Cycle
+        | Pressed::Tab
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan

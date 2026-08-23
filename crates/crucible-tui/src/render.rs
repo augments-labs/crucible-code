@@ -261,14 +261,14 @@ pub struct Renderer<T: Terminal> {
     /// under it — a scroll, a resize — because a selection that stayed put
     /// while its words moved is a highlight over the wrong text.
     taken: Option<Taken>,
-    /// Which window row the pointer was last reported on.
+    /// Which window row and column the pointer was last reported on.
     ///
-    /// A row rather than what is on it, and kept across everything that moves
+    /// A place rather than what is on it, and kept across everything that moves
     /// the picture: what the pointer is over is worked out again for every
     /// frame, from this and from where the record has got to. A pointer resting
     /// still while an answer scrolls under it is over whatever is under it now,
     /// which is what a reader watching the screen sees.
-    pointing: Option<usize>,
+    pointing: Option<(usize, usize)>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -378,7 +378,7 @@ impl<T: Terminal> Renderer<T> {
                 && transcript_map::door(self.size.columns)
                     .is_some_and(|door| door.contains(&column));
             let crossed = over != self.map_pointed;
-            self.pointing = Some(row);
+            self.pointing = Some((row, column));
             self.map_pointed = over;
             let changed =
                 lit != self.pointed() || prompt_pointed != self.prompt_pointed() || crossed;
@@ -462,6 +462,17 @@ impl<T: Terminal> Renderer<T> {
         }
     }
 
+    /// Where the pointer was last reported, as a window row and column.
+    ///
+    /// `None` until one is reported at all, which is every session on a
+    /// terminal that answers nothing about the mouse. The place is the
+    /// window's; what is on it is [`Renderer::aimed`]'s answer, and what that
+    /// row means is the answer of whoever drew it.
+    #[must_use]
+    pub fn pointer(&self) -> Option<(usize, usize)> {
+        self.pointing
+    }
+
     /// Whether a pointer transition is waiting for a pointable prompt redraw.
     ///
     /// Taken once. Motion within the same effective target sets no new
@@ -487,7 +498,7 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let nothing = bands.transcript.start..bands.transcript.start;
 
-        let Some(row) = self.pointing else {
+        let Some((row, _)) = self.pointing else {
             return nothing;
         };
 
@@ -530,7 +541,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// Whether the pointer is over the prompt row the caller marked pointable.
     fn prompt_pointed(&self) -> bool {
-        let (Some(row), Some(target)) = (self.pointing, self.prompt_target) else {
+        let (Some((row, _)), Some(target)) = (self.pointing, self.prompt_target) else {
             return false;
         };
 

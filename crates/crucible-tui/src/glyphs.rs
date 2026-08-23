@@ -115,6 +115,50 @@ impl Glyphs {
         }
     }
 
+    /// The two ends of an edge that runs down inside a frame: where it begins
+    /// at the edge across the top, then where it ends at the edge across the
+    /// bottom.
+    ///
+    /// A pair rather than two methods, for the reason [`Glyphs::top`] is one:
+    /// what a frame divided down the middle needs is both ends of the one
+    /// edge, and a set that spelled them apart would let a divider be drawn
+    /// closed at the top and open at the bottom.
+    ///
+    /// Neither is a corner. [`Glyphs::top`] and [`Glyphs::bottom`] turn a
+    /// frame at its outside, and these two open a second edge inside one —
+    /// which is the whole difference between a frame with two panes in it and
+    /// two frames drawn touching.
+    ///
+    /// One column in both sets, for the reason [`Glyphs::crossing`] is: the
+    /// panes either side are laid out against fixed column widths, so a joint
+    /// costing two would put every column after it a place out, in that set
+    /// alone.
+    #[must_use]
+    pub fn dividing(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("┬", "┴"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
+    /// Where a rule that runs across meets the edge down the left of a frame,
+    /// then the edge down its right.
+    ///
+    /// [`Glyphs::crossing`] is this rule meeting an edge in the middle, and
+    /// these are the same rule reaching the outside. All three are one mark in
+    /// the ascii set, which has one joint for every purpose and no way to say
+    /// which side of a frame it is on.
+    ///
+    /// A pair, and one column apiece, for the reasons [`Glyphs::dividing`]
+    /// gives.
+    #[must_use]
+    pub fn joining(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("├", "┤"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
     /// The mark a line is typed after, and that its record keeps afterwards.
     ///
     /// One column either way. The prompt reserves exactly that much room for
@@ -166,6 +210,20 @@ impl Glyphs {
     pub fn stepping(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("←", "→"),
+            Self::Ascii => ("<", ">"),
+        }
+    }
+
+    /// The pair that closes around one word of several, holding the mark.
+    ///
+    /// A pair rather than one mark repeated, and not [`Glyphs::stepping`]:
+    /// those are two keys named under a track, and these are two sides of one
+    /// word. A row of words with a mark only in front of one says which word
+    /// starts there; a word with a side on each of it says which word it is.
+    #[must_use]
+    pub fn bracketing(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("\u{2039}", "\u{203a}"),
             Self::Ascii => ("<", ">"),
         }
     }
@@ -388,6 +446,73 @@ mod tests {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn the_joints_of_a_frame_are_four_marks_and_none_is_the_edge_it_interrupts() {
+        // A frame with a pane divider down it meets a rule across it in four
+        // places, and each is a different shape: the divider's top and bottom,
+        // and the rule's left and right. Two of them drawn alike is a divider
+        // that reads as open at one end; one of them drawn as the plain edge
+        // it interrupts is no joint at all, which is the same picture as
+        // having drawn nothing.
+        //
+        // One column apiece because the panes are laid out against fixed
+        // column widths -- a joint costing two would put every column after it
+        // a place out, in that set only.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (top, bottom) = glyphs.dividing();
+            let (left, right) = glyphs.joining();
+            let joints = [top, bottom, left, right];
+
+            for joint in joints {
+                assert_eq!(columns(joint), 1, "{glyphs:?}: {joint:?}");
+                assert_ne!(joint, glyphs.horizontal(), "{glyphs:?}: {joint:?}");
+                assert_ne!(joint, glyphs.vertical(), "{glyphs:?}: {joint:?}");
+            }
+        }
+
+        // Apart from each other only where the set has the glyphs to spare.
+        // The ascii set answers "+" to every joint, as it already does for
+        // `crossing` and both corners, and that is what it has.
+        let (top, bottom) = Glyphs::Unicode.dividing();
+        let (left, right) = Glyphs::Unicode.joining();
+        let joints = [top, bottom, left, right, Glyphs::Unicode.crossing()];
+        for (at, joint) in joints.iter().enumerate() {
+            assert!(
+                !joints.iter().skip(at + 1).any(|other| other == joint),
+                "{joint:?} twice"
+            );
+        }
+    }
+
+    #[test]
+    fn every_joint_of_a_frame_is_the_one_mark_the_ascii_set_has_for_one() {
+        // A set that answered "+" to a crossing and something else to a tee
+        // would draw a frame whose joints do not look like each other's, on
+        // the terminal that has the least to work with.
+        let (top, bottom) = Glyphs::Ascii.dividing();
+        let (left, right) = Glyphs::Ascii.joining();
+        for joint in [top, bottom, left, right] {
+            assert_eq!(joint, Glyphs::Ascii.crossing(), "{joint:?}");
+        }
+    }
+
+    #[test]
+    fn the_pair_that_closes_around_a_word_is_one_column_a_side_in_both_sets() {
+        // The words on a track are laid out against fixed columns and the mark
+        // walks between them, so a side costing two columns in one set would
+        // shove every word after the marked one a place along -- and only on
+        // the terminal that has that set. Two sides that were the same mark
+        // would say a word starts and ends with the same thing, which is a
+        // picture with no left and no right in it.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (opens, closes) = glyphs.bracketing();
+
+            assert_eq!(columns(opens), 1, "{glyphs:?}: {opens:?}");
+            assert_eq!(columns(closes), 1, "{glyphs:?}: {closes:?}");
+            assert_ne!(opens, closes, "{glyphs:?}");
         }
     }
 

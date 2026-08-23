@@ -1,0 +1,28 @@
+---
+source: crates/crucible-tui/src/shelf/tests.rs
+expression: "picture(&shelf(&providers, &models).within(58, 24, Glyphs::Unicode), 58)"
+---
+<Strong>Model</>                <Quiet>now  anthropic/claude-sonnet-5 · high</>
+
+<Quiet>╭</><Quiet>────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</><Quiet> Search</>    <Quiet>a model, or a vendor</>                         <Quiet>│</>
+<Quiet>╰</><Quiet>────────────────────────────────────────────────────────</><Quiet>╯</>
+
+<Quiet>╭</><Quiet>────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</>  <Accent>‹</><Quiet>All</><Accent>›</><Quiet> · </><Quiet>Anthropic</><Quiet> · </><Quiet>MoonshotAI</><Quiet> · </><Quiet>OpenAI</>               <Quiet>│</>
+<Quiet>├</><Quiet>────────────────────────────────────────────────────────</><Quiet>┤</>
+<Quiet>│</> <Accent>›</> <Strong>claude-sonnet-5</>          <Quiet>Anthropic</>       <Quiet>1M</>  <DoneMark>← now</>   <Quiet>│</>
+<Quiet>│</> <Accent> </> claude-opus-5            <Quiet>Anthropic</>     <Quiet>200K</>          <Quiet>│</>
+<Quiet>│</> <Accent> </> claude-haiku-4-5         <Quiet>Anthropic</>     <Quiet>200K</>  <Quiet>no rung</> <Quiet>│</>
+<Quiet>│</> <Accent> </> a model whose name nobo  <Quiet>MoonshotAI</>       <Quiet>—</>  <Quiet>a model </><Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>│</>                                                        <Quiet>│</>
+<Quiet>╰</><Quiet>────────────────────────────────────────────────────────</><Quiet>╯</>
+
+  <Quiet>Effort</>    <Quiet>low</>   <Quiet>medium</>  <Accent>‹</> <Strong>high</> <Accent>›</>  <Quiet>xhigh</>   <Quiet>max</>
+
+  <Quiet>tab · ↑↓ · ←→ · enter · esc</>

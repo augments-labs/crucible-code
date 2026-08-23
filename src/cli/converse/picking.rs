@@ -12,9 +12,10 @@
 //! lets `/login`, `/logout` and a first run that opens with the same list share
 //! one loop rather than one string.
 //!
-//! Two sets of keys rather than one, because the two shapes are read
-//! differently: a list is walked down and a ladder is walked along, and a
-//! component whose arrows disagree with its picture is one nobody trusts twice.
+//! Three sets of keys rather than one, because the three shapes are read
+//! differently: a list is walked down, a ladder is walked along, and a shelf is
+//! both at once with a line being typed above them. A component whose arrows
+//! disagree with its picture is one nobody trusts twice.
 //! What happens around the keys — the resize, the answer, and the box coming
 //! back — is [`region`]'s, and is one loop.
 //!
@@ -22,7 +23,9 @@
 //! each end instead of wrapping. A ring puts the first entry one key past the
 //! last, so the key that went too far is the key that goes further.
 
-use crucible_tui::{Key, Ladder, Panel, Pressed, Renderer, Terminal};
+use crucible_tui::{
+    Caret, Editor, Head, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal, Typed,
+};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -213,6 +216,321 @@ fn sliding(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,
         _ => Moved::Still,
+    }
+}
+
+/// The rows the window keeps for itself while something stands in it.
+///
+/// The head at the top and the row that maps the transcript at the foot. A
+/// component is handed the whole height of the window and lays itself out
+/// against it, and these two are already spoken for — rows asked for past them
+/// are laid out and then dropped off the bottom, which costs the keys row
+/// first. Under-asking costs nothing: the transcript is above and fills what is
+/// left.
+const CHROME: usize = Head::ROWS + 1;
+
+/// What came off the shelf: a model, and the rung marked under it.
+///
+/// `Option<usize>` rather than a rung index into nothing, because a model whose
+/// provider serves no rung is taken with no rung and that is not a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Shelved<T> {
+    /// This came off the shelf, with the rung marked under it where there was
+    /// one to mark.
+    Took(T, Option<usize>),
+    /// The shelf was left with nothing taken. What is owed is the caller's line
+    /// saying so.
+    Left,
+    /// There was no room to stand one. The caller still owes an answer.
+    Cramped,
+}
+
+/// What a shelf keeps between frames.
+///
+/// The line being typed, a mark per pane, and what the last frame narrowed —
+/// which is written here by the frame that laid it out rather than by the key
+/// that caused it, because narrowing is the caller's and this module is never
+/// told what is on the shelf. The two counts are the same fact for the panes
+/// nothing is taken out of: the keys need to know where each pane ends, and the
+/// rows themselves are the caller's.
+pub(super) struct Standing<M> {
+    /// The search line.
+    pub(super) query: Editor,
+    /// Which pane the arrows walk.
+    pub(super) pane: Pane,
+    /// The mark in the pane of providers, counting the row that means all of
+    /// them.
+    pub(super) provider: usize,
+    /// The mark in the pane of models, into `models`.
+    pub(super) model: usize,
+    /// The mark on the strip of rungs.
+    pub(super) rung: usize,
+    /// What the last frame narrowed the shelf to. The one thing here that comes
+    /// back out.
+    pub(super) models: Vec<M>,
+    /// How many rows the pane of providers has.
+    pub(super) providers: usize,
+    /// How many rungs the strip has. None at all is a model that takes none.
+    pub(super) rungs: usize,
+    /// Where the pointer is resting, in the shelf's own rows and the window's
+    /// columns, or `None` where it is resting on nothing the shelf drew.
+    ///
+    /// Beside the marks and never one of them. A pointer says what a reader is
+    /// looking at and a mark says what the next key acts on, and a hand crossing
+    /// the window on its way somewhere else has chosen nothing.
+    pub(super) pointer: Option<(usize, usize)>,
+    /// Which row the last frame lit under that pointer, written here by the
+    /// frame that drew it.
+    ///
+    /// A click reads this rather than working the place out a second time.
+    /// Where the pointer is is a fact about the window; which row that is is a
+    /// fact about a picture that has been narrowed, scrolled and folded to a
+    /// width, and the party that knows all three is the one that just drew it.
+    /// Reading it back is also the whole of what stops a click from taking a
+    /// row other than the one the reader can see lit.
+    pub(super) lit: Option<Resting>,
+}
+
+/// Stands a shelf over the whole window and reads keys until one is taken.
+///
+/// `laid` is handed the room under the window's own chrome rather than the
+/// window's height, because a shelf fills what it is given and the two rows at
+/// the ends are not its to fill.
+///
+/// A shelf whose marked row is not there — nothing narrowed to, at the moment
+/// Enter arrived — comes back [`Shelved::Cramped`], which is the answer a
+/// caller already has for a shelf it could not stand: the listing. The keys
+/// below refuse Enter on an empty shelf, so it is a miss that cannot happen
+/// rather than a case with behaviour of its own.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn shelve<T: Terminal, M: Copy>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    standing: &mut Standing<M>,
+    mut laid: impl FnMut(&mut Standing<M>, usize, usize) -> (Vec<Row>, Option<Caret>),
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Shelved<M>, Fatal> {
+    let ended = region::stand_while(
+        renderer,
+        |_| style,
+        standing,
+        |standing, columns, rows| laid(standing, columns, rows.saturating_sub(CHROME)),
+        searching,
+        while_waiting,
+    )?;
+
+    Ok(match ended {
+        Ended::Took => standing
+            .models
+            .get(standing.model)
+            .copied()
+            .map_or(Shelved::Cramped, |took| {
+                Shelved::Took(took, (standing.rungs > 0).then_some(standing.rung))
+            }),
+        Ended::Left => Shelved::Left,
+        Ended::Cramped => Shelved::Cramped,
+    })
+}
+
+/// What `arrived` does to a shelf.
+///
+/// Three shapes under one hand, so the keys are parted by what they are for
+/// rather than by which pane has the mark. The down pair walks whichever pane
+/// the mark is in, tab is what moves the mark between them, and the across pair
+/// walks the strip of rungs — which is the one binding both readings of could
+/// have had: the strip is a picture with a left and a right, and the search
+/// line is not the thing being walked. Everything else the line has a use for
+/// goes to the line, so a long query is still editable with Home, End and the
+/// word keys.
+///
+/// The wheel is nothing here on purpose. A shelf is not a window over more than
+/// it holds, so the wheel scrolls the transcript underneath it, which is what
+/// every other standing component already does.
+// An event token is handed over, not lent: the handler takes the one thing
+// the reader produced, and a reference would say the caller kept a say in it.
+#[allow(clippy::needless_pass_by_value)]
+fn searching<M>(arrived: Pressed, standing: &mut Standing<M>) -> Moved {
+    match arrived {
+        // Nothing to take. Refused here rather than answered by the caller,
+        // because a shelf that closed on a query matching nothing would be the
+        // panel disagreeing with the search line the reader is looking at.
+        Pressed::Key(Key::Enter) if standing.models.is_empty() => Moved::Still,
+        Pressed::Key(Key::Enter) => Moved::Took,
+        Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
+        Pressed::Resized => Moved::Redraw,
+        // Where the pointer is, rather than what is under it: which row of
+        // which pane a place falls on is a fact about the picture, and the
+        // picture is laid out a layer up. A report per cell that lands on the
+        // same cell costs nothing -- the rows come back the same and a frame is
+        // written only where its text changed.
+        Pressed::Hovered { row, column } => {
+            let next = (row != usize::MAX).then_some((row, column));
+            if standing.pointer == next {
+                return Moved::Still;
+            }
+            standing.pointer = next;
+            Moved::Redraw
+        }
+        // A click takes what is lit, and never what is under the place the
+        // click reports. On a terminal answering motion the two are one place,
+        // because the pointer crossed the row before the button went down; on
+        // one that is not, what is on screen is what the reader chose. So a
+        // click arriving where nothing is lit lights it and stops there, and
+        // the next one takes it.
+        Pressed::Clicked { row, column } => {
+            if standing.pointer != Some((row, column)) {
+                standing.pointer = Some((row, column));
+                return Moved::Redraw;
+            }
+            clicked(standing)
+        }
+        Pressed::Tab => {
+            standing.pane = match standing.pane {
+                Pane::Providers => Pane::Models,
+                Pane::Models => Pane::Providers,
+            };
+            Moved::Redraw
+        }
+        Pressed::Up => stepped(standing, |at| at.checked_sub(1)),
+        Pressed::Down => stepped(standing, |at| Some(at + 1)),
+        Pressed::Key(Key::Left) => {
+            let next = standing.rung.checked_sub(1);
+            step(&mut standing.rung, next)
+        }
+        Pressed::Key(Key::Right) => {
+            let next = Some(standing.rung + 1).filter(|next| *next < standing.rungs);
+            step(&mut standing.rung, next)
+        }
+        Pressed::Pasted(pasted) => {
+            let answered = standing.query.paste(&pasted);
+            typed(answered, true, standing)
+        }
+        Pressed::Key(key) => {
+            let rewrites = rewrites(key);
+            let answered = standing.query.press(key);
+            typed(answered, rewrites, standing)
+        }
+        _ => Moved::Still,
+    }
+}
+
+/// Puts the mark on the row the pointer is lighting, and says what moved.
+///
+/// A first click marks and a second takes, which is the two steps the keys are:
+/// the arrows put the mark somewhere, enter takes what it is on. It matters
+/// that they stay two, because the rung under the panes is taken with the model
+/// -- a click that took on sight would close the shelf before anybody could say
+/// how hard to think.
+///
+/// A provider is not one of the things that can be taken. It narrows what is
+/// beside it, the way it does under the arrows, and the two marks it governs go
+/// back to the top of a pane that is about to hold something else.
+fn clicked<M>(standing: &mut Standing<M>) -> Moved {
+    match standing.lit {
+        None => Moved::Still,
+        Some(Resting::Provider(at)) => {
+            // Two things change and either one is a frame: which provider the
+            // shelf is narrowed to, and which pane the arrows walk. The second
+            // shows -- it is the mark drawn strongly -- so a click landing on
+            // the row the mark is already on has still changed the picture, as
+            // long as it came from the other pane.
+            let crossed = standing.pane != Pane::Providers;
+            standing.pane = Pane::Providers;
+            if standing.provider == at {
+                return if crossed { Moved::Redraw } else { Moved::Still };
+            }
+            standing.provider = at;
+            standing.model = 0;
+            standing.rung = 0;
+            Moved::Redraw
+        }
+        Some(Resting::Model(at)) => {
+            let marked = standing.pane == Pane::Models && standing.model == at;
+            standing.pane = Pane::Models;
+            standing.model = at;
+            if marked { Moved::Took } else { Moved::Redraw }
+        }
+    }
+}
+
+/// Walks the mark of whichever pane it is in, and says what moved.
+///
+/// A step through the providers takes the other two marks with it: the shelf
+/// beside them is about to be narrowed to something else, and a mark left where
+/// it was would be standing on whatever slid under it.
+fn stepped<M>(standing: &mut Standing<M>, next: impl Fn(usize) -> Option<usize>) -> Moved {
+    let (at, count) = match standing.pane {
+        Pane::Providers => (&mut standing.provider, standing.providers),
+        Pane::Models => (&mut standing.model, standing.models.len()),
+    };
+    let moved = step(at, next(*at).filter(|next| *next < count));
+
+    if moved == Moved::Redraw && standing.pane == Pane::Providers {
+        standing.model = 0;
+        standing.rung = 0;
+    }
+
+    moved
+}
+
+/// What a key the search line took does to the marks beside it.
+///
+/// `rewrites` is whether the key changed what has been typed rather than only
+/// where the cursor is in it. A changed query is a different shelf and sends
+/// every mark back to the top of it; somebody pressing Home to fix the front of
+/// a word has not asked for the row under the mark to move.
+///
+/// The mark on the providers goes back with the other two, which is the whole
+/// of what stops a query from being answered by a pane that disagrees with it.
+/// Typing a vendor's name while the mark stands on a different vendor asks two
+/// questions whose answer is nothing at all -- and the reader can see the line
+/// they just typed, so it is the line that has to win.
+fn typed<M>(answered: Typed, rewrites: bool, standing: &mut Standing<M>) -> Moved {
+    if answered == Typed::Ignored {
+        return Moved::Still;
+    }
+
+    if rewrites {
+        standing.provider = 0;
+        standing.model = 0;
+        standing.rung = 0;
+    }
+
+    Moved::Redraw
+}
+
+/// Whether `key` changes what has been typed, rather than only where the cursor
+/// is in it.
+///
+/// Written out rather than matched loosely so that a key added to the set has
+/// to be answered here: the two halves differ by whether the shelf underneath
+/// is about to be a different shelf, and a new key guessed into the wrong half
+/// moves a mark nobody touched.
+const fn rewrites(key: Key) -> bool {
+    match key {
+        Key::Char(_)
+        | Key::Backspace
+        | Key::Delete
+        | Key::RubWord
+        | Key::RubToStart
+        | Key::RubToEnd => true,
+        // The last three never reach the line — they are answered above — and
+        // the rest move the cursor along a query that stays as it was.
+        Key::Left
+        | Key::Right
+        | Key::Up
+        | Key::Down
+        | Key::WordLeft
+        | Key::WordRight
+        | Key::Home
+        | Key::End
+        | Key::Newline
+        | Key::Enter
+        | Key::Interrupt
+        | Key::Eof => false,
     }
 }
 

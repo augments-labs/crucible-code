@@ -532,10 +532,13 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         // region, which would leave a question on screen with nothing left to
         // answer it with. The key that copies the line is here for the other
         // reason: an ask is not a line being typed, and there is nothing in the
-        // box for it to take.
+        // box for it to take. The key that crosses regions among them because
+        // an ask has no second region to cross into: what it has instead is
+        // the questions row, and the arrows are what walk it.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
+        | Pressed::Tab
         | Pressed::Explain
         | Pressed::Expand
         | Pressed::Plan

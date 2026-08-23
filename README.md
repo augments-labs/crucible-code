@@ -102,14 +102,16 @@ of `ANTHROPIC_API_KEY`, `MOONSHOT_API_KEY` and `OPENAI_API_KEY`, or one stored
 by `/login`, whether an API key or an account login. Hold more than one and
 nothing chooses between them, so qualify the name or set `provider` for one of
 them. There is no model built in: name one,
-configure one, or run `/model` in the session and take one off the panel, which
-writes the answer down.
+configure one, or run `/model` in the session and take one off the shelf, which
+searches by model or provider, takes the effort in the same visit, and writes
+both down.
 
 `--effort` says how hard to think — `low`, `medium`, `high`, `xhigh` or `max` —
 on every turn of the session, and `providers.<name>.effort` says it once. Left
 off, crucible asks for no rung and the vendor's own default for that model is
 what applies. Not every model serves all five, and some serve none at all;
-`/effort` offers the ones the model in force does.
+`/effort` offers the ones the model in force does, as does the shelf `/model`
+stands.
 
 ```bash
 crucible --model openai/gpt-5.6-terra   # reads OPENAI_API_KEY
