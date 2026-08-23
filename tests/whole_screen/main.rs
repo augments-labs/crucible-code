@@ -310,6 +310,27 @@ fn a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under() {
 }
 
 #[test]
+fn a_slash_typed_mid_turn_opens_the_command_list() {
+    // The turn is still running when `/` is typed. The command list the line
+    // opens is the same one the prompt would open between turns, stood above
+    // the box while the turn goes on writing behind it.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("list-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // `/` typed into the box opens the list above it.
+    window.types_and_catches("/", "/clear");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_model_picked_mid_turn_is_confirmed_then_held() {
     // The answer is long enough that the turn is still running when the
     // command is sent. `/model` cannot reach the runner on the worker, so its

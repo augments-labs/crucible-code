@@ -715,8 +715,15 @@ fn working<T: Terminal>(
     let boxed = boxing(renderer, editor, says, footing.turning.left(), style);
     let room = renderer.rows().saturating_sub(boxed.rows.len());
 
+    // The list a `/`-started line has open stands directly above the box, over
+    // the running row and plan, as it does at the prompt: a list is what the
+    // reader is looking at while it is open, so the rows above give way to it.
+    let mut over = footing.turning.rows(footing.planning, columns, style, room);
+    let left = room.saturating_sub(over.len());
+    over.extend(footing.opened_list.rows(columns, left, style.glyphs()));
+
     Footed {
-        over: footing.turning.rows(footing.planning, columns, style, room),
+        over,
         boxed: boxed.rows,
         pointed: boxed.pointed,
         caret: boxed.caret,
@@ -752,6 +759,8 @@ pub(super) struct Footing<'a> {
     pub(super) turning: &'a Turning,
     /// The plan the agent is working to, above that row.
     pub(super) planning: &'a Planning,
+    /// The command list a `/`-started line has open, standing over both.
+    pub(super) opened_list: &'a Opened,
 }
 
 /// What the row under a running turn says.
@@ -802,6 +811,7 @@ pub(super) fn during<T: Terminal>(
         kept,
         opened,
         viewing,
+        opened_list,
         listing,
         says,
         background,
@@ -907,6 +917,18 @@ pub(super) fn during<T: Terminal>(
             // pending slot, and the row under the box says which mode that is,
             // marked for the turn it lands on. The step is read off the slot's
             // last value, or off the running mode the row was frozen with.
+            // The one list a running turn can stand, walked. A line that is
+            // not a command has no list open, and up and down both leave the
+            // mark where it is, so an arrow with nothing to walk moves
+            // nothing.
+            Meant::Arrow { back } => {
+                moved |= if back {
+                    opened_list.up()
+                } else {
+                    opened_list.down()
+                };
+            }
+
             Meant::Cycle => {
                 let next = terms.pending_mode.get().unwrap_or(says.running_mode).next();
                 terms.pending_mode.set(Some(next));
@@ -943,6 +965,10 @@ pub(super) fn during<T: Terminal>(
                     notice = Some(LIMITED);
                 } else if inserted.changed {
                     notice = None;
+                    // The list a `/`-started line has open is of what the line
+                    // now says, so it is filtered again on the change — a line
+                    // that stopped being one closes the list with it.
+                    *opened_list = Opened::filtered(editor.projection().text(), style.glyphs());
                 }
             }
 
@@ -962,6 +988,7 @@ pub(super) fn during<T: Terminal>(
                 Typed::Changed => {
                     moved = true;
                     notice = None;
+                    *opened_list = Opened::filtered(editor.projection().text(), style.glyphs());
                 }
                 Typed::Refused => {
                     moved = true;
@@ -1095,7 +1122,11 @@ pub(super) fn during<T: Terminal>(
         // A view takes the rows the box has, so a frame draws one of the three.
         // A window with no room for either view has closed it above, and the
         // box comes back in the same frame.
-        let footing = Footing { turning, planning };
+        let footing = Footing {
+            turning,
+            planning,
+            opened_list,
+        };
         match notice {
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
             None => stand(renderer, editor, footing, says, style)?,
@@ -1207,6 +1238,13 @@ enum Meant {
         /// Whether the notch was towards the top of the session.
         back: bool,
     },
+    /// An arrow through the command list a `/`-started line has open, which is
+    /// the one list a running turn can stand. `back` is the up-arrow, towards
+    /// the top of the list.
+    Arrow {
+        /// Whether the mark moves towards the top of the list.
+        back: bool,
+    },
     /// Shift+Tab: the mode the next turn runs under, stepped to and held. The
     /// runner holding the mode is on the worker for this turn's length, so the
     /// step is taken here and applied when the runner is back — not ignored,
@@ -1269,9 +1307,13 @@ fn meant(arrived: Pressed) -> Meant {
         // runner is back: the running turn's mode was decided before it ran,
         // and a step that moved nothing now would be a key that did nothing.
         Pressed::Cycle => Meant::Cycle,
+        // The arrows walk the command list a `/`-started line has open, as
+        // they do at the prompt. A line that is not one has no list, and the
+        // arm it reaches leaves the box alone, so an arrow with nothing to walk
+        // is still the nothing it was.
+        Pressed::Up => Meant::Arrow { back: true },
+        Pressed::Down => Meant::Arrow { back: false },
         Pressed::Explain
-        | Pressed::Up
-        | Pressed::Down
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
@@ -1301,6 +1343,12 @@ pub(super) struct During<'a> {
     /// Whether the queue is standing open to be gone over, which is the other
     /// thing that takes the box's rows while the turn goes on writing above.
     pub(super) viewing: &'a mut queueing::Standing,
+    /// The command list a `/`-started line has open above the box.
+    ///
+    /// Owned by the session rather than read fresh each look: a turn is many
+    /// looks at the keyboard, and the list has to survive from the character
+    /// that opened it to the arrow that walks it.
+    pub(super) opened_list: &'a mut Opened,
     /// The list of what is still running, which a click on the count under the
     /// box stands — the same door the key is at the prompt, kept across the
     /// looks at the channel a turn is one of.
@@ -1646,7 +1694,7 @@ fn landed<T: Terminal>(
 /// finished by hand and then rejected — the list being right about the command
 /// and the line being wrong about it, at the same time and on the same screen.
 #[derive(Debug, Default)]
-struct Opened {
+pub(super) struct Opened {
     /// What the filter left, in the order `/help` lists them.
     shown: Vec<Listed<'static>>,
     /// Which row of it return runs.
@@ -1661,7 +1709,7 @@ impl Opened {
     /// rather than the first of them. `/mode` is a prefix of `/model`, so a
     /// line naming a command outright would otherwise point at a different
     /// command that merely starts the same way.
-    fn filtered(said: &str, glyphs: Glyphs) -> Self {
+    pub(super) fn filtered(said: &str, glyphs: Glyphs) -> Self {
         let shown = command::filtering(said, glyphs);
         let at = shown
             .iter()
@@ -1677,14 +1725,14 @@ impl Opened {
     /// as the arrows that move along the line. A list is short enough to read
     /// whole, so wrapping would buy a keystroke at the price of somebody
     /// looking away and back to find where the mark went.
-    fn up(&mut self) -> bool {
+    pub(super) fn up(&mut self) -> bool {
         let moved = self.at > 0;
         self.at = self.at.saturating_sub(1);
         moved
     }
 
     /// Moves it on a row.
-    fn down(&mut self) -> bool {
+    pub(super) fn down(&mut self) -> bool {
         let last = self.shown.len().saturating_sub(1);
         let moved = self.at < last;
         self.at = last.min(self.at + 1);
@@ -1693,7 +1741,7 @@ impl Opened {
 
     /// What return runs, or `None` where there is no list and the line is what
     /// was typed.
-    fn chosen(&self) -> Option<&'static str> {
+    pub(super) fn chosen(&self) -> Option<&'static str> {
         self.shown.get(self.at).map(|one| one.name)
     }
 
@@ -1704,7 +1752,7 @@ impl Opened {
     /// is room for either: a list cut off at the top reads as the whole list,
     /// which is worse than drawing nothing at all. Nothing is what a reader can
     /// tell is nothing.
-    fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+    pub(super) fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
         if self.shown.is_empty() || self.shown.len() > room {
             return Vec::new();
         }

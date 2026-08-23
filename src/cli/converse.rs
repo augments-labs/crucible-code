@@ -871,6 +871,7 @@ impl Turn<'_, '_> {
                     kept: &mut self.held.kept,
                     opened: &mut self.held.opened,
                     viewing: &mut self.held.viewing,
+                    opened_list: &mut self.held.opened_list,
                     listing: &mut self.held.listing,
                     says: self.says,
                     style: self.terms.style(),
@@ -1046,6 +1047,7 @@ fn take<T: Terminal>(
             typing::Footing {
                 turning: &turning,
                 planning: &mut held.planning,
+                opened_list: &held.opened_list,
             },
             &says,
             terms.style(),
@@ -1366,6 +1368,9 @@ struct Held<'a> {
     /// view opened while a turn ran is still open when the turn ends, in the
     /// region the box comes back to, and the reader who opened it is reading.
     opened: Standing,
+    /// The command list a line typed mid-turn has open above the box, empty
+    /// while the line is a prompt.
+    opened_list: typing::Opened,
     /// Whether the queue above is standing open to be gone over, and where the
     /// mark is down it.
     ///
@@ -1403,6 +1408,7 @@ impl<'a> Held<'a> {
             queued: Prompts::default(),
             kept: Kept::default(),
             opened: Standing::default(),
+            opened_list: typing::Opened::default(),
             viewing: queueing::Standing::default(),
             listing: leaving::Leaving::default(),
             planning: Planning::new(plan),
