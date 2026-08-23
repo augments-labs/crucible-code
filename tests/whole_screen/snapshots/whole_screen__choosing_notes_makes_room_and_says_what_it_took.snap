@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 743
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
@@ -18,7 +19,7 @@ expression: window.picture()
 |                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 | compacted · you chose notes over carrying this session whole                   |
-| 4 messages became a recap · 4k → 5k carried · 2 turns kept whole               |
+| 4 messages became a recap · 5k → 5k carried · 2 turns kept whole               |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |                                                                  window unknown|

@@ -34,7 +34,8 @@ one line would otherwise be the whole answer.
 An `offset` past the end of the file is not a failure: the answer is
 `one.txt has no line 900`, which tells the model it walked off the end rather
 than that something is wrong. A file that is not text says so too, rather than
-putting its bytes in the transcript.
+putting its bytes in the transcript — and where its name says what it is, the
+refusal says what would turn it into something readable.
 
 ### A document is read by converting it first
 
@@ -96,6 +97,56 @@ and layout do not survive a conversion, and neither does a picture — except
 under `pandoc`, where it survives as a file beside the text rather than as part
 of it. A slide deck or a spreadsheet whose content *is* a diagram still converts
 to very little.
+
+### A video is read as the frames pulled out of it
+
+Nothing crucible speaks to reads a video, and everything it speaks to reads a
+picture. So a video is refused in the same shape as a document — turn it into
+something a model takes in, then hand that over — with a different second half:
+
+```
+clip.mp4 is not a text file. It is a video — nothing here reads one and
+everything here reads a picture, so pull frames out and attach those. ffprobe
+-v error -show_entries format=duration -of csv=p=0 clip.mp4 says how long it is,
+and ffmpeg -i clip.mp4 -vf fps=1 -frames:v 20 frame-%03d.jpg takes one a second
+and stops at twenty, which is about as many as one request carries. Sample a
+long recording sparsely rather than sampling the start of it.
+```
+
+`.mp4`, `.mov`, `.mkv`, `.webm`, `.avi` and `.m4v`, all by `ffmpeg`. `ffprobe`
+is named beside it because a rate chosen without a duration is chosen blind:
+one frame a second is thirty frames of a clip and seven thousand of a two-hour
+recording. It ships with `ffmpeg`, so there is one thing to install — which is
+why the answer for a machine that has neither names only `ffmpeg`.
+
+Neither is looked for on the `PATH` alone. `ffmpeg` publishes an archive rather
+than an installer on macOS and Windows, so it usually arrives through a package
+manager, and crucible also looks in the directories those managers document
+their shims into — Homebrew's and MacPorts' prefixes, and winget's,
+Chocolatey's and Scoop's. It is the same lookup that finds LibreOffice where
+its installer puts it, held to the same line: a directory is looked in because
+an installer is known to write there, never because a program is often found
+there. A folder you unpacked an archive into yourself is not looked in, because
+guessing at one is how an answer sounds right and is wrong.
+
+Three things are lost, and knowing which is what makes the frames readable:
+
+- **The soundtrack.** No model crucible offers accepts audio, so a video whose
+  content is speech becomes a video with no content.
+- **Everything between two sampled frames.** Good for *what is on this screen*,
+  wrong for *what happened between these two moments*.
+- **Most of a long recording.** One request carries 4 MB of files, and twenty
+  full-size frames is already about that. That is why the suggested command
+  carries a rate and a cap rather than extracting everything: a minute of
+  thirty-frames-a-second video is 1 800 files, and a suggestion that fills a
+  directory is worse than none. Smaller pictures buy more of them —
+  `-vf fps=1,scale=1280:-1` is the same command with the frames scaled down.
+
+crucible extracts nothing and chooses no frames. The commands are suggestions,
+run — if you allow it — by [`bash`](commands.md), and the pictures that come
+out are
+[named in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt)
+like any other.
 
 Reading is never asked about. It is allowed, or refused by a `deny`
 [rule](../permissions/rules.md), and the question is answered without being put
