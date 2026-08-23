@@ -16,6 +16,7 @@
 //! receives an already-resolved `Credential` and never learns what kind it is.
 
 mod ask;
+mod attachable;
 mod cancel;
 mod compaction;
 mod credential;
@@ -33,6 +34,7 @@ mod transcript;
 mod workspace;
 
 pub use ask::{Answer, Answered, Put, Question};
+pub use attachable::{CEILING, KINDS, Kind, kind};
 pub use cancel::Cancel;
 pub use compaction::{Compacted, Compacting, RECAP, Room};
 pub use credential::{

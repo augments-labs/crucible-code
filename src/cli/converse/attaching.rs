@@ -8,8 +8,8 @@
 
 use std::fs;
 
-use crucible_core::{Attachment, Modality, Provider, Workspace, written};
-use crucible_runner::{Runner, attachments::CEILING};
+use crucible_core::{Attachment, CEILING, Provider, Workspace, kind, written};
+use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use sha2::{Digest as _, Sha256};
 
@@ -106,7 +106,7 @@ enum Named {
 /// with `/model`; what is too large they fix with a smaller copy. Reading the
 /// file comes last, because the three answers above it cost nothing.
 fn decide(workspace: &Workspace, provider: &dyn Provider, model: &str, word: &str) -> Named {
-    let Some(kind) = KINDS.iter().find(|kind| kind.names(word)) else {
+    let Some(kind) = kind(word) else {
         return Named::Nothing;
     };
     let (Ok(path), Some(size)) = (workspace.existing(word), sized(workspace, word)) else {
@@ -175,113 +175,6 @@ fn sized(workspace: &Workspace, word: &str) -> Option<u64> {
     let about = fs::metadata(path.as_path()).ok()?;
 
     about.is_file().then_some(about.len())
-}
-
-/// One kind of file that may be attached, under the name it goes by.
-struct Kind {
-    /// The extension, without its dot, as a prompt would spell it.
-    extension: &'static str,
-    /// What the model would be asked to do with it.
-    modality: Modality,
-    /// What the provider labels the bytes with.
-    media_type: &'static str,
-    /// Whether the bytes are what the extension claims.
-    confirms: fn(&[u8]) -> bool,
-}
-
-impl Kind {
-    /// Whether a word in a prompt is a path spelled with this extension.
-    ///
-    /// Case-insensitive on the extension alone: a camera writes `IMG_0001.JPG`
-    /// and a person types what the camera wrote.
-    fn names(&self, word: &str) -> bool {
-        word.rsplit_once('.')
-            .is_some_and(|(_, tail)| tail.eq_ignore_ascii_case(self.extension))
-    }
-
-    /// The kind as it appears mid-sentence, with the article English wants.
-    fn spoken(&self) -> String {
-        let article = match self.modality {
-            Modality::Image | Modality::Audio => "an",
-            Modality::Text | Modality::Pdf | Modality::Video => "a",
-        };
-
-        format!("{article} {}", self.modality.as_str())
-    }
-}
-
-/// Every kind crucible will attach: the picture formats all three vendors
-/// document accepting, and the one document format any of them reads.
-///
-/// A closed list rather than a guess from the extension, because the cost of
-/// being wrong is a refused request the user paid for. Anything not here is
-/// text, and the `read` tool already opens it.
-const KINDS: &[Kind] = &[
-    Kind {
-        extension: "png",
-        modality: Modality::Image,
-        media_type: "image/png",
-        confirms: png,
-    },
-    Kind {
-        extension: "jpg",
-        modality: Modality::Image,
-        media_type: "image/jpeg",
-        confirms: jpeg,
-    },
-    Kind {
-        extension: "jpeg",
-        modality: Modality::Image,
-        media_type: "image/jpeg",
-        confirms: jpeg,
-    },
-    Kind {
-        extension: "gif",
-        modality: Modality::Image,
-        media_type: "image/gif",
-        confirms: gif,
-    },
-    Kind {
-        extension: "webp",
-        modality: Modality::Image,
-        media_type: "image/webp",
-        confirms: webp,
-    },
-    Kind {
-        extension: "pdf",
-        modality: Modality::Pdf,
-        media_type: "application/pdf",
-        confirms: pdf,
-    },
-];
-
-/// The eight bytes a PNG starts with, of which the last four catch a file a
-/// transfer has rewritten the line endings of.
-fn png(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
-}
-
-/// Every JPEG starts with a start-of-image marker and the next marker's
-/// introducer. What follows differs by encoder, so three bytes is the whole of
-/// what is common to all of them.
-fn jpeg(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0xff, 0xd8, 0xff])
-}
-
-/// The two GIF versions, both still written by something.
-fn gif(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
-}
-
-/// A WebP is a RIFF container, and the four bytes saying which kind sit after
-/// the length rather than beside the tag.
-fn webp(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(&b"WEBP"[..])
-}
-
-/// The header a PDF opens with, version and all.
-fn pdf(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"%PDF-")
 }
 
 #[cfg(test)]

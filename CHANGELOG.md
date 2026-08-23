@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**A picture the agent asks for comes back as a picture.** `read` on a `.png`,
+`.jpg`, `.gif` or `.webp` hands the file back to be looked at rather than
+refusing it as not text, so the model can go and find a screenshot instead of
+waiting to be handed one. One over the 4 MB a request carries is still refused,
+and a model that does not read pictures gets the answer with a row saying what
+stayed behind.
+
 ## [0.20.1] - 2026-08-23
 
 ### Fixed

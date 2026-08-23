@@ -1627,7 +1627,7 @@ fn attachments_a_request_went_out_without_are_named_as_it_goes() {
     // this the reader has no way to know which file it did not get to look at.
     let sample = Sample::new("aged-over");
     let under = sample.workspace().root().to_path_buf();
-    let third = attachments::CEILING / 3 + 1;
+    let third = crucible_core::CEILING / 3 + 1;
 
     let mut scripted = Scripted::new(
         Script::new(vec![saying("looking")]),
@@ -1683,7 +1683,7 @@ fn a_retry_says_again_which_attachments_it_went_out_without() {
     // owed the same sentence about it.
     let sample = Sample::new("aged-retry");
     let under = sample.workspace().root().to_path_buf();
-    let third = attachments::CEILING / 3 + 1;
+    let third = crucible_core::CEILING / 3 + 1;
 
     let mut scripted = Scripted::new(
         Script::dropping(1, vec![saying("done")]),

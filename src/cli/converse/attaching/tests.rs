@@ -258,7 +258,7 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
 fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
     let sample = Sample::new("attaching-over-the-ceiling");
     let mut bytes = PNG.to_vec();
-    bytes.resize(crucible_runner::attachments::CEILING + 1, 0);
+    bytes.resize(crucible_core::CEILING + 1, 0);
     let workspace = holding(&sample, "huge.png", &bytes);
 
     let Attaching {

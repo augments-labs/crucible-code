@@ -595,7 +595,9 @@ what is wrong with this layout? screenshot.png
 The file is sent as what it is rather than as text. Nothing else changes: the
 rest of the line is the prompt, and a path to anything crucible does not send
 this way — a source file, a log — is just a word in the sentence, which the
-`read` tool opens when the model asks for it.
+`read` tool opens when the model asks for it. A picture the model asks for that
+way comes back as a picture too, rather than as a refusal — see
+[`read`](../tools/files.md#a-picture-is-looked-at-rather-than-read).
 
 Pictures go to all three providers. A PDF goes to Anthropic and OpenAI, whose
 requests have a shape for a document; MoonshotAI's have none, and say so rather
