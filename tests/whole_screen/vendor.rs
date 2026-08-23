@@ -47,6 +47,16 @@ const ENDED: &str = "event: content_block_stop\ndata: {\"index\":0}\n\n";
 /// The event that closes the message.
 const STOPPED: &str = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
 
+/// The keep-alive the same API sends, which draws nothing.
+const PINGED: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
+
+/// How many keep-alives hold a turn open once its answer has arrived whole.
+///
+/// Enough at [`BETWEEN`] to outlast the steps a case takes after that, and no
+/// more: the thread stops the moment crucible is gone, because the write it is
+/// on fails and `answer` returns.
+const HOLDING: usize = 2_000;
+
 /// A provider listening on this machine.
 pub(crate) struct Vendor {
     /// Where crucible is told to send its requests.
@@ -80,6 +90,19 @@ impl Vendor {
     /// returned. They arrive in that order, each on its own connection.
     pub(crate) fn calling(tool: &str, input: &str, text: &str) -> Self {
         Self::serving(vec![asking(tool, input), stream(text)])
+    }
+
+    /// The same, except the second answer holds the turn open behind `text`.
+    ///
+    /// A case that needs a turn still running once its answer is on screen
+    /// cannot get there by making the answer long enough to still be arriving:
+    /// what is drawn then is however far the stream happened to have got, which
+    /// is the pace the deltas arrive at rather than anything the case is about,
+    /// and the picture moves with the machine. Letting the answer finish and
+    /// holding the message open afterwards pins the screen and still leaves the
+    /// turn where the case wants it.
+    pub(crate) fn calling_then_holding(tool: &str, input: &str, text: &str) -> Self {
+        Self::serving(vec![asking(tool, input), holding(text)])
     }
 
     /// Starts one that answers each request with the next of `bodies`.
@@ -197,6 +220,30 @@ fn header<'a>(line: &'a str, name: &str) -> Option<&'a str> {
 /// One delta per word, keeping the spaces, so the answer arrives the way a real
 /// one does rather than all at once.
 fn stream(text: &str) -> Vec<String> {
+    let mut events = opening(text);
+
+    events.push(ENDED.to_owned());
+    events.push(stopped("end_turn"));
+    events.push(STOPPED.to_owned());
+
+    events
+}
+
+/// The same events, with the message left open behind them.
+///
+/// Keep-alives rather than silence: they are what the API itself sends through
+/// a quiet stretch, crucible draws nothing for one, and a connection with bytes
+/// still moving on it is not one anything on either end mistakes for a stall.
+fn holding(text: &str) -> Vec<String> {
+    let mut events = opening(text);
+
+    events.extend((0..HOLDING).map(|_| PINGED.to_owned()));
+
+    events
+}
+
+/// The events that open a message and carry `text` into it.
+fn opening(text: &str) -> Vec<String> {
     let mut events = vec![
         STARTED.to_owned(),
         "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
@@ -209,10 +256,6 @@ fn stream(text: &str) -> Vec<String> {
             serde_json::Value::from(word)
         )
     }));
-
-    events.push(ENDED.to_owned());
-    events.push(stopped("end_turn"));
-    events.push(STOPPED.to_owned());
 
     events
 }

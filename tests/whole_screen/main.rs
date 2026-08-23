@@ -443,19 +443,28 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
 
 #[test]
 fn a_model_picked_mid_turn_is_confirmed_then_held() {
-    // The answer is long enough that the turn is still running when the
-    // command is sent. `/model` cannot reach the runner on the worker, so its
-    // picker opens over the turn, the consequence of a switch is said and
-    // agreed to, and the pick is held for the turn the loop starts next.
-    let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
+    // The answer arrives whole and the turn goes on running behind it, which is
+    // what the command is sent into. `/model` cannot reach the runner on the
+    // worker, so its picker opens over the turn, the consequence of a switch is
+    // said and agreed to, and the pick is held for the turn the loop starts
+    // next.
+    //
+    // Waited for by its last word: everything under the panel is in this
+    // picture, so a step taken while the answer was still arriving would pin
+    // the rows to how far the stream had got — and the case would then fail on
+    // a loaded machine for a reason that is not its subject. Short, now that
+    // holding the turn open is what keeps it running rather than the answer
+    // going on long enough to: the command it was sent into stays on screen
+    // beside the picker, where a picture of a turn still running wants it.
+    let answer = "It is started. That is all.";
+    let vendor = Vendor::calling_then_holding(
         "bash",
         r#"{"command":"sleep 30","background":true}"#,
-        &answer,
+        answer,
     );
     let mut window = Watched::allowing("model-mid-turn", 100, 24, &vendor, "bash(*)");
 
-    window.types_and_catches("start it\r", "the quick brown fox");
+    window.types_and_catches("start it\r", "all.");
 
     // The picker opens, then a step down and Enter picks a model that is not
     // the one in force. What stands next is the consequence, said and asked
