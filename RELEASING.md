@@ -99,13 +99,15 @@ git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
 ```
 
-Nothing on screen draws the version, so no whole-screen snapshot holds one and
-a bump costs no snapshot change at all. If the gate ever fails there on a
-release that changed only a version, something new has started drawing it: read
-that diff rather than accepting it blind, because one changed line per file is
-what a bump may cost and anything else on it is a rendering change that arrived
-with the release and belongs in the changelog rather than in a snapshot nobody
-looked at.
+The opening screen draws the version, and the whole-screen pictures mask it out
+rather than hold it — one `#` per character, so the row keeps its width. A bump
+therefore costs no snapshot change, and the one exception is a version spelled
+in more characters than the last, which moves what that screen is laid out
+around and is worth looking at. If the gate fails there on a release that
+changed only a version and the version's length did not move, something new has
+started drawing one: read that diff rather than accepting it blind, because
+anything on it is a rendering change that arrived with the release and belongs
+in the changelog rather than in a snapshot nobody looked at.
 
 `cargo deny` is not a required check, and must not become one. It runs only when
 the dependency set changes, so on a release that touches no dependency it never
