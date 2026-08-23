@@ -84,6 +84,20 @@ pub(crate) struct Screen {
     pending: Vec<u8>,
 }
 
+/// The version this build draws on its opening screen.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The character that stands in for each of its characters.
+///
+/// One per character, so the row keeps its width and the frame around it keeps
+/// its corners: the picture is a grid already drawn, and a stand-in of another
+/// length would move every bar to its right rather than only the version. The
+/// mask therefore follows the version's own length, which leaves one case that
+/// still moves a snapshot — a release whose version is spelled in more
+/// characters than the last. That one is worth reading, because it moves what
+/// the opening screen is laid out around.
+const MASK: char = '#';
+
 impl Screen {
     /// An empty screen of that size.
     pub(crate) fn new(columns: usize, rows: usize) -> Self {
@@ -165,6 +179,11 @@ impl Screen {
     /// editor is free to strip. The cursor is on the header line because where
     /// it parks is half of what the arithmetic under test decides, and a
     /// picture that only showed the text would assert the other half.
+    ///
+    /// This build's own version is masked out of it. The opening screen draws
+    /// one, and a snapshot holding it is a snapshot every release has to
+    /// re-accept — which is how a picture stops being read and becomes a file
+    /// that gets a yes. [`MASK`] is what stands there instead, one per character.
     pub(crate) fn picture(&self) -> String {
         let mut lines = vec![format!(
             "{}x{} cursor {},{} scrolled {}",
@@ -179,7 +198,9 @@ impl Screen {
             lines.push(format!("|{line}|"));
         }
 
-        lines.join("\n")
+        let masked = MASK.to_string().repeat(VERSION.len());
+
+        lines.join("\n").replace(VERSION, &masked)
     }
 
     /// Says once that crucible did something it does not promise to do.
@@ -514,6 +535,26 @@ mod tests {
             screen.feed(std::slice::from_ref(byte));
         }
         screen
+    }
+
+    /// A picture holds no version, so cutting a release costs no snapshot.
+    ///
+    /// The opening screen draws this build's own version, and one case here
+    /// leaves it on screen. Without the mask, every release re-accepts that
+    /// snapshot — and a snapshot re-accepted on a schedule is one nobody
+    /// reads, which is the whole of what it was for.
+    #[test]
+    fn a_picture_holds_no_version_of_the_build_that_drew_it() {
+        let mut screen = Screen::new(24, 8);
+        screen.feed(concat!("crucible v", env!("CARGO_PKG_VERSION")).as_bytes());
+
+        let picture = screen.picture();
+
+        assert!(
+            !picture.contains(env!("CARGO_PKG_VERSION")),
+            "the picture names the version it was drawn by:\n{picture}"
+        );
+        assert!(picture.contains("crucible v#"), "{picture}");
     }
 
     #[test]
