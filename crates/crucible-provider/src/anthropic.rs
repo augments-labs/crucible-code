@@ -16,7 +16,10 @@ mod body;
 mod stream;
 mod wire;
 
-use crucible_core::{Cancel, Credential, DeltaStream, Outgoing, Provider, ProviderError, Request};
+use crucible_core::{
+    Cancel, Credential, DeltaStream, Modalities, Modality, Outgoing, Provider, ProviderError,
+    Request,
+};
 
 use crate::anthropic::stream::Stream;
 use crate::endpoint::Endpoint;
@@ -88,6 +91,12 @@ impl Anthropic {
 impl Provider for Anthropic {
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn spells(&self) -> Modalities {
+        // Messages spells an attachment as an `image` or `document` block. This
+        // module writes neither yet, so neither is offered.
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(
@@ -327,6 +336,20 @@ mod tests {
         assert!(
             replay.sent().url.is_empty(),
             "a request went out for a turn the user had abandoned"
+        );
+    }
+
+    /// What a wire protocol declares is what its body writes, and until a body
+    /// writes an attachment that is text and nothing else. A declaration that
+    /// ran ahead of the body would be read as permission to send bytes this
+    /// module has no shape for.
+    #[test]
+    fn anthropic_spells_no_more_than_its_body_can_write_today() {
+        let (provider, _replay) = provider(200, ANSWER);
+
+        assert_eq!(
+            provider.spells(),
+            Modalities::empty().insert(Modality::Text),
         );
     }
 }

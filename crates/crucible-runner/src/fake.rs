@@ -9,9 +9,9 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
 use crucible_core::{
-    Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Provider, ProviderError,
-    Remember, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolCall, ToolError,
-    ToolOutput, ToolSchema, Verdict, Watch, Wrote,
+    Approved, Ask, Cancel, Delta, DeltaStream, Diff, Effort, Message, Modalities, Modality,
+    Provider, ProviderError, Remember, Request, Sensitivity, Summary, Target, Tool, ToolArgs,
+    ToolCall, ToolError, ToolOutput, ToolSchema, Verdict, Watch, Wrote,
 };
 
 /// The name a scripted provider answers to.
@@ -116,6 +116,15 @@ impl Script {
 impl Provider for Script {
     fn name(&self) -> &'static str {
         SCRIPT
+    }
+
+    /// A stand-in spells what every real provider here spells today.
+    ///
+    /// It is not a wire protocol, so it has nothing of its own to declare; what
+    /// it must not do is differ, or a test would be exercising a capability no
+    /// provider has.
+    fn spells(&self) -> Modalities {
+        Modalities::empty().insert(Modality::Text)
     }
 
     fn stream(

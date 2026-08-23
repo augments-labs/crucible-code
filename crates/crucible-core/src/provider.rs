@@ -13,6 +13,7 @@ use std::fmt;
 use crate::cancel::Cancel;
 use crate::credential::{CredentialError, Redactions};
 use crate::ids::ToolId;
+use crate::modality::Modalities;
 use crate::transcript::{StopReason, Transcript};
 
 /// Why a provider could not produce a response.
@@ -526,6 +527,23 @@ pub trait DeltaStream: Send {
 pub trait Provider: Send + Sync {
     /// The provider's name, for errors and for the status line.
     fn name(&self) -> &'static str;
+
+    /// What this protocol has a shape for, and can therefore put in a request.
+    ///
+    /// Half of what may be attached. The other half is what the model accepts,
+    /// which a published table answers; neither alone is right, because one
+    /// would send a video to a protocol with no word for one and the other
+    /// would offer a PDF to a model that cannot read it.
+    ///
+    /// What is declared here is what **this module can write today**, not what
+    /// the vendor's API documents. The two diverge, and the honest one is the
+    /// one that decides whether bytes go out.
+    ///
+    /// There is deliberately no default. A provider added later and left to
+    /// inherit a text-only answer would be silently incapable, which is the
+    /// same failure as guessing; adding one is already an edit to several
+    /// places at once, and this is one of them.
+    fn spells(&self) -> Modalities;
 
     /// Starts a request and returns its stream of deltas.
     ///

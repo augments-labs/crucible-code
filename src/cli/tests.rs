@@ -1,6 +1,7 @@
 //! What the command line and the files together decide.
 
 use clap::CommandFactory;
+use crucible_core::Modality;
 #[cfg(unix)]
 use std::ffi::OsString;
 
@@ -668,4 +669,65 @@ fn a_model_nobody_wrote_down_is_offered_every_rung_rather_than_none() {
     // vendors serving one name serve it on their own terms.
     assert_eq!(rungs("openai", "claude-haiku-4-5"), Effort::LADDER);
     assert!(rungs("anthropic", "claude-haiku-4-5").is_empty());
+}
+
+/// Every model crucible offers, and what the generated table says it reads.
+///
+/// Named by provider rather than one by one: a model added to `OFFERED` later
+/// is covered by these the moment the table is regenerated, which is the point
+/// at which somebody is reading the diff anyway.
+fn accepting(one: Modality) -> Vec<&'static str> {
+    models::FACTS
+        .iter()
+        .filter(|facts| facts.accepts.contains(one))
+        .map(|facts| facts.provider)
+        .collect()
+}
+
+#[test]
+fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
+    assert!(
+        !models::FACTS.is_empty(),
+        "the table is generated and is never empty"
+    );
+    for facts in models::FACTS {
+        let named = facts.model;
+        assert!(facts.accepts.contains(Modality::Text), "{named} reads text");
+        assert!(
+            facts.accepts.contains(Modality::Image),
+            "{named} reads an image"
+        );
+    }
+}
+
+#[test]
+fn the_models_table_gives_a_pdf_to_anthropic_and_openai_and_not_to_moonshot() {
+    for facts in models::FACTS {
+        let expected = matches!(facts.provider, "anthropic" | "openai");
+        assert_eq!(
+            facts.accepts.contains(Modality::Pdf),
+            expected,
+            "{} reading a PDF",
+            facts.model,
+        );
+    }
+    assert!(accepting(Modality::Pdf).contains(&"anthropic"));
+}
+
+#[test]
+fn the_models_table_gives_video_to_moonshot_alone_and_audio_to_nobody() {
+    for facts in models::FACTS {
+        assert_eq!(
+            facts.accepts.contains(Modality::Video),
+            facts.provider == "moonshot",
+            "{} reading a video",
+            facts.model,
+        );
+        assert!(
+            !facts.accepts.contains(Modality::Audio),
+            "{} reads audio, which no model crucible offers did when this was written",
+            facts.model,
+        );
+    }
+    assert_eq!(accepting(Modality::Audio), Vec::<&str>::new());
 }

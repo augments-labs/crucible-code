@@ -186,3 +186,16 @@ fn a_cancelled_turn_is_never_sent() {
         "a request went out for a turn the user had abandoned"
     );
 }
+/// What a wire protocol declares is what its body writes, and until a body
+/// writes an attachment that is text and nothing else. A declaration that
+/// ran ahead of the body would be read as permission to send bytes this
+/// module has no shape for.
+#[test]
+fn moonshot_spells_no_more_than_its_body_can_write_today() {
+    let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
+
+    assert_eq!(
+        provider.spells(),
+        Modalities::empty().insert(Modality::Text),
+    );
+}

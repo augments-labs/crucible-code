@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Read;
 
+use crucible_core::{Modalities, Modality};
 use serde_json::Value;
 
 /// Every model crucible offers, and the key the database lists it under.
@@ -98,16 +99,19 @@ fn main() {
         std::process::exit(2);
     };
 
-    let mut rows: BTreeMap<(&str, &str), (u32, u32)> = BTreeMap::new();
+    let mut rows: BTreeMap<(&str, &str), Row> = BTreeMap::new();
     for (provider, offered, key, divisor) in OFFERED {
         let Some(key) = key else { continue };
-        let limit = database
+        let entry = database
             .get(listed(provider))
-            .and_then(|entry| entry.get("models"))
-            .and_then(|models| models.get(key))
-            .and_then(|model| model.get("limit"));
-        let Some(limit) = limit else {
+            .and_then(|listed| listed.get("models"))
+            .and_then(|models| models.get(key));
+        let Some(entry) = entry else {
             eprintln!("generate-models: the database does not list {provider}/{key}");
+            std::process::exit(1);
+        };
+        let Some(limit) = entry.get("limit") else {
+            eprintln!("generate-models: {provider}/{key} lists no limits");
             std::process::exit(1);
         };
 
@@ -140,10 +144,77 @@ fn main() {
             Some(by) if *by > 1 => window / by,
             _ => window,
         };
-        rows.insert((provider, offered), (window, output));
+        let accepts = match accepts(entry) {
+            Ok(accepts) => accepts,
+            Err(why) => {
+                eprintln!("generate-models: {provider}/{key} {why}");
+                std::process::exit(1);
+            }
+        };
+        rows.insert(
+            (provider, offered),
+            Row {
+                window,
+                output,
+                accepts,
+            },
+        );
     }
 
     print!("{}", written(&rows));
+}
+
+/// One model's answers, on the way to being written out.
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    /// The most one request may carry, in tokens.
+    window: u32,
+    /// The most one answer may produce, in tokens.
+    output: u32,
+    /// What the model reads.
+    accepts: Modalities,
+}
+
+/// What the database says this model accepts.
+///
+/// Both ways of failing here are loud on purpose, and they are opposite. An
+/// entry with no `modalities` at all must stop the run rather than write an
+/// empty set, because an empty set makes a capable model look incapable and
+/// nothing downstream can tell that apart from a model that really takes only
+/// text. A word this build has never heard of must stop it too: that is the
+/// database's vocabulary having gained a member, which is a change to what
+/// crucible can be asked about and belongs in a diff somebody reads.
+fn accepts(entry: &Value) -> Result<Modalities, String> {
+    let input = entry
+        .get("modalities")
+        .and_then(|modalities| modalities.get("input"))
+        .and_then(Value::as_array);
+    let Some(input) = input else {
+        return Err(String::from("lists no modalities.input"));
+    };
+    let mut accepts = Modalities::empty();
+    for word in input {
+        let Some(word) = word.as_str() else {
+            return Err(format!(
+                "lists {word} among its modalities, which is not a word"
+            ));
+        };
+        accepts = accepts.insert(word.parse::<Modality>().map_err(|why| why.to_string())?);
+    }
+    Ok(accepts)
+}
+
+/// A set as the expression that rebuilds it.
+///
+/// The variant is written from `Debug`, which is the variant's own name, so a
+/// modality renamed in core renames itself here rather than in a second list
+/// that would quietly keep spelling the old one.
+fn spelled(accepts: Modalities) -> String {
+    let mut out = String::from("Modalities::empty()");
+    for one in accepts.iter() {
+        let _ = write!(out, ".insert(Modality::{one:?})");
+    }
+    out
 }
 
 /// A number with the separators this project's lint asks for.
@@ -163,12 +234,13 @@ fn grouped(number: u32) -> String {
 }
 
 /// The table, as the file that is checked in.
-fn written(rows: &BTreeMap<(&str, &str), (u32, u32)>) -> String {
+fn written(rows: &BTreeMap<(&str, &str), Row>) -> String {
     let mut out = String::from(
         "//! What each model crucible offers accepts and produces.\n\
          //!\n\
-         //! Generated. Do not edit: `scripts/models.sh` writes this file, and a test\n\
-         //! refuses a tree where the two disagree. What it is generated *from* is a\n\
+         //! Generated. Do not edit: `scripts/models.sh` writes this file, and what\n\
+         //! checks it is the diff that run leaves — a row changed by hand is a row\n\
+         //! the next run discards. What it is generated *from* is a\n\
          //! public database of model limits, read over the network by a `curl` in that\n\
          //! script rather than by anything here.\n\
          //!\n\
@@ -176,7 +248,8 @@ fn written(rows: &BTreeMap<(&str, &str), (u32, u32)>) -> String {
          //! table has no answer here at all, which is deliberate: a window guessed from a\n\
          //! name that merely resembles one is wrong by a factor nobody would notice until\n\
          //! a session had already thrown half of itself away.\n\n\
-         /// What one model accepts and produces, in tokens.\n\
+         use crucible_core::{Modalities, Modality};\n\n\
+         /// What one model accepts and produces.\n\
          #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
          pub(crate) struct Facts {\n\
          \x20   /// The provider it is asked of.\n\
@@ -187,19 +260,81 @@ fn written(rows: &BTreeMap<(&str, &str), (u32, u32)>) -> String {
          \x20   pub(crate) window: u32,\n\
          \x20   /// The most one answer may produce, in tokens.\n\
          \x20   pub(crate) output: u32,\n\
+         \x20   /// What the model reads. Half of what may be attached; the\n\
+         \x20   /// other half is what the provider can spell.\n\
+         \x20   pub(crate) accepts: Modalities,\n\
          }\n\n\
          /// Every model this build knows the limits of, sorted so a diff reads.\n\
          pub(crate) const FACTS: &[Facts] = &[\n",
     );
-    for ((provider, model), (window, output)) in rows {
+    for ((provider, model), row) in rows {
         let _ = write!(
             out,
             "    Facts {{\n        provider: {provider:?},\n        model: {model:?},\n        \
-             window: {},\n        output: {},\n    }},\n",
-            grouped(*window),
-            grouped(*output),
+             window: {},\n        output: {},\n        accepts: {},\n    }},\n",
+            grouped(row.window),
+            grouped(row.output),
+            spelled(row.accepts),
         );
     }
     out.push_str("];\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The set the four Anthropic rows and the four OpenAI rows carry.
+    fn documents() -> Modalities {
+        Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+    }
+
+    #[test]
+    fn generating_models_reads_the_modalities_the_database_lists() {
+        let entry = json!({
+            "limit": { "context": 200_000, "output": 64_000 },
+            "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        });
+        assert_eq!(accepts(&entry), Ok(documents()));
+    }
+
+    #[test]
+    fn generating_models_without_modalities_fails_rather_than_writing_an_empty_set() {
+        let entry = json!({ "limit": { "context": 200_000, "output": 64_000 } });
+        assert!(
+            accepts(&entry).is_err(),
+            "a model with no modalities is not a model that reads nothing"
+        );
+
+        let output_only = json!({ "modalities": { "output": ["text"] } });
+        assert!(
+            accepts(&output_only).is_err(),
+            "output alone says nothing about what is read"
+        );
+    }
+
+    #[test]
+    fn generating_models_from_a_sixth_word_fails_rather_than_skipping_it() {
+        let entry = json!({ "modalities": { "input": ["text", "hologram"] } });
+        let why = accepts(&entry).expect_err("a word this build has never heard of");
+        assert!(
+            why.contains("hologram"),
+            "the failure has to name the word: {why}"
+        );
+    }
+
+    #[test]
+    fn generating_models_writes_a_set_as_the_expression_that_rebuilds_it() {
+        assert_eq!(spelled(Modalities::empty()), "Modalities::empty()");
+        assert_eq!(
+            spelled(documents()),
+            "Modalities::empty().insert(Modality::Text)\
+             .insert(Modality::Image).insert(Modality::Pdf)",
+        );
+    }
 }
