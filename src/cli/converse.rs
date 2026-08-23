@@ -705,6 +705,21 @@ impl Turn<'_, '_> {
     ///
     /// `false` where the worker has closed the channel and the turn is over.
     fn step<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<bool, Fatal> {
+        if !self.drain(renderer)? {
+            return Ok(false);
+        }
+        self.keys(renderer)?;
+        Ok(true)
+    }
+
+    /// The events half of a pass, on its own so a panel standing mid-turn can
+    /// keep the transcript moving while the keyboard is the panel's: what the
+    /// worker reported is drawn, what ended is reaped and counted, and the row
+    /// under the box is kept current — but the keyboard is not looked at, which
+    /// is the panel's to read.
+    ///
+    /// `false` where the worker has closed the channel and the turn is over.
+    fn drain<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<bool, Fatal> {
         match self.seen.recv_timeout(TICK) {
             Ok(one) => {
                 // Before it is drawn, because drawing consumes it. The row
@@ -795,6 +810,13 @@ impl Turn<'_, '_> {
         }
         self.says.running = self.terms.leaving.count();
 
+        Ok(true)
+    }
+
+    /// The keyboard half of a pass: the loop over the keys pressed while the
+    /// turn ran. On its own so `step` is `drain` and this, and a panel never
+    /// reaches it — while a panel stands, the keyboard is the panel's.
+    fn keys<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Result<(), Fatal> {
         // After the event rather than before it, so what the turn said is on
         // screen before the box is drawn back underneath it. A line finished
         // here is kept for the loop above: running it now would start a second
@@ -829,12 +851,81 @@ impl Turn<'_, '_> {
                 // and this loop is what notices it has: leaving here would drop
                 // the join handle below and take the process out over a session
                 // log still being written.
-                Ok(asked) => *self.meanwhile = asked,
+                Ok(typing::Meanwhile::Leaving) => *self.meanwhile = typing::Meanwhile::Leaving,
+                // A slash command is run here rather than in the keyboard loop:
+                // the panel it stands is the turn's to keep rendering under, and
+                // this is where the turn is. Running it hands the keyboard to
+                // the panel for its length, which is why it is not `during`'s.
+                Ok(typing::Meanwhile::Command(command)) => {
+                    if self.drawn.is_ok() {
+                        let ran = self.command(renderer, command);
+                        *self.drawn = stop_if_failed(ran, &self.terms.cancel);
+                    }
+                }
+                Ok(typing::Meanwhile::Nothing) => {}
                 Err(problem) => *self.drawn = stop_if_failed(Err(problem), &self.terms.cancel),
             }
         }
 
-        Ok(true)
+        Ok(())
+    }
+
+    /// Runs a slash command finished mid-turn, with the turn rendering behind
+    /// whatever it stands. Which of the three it may do is the command's own
+    /// say; the panel is stood from here, where the turn's drain can be run
+    /// between the keys it reads.
+    fn command<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        command: command::Owned,
+    ) -> Result<(), Fatal> {
+        match command.class() {
+            command::MidTurn::Live => self.live(renderer, command),
+            command::MidTurn::Deferred => self.deferred(renderer, command),
+            command::MidTurn::Refused(why) => {
+                command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
+            }
+        }
+    }
+
+    /// Runs a slash command that moves nothing but the screen, with the turn
+    /// still rendering behind it.
+    ///
+    /// The panel owns the keyboard while it stands — `keys` is not reached —
+    /// and the transcript is kept moving by draining the turn between the keys
+    /// the panel reads. A permission or asked question is the one thing not
+    /// drained: it has paused the turn already, so it is held for the panel's
+    /// close rather than drawn over it, and the loop above answers it the
+    /// moment the keyboard is the box's again.
+    fn live<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        command: command::Owned,
+    ) -> Result<(), Fatal> {
+        // The transcript advances while the panel stands, so the drain is run
+        // once a pass. The keyboard is not the turn's here, which is why this
+        // is `drain` rather than `step` — and why the hook is handed the
+        // renderer rather than closing over it.
+        command::live(renderer, self.terms, command, &mut |renderer| {
+            self.drain(renderer).map(|_| ())
+        })
+    }
+
+    /// Runs a command whose pick the turn started next applies.
+    ///
+    /// `/model` is the one of these. The picker opens over the running turn,
+    /// the consequence is said and agreed to, and the pick is held — the
+    /// runner is on the worker for this turn's length, so nothing of it can
+    /// change now. The loop applies it when the turn ends and the runner is
+    /// this side's again.
+    fn deferred<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        command: command::Owned,
+    ) -> Result<(), Fatal> {
+        command::deferred(renderer, self.terms, command, &mut |renderer| {
+            self.drain(renderer).map(|_| ())
+        })
     }
 }
 

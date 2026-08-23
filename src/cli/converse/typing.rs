@@ -965,15 +965,14 @@ pub(super) fn during<T: Terminal>(
                 // empty, so the text is read off it before `queue` clears it.
                 Typed::Submitted => {
                     // A slash command is not a line for the turn: it is answered
-                    // here, on this thread, the way it is between turns. The
-                    // runner is on the worker for the turn's length, so which of
-                    // them may run now is the command's own say.
+                    // on this thread, the way it is between turns. But the panel
+                    // it opens is stood from the turn's own loop, where the turn
+                    // it stands over can be kept rendering — so the command is
+                    // returned, and that loop runs it.
                     let line = editor.text().to_owned();
-                    if let Some(wanted) = command::wanted(&line) {
-                        notice = crate::cli::converse::command::mid_turn(wanted, renderer, style)?;
+                    if let Some(owned) = command::owned(&line) {
                         editor.take();
-                        moved = true;
-                        continue;
+                        return Ok(Meanwhile::Command(owned));
                     }
                     steer.say(line);
                     notice = queue(editor, queued, turning, renderer.columns(), style);
@@ -1106,6 +1105,10 @@ pub(super) enum Meanwhile {
     /// Nothing past the line in the box. The session goes on, and so does the
     /// turn.
     Nothing,
+    /// A slash command was finished. The turn's own loop runs it — the keyboard
+    /// is this loop's, and the command's panel is stood from there, where the
+    /// turn it stands over can be kept rendering.
+    Command(command::Owned),
     /// Ctrl-C twice against an empty box. The turn has been asked to stop and
     /// the session ends once it has, which is why this is reported rather than
     /// acted on here: the worker still holds the runner, and the session's log

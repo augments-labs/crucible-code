@@ -90,12 +90,32 @@ pub(super) fn stand<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
+    stand_while(renderer, style, state, laid, keys, |_| Ok(()))
+}
+
+/// [`stand`], with something to do on each pass before a key is waited on.
+///
+/// Between turns there is nothing to do — nothing moves while nobody types —
+/// so `stand` passes a no-op. Mid-turn there is: the worker goes on reporting
+/// while a panel stands, and the transcript would freeze over the box it opened
+/// from if nothing drained it. The hook is that drain, run once per pass so a
+/// turn's text keeps arriving behind what it is standing under.
+pub(super) fn stand_while<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+    while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Ended, Fatal> {
     let mut changed = true;
+    let mut while_waiting = while_waiting;
 
     loop {
+        while_waiting(renderer)?;
         if changed {
             let (rows, caret) = laid(state, renderer.columns(), renderer.rows());
             // Asked per frame rather than taken once, because one caller

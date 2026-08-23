@@ -100,6 +100,48 @@ pub(super) enum Wanted<'a> {
     Unknown(&'a str),
 }
 
+/// A command read mid-turn, owned so it crosses from the keyboard loop to the
+/// turn's own.
+///
+/// The line it was read from is the box's, and the box is cleared as the
+/// command is taken, so the command and its rest are owned here rather than
+/// borrowed from a line that is gone.
+#[derive(Debug)]
+pub(super) enum Owned {
+    /// A command, and whatever was typed after it.
+    Known {
+        /// Which one.
+        command: Command,
+        /// What followed it. Empty where nothing did.
+        rest: String,
+    },
+    /// A word shaped like a command that names none. The word is not kept: an
+    /// unknown one is refused whichever it is, and the panel says only that it
+    /// names no command.
+    Unknown,
+}
+
+impl Owned {
+    /// Which command this is, or `Exit` for a word that names none — a command
+    /// that is never live, so an unknown word is refused the way a safe-looking
+    /// typo is.
+    pub(super) fn command(&self) -> Command {
+        match self {
+            Self::Known { command, .. } => *command,
+            Self::Unknown => Command::Exit,
+        }
+    }
+
+    /// What it does while a turn is running: the command's own class, or a
+    /// refusal for a word that names none.
+    pub(super) fn class(&self) -> MidTurn {
+        match self {
+            Self::Known { command, .. } => command.mid_turn(),
+            Self::Unknown => MidTurn::Refused("names no command"),
+        }
+    }
+}
+
 /// What is to happen once a command has run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ran {
@@ -239,37 +281,76 @@ pub(super) fn wanted(line: &str) -> Option<Wanted<'_>> {
     })
 }
 
-/// Runs a command the reader finished while a turn was running.
+/// Runs a command that moves nothing but the screen, with a turn behind it.
 ///
-/// Reached from the mid-turn loop rather than from `run`: the runner is on the
-/// worker thread for the turn's length, so a command is answered here against
-/// what this thread holds — the screen, the terms, the catalog. Which of the
-/// three it may do is the command's own [`Command::mid_turn`]. What it answers
-/// with is a notice under the box, the same place a refused keystroke is
-/// reported: a panel here would draw over the turn it is refusing to interrupt.
+/// The picker and the list are the same ones the between-turns command opens;
+/// `while_waiting` is what differs. It is the turn's drain, run once a pass so
+/// the transcript goes on rendering while the panel stands, and it is the
+/// reason this is reached from the mid-turn loop rather than from `run`.
 ///
 /// # Errors
 ///
-/// [`Fatal::Terminal`] if the terminal could not be drawn on.
-pub(super) fn mid_turn<T: Terminal>(
-    wanted: Wanted<'_>,
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn live<T: Terminal>(
     renderer: &mut Renderer<T>,
-    style: Style,
-) -> Result<Option<&'static str>, Fatal> {
-    let Some(command) = (match wanted {
-        Wanted::Known { command, .. } => Some(command),
-        Wanted::Unknown(_) => None,
-    }) else {
-        return Ok(Some("no such command"));
+    terms: &Terms,
+    wanted: Owned,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<(), Fatal> {
+    let style = terms.style();
+    let rest = match &wanted {
+        Owned::Known { rest, .. } => rest.as_str(),
+        Owned::Unknown => "",
     };
-
-    match command.mid_turn() {
-        // Answered where the box is: the panel that opens one of these live,
-        // and the holding of a `/model` pick for the turn to come, are the
-        // next pieces of this and not stood yet.
-        MidTurn::Live | MidTurn::Deferred => Ok(Some("not answered mid-turn yet")),
-        MidTurn::Refused(why) => refused(renderer, command, why, style),
+    match wanted.command() {
+        Command::Theme => theme::live(renderer, terms, rest, while_waiting),
+        Command::Help => {
+            // No keys to read: the list is stood, and any key closes it.
+            region::stand_while(
+                renderer,
+                |_| style,
+                &mut Still,
+                |_, columns, _| (listing(columns, style.glyphs()), None),
+                |arrived, _| {
+                    if matches!(arrived, Pressed::Resized) {
+                        Moved::Redraw
+                    } else {
+                        Moved::Left
+                    }
+                },
+                while_waiting,
+            )?;
+            Ok(())
+        }
+        // The classifier decides which commands reach here; a live one this
+        // arm does not name is a build error at the match, not a silent skip.
+        _ => Ok(()),
     }
+}
+
+/// The stateless marker a panel with nothing to hold is stood with.
+struct Still;
+
+/// Runs a command whose pick the turn started next applies.
+///
+/// `/model` is the one of these. The picker opens over the running turn and the
+/// consequence is said and agreed to before the pick is held; the running turn
+/// keeps the model it started with. What is taken is held rather than applied,
+/// and the loop applies it when the runner is this side's again.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn deferred<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    wanted: Owned,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<(), Fatal> {
+    let _ = (renderer, terms, wanted, while_waiting);
+    // The picker, the confirmation, and the holding of the pick are the next
+    // piece of this and are not stood yet.
+    Ok(())
 }
 
 /// Stands why a command cannot run now over the box until escape closes it.
@@ -279,17 +360,12 @@ pub(super) fn mid_turn<T: Terminal>(
 /// goes on above — the panel stands where the working row, the box, the status
 /// and the map were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
-fn refused<T: Terminal>(
+pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
     command: Command,
     why: &'static str,
     style: Style,
 ) -> Result<Option<&'static str>, Fatal> {
-    // The panel holds nothing — the reason it was stood with is all it says —
-    // but a unit-typed state trips the `match_same_arms` family of lints, so
-    // the nothing it holds has a name.
-    struct Still;
-
     region::stand(
         renderer,
         |_| style,
@@ -326,6 +402,18 @@ fn refused<T: Terminal>(
         },
     )?;
     Ok(None)
+}
+
+/// A command read mid-turn, owned so it crosses from the keyboard loop to the
+/// turn's own. `None` where the line is no command, the same as [`wanted`].
+pub(super) fn owned(line: &str) -> Option<Owned> {
+    wanted(line).map(|wanted| match wanted {
+        Wanted::Known { command, rest } => Owned::Known {
+            command,
+            rest: rest.to_owned(),
+        },
+        Wanted::Unknown(_) => Owned::Unknown,
+    })
 }
 
 /// What the menu shows while `line` is being typed.

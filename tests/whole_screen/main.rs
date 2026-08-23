@@ -264,6 +264,30 @@ fn a_command_that_cannot_run_mid_turn_says_so_on_a_panel() {
 }
 
 #[test]
+fn a_theme_panel_opens_while_a_turn_is_still_running() {
+    // The answer is long enough that the turn is still running when the
+    // command is sent. `/theme` moves nothing but the screen, so its picker
+    // opens over the box with the turn going on behind it.
+    let answer = taller_than_the_window();
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("theme-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    // The first word of the answer proves the turn is running before the
+    // command is sent.
+    window.types_and_catches("start it\r", "the quick brown fox");
+
+    // The picker stands over the box: its title row is the stable mark, and
+    // the theme list under it is what choosing moves through.
+    window.types_and_catches("/theme\r", "Theme");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
     // A real SGR mouse click opens the control at the bottom right, then a
     // second gesture drags its current place to the first cell. The
