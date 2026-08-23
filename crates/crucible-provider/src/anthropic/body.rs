@@ -152,9 +152,18 @@ fn write_message(
         // asked, and this is the answer coming back to it.
         Message::ToolResults(results) => messages.object(|message| {
             message.text("role", "user");
+            // One message's files, handed out in the order the results claim
+            // them: an attachment's index is its place across the whole
+            // message, so each result takes as many as it holds and the next
+            // one starts where it stopped.
+            let mut files = attached.iter().filter(|one| one.message == nth);
             message.array("content", |content| {
                 for result in results {
-                    content.object(|block| write_result(block, result));
+                    let found: Vec<_> = files
+                        .by_ref()
+                        .take(result.output.attachments().len())
+                        .collect();
+                    content.object(|block| write_result(block, result, &found));
                 }
             });
         }),
@@ -198,11 +207,36 @@ const fn spelling(modality: Modality) -> &'static str {
     }
 }
 
-/// One tool result.
-fn write_result(block: &mut Object<'_>, result: &ToolResult) {
+/// One tool result, and whatever files the tool found for it.
+///
+/// The words lead and the files follow, which is the other way round from a
+/// prompt: there the picture is what the vendor reads better first, and here
+/// the words are what say which file is which.
+fn write_result(block: &mut Object<'_>, result: &ToolResult, found: &[&Attached<'_>]) {
     block.text("type", "tool_result");
     block.text("tool_use_id", result.id.as_str());
-    block.text("content", result.output.text());
+
+    // A string where a tool answered in words alone, which is every call made
+    // before a tool could find a file.
+    if found.is_empty() {
+        block.text("content", result.output.text());
+    } else {
+        block.array("content", |content| {
+            // A tool that found a picture and said nothing about it is the
+            // picture alone: an empty text block is one this vendor refuses
+            // the request over rather than ignores.
+            if !result.output.text().is_empty() {
+                content.object(|part| {
+                    part.text("type", "text");
+                    part.text("text", result.output.text());
+                });
+            }
+            for one in found {
+                content.object(|part| write_attached(part, one));
+            }
+        });
+    }
+
     if result.output.is_failed() {
         block.boolean("is_error", true);
     }
@@ -223,6 +257,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::fake::{failed, found, picture};
 
     /// What a pointer finds when there is nothing there.
     const NOTHING: Value = Value::Null;
@@ -646,6 +681,138 @@ mod tests {
                 }
             }]),
             "{body}"
+        );
+    }
+
+    /// A turn whose tool results the runner resolved these attachments for.
+    fn answering(results: Vec<ToolResult>, attached: Vec<Attached<'static>>) -> Request<'static> {
+        let mut transcript = said("find me one");
+        transcript.push(Message::ToolResults(results));
+        let mut request = request(transcript);
+        request.attached = Box::leak(attached.into_boxed_slice());
+        request
+    }
+
+    /// One file the runner resolved, at its place across the message above.
+    fn resolved(
+        index: usize,
+        media_type: &'static str,
+        modality: Modality,
+        content: Content<'static>,
+    ) -> Attached<'static> {
+        Attached {
+            message: 1,
+            index,
+            media_type,
+            modality,
+            content,
+        }
+    }
+
+    /// The picture a tool found, resolved.
+    fn resolved_picture(index: usize) -> Attached<'static> {
+        resolved(index, "image/png", Modality::Image, Content::Bytes(PIXEL))
+    }
+
+    /// One call, answered with the words and files a tool came back with.
+    fn one(output: ToolOutput) -> Vec<ToolResult> {
+        vec![ToolResult {
+            id: ToolId::new("call_1"),
+            output,
+        }]
+    }
+
+    #[test]
+    fn a_tool_that_found_a_picture_sends_it_inside_the_result() {
+        let body = build(&answering(
+            one(found("one match: holiday.png", vec![picture()])),
+            vec![resolved_picture(0)],
+        ));
+
+        assert_eq!(
+            at(&body, "/messages/1/content/0"),
+            &json!({
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": [
+                    { "type": "text", "text": "one match: holiday.png" },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "iVBORw=="
+                        }
+                    }
+                ]
+            }),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_tool_that_only_found_a_picture_sends_no_empty_text_block() {
+        let body = build(&answering(
+            one(found("", vec![picture()])),
+            vec![resolved_picture(0)],
+        ));
+
+        assert_eq!(
+            at(&body, "/messages/1/content/0/content"),
+            &json!([{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw=="
+                }
+            }]),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_failed_result_that_found_a_file_still_says_it_failed() {
+        let body = build(&answering(
+            one(failed("could not open it", vec![picture()])),
+            vec![resolved_picture(0)],
+        ));
+
+        assert_eq!(
+            at(&body, "/messages/1/content/0/is_error"),
+            &json!(true),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn each_result_gets_the_files_its_own_call_found() {
+        let body = build(&answering(
+            vec![
+                ToolResult {
+                    id: ToolId::new("call_1"),
+                    output: found("first", vec![picture()]),
+                },
+                ToolResult {
+                    id: ToolId::new("call_2"),
+                    output: found("second", vec![picture()]),
+                },
+            ],
+            vec![
+                resolved_picture(0),
+                resolved(1, "application/pdf", Modality::Pdf, Content::Bytes(PAGES)),
+            ],
+        ));
+
+        assert_eq!(
+            at(&body, "/messages/1/content/0/content/1/type"),
+            &json!("image"),
+            "the first call found the picture: {body}"
+        );
+        assert_eq!(
+            at(&body, "/messages/1/content/1/content/1/type"),
+            &json!("document"),
+            "the second found the document: {body}"
         );
     }
 }
