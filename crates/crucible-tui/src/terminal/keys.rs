@@ -101,6 +101,12 @@ pub enum Pressed {
     /// terminal to select something else, so the copy is made here, from the
     /// line rather than from the picture of it.
     Copy,
+    /// Ctrl+V: read an image from the operating-system clipboard.
+    ///
+    /// Text paste is still the terminal's bracketed-paste event. This exists for
+    /// the other clipboard shape, whose bytes a terminal does not put into an
+    /// editor buffer and whose path may not exist on this machine at all.
+    PasteImage,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -429,6 +435,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // always been spelled with.
         KeyCode::Char('y') if bound => Pressed::Copy,
 
+        // Ctrl+V is normally quoted-insert or a terminal's paste binding. A
+        // bracketed text paste arrives under its own event before this mapping;
+        // the distinct press is therefore available for clipboard image bytes.
+        KeyCode::Char('v') if bound => Pressed::PasteImage,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -637,6 +648,11 @@ mod tests {
             meaning(control(KeyCode::Char('y'))),
             Pressed::Copy,
             "the key that copies the line was read as an edit"
+        );
+        assert_eq!(
+            meaning(control(KeyCode::Char('v'))),
+            Pressed::PasteImage,
+            "the key that pastes an image was dropped as a modified letter"
         );
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare

@@ -437,6 +437,7 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         | Pressed::Pasted(_)
         | Pressed::Queue
         | Pressed::Copy
+        | Pressed::PasteImage
         | Pressed::Scrolled { .. }
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }

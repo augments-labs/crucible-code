@@ -87,6 +87,9 @@ const COPIED: &str = "line copied";
 /// what a reader can act on is that the clipboard does not have it.
 const UNCOPIED: &str = "the line is too long for the terminal to copy";
 
+/// What the row says when Ctrl+V found no image it could attach.
+const UNPASTED_IMAGE: &str = "no readable clipboard image was attached";
+
 /// How long the second press has to arrive in.
 ///
 /// Long enough to be a pair of presses somebody meant and short enough that it
@@ -460,6 +463,23 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Copy => {
                 says.asking = copy(renderer, editor)?;
                 says.asking.is_some() || offered.is_some()
+            }
+
+            // Image bytes come from the desktop clipboard, into the same durable
+            // session store an external path is imported through. The editor
+            // holds only the quoted name, so submission takes the ordinary
+            // attachment path and all of its capability checks.
+            Pressed::PasteImage => {
+                if let Ok(path) = super::attaching::clipboard(runner) {
+                    let moved = pasted(editor, &path, &mut says);
+                    if moved {
+                        open = Opened::filtered(editor.projection().text(), glyphs);
+                    }
+                    moved || offered.is_some()
+                } else {
+                    says.asking = Some(UNPASTED_IMAGE);
+                    true
+                }
             }
 
             // And the key that says the same word about the other thing that
@@ -1085,7 +1105,7 @@ pub(super) fn during<T: Terminal>(
                 renderer.notched(back)?;
             }
 
-            Meant::Ignored => {}
+            Meant::PasteImage | Meant::Ignored => {}
         }
     }
 
@@ -1227,6 +1247,9 @@ enum Meant {
     /// Ctrl+Y: the line on the clipboard. The line is the reader's whether or
     /// not a turn is running above it, so the key is the same on both sides.
     Copy,
+    /// Ctrl+V: an image on the clipboard. A running turn owns the runner whose
+    /// session store it must enter, so this is held apart and ignored here.
+    PasteImage,
     /// A click, which lands on a result the transcript cut short, on the line
     /// being typed, or on nothing.
     ///
@@ -1286,6 +1309,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Plan => Meant::Plan,
         Pressed::Background => Meant::Background,
         Pressed::Copy => Meant::Copy,
+        Pressed::PasteImage => Meant::PasteImage,
 
         // The panel of what is waiting behind the turn, opened whole. Its own
         // meaning rather than the queue's: Return adds to the queue, and this

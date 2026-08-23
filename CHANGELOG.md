@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Added
+
+**A picture outside the workspace can be named in the prompt.** An absolute path
+is imported into the session's private attachment store before it is sent, so a
+screenshot under Pictures needs no copy in the repository and survives the
+original being moved or deleted. Quote a path that contains spaces. Ctrl+V
+between turns imports an image directly from the operating-system clipboard.
+
 ## [0.21.0] - 2026-08-23
 
 ### Added

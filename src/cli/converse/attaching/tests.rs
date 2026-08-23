@@ -17,7 +17,7 @@ use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
 use super::super::replaying::replayed;
-use super::{Attaching, attaching, beside};
+use super::{Attaching, Named, attaching, beside, decide, names};
 
 /// The eight bytes every PNG starts with.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -67,6 +67,60 @@ fn spelling(named: &'static str) -> Spelling {
 fn holding(sample: &Sample, name: &str, bytes: &[u8]) -> Workspace {
     fs::write(sample.root().join(name), bytes).expect("a file in the workspace");
     sample.workspace()
+}
+
+#[test]
+fn a_quoted_path_with_spaces_is_one_prompt_name() {
+    assert_eq!(
+        names("don't describe '/home/ada/Pictures/Screen Shot.png'?"),
+        [
+            "don't",
+            "describe",
+            "/home/ada/Pictures/Screen Shot.png",
+            "?",
+        ]
+    );
+}
+
+#[test]
+fn an_external_picture_is_imported_for_the_session() {
+    let sample = Sample::new("attaching-an-external-picture");
+    let workspace = sample.workspace();
+    let outside = sample
+        .root()
+        .parent()
+        .expect("the sample base")
+        .join("Screen Shot.png");
+    fs::write(&outside, PNG).expect("an external picture");
+    let imported = sample.logs().join("attachments/session-one");
+
+    let Named::Attached(one) = decide(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        outside.to_str().expect("a text path"),
+        Some(&imported),
+    ) else {
+        panic!("the user-selected external picture is attached")
+    };
+
+    assert!(
+        one.path
+            .starts_with(imported.to_str().expect("a text path"))
+    );
+    assert_eq!(
+        fs::read(one.path.as_ref()).expect("the imported bytes"),
+        PNG
+    );
+    fs::remove_file(&outside).expect("the source goes away");
+    assert_eq!(fs::read(one.path.as_ref()).expect("the durable copy"), PNG);
+
+    let copied = super::import(&imported, "png", one.hash, PNG).expect("the same import");
+    assert_eq!(
+        copied.to_str(),
+        Some(one.path.as_ref()),
+        "the bytes deduplicate"
+    );
 }
 
 #[test]

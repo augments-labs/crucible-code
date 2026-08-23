@@ -701,6 +701,12 @@ impl Tool for Read {
         // the model can correct by sending a different path.
         let path = match self.workspace.existing(requested) {
             Ok(path) => path,
+            Err(crucible_core::PathError::Escapes { .. }) => {
+                return Ok(ToolOutput::failed(format!(
+                    "{requested} resolves outside the workspace. Ask the user to attach it, or have \
+                     them add its directory to permissions.extraDirectories."
+                )));
+            }
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
@@ -992,6 +998,8 @@ mod tests {
 
         assert!(output.is_failed());
         assert!(!output.text().contains("classified"));
+        assert!(output.text().contains("Ask the user to attach it"));
+        assert!(output.text().contains("permissions.extraDirectories"));
     }
 
     #[test]

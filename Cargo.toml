@@ -31,6 +31,15 @@ authors = ["Peguy Njoyim"]
 # below reaches up to ask what the user configured. `auth` sits there too, and
 # is handed the directory `config` resolved rather than resolving one itself.
 [workspace.dependencies]
+# Reads image pixels from the desktop clipboard for Ctrl+V attachment ingress.
+# Wayland's clipboard is a separate protocol rather than an X11 compatibility
+# path, so its backend is named outright instead of leaving Linux support to
+# whichever display server happens to be in use.
+arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
+# Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
+# same release is already in arboard's image-data graph, so this names the API
+# without compiling a second encoder.
+image = { version = "=0.25.9", default-features = false, features = ["png"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-auth = { path = "crates/crucible-auth" }
@@ -307,6 +316,7 @@ path = "src/main.rs"
 # its user configuration; that crate knows nothing about settings. The arrows
 # that make a provider and a tool meet a runner are still drawn here or nowhere.
 [dependencies]
+arboard.workspace = true
 clap.workspace = true
 crucible-auth.workspace = true
 crucible-config.workspace = true
@@ -316,6 +326,7 @@ crucible-provider.workspace = true
 crucible-runner.workspace = true
 crucible-tools.workspace = true
 crucible-tui.workspace = true
+image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both
 # sides read the same definition off `Attachment::hash`, and the crate is
