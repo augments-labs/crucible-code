@@ -21,11 +21,12 @@
 
 use crucible_core::{Compacting, Mode};
 use crucible_runner::Runner;
-use crucible_tui::{Glyphs, Listed, Menu, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Glyphs, Key, Listed, Menu, Pressed, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
+use super::region::{self, Moved};
 use super::{Held, Terms, mode};
 
 mod clear;
@@ -170,6 +171,48 @@ impl Command {
             says: self.says(glyphs),
         }
     }
+
+    /// What it does while a turn is running.
+    ///
+    /// The runner that every one of these would act on is on the worker thread
+    /// for the length of a turn, so nothing here reaches it. The commands that
+    /// move nothing but the screen open and apply live; `/model` opens and its
+    /// pick is held for the turn the loop starts next; the rest are refused,
+    /// each with the one-line reason that is its own. A command added here
+    /// decides which of the three it is in the same place it names itself.
+    const fn mid_turn(self) -> MidTurn {
+        match self {
+            Self::Help | Self::Theme => MidTurn::Live,
+            Self::Model => MidTurn::Deferred,
+            Self::Effort => {
+                MidTurn::Refused("sets how hard it thinks, which the running turn has taken")
+            }
+            Self::Login => MidTurn::Refused("adds a key the request now in flight cannot use"),
+            Self::Logout => {
+                MidTurn::Refused("removes the key the request now in flight is signed with")
+            }
+            Self::Mode => {
+                MidTurn::Refused("steps the mode, which the running tool call is gated by")
+            }
+            Self::Resume => MidTurn::Refused("leaves this session for an earlier one, mid-answer"),
+            Self::Compact => {
+                MidTurn::Refused("cuts the window the turn now running is answering in")
+            }
+            Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
+            Self::Exit => MidTurn::Refused("ends the session, turn and all"),
+        }
+    }
+}
+
+/// What a command does while a turn is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MidTurn {
+    /// Opens and applies now: it moves nothing but the screen.
+    Live,
+    /// Opens now and takes effect on the turn started next.
+    Deferred,
+    /// Does nothing, with the reason it cannot said on a panel instead.
+    Refused(&'static str),
 }
 
 /// What `line` asked for, or `None` where it asked for no command at all.
@@ -194,6 +237,95 @@ pub(super) fn wanted(line: &str) -> Option<Wanted<'_>> {
         },
         None => Wanted::Unknown(word),
     })
+}
+
+/// Runs a command the reader finished while a turn was running.
+///
+/// Reached from the mid-turn loop rather than from `run`: the runner is on the
+/// worker thread for the turn's length, so a command is answered here against
+/// what this thread holds — the screen, the terms, the catalog. Which of the
+/// three it may do is the command's own [`Command::mid_turn`]. What it answers
+/// with is a notice under the box, the same place a refused keystroke is
+/// reported: a panel here would draw over the turn it is refusing to interrupt.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on.
+pub(super) fn mid_turn<T: Terminal>(
+    wanted: Wanted<'_>,
+    renderer: &mut Renderer<T>,
+    style: Style,
+) -> Result<Option<&'static str>, Fatal> {
+    let Some(command) = (match wanted {
+        Wanted::Known { command, .. } => Some(command),
+        Wanted::Unknown(_) => None,
+    }) else {
+        return Ok(Some("no such command"));
+    };
+
+    match command.mid_turn() {
+        // Answered where the box is: the panel that opens one of these live,
+        // and the holding of a `/model` pick for the turn to come, are the
+        // next pieces of this and not stood yet.
+        MidTurn::Live | MidTurn::Deferred => Ok(Some("not answered mid-turn yet")),
+        MidTurn::Refused(why) => refused(renderer, command, why, style),
+    }
+}
+
+/// Stands why a command cannot run now over the box until escape closes it.
+///
+/// Where the box was, as every panel is: the rule, the command's name, the one
+/// reason it cannot run while a turn is, and the key that closes it. The turn
+/// goes on above — the panel stands where the working row, the box, the status
+/// and the map were, and the transcript keeps its own rows. Nothing of the turn
+/// changes: the command did nothing, and this is the whole of what happened.
+fn refused<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    command: Command,
+    why: &'static str,
+    style: Style,
+) -> Result<Option<&'static str>, Fatal> {
+    // The panel holds nothing — the reason it was stood with is all it says —
+    // but a unit-typed state trips the `match_same_arms` family of lints, so
+    // the nothing it holds has a name.
+    struct Still;
+
+    region::stand(
+        renderer,
+        |_| style,
+        &mut Still,
+        |_, columns, _| {
+            let glyphs = style.glyphs();
+            let mut rows = vec![
+                Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
+                Row::new(),
+                Row::new().then(Slot::Strong, command.name()),
+            ];
+            rows.extend(
+                fold(why, columns)
+                    .into_iter()
+                    .map(|line| Row::new().then(Slot::Plain, line)),
+            );
+            rows.push(Row::new());
+            rows.push(Row::new().then(Slot::Quiet, "esc to close"));
+            (rows, None)
+        },
+        |arrived, _| {
+            // Matching the key rather than the state: the panel holds nothing,
+            // so only the press decides what the loop does with it.
+            if matches!(
+                arrived,
+                Pressed::Escape | Pressed::Key(Key::Enter | Key::Interrupt | Key::Eof)
+            ) {
+                Moved::Left
+            } else if arrived == Pressed::Resized {
+                Moved::Redraw
+            } else {
+                Moved::Still
+            }
+        },
+    )?;
+    Ok(None)
 }
 
 /// What the menu shows while `line` is being typed.

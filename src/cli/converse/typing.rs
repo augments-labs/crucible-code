@@ -964,7 +964,18 @@ pub(super) fn during<T: Terminal>(
                 // loop that reads that drops them. The queue takes the editor
                 // empty, so the text is read off it before `queue` clears it.
                 Typed::Submitted => {
-                    steer.say(editor.text().to_owned());
+                    // A slash command is not a line for the turn: it is answered
+                    // here, on this thread, the way it is between turns. The
+                    // runner is on the worker for the turn's length, so which of
+                    // them may run now is the command's own say.
+                    let line = editor.text().to_owned();
+                    if let Some(wanted) = command::wanted(&line) {
+                        notice = crate::cli::converse::command::mid_turn(wanted, renderer, style)?;
+                        editor.take();
+                        moved = true;
+                        continue;
+                    }
+                    steer.say(line);
                     notice = queue(editor, queued, turning, renderer.columns(), style);
                     moved = true;
                 }
