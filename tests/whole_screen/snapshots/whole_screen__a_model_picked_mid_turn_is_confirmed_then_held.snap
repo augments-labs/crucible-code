@@ -4,14 +4,14 @@ expression: window.picture()
 ---
 100x24 cursor 22,0 scrolled 0
 |…/a-directory-to-be-working-in/and-something-below-that-again/workspace                             |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY                                  |
+|                                                                                                    |
 |› start it                                                                                          |
 |                                                                                                    |
 |● Bash(sleep 30)                                                                                    |
 |  └ (no output yet) (+2 lines · ctrl+o to expand)                                                   |
 |                                                                                                    |
-|the quick brown fox jumps over the                                                                  |
-|                                                                                                    |
-|lazy                                                                                                |
+|It is started. That is all.                                                                         |
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
 |                                                                                                    |
 |Switch model?                                                                                       |
