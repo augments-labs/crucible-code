@@ -7,32 +7,80 @@
 //! which is most first runs, because a model name is a string a vendor chose and
 //! there is no guessing it.
 //!
-//! The panel holds every provider beside the models it serves. A key says a
-//! provider can be reached; it does not choose one. Taking a row is the
-//! explicit point where the provider and model change together.
+//! The shelf holds every provider beside the models it serves, with a line to
+//! narrow both by and the rungs the marked model takes on a strip beneath. A
+//! key says a provider can be reached; it does not choose one. Taking a row is
+//! the explicit point where the provider, the model and the rung change
+//! together — one stop rather than three, because a rung is asked of a model
+//! and picking the model first only to be sent elsewhere for the rung is the
+//! same question asked twice.
 //!
 //! What is taken is written down, because the answer to "which model" is the
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
 
+use crucible_core::Effort;
 use crucible_runner::Runner;
-use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_tui::{
+    Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
+    clip, fold,
+};
 
 use crate::cli::choice::Choice;
-use crate::cli::converse::picking::{self, Taken};
+use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
 use crate::cli::{Fatal, Model, NO_MODEL_CHOSEN, PROVIDERS, Served, remember, served};
 
 use super::{Terms, about, say};
 
-/// The sentence under the panel's title: what standing there cannot show, which
-/// is that this outlives the session it was chosen in.
-const SAID: &str = concat!(
-    "Choose the provider and model crucible asks from the next turn on. The ",
-    "choice is written down for every run from now on; effort stays unset until chosen."
-);
+mod narrowing;
 
 /// What escape leaves behind, in place of the listing it used to write.
 const LEFT: &str = "cancelled, no model taken";
+
+/// The row at the top of the pane of providers: every one of them at once.
+const ALL: &str = "All";
+
+/// What the search line says with nothing typed into it.
+///
+/// Both halves named, because the line reads all four names a row has and
+/// nothing on screen says which one a match came off. Somebody who only knew it
+/// searched models would never try a vendor's name in it.
+const HINT: &str = "a model, or whoever serves it";
+
+/// What the pane of models says where the query left nothing on it.
+const NOTHING: &str = "nothing here answers to that";
+
+/// What the row of a model whose provider serves no rung says at its end.
+const NO_RUNG: &str = "no rung";
+
+/// What the strip says where the marked model serves no rung.
+const SERVES_NONE: &str = "this model takes none";
+
+/// What the strip says while a turn runs.
+///
+/// A rung is what the running turn was started under, so there is nothing here
+/// to change about it — the same answer `/effort` itself gives mid-turn, said
+/// where somebody is looking for the strip rather than where they typed the
+/// other command.
+const HELD: &str = "set by /effort between turns";
+
+/// What the title says on its right where no model has been chosen yet.
+const NOTHING_ASKED: &str = "nothing asked yet";
+
+/// What the strip under the panes offers, and which rung is on it now.
+///
+/// Two answers rather than one because mid-turn there is a third thing to say.
+/// `/effort` is refused while a turn runs and a pick made over one is held
+/// rather than applied, so the strip is drawn empty with the reason on it —
+/// offering a rung this command could not then apply would be the panel
+/// promising something the loop underneath it refuses.
+#[derive(Clone, Copy)]
+enum Track {
+    /// Rungs may be taken, and this is the one in force.
+    Offered(Option<Effort>),
+    /// None may be taken here.
+    Refused,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Selected {
@@ -71,88 +119,41 @@ pub(super) fn run<T: Terminal>(
     }
 
     if keys {
-        match chosen(renderer, runner, terms)? {
-            Taken::Took(selected) => {
-                return taken(
-                    selected.provider,
-                    selected.model.name,
-                    renderer,
-                    runner,
-                    terms,
-                );
+        let track = Track::Offered(runner.effort());
+        match stood(renderer, terms, runner.model(), track, &mut |_| Ok(()))? {
+            Shelved::Took(selected, rung) => {
+                return applied(selected, rung, renderer, runner, terms);
             }
-            // Escape asked for the screen that was there before the panel. A
+            // Escape asked for the screen that was there before the shelf. A
             // listing under it would be the same question put a second time.
-            Taken::Left => return say(renderer, LEFT),
-            Taken::Cramped => {}
+            Shelved::Left => return say(renderer, LEFT),
+            Shelved::Cramped => {}
         }
     }
 
     listed(renderer, runner, terms)
 }
 
-/// The picker, stood while a turn runs behind it.
+/// The shelf, stood while a turn runs behind it.
 ///
-/// The runner is on the worker, so which model is in force is handed in by
-/// name rather than read off it, and the drain is run once a pass so the turn
-/// goes on rendering under the panel. What comes back is the pick, not applied
-/// — the runner cannot be reached mid-turn, so it is held for the turn the
-/// loop starts next.
+/// The runner is on the worker, so which model is in force is handed in by name
+/// rather than read off it, and the drain is run once a pass so the turn goes
+/// on rendering under the shelf. What comes back is the pick, not applied — the
+/// runner cannot be reached mid-turn, so it is held for the turn the loop
+/// starts next, and the strip of rungs is drawn empty for the same reason.
 pub(super) fn picked_while<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     current: &str,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Taken<Selected>, Fatal> {
-    let offered: Vec<_> = PROVIDERS
-        .into_iter()
-        .flat_map(|provider| {
-            provider
-                .models
-                .iter()
-                .copied()
-                .map(move |model| Selected { provider, model })
-        })
-        .collect();
-
-    let saying = if current.is_empty() {
-        format!("Nothing is being asked yet. {SAID}")
-    } else {
-        format!(
-            "{}/{current} is what is asked now. {SAID}",
-            terms.provider.get().unwrap_or("unselected")
-        )
-    };
-
-    let says: Vec<String> = offered
-        .iter()
-        .map(|selected| beside(*selected, terms.style().glyphs()))
-        .collect();
-
-    let shown: Vec<Offered<'_>> = offered
-        .iter()
-        .zip(&says)
-        .map(|(selected, says)| Offered {
-            name: selected.model.shown,
-            says,
-        })
-        .collect();
-
-    let panel = Panel {
-        title: "Model",
-        said: Some(&saying),
-        shown: &shown,
-        chosen: offered
-            .iter()
-            .position(|selected| {
-                Some(selected.provider.name) == terms.provider.get()
-                    && selected.model.name == current
-            })
-            .unwrap_or(0),
-        footer: "esc to cancel",
-    };
-
-    Ok(picking::pick_while(renderer, terms.style(), panel, while_waiting)?.of(&offered))
+    Ok(
+        match stood(renderer, terms, current, Track::Refused, while_waiting)? {
+            Shelved::Took(selected, _) => Taken::Took(selected),
+            Shelved::Left => Taken::Left,
+            Shelved::Cramped => Taken::Cramped,
+        },
+    )
 }
 
 /// Whether a switch is confirmed, with the consequence said first.
@@ -248,88 +249,226 @@ fn named<T: Terminal>(
     taken(provider, &model, renderer, runner, terms)
 }
 
-/// Stands the panel where the prompt box was, and says which model came off it.
+/// The keys, under the panes they work on, long and short.
 ///
-/// A window with no room to stand one in comes out as the listing below — the
-/// answer `/model` always had, and the only one a short window can be given.
-fn chosen<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    runner: &Runner,
-    terms: &Terms,
-) -> Result<Taken<Selected>, Fatal> {
-    let offered: Vec<_> = PROVIDERS
-        .into_iter()
-        .flat_map(|provider| {
-            provider
-                .models
-                .iter()
-                .copied()
-                .map(move |model| Selected { provider, model })
-        })
-        .collect();
+/// Built rather than written down, because the four arrows in it are the
+/// setting's: a terminal without them draws hollow squares on the one row that
+/// exists to be read by somebody who does not yet know. The short form is what
+/// a window with no room for the long one gets — the same keys, without the
+/// words saying what each of them moves.
+fn keys(glyphs: Glyphs) -> (String, String) {
+    let (up, down) = glyphs.walking();
+    let (left, right) = glyphs.stepping();
 
-    // Which model is in force goes here rather than beside an entry: it is one
-    // fact about the session, and a list that says it once is a list whose rows
-    // all read the same way.
-    let saying = match runner.model() {
-        "" => format!("Nothing is being asked yet. {SAID}"),
-        name => format!(
-            "{}/{name} is what is asked now. {SAID}",
-            terms.provider.get().unwrap_or("unselected")
-        ),
-    };
-
-    let says: Vec<String> = offered
-        .iter()
-        .map(|selected| beside(*selected, terms.style().glyphs()))
-        .collect();
-
-    let shown: Vec<Offered<'_>> = offered
-        .iter()
-        .zip(&says)
-        .map(|(selected, says)| Offered {
-            name: selected.model.shown,
-            says,
-        })
-        .collect();
-
-    let panel = Panel {
-        title: "Model",
-        said: Some(&saying),
-        shown: &shown,
-        // Opened on the one in force, so the first key moves off a known place
-        // rather than towards one. A model chosen elsewhere is on no row here,
-        // and the sentence above is where it is named.
-        chosen: offered
-            .iter()
-            .position(|selected| {
-                Some(selected.provider.name) == terms.provider.get()
-                    && selected.model.name == runner.model()
-            })
-            .unwrap_or(0),
-        // The one key worth naming: the arrows and Enter are what a list with a
-        // mark on it is already saying.
-        footer: "esc to cancel",
-    };
-
-    Ok(picking::pick(renderer, terms.style(), panel)?.of(&offered))
+    (
+        format!("{up}{down} model   {left}{right} effort   tab pane   enter take   esc leave"),
+        format!("{up}{down} {left}{right} tab enter esc"),
+    )
 }
 
-/// What a row says beside the model's name: who serves it, and the other way
-/// to the same model.
+/// Stands the shelf over the whole window, and says what came off it.
 ///
-/// The one thing that differs between rows that would otherwise be a name and
-/// nothing else. The mark between the two halves is the setting's, since a
-/// terminal that cannot draw it would otherwise be given a question mark in the
-/// middle of a line somebody is reading a flag off.
-fn beside(selected: Selected, glyphs: Glyphs) -> String {
-    format!(
-        "{} {} --model {}/{}",
-        selected.provider.shown,
-        glyphs.dot(),
-        selected.provider.name,
-        selected.model.name
+/// One loop for both ways in. Between turns the runner is this side's and the
+/// track carries the rung in force; mid-turn it is on the worker, the model in
+/// force is handed in by name, and the track carries nothing at all.
+///
+/// The shelf is narrowed inside the frame rather than before it, because what
+/// it holds is decided by what has been typed and by which provider the mark
+/// stands on, and both of those change under the keys. So the frame that
+/// narrows is the frame that writes down what the keys will walk next — marks
+/// included, since a query that emptied the shelf under one leaves it standing
+/// past the end.
+fn stood<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    current: &str,
+    track: Track,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Shelved<Selected>, Fatal> {
+    let all = narrowing::every();
+    let glyphs = terms.style().glyphs();
+    let (long, short) = keys(glyphs);
+
+    // Which model is in force goes on the title row rather than beside an
+    // entry: it is one fact about the session, and a pane whose rows all read
+    // the same way is one that can be walked without reading each of them.
+    let now = match current {
+        "" => NOTHING_ASKED.to_owned(),
+        name => format!("{}/{name}", terms.provider.get().unwrap_or("unselected")),
+    };
+    let norung = match track {
+        Track::Offered(_) => SERVES_NONE,
+        Track::Refused => HELD,
+    };
+
+    // Opened on the one in force, so the first key moves off a known place
+    // rather than towards one. A model chosen elsewhere is on no row here, and
+    // the title above is where it is named.
+    let at = all
+        .iter()
+        .position(|one| {
+            Some(one.provider.name) == terms.provider.get() && one.model.name == current
+        })
+        .unwrap_or(0);
+    let rung = match track {
+        Track::Offered(Some(effort)) => all
+            .get(at)
+            .and_then(|one| one.model.rungs.iter().position(|one| *one == effort))
+            .unwrap_or(0),
+        _ => 0,
+    };
+
+    let mut standing = Standing {
+        query: Editor::new(),
+        // Opened on the models, which is what somebody typing `/model` came
+        // for. The pane beside them is how the shelf is narrowed rather than
+        // what is taken off it, and tab is what says so.
+        pane: Pane::Models,
+        provider: 0,
+        model: at,
+        rung,
+        models: all.clone(),
+        providers: 0,
+        rungs: 0,
+    };
+
+    picking::shelve(
+        renderer,
+        terms.style(),
+        &mut standing,
+        |standing, columns, room| {
+            let counts = narrowing::counted(&all, standing.query.text());
+            let only = standing
+                .provider
+                .checked_sub(1)
+                .and_then(|at| counts.get(at))
+                .map(|(provider, _)| provider.name);
+
+            standing.models = narrowing::shelved(&all, standing.query.text(), only);
+            standing.providers = counts.len() + 1;
+            standing.provider = standing.provider.min(counts.len());
+            standing.model = standing.model.min(standing.models.len().saturating_sub(1));
+
+            let rungs: Vec<&str> = match track {
+                Track::Refused => Vec::new(),
+                Track::Offered(_) => standing
+                    .models
+                    .get(standing.model)
+                    .map(|one| one.model.rungs.iter().map(|rung| rung.as_str()).collect())
+                    .unwrap_or_default(),
+            };
+            standing.rungs = rungs.len();
+            standing.rung = standing.rung.min(rungs.len().saturating_sub(1));
+
+            let total: usize = counts.iter().filter_map(|(_, count)| *count).sum();
+            let serving: Vec<Serving<'_>> = std::iter::once(Serving {
+                name: ALL,
+                count: (total > 0).then_some(total),
+            })
+            .chain(counts.iter().map(|(provider, count)| Serving {
+                name: provider.shown,
+                count: *count,
+            }))
+            .collect();
+
+            let windows: Vec<String> = standing
+                .models
+                .iter()
+                .map(|one| {
+                    crate::cli::startup::window(one.provider.name, one.model.name, &terms.settings)
+                        .map_or_else(
+                            || glyphs.dash().to_owned(),
+                            |window| crate::cli::draw::tokens(u64::from(window)),
+                        )
+                })
+                .collect();
+
+            let stocked: Vec<Stocked<'_>> = standing
+                .models
+                .iter()
+                .zip(&windows)
+                .map(|(one, window)| Stocked {
+                    name: one.model.shown,
+                    // Who serves it, until the shelf is one provider's — at
+                    // which point the pane beside it is already saying so, once
+                    // rather than on every row.
+                    by: if only.is_none() {
+                        one.provider.shown
+                    } else {
+                        ""
+                    },
+                    window,
+                    note: if one.model.rungs.is_empty() {
+                        NO_RUNG
+                    } else {
+                        ""
+                    },
+                    now: Some(one.provider.name) == terms.provider.get()
+                        && one.model.name == current,
+                })
+                .collect();
+
+            let shelf = Shelf {
+                title: "Model",
+                now: &now,
+                query: standing.query.text(),
+                typed: standing.query.column(),
+                hint: HINT,
+                providers: &serving,
+                provider: standing.provider,
+                models: &stocked,
+                model: standing.model,
+                rungs: &rungs,
+                rung: standing.rung,
+                nothing: NOTHING,
+                pane: standing.pane,
+                keys: (&long, &short),
+                norung,
+            };
+
+            (
+                shelf.within(columns, room, glyphs),
+                Some(shelf.caret(columns, glyphs)),
+            )
+        },
+        while_waiting,
     )
+}
+
+/// Asks for the model, and then for the rung marked under it.
+///
+/// In that order, and each through the command that already owns it: the model
+/// here, the rung through `/effort`'s own path. A rung taken on this shelf is
+/// then written down and said back exactly as one taken there, which is what
+/// keeps two ways to one answer from being two answers.
+///
+/// A model whose provider serves no rung is taken with the rung left exactly as
+/// it was. That is not a failure and says nothing on screen beyond the `no rung`
+/// its row already carried.
+fn applied<T: Terminal>(
+    selected: Selected,
+    rung: Option<usize>,
+    renderer: &mut Renderer<T>,
+    runner: &mut Runner,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    taken(
+        selected.provider,
+        selected.model.name,
+        renderer,
+        runner,
+        terms,
+    )?;
+
+    let Some(effort) = rung.and_then(|at| selected.model.rungs.get(at).copied()) else {
+        return Ok(());
+    };
+
+    // Through `/effort` itself rather than through a copy of its two lines.
+    // With no keyboard asked for, because the rung is already chosen: what it
+    // does with a word is take it, write it down and say so, which is the whole
+    // of what is owed here.
+    super::effort::run(effort.as_str(), renderer, runner, terms, false)
 }
 
 /// Asks it from the next turn on, and writes it down for the next run.
@@ -455,33 +594,105 @@ mod tests {
     use crate::cli::fake::Script;
     use crate::cli::sample::Sample;
 
-    use super::{PROVIDERS, Selected, beside, taken};
+    use super::{Effort, PROVIDERS, Selected, applied, keys, taken};
 
     #[test]
-    fn what_stands_between_the_vendor_and_the_flag_comes_out_of_the_glyph_set() {
-        // The row names who serves the model and the flag that asks for it
-        // without the panel, and what says they are two is the mark between
-        // them. A terminal that cannot draw that mark gets the one the setting
-        // names rather than a question mark in the middle of a flag.
-        let provider = PROVIDERS.into_iter().next().expect("a served provider");
-        let model = provider.models.first().copied().expect("a served model");
-        let selected = Selected { provider, model };
-
+    fn the_keys_under_the_panes_come_out_of_the_glyph_set() {
+        // The row naming the keys is the whole of what teaches somebody
+        // standing at the shelf how to walk it and how to leave it. A terminal
+        // without the arrows draws four hollow squares on the one row that
+        // exists to be read by somebody who does not yet know.
         assert_eq!(
-            beside(selected, Glyphs::Unicode),
-            format!(
-                "{} · --model {}/{}",
-                provider.shown, provider.name, model.name
+            keys(Glyphs::Unicode),
+            (
+                "\u{2191}\u{2193} model   \u{2190}\u{2192} effort   tab pane   enter take   esc leave"
+                    .to_owned(),
+                "\u{2191}\u{2193} \u{2190}\u{2192} tab enter esc".to_owned(),
             )
         );
         assert_eq!(
-            beside(selected, Glyphs::Ascii),
-            format!(
-                "{} - --model {}/{}",
-                provider.shown, provider.name, model.name
+            keys(Glyphs::Ascii),
+            (
+                "^v model   <> effort   tab pane   enter take   esc leave".to_owned(),
+                "^v <> tab enter esc".to_owned(),
             )
         );
     }
+
+    /// A runner asking for `old` and nothing else, to take a row against.
+    fn asking() -> crucible_runner::Runner {
+        crucible_runner::Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            RunnerModel {
+                name: "old".into(),
+                max_tokens: 17,
+                window: Some(99),
+                accepts: None,
+                system: None,
+                effort: None,
+            },
+            Session::nowhere(),
+        )
+    }
+
+    /// The row for one model of one provider, by both names.
+    fn row(provider: &str, model: &str) -> Selected {
+        let provider = PROVIDERS
+            .into_iter()
+            .find(|one| one.name == provider)
+            .expect("a served provider");
+        let model = provider
+            .models
+            .iter()
+            .find(|one| one.name == model)
+            .copied()
+            .expect("a served model");
+
+        Selected { provider, model }
+    }
+
+    #[test]
+    fn taking_a_row_asks_for_the_model_and_then_the_rung_marked_under_it() {
+        // Both halves, in that order. A rung is asked of a model, so a shelf
+        // that applied the rung first would be asking it of the model being
+        // left behind.
+        let terms = plain();
+        let mut runner = asking();
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        let selected = row("anthropic", "claude-sonnet-5");
+        let at = selected
+            .model
+            .rungs
+            .iter()
+            .position(|rung| *rung == Effort::Xhigh)
+            .expect("a model that serves xhigh");
+
+        applied(selected, Some(at), &mut renderer, &mut runner, &terms)
+            .expect("the row to be taken");
+
+        assert_eq!(runner.model(), "claude-sonnet-5");
+        assert_eq!(runner.effort(), Some(Effort::Xhigh));
+    }
+
+    #[test]
+    fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
+        // Not an error and nothing said about it. The row carried `no rung`
+        // and the strip carried the same sentence, so a session that took it
+        // has already been told.
+        let terms = plain();
+        let mut runner = asking();
+        runner.think(Effort::High);
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        let selected = row("anthropic", "claude-haiku-4-5");
+        assert!(selected.model.rungs.is_empty());
+
+        applied(selected, None, &mut renderer, &mut runner, &terms).expect("the row to be taken");
+
+        assert_eq!(runner.model(), "claude-haiku-4-5");
+        assert_eq!(runner.effort(), Some(Effort::High));
+    }
+
     #[test]
     fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
         let sample = Sample::new("model-runtime-limits");
