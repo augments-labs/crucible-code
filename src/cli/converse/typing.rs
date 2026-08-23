@@ -87,25 +87,6 @@ const COPIED: &str = "line copied";
 /// what a reader can act on is that the clipboard does not have it.
 const UNCOPIED: &str = "the line is too long for the terminal to copy";
 
-/// What the row under the box says while a turn is running.
-///
-/// Two keys, both of which do something at that moment. The one that steps the
-/// mode is left off, because the runner holding the mode is away with the turn;
-/// so is Ctrl-C, which does here what it does at the prompt and so needs no
-/// second teaching.
-///
-/// Esc is named twice on screen while a turn runs — here and in the third
-/// segment of the row above the box — and the repetition is the point. That
-/// segment is the first thing dropped on a narrow window, and the key that
-/// stops a turn is the wrong thing for a narrow window to take away.
-///
-/// Built rather than written down, because the mark parting the two keys is
-/// the setting's — the same one the row above the box parts its segments with,
-/// two rows away.
-fn interrupting(glyphs: Glyphs) -> String {
-    format!("(enter queues it {} esc to interrupt)", glyphs.dot())
-}
-
 /// How long the second press has to arrive in.
 ///
 /// Long enough to be a pair of presses somebody meant and short enough that it
@@ -765,15 +746,12 @@ pub(super) struct Footing<'a> {
 
 /// What the row under a running turn says.
 ///
-/// Read before the runner leaves for the worker, because nothing on this side
-/// can ask it anything while it is away — and nothing needs to: `/mode`,
-/// `/model` and `/effort` are all lines typed between turns, so none of the
-/// three facts here can change while the turn they describe is the one running.
-pub(super) fn under(runner: &Runner, glyphs: Glyphs) -> Says {
-    Says {
-        keys: Cow::Owned(interrupting(glyphs)),
-        ..saying(runner)
-    }
+/// The same mode and key as between turns. Shift+Tab is live while the turn
+/// runs: its mode is held for the next turn until the runner comes back. Esc is
+/// already named on the working row above the box, and Return needs no second
+/// explanation here.
+pub(super) fn under(runner: &Runner) -> Says {
+    saying(runner)
 }
 
 /// Reads whatever the keyboard already has, and redraws the box if it moved.

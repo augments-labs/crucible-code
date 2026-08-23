@@ -21,6 +21,11 @@ the runner is back, rather than being dropped.
 
 ### Fixed
 
+**The permission-mode hint under the prompt no longer changes during a turn.**
+It remains `(shift+tab to cycle)`, which is now actionable mid-turn, instead of
+replacing it with Return and Escape instructions. Escape is already named on
+the working row above the box.
+
 **A panel stood over the prompt clears the transcript map beside it.** The box
 was covered but the `transcript map` door on the same band was not, so a
 standing panel showed a door reporting on a screen it owned. The row goes blank

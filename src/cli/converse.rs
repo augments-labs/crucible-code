@@ -993,14 +993,15 @@ fn take<T: Terminal>(
     // is exactly which mode is in force, and reading that off the screen must
     // not mean remembering it.
     //
-    // Read here because the runner is about to leave, and nothing changes the
-    // mode while it is away. Drawn below rather than here, where a failure would
-    // be a turn that never ran.
+    // Read here because the runner is about to leave. The mode this turn uses
+    // stays with it; a Shift-Tab while it is away updates this row immediately
+    // and is held for the next turn. Drawn below rather than here, where a
+    // failure would be a turn that never ran.
     //
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(&runner, terms.style().glyphs());
+    let mut says = typing::under(&runner);
 
     // Read here for the same reason and at the same moment: half of what a turn
     // is asked under is about the session — which model is answering, and how

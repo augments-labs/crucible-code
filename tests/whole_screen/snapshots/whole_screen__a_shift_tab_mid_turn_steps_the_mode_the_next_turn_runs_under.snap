@@ -25,5 +25,5 @@ expression: window.picture()
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|allow edits on · 1 command                               anthropic/claude-test-1|
+|allow edits on (shift+tab to cycle) · 1 command          anthropic/claude-test-1|
 |                                                               transcript map → |
