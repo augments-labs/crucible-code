@@ -114,7 +114,7 @@ fn an_external_picture_is_imported_for_the_session() {
 
     let copied = super::import(&imported, "png", one.hash, PNG).expect("the same import");
     assert_eq!(
-        copied.to_str(),
+        Some(written(&copied).as_str()),
         Some(one.path.as_ref()),
         "the bytes deduplicate"
     );
