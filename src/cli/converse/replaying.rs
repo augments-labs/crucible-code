@@ -254,6 +254,7 @@ mod tests {
                 name: "script".into(),
                 max_tokens: 64,
                 window: None,
+                accepts: None,
                 system: None,
                 effort: None::<Effort>,
             },

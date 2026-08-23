@@ -10,13 +10,20 @@
 //! agree. Where they differ the request loses bytes, never the transcript, and
 //! never the turn: the newest attachments that fit are read, and every older
 //! one keeps its place in the request carrying a line that says so.
+//!
+//! A transcript outlives a model, too. What may be attached is settled per
+//! request rather than when a file was named, because the model being asked can
+//! change between one request and the next and a file's kind cannot. A file the
+//! model does not read stands down the same way, and for the same reason: the
+//! alternative is bytes labelled with a kind the request has no word for, which
+//! is a wrong answer rather than a refused one.
 
 use std::fs;
 use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
-use crucible_core::{Attached, Attachment, Content, Modality, Transcript};
+use crucible_core::{Attached, Attachment, Content, Modalities, Modality, Transcript};
 
 /// The most raw attachment bytes one request may carry.
 ///
@@ -55,6 +62,7 @@ struct Held {
 enum Carried {
     Bytes(Vec<u8>),
     Instead(String),
+    Unread(String),
 }
 
 /// Reads what this request can carry, newest first.
@@ -63,7 +71,7 @@ enum Carried {
 /// user is talking about now is the one they are talking about now. By bytes
 /// rather than by count: two screenshots and twenty icons are the same number
 /// of files and not the same problem.
-pub(crate) fn resolve(transcript: &Transcript) -> Resolved {
+pub(crate) fn resolve(transcript: &Transcript, carries: Modalities) -> Resolved {
     let mut held = Vec::new();
     let mut spent = 0;
 
@@ -75,7 +83,7 @@ pub(crate) fn resolve(transcript: &Transcript) -> Resolved {
                 index,
                 media_type: attachment.media_type.clone(),
                 modality: attachment.modality,
-                carried: read(attachment, &mut spent),
+                carried: read(attachment, &mut spent, carries),
             });
         }
     }
@@ -88,7 +96,13 @@ pub(crate) fn resolve(transcript: &Transcript) -> Resolved {
 }
 
 /// The file, or the line that takes its place.
-fn read(attachment: &Attachment, spent: &mut usize) -> Carried {
+fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carried {
+    // Asked before the file is opened, because a kind that cannot go does not
+    // become one by being on disk, and this is the one reason that does not
+    // depend on what is found there.
+    if !carries.contains(attachment.modality) {
+        return unread(attachment);
+    }
     let Ok(bytes) = fs::read(Path::new(attachment.path.as_ref())) else {
         return instead(attachment, "because it could not be read");
     };
@@ -116,6 +130,20 @@ fn instead(attachment: &Attachment, why: &str) -> Carried {
     ))
 }
 
+/// One line, in place of one file whose kind this request cannot carry.
+///
+/// It ends in no next move, unlike [`instead`]. Reading the file again produces
+/// the same bytes of the same kind, and which model is being asked is not the
+/// model's to choose — an invitation here would be one to a call that cannot
+/// work.
+fn unread(attachment: &Attachment) -> Carried {
+    Carried::Unread(format!(
+        "{} is not attached to this request: it is {}, which the model being asked does not read.",
+        attachment.path,
+        attachment.modality.as_str()
+    ))
+}
+
 impl Resolved {
     /// The attachments this request went out without, in transcript order.
     ///
@@ -123,9 +151,28 @@ impl Resolved {
     /// for them: that line is written for the model, and what a reader is owed
     /// is the file it was written about.
     pub(crate) fn aged(&self, transcript: &Transcript) -> Box<[Attachment]> {
+        self.named(transcript, |held| {
+            matches!(held.carried, Carried::Instead(_))
+        })
+    }
+
+    /// The attachments this request could never have carried, in transcript
+    /// order.
+    ///
+    /// Apart from [`Resolved::aged`] because the two differ in the one part a
+    /// reader can act on: an aged file goes out if it is asked for again, and
+    /// this one does not go out until the model does.
+    pub(crate) fn unread(&self, transcript: &Transcript) -> Box<[Attachment]> {
+        self.named(transcript, |held| {
+            matches!(held.carried, Carried::Unread(_))
+        })
+    }
+
+    /// The files behind whichever held entries a rule picks out.
+    fn named(&self, transcript: &Transcript, which: impl Fn(&Held) -> bool) -> Box<[Attachment]> {
         self.0
             .iter()
-            .filter(|held| matches!(held.carried, Carried::Instead(_)))
+            .filter(|held| which(held))
             .filter_map(|held| {
                 let said = transcript.messages().get(held.message)?;
                 said.attachments().get(held.index).map(|one| (*one).clone())
@@ -144,7 +191,7 @@ impl Resolved {
                 modality: held.modality,
                 content: match &held.carried {
                     Carried::Bytes(bytes) => Content::Bytes(bytes),
-                    Carried::Instead(line) => Content::Instead(line),
+                    Carried::Instead(line) | Carried::Unread(line) => Content::Instead(line),
                 },
             })
             .collect()

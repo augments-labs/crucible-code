@@ -1288,11 +1288,21 @@ fn picture(under: &Path, name: &str) -> Attachment {
 
 /// What the terminal ends up with when a request goes out without `files`.
 fn ageing(files: Box<[Attachment]>) -> String {
+    posted(Event::Aged { files })
+}
+
+/// The same, for files the model being asked does not read.
+fn unreadable(files: Box<[Attachment]>) -> String {
+    posted(Event::Unread { files })
+}
+
+/// What one event leaves on a fresh terminal.
+fn posted(one: Event) -> String {
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
 
     event(
         &mut renderer,
-        Event::Aged { files },
+        one,
         &here(),
         Style::plain(),
         &mut Kept::default(),
@@ -1318,4 +1328,18 @@ fn a_file_a_request_went_out_without_is_named_where_the_answer_arrives() {
     // Named the way the row under the prompt named it, which is why the root
     // it is under is not on the row.
     assert!(!screen.contains(&written(&root)), "{screen}");
+}
+
+#[test]
+fn a_file_the_model_does_not_read_is_named_with_no_offer_to_ask_again() {
+    // The other row's word is an invitation, and here it would be a wrong one:
+    // the file has not moved and reading it again produces the same kind. What
+    // a reader can act on is the model, so that is what the row leaves them
+    // holding.
+    let root = here().root().to_path_buf();
+    let screen = unreadable(Box::new([picture(&root, "chart.png")]));
+
+    assert!(screen.contains("chart.png"), "{screen}");
+    assert!(screen.contains("does not read it"), "{screen}");
+    assert!(!screen.contains("read again"), "{screen}");
 }

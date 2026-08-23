@@ -2,12 +2,15 @@ use std::fs;
 use std::path::Path;
 
 use crucible_core::{
-    Approved, Attachment, Content, Message, Modality, Permission, Sensitivity, Settled, Target,
-    ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Verdict, Workspace,
+    Approved, Attachment, Content, Message, Modalities, Modality, Permission, Sensitivity, Settled,
+    Target, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Verdict, Workspace,
 };
 use sha2::{Digest as _, Sha256};
 
 use super::{CEILING, resolve};
+
+/// A model that reads pictures, which is what every case here but one attaches.
+const READS: Modalities = Modalities::empty().insert(Modality::Image);
 use crate::fake::Says;
 use crate::sample::Sample;
 
@@ -84,7 +87,7 @@ fn everything_under_the_ceiling_is_carried_whole() {
         ],
     ));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
     let [one, two] = attached.as_slice() else {
         panic!("both files, in transcript order");
@@ -110,7 +113,7 @@ fn over_the_ceiling_the_newest_are_carried_and_the_rest_stand_in() {
         transcript.push(answered("looking"));
     }
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
 
     assert_eq!(attached.len(), 4, "every attachment keeps its place");
@@ -160,7 +163,7 @@ fn the_ceiling_falls_on_bytes_and_not_on_how_many_files() {
         vec![file(&under, "big.png", &vec![9; CEILING - 4096])],
     ));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
 
     assert_eq!(attached.len(), 21);
@@ -190,7 +193,7 @@ fn a_file_that_changed_after_it_was_attached_stands_in() {
     let mut transcript = Transcript::new();
     transcript.push(asked("what is in this", vec![attachment]));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
     let one = attached.first().expect("the attachment");
     let Content::Instead(line) = one.content else {
@@ -215,7 +218,7 @@ fn a_file_that_is_gone_stands_in() {
     let mut transcript = Transcript::new();
     transcript.push(asked("what is in this", vec![attachment]));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
     let one = attached.first().expect("the attachment");
     let Content::Instead(line) = one.content else {
@@ -254,7 +257,7 @@ fn all_three_lines_name_the_file_and_offer_the_read() {
         vec![file(&under, "big.png", &vec![9; CEILING])],
     ));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
     let [aged, gone, changed, _] = attached.as_slice() else {
         panic!("four attachments, each in its own place");
@@ -294,7 +297,7 @@ fn a_file_that_stood_in_once_is_carried_where_there_is_room() {
         vec![file(&under, "big.png", &vec![9; CEILING])],
     ));
 
-    let crowded = resolve(&full);
+    let crowded = resolve(&full, READS);
     let crowded = crowded.attached();
     assert!(
         matches!(
@@ -306,7 +309,7 @@ fn a_file_that_stood_in_once_is_carried_where_there_is_room() {
 
     let mut alone = Transcript::new();
     alone.push(asked("first", vec![old]));
-    let roomy = resolve(&alone);
+    let roomy = resolve(&alone, READS);
     let roomy = roomy.attached();
     assert!(
         matches!(
@@ -328,7 +331,7 @@ fn nothing_resolved_survives_the_request() {
         vec![file(&under, "shot.png", &[1; 64])],
     ));
 
-    let first = resolve(&transcript);
+    let first = resolve(&transcript, READS);
     assert!(matches!(
         first.attached().first().expect("the attachment").content,
         Content::Bytes(_)
@@ -337,7 +340,7 @@ fn nothing_resolved_survives_the_request() {
 
     fs::remove_file(under.join("shot.png")).expect("the file goes");
 
-    let second = resolve(&transcript);
+    let second = resolve(&transcript, READS);
     assert!(
         matches!(
             second.attached().first().expect("the attachment").content,
@@ -365,7 +368,7 @@ fn what_a_tool_found_is_carried_like_what_a_prompt_named() {
         &approved,
     ));
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
     let [one, two] = attached.as_slice() else {
         panic!("both files the tool found, in the order it found them");
@@ -398,7 +401,7 @@ fn a_tool_s_files_age_out_on_the_same_rule_as_a_prompt_s() {
         ));
     }
 
-    let resolved = resolve(&transcript);
+    let resolved = resolve(&transcript, READS);
     let attached = resolved.attached();
 
     assert_eq!(attached.len(), 8, "every attachment keeps its place");
@@ -427,5 +430,45 @@ fn a_tool_s_files_age_out_on_the_same_rule_as_a_prompt_s() {
     assert!(
         aged.iter().any(|one| one.path.contains("tool-")),
         "a file a tool found ages out beside one a prompt named"
+    );
+}
+
+#[test]
+fn a_file_the_model_does_not_read_is_stood_down_with_a_line_saying_so() {
+    let sample = Sample::new("attach-unread");
+    let under = sample.workspace().root().to_path_buf();
+
+    let mut transcript = Transcript::new();
+    transcript.push(asked(
+        "what is in this",
+        vec![file(&under, "one.png", &[1; 16])],
+    ));
+
+    let resolved = resolve(&transcript, Modalities::empty().insert(Modality::Text));
+    let attached = resolved.attached();
+
+    let [one] = attached.as_slice() else {
+        panic!("the file keeps its place in the request")
+    };
+    let Content::Instead(line) = one.content else {
+        panic!("bytes went out to a model with no word for them")
+    };
+    assert!(line.contains("one.png"), "the line names the file: {line}");
+    assert!(
+        line.contains("does not read"),
+        "and says why it is not there: {line}"
+    );
+    assert!(
+        resolved.aged(&transcript).is_empty(),
+        "a file the model cannot read has not aged out; it was never going"
+    );
+    let unread = resolved.unread(&transcript);
+    let [named] = unread.as_ref() else {
+        panic!("the reader is told which file the answer did not see")
+    };
+    assert!(
+        named.path.ends_with("one.png"),
+        "and it is named: {}",
+        named.path
     );
 }

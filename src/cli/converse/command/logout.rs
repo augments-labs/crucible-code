@@ -204,7 +204,7 @@ fn forgetting<T: Terminal>(
             } else {
                 NOTHING_TO_ASK
             };
-            runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None);
+            runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None, None);
             runner.serve(Box::new(Unavailable::new(warning)));
             terms.provider.set(None);
             "the active session is now signed out".to_owned()

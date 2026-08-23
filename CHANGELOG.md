@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+**A file the model being asked does not read stays behind, and a row says so.**
+Switching model mid-session used to send the pictures already in the transcript
+to a model with no word for them, which reaches the vendor labelled as something
+it is not. Each request now goes out without them and names them where its
+answer arrives.
+
 ## [0.20.0] - 2026-08-23
 
 ### Added

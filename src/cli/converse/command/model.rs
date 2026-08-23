@@ -375,6 +375,7 @@ fn taken<T: Terminal>(
         name,
         crate::cli::startup::ceiling(provider, name),
         crate::cli::startup::window(provider, name, &terms.settings),
+        crate::cli::startup::accepts(provider, name),
     );
 
     // The word may have come off the line and was never shape-checked — anything
@@ -495,6 +496,7 @@ mod tests {
                 name: "old".into(),
                 max_tokens: 17,
                 window: Some(99),
+                accepts: None,
                 system: None,
                 effort: None,
             },

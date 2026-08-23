@@ -15,8 +15,8 @@ use std::sync::Arc;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_core::{
-    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Mode, Provider,
-    Revealed, Search, Tool, Transcript, Workspace,
+    ApiKey, Cancel, Credential, Effort, Fetch, Header, HeaderKey, Message, Modalities, Mode,
+    Provider, Revealed, Search, Tool, Transcript, Workspace,
 };
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Https, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Unavailable,
@@ -788,6 +788,7 @@ fn model(
         name: name.into(),
         max_tokens: ceiling(provider, name),
         window: window(provider, name, settings),
+        accepts: accepts(provider, name),
         effort,
     }
 }
@@ -826,6 +827,16 @@ pub(super) fn window(provider: &str, model: &str, settings: &Settings) -> Option
     settings
         .context_window(provider, model)
         .or_else(|| super::facts(provider, model).map(|facts| facts.window))
+}
+
+/// What this model reads, where this build has heard of it.
+///
+/// The model's half alone. The other half is the provider's, and the loop asks
+/// the provider itself rather than being handed an answer resolved here: what a
+/// wire module can write today and what a vendor's table says are two facts
+/// that drift apart, and only one of them is in this table.
+pub(super) fn accepts(provider: &str, model: &str) -> Option<Modalities> {
+    super::facts(provider, model).map(|facts| facts.accepts)
 }
 
 /// How long an answer to ask this model for.
