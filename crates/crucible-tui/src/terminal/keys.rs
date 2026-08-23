@@ -58,6 +58,18 @@ pub enum Pressed {
     Pasted(Box<str>),
     /// Shift+Tab: step the mode on to the next one.
     Cycle,
+    /// Tab on its own: cross to the next region of whatever is standing.
+    ///
+    /// Named for the key rather than for an effect, where [`Pressed::Cycle`]
+    /// beside it is named for its one. This one has no single effect to be
+    /// named for: what it crosses is whatever drew the regions, and a name
+    /// borrowed from the first component to want it would be wrong for the
+    /// second.
+    ///
+    /// It is a key a component reads rather than one the editor sees, because
+    /// a component whose typing goes to a search line has no arrow and no
+    /// letter left to navigate with.
+    Tab,
     /// Ctrl+E: show what is on screen in full, or hide it again.
     ///
     /// A toggle rather than an action, so the same key is the way back — which
@@ -481,6 +493,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // match, and the modifier a given emulator does or does not set
         // alongside it is not a second case.
         KeyCode::BackTab => Pressed::Cycle,
+        // Tab on its own, one key away from the sequence above and meaning
+        // something else entirely: cross to the next region of whatever is
+        // standing. Nothing on the prompt reads it, so a turn with nothing
+        // standing sees it and does nothing.
+        KeyCode::Tab => Pressed::Tab,
         KeyCode::Esc => Pressed::Escape,
 
         // A newline, and the two spellings of one that are Return with
@@ -803,10 +820,10 @@ mod tests {
 
     #[test]
     fn tab_on_its_own_is_not_the_key_that_steps_the_mode() {
-        // The two are one key apart and only one of them was bound. Reading a
-        // near miss as the binding is how somebody ends up in a mode they did
-        // not ask for.
-        assert_eq!(meaning(press(KeyCode::Tab)), Pressed::Ignored);
+        // The two are one key apart and mean different things. Reading either
+        // as the other is how somebody ends up in a mode they did not ask for,
+        // or crossing a panel they meant to leave.
+        assert_eq!(meaning(press(KeyCode::Tab)), Pressed::Tab);
     }
 
     #[test]

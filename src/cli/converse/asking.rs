@@ -427,10 +427,13 @@ fn moving(arrived: Pressed, standing: &mut Standing) -> Moved {
         // The key about what is already running among them: this question is what
         // decides whether the command runs at all, so there is nothing here for it
         // to act on. And the key that copies the line, because the line it copies
-        // is in a box nobody is typing into while this is on screen.
+        // is in a box nobody is typing into while this is on screen. And the
+        // key that crosses regions, for the plainest reason of the lot: a
+        // question is one list, and there is no second region to cross into.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
+        | Pressed::Tab
         | Pressed::Expand
         | Pressed::Plan
         | Pressed::Clicked { .. }

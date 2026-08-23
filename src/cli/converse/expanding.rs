@@ -357,10 +357,13 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // The key about what is running among them: those have their own list,
         // opened from the row under the box, and reached from in here it would be
         // two things standing in one region. The key that copies the line for the
-        // plainest reason of all — the line is under this view, not in it.
+        // plainest reason of all — the line is under this view, not in it. The
+        // key that crosses regions for a reason of the same shape: a view is
+        // one window over one thing, and one region is all there is here.
         Pressed::Key(_)
         | Pressed::Background
         | Pressed::Cycle
+        | Pressed::Tab
         | Pressed::Explain
         | Pressed::Plan
         | Pressed::Clicked { .. }

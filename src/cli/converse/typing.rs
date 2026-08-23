@@ -496,11 +496,14 @@ pub(crate) fn ask<T: Terminal>(
             // The pointer moving under a held button and the button coming up
             // again among them: both belong to the selection, which was
             // offered every press before this one saw it, so neither reaches
-            // here. Named all the same — a variant nothing decides about is
-            // one that will arrive undecided the day something changes.
+            // here. The key that crosses regions among them for the first
+            // reason of all: nothing is standing, so there are no regions.
+            // Named all the same — a variant nothing decides about is one that
+            // will arrive undecided the day something changes.
             Pressed::Escape
             | Pressed::Explain
             | Pressed::Queue
+            | Pressed::Tab
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
@@ -1340,7 +1343,10 @@ fn meant(arrived: Pressed) -> Meant {
         // is still the nothing it was.
         Pressed::Up => Meant::Arrow { back: true },
         Pressed::Down => Meant::Arrow { back: false },
+        // The key that crosses regions among them: it is read by whatever is
+        // standing, and nothing is standing while this arm is the one reading.
         Pressed::Explain
+        | Pressed::Tab
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

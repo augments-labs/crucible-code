@@ -164,8 +164,12 @@ impl Leaving {
                 }
                 Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
                 Pressed::Resized => Moved::Redraw,
+
+                // What a command has printed is one window over one thing, so
+                // the key that crosses regions has nowhere here to cross to.
                 Pressed::Key(_)
                 | Pressed::Cycle
+                | Pressed::Tab
                 | Pressed::Explain
                 | Pressed::Expand
                 | Pressed::Plan
@@ -249,8 +253,11 @@ impl Leaving {
             // The wheel among them, deliberately: what stands here is a list
             // short enough to reach with an arrow, and the transcript it stands
             // over is not. Answering `Still` is what hands the wheel to it.
+            // And the key that crosses regions, because this list is the only
+            // region on screen while it stands.
             Pressed::Key(_)
             | Pressed::Cycle
+            | Pressed::Tab
             | Pressed::Explain
             | Pressed::Expand
             | Pressed::Plan
