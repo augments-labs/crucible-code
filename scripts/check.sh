@@ -197,6 +197,34 @@ else
     fi
 fi
 
+section "the replay seam"
+# `ToolOutput::replayed` is the one way files reach a tool result with no
+# `Approved` beside them. It exists because a log cannot hold one: the verdict
+# was reached about a call that is over, and reading back what this build
+# recorded is not deciding it again.
+#
+# What keeps that narrow is that exactly one caller replays a log. A tool
+# reaching this would put files on its own result without being permitted to,
+# and a doc comment asking it not to is a request rather than a rule. So the
+# rule is here, where it fails a run.
+#
+# `grep -c` counts rather than lists, because the one legitimate call is in the
+# file this names and a second call in that same file is as wrong as a call
+# anywhere else.
+replay="crates/crucible-session/src/session/wire.rs"
+elsewhere=$(grep -rln '\.replayed(' --include='*.rs' crates src | grep -Fxv "$replay" || true)
+if [[ -n "$elsewhere" ]]; then
+    while IFS= read -r file; do
+        printf '    FAIL %s calls ToolOutput::replayed; only %s may\n' "$file" "$replay"
+    done <<< "$elsewhere"
+    failed=1
+fi
+here=$(grep -c '\.replayed(' "$replay" || true)
+if ((here != 1)); then
+    printf '    FAIL %s calls ToolOutput::replayed %d times; the replay is one call\n' "$replay" "$here"
+    failed=1
+fi
+
 section "file length (<= ${MAX_FILE_LINES} lines)"
 # `find` printing nothing would walk this loop zero times and pass. The error
 # stream is not discarded either: a renamed source directory is exactly the way

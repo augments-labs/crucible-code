@@ -428,6 +428,27 @@ impl ToolOutput {
         self
     }
 
+    /// The files this result showed, restored from a log this build wrote.
+    ///
+    /// The one way files reach a result without the proof that admitted them,
+    /// and it is here because that proof is not a thing a log can hold: a
+    /// verdict is reached about a call, and the call is long over. What stands
+    /// in its place is where the line came from — an owner-only session log
+    /// that this build wrote, and wrote only once the engine had allowed the
+    /// call. Reading back what was recorded is not deciding it again.
+    ///
+    /// A log somebody has edited can put any readable path into a request this
+    /// way. It can already do that with a prompt line, which carries no proof
+    /// either, so what this rests on is the log file's own boundary rather than
+    /// a new one. What must stay true is that nothing else calls it, and that
+    /// is not left to a comment: `scripts/check.sh` holds it to the one module
+    /// that replays a log.
+    #[must_use]
+    pub fn replayed(mut self, attachments: impl Into<Box<[Attachment]>>) -> Self {
+        self.attachments = attachments.into();
+        self
+    }
+
     /// The files this result asks the model to look at.
     #[must_use]
     pub fn attachments(&self) -> &[Attachment] {

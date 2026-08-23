@@ -14,6 +14,12 @@ to a model with no word for them, which reaches the vendor labelled as something
 it is not. Each request now goes out without them and names them where its
 answer arrives.
 
+**A tool result's files survive `--continue`.** The line recording a result now
+carries the files it showed, so a resumed session hands the model back what it
+was looking at rather than the text alone. The session format moves to 7 for it,
+and a log this build writes is refused by an older one rather than replayed with
+the files quietly dropped.
+
 ## [0.20.0] - 2026-08-23
 
 ### Added

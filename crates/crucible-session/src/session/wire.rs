@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 6;
+pub(crate) const FORMAT: u32 = 7;
 
 /// The formats this build reads, newest first.
 ///
@@ -42,7 +42,7 @@ pub(crate) const FORMAT: u32 = 6;
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -400,11 +400,26 @@ fn call(value: &Value) -> Option<ToolCall> {
     })
 }
 
+/// One tool result as the line that records it.
+///
+/// The files go down beside the text under the key a prompt's do, and are left
+/// off entirely where there are none — so a session whose tools showed nothing
+/// is written exactly as format 6 wrote it.
 fn answered(result: &ToolResult) -> Value {
+    let attachments = result.output.attachments();
+    if attachments.is_empty() {
+        return json!({
+            "id": result.id.as_str(),
+            "failed": result.output.is_failed(),
+            "text": result.output.text(),
+        });
+    }
+
     json!({
         "id": result.id.as_str(),
         "failed": result.output.is_failed(),
         "text": result.output.text(),
+        "attached": attachments.iter().map(attached).collect::<Vec<_>>(),
     })
 }
 
@@ -412,21 +427,63 @@ fn result(value: &Value) -> Option<ToolResult> {
     let text = value.get("text")?.as_str()?;
     let failed = value.get("failed")?.as_bool()?;
 
+    let output = if failed {
+        ToolOutput::failed(text)
+    } else {
+        ToolOutput::ok(text)
+    };
+
     Some(ToolResult {
         id: ToolId::new(value.get("id")?.as_str()?),
-        output: if failed {
-            ToolOutput::failed(text)
-        } else {
-            ToolOutput::ok(text)
+        // Restored rather than admitted again. The verdict that let this tool
+        // read is over and no log holds one; what says it was reached is that
+        // this build wrote the line at all.
+        output: match value.get("attached") {
+            Some(attached) => output.replayed(read(attached, attachment)?),
+            None => output,
         },
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Attachment, Modality};
+    use crucible_core::{
+        Approved, Ask, Attachment, Modality, Permission, Remember, Sensitivity, Settled, Target,
+        ToolArgs, Verdict,
+    };
 
     use super::*;
+
+    /// Nobody to ask. A read is settled without a question in every mode, so a
+    /// test that reaches this has stopped testing what it meant to.
+    struct Unasked;
+
+    impl Ask for Unasked {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            (Verdict::Deny, Remember::Never)
+        }
+    }
+
+    /// A verdict about the very read that found the file.
+    fn permitted() -> Approved {
+        let call = ToolCall {
+            id: ToolId::new("call-1"),
+            name: "read".into(),
+            args: ToolArgs::new("{}"),
+        };
+        let settled = Permission::new().decide(
+            &call,
+            &Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            },
+            &mut Unasked,
+        );
+
+        let Settled::Approved(approved) = settled else {
+            panic!("a read is allowed without a question")
+        };
+        approved
+    }
 
     fn holiday() -> Attachment {
         Attachment {
@@ -484,8 +541,46 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_result_and_the_file_it_showed_survive_the_line_that_records_them() {
+        let found = Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call-1"),
+            output: ToolOutput::ok("one match").with_attachments(&permitted(), [holiday()]),
+        }]);
+
+        let read = message(&line(&found)).expect("the line to read back as a message");
+        let Message::ToolResults(results) = &read else {
+            panic!("a line of results reads back as results")
+        };
+        let [only] = results.as_slice() else {
+            panic!("one result went in")
+        };
+        let [file] = only.output.attachments() else {
+            panic!("the file the result showed did not survive the log")
+        };
+
+        assert_eq!(file, &holiday());
+        assert_eq!(read, found, "and nothing else about the result moved");
+    }
+
+    #[test]
+    fn a_tool_result_that_showed_nothing_is_written_exactly_as_format_six_wrote_it() {
+        // The same reason the prompt's key is left off rather than written
+        // empty, one format later: a session whose tools showed nothing must
+        // not change at all under format 7.
+        let quiet = Message::ToolResults(vec![ToolResult {
+            id: ToolId::new("call-1"),
+            output: ToolOutput::ok("one match"),
+        }]);
+
+        assert_eq!(
+            line(&quiet),
+            r#"{"results":[{"failed":false,"id":"call-1","text":"one match"}]}"#
+        );
+    }
+
+    #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 6);
+        assert_eq!(FORMAT, 7);
         assert!(readable(FORMAT));
     }
 }
