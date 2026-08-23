@@ -44,8 +44,9 @@ refusal names something that would turn it into text:
 
 ```
 report.docx is not a text file. It is a Word document — convert it and read
-what comes out, for example: pandoc report.docx --extract-media=converted-media
--o converted.md
+what comes out, and its pictures come out beside it into converted-media/ where
+each one can be attached to a prompt and looked at, for example: pandoc
+report.docx --extract-media=converted-media -o converted.md
 ```
 
 The command named is one that is **on your machine**. crucible looks for each
@@ -64,10 +65,16 @@ keeps headings, lists and tables; the others flatten a document into prose — a
 heading becomes a line like any other, and a table becomes tab-separated rows.
 
 `--extract-media` is there because a picture is the one thing no converter turns
-into text. `pandoc` without it writes the *reference* and not the file, leaving a
-link to something that was never saved; with it the pictures are written out
-beside the Markdown, and stay openable. The other converters keep a picture's
-description, where it has one, and nothing else.
+into text. `pandoc` without it writes the *reference* and not the file, leaving
+a link to something that was never saved; with it the pictures come out beside
+the Markdown as ordinary files — and an ordinary file is one you can
+[name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt),
+on a model that reads pictures. That is the second half of reading a document:
+the words come out of the converter, and the diagram goes back in as a picture.
+
+Only `pandoc` is described that way, because only `pandoc` does it. The rest
+keep a picture's description, where it has one, and nothing else — so their
+refusals promise nothing about files that will not be there.
 
 LibreOffice's command line is `soffice`, and its installer puts it on the `PATH`
 on Linux only — so on macOS and Windows crucible also looks where the installer
@@ -84,9 +91,11 @@ suggestion, run — if you allow it — by [`bash`](commands.md) like any other.
 file whose name says nothing about it gets the plain refusal, because a
 suggestion that does not fit is worse than none.
 
-What comes back is the text of the document, and only the text. Pictures,
-charts, cell formatting and layout do not survive a conversion to text, so a
-document whose content *is* a diagram converts to very little.
+What comes back is the text of the document, and only the text. Cell formatting
+and layout do not survive a conversion, and neither does a picture — except
+under `pandoc`, where it survives as a file beside the text rather than as part
+of it. A slide deck or a spreadsheet whose content *is* a diagram still converts
+to very little.
 
 Reading is never asked about. It is allowed, or refused by a `deny`
 [rule](../permissions/rules.md), and the question is answered without being put

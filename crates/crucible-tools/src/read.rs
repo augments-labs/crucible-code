@@ -48,6 +48,13 @@ struct Converter {
     program: &'static str,
     /// What follows the program, with `{}` where the file's own name goes.
     arguments: &'static str,
+    /// Whether this one writes the file's pictures out beside the text.
+    ///
+    /// True of `pandoc` and of nothing else, because it is true of nothing
+    /// else: every other converter here reduces a picture to its caption, its
+    /// alt text or nothing at all. The refusal says so only where this is set,
+    /// so a converter that flattens a diagram is never described as keeping it.
+    extracts: bool,
 }
 
 /// One kind of file this tool cannot read, and what would convert it.
@@ -89,6 +96,13 @@ struct Document {
 ///
 /// An extension not on this list gets the plain refusal. A suggestion that does
 /// not fit costs more than none at all.
+/// The directory an extracting converter is told to write pictures into.
+///
+/// Named here and asked for in an `arguments` template, which is two places for
+/// one fact. `every_converter_that_extracts_asks_for_the_directory_the_sentence_names`
+/// is what keeps them the same one.
+const EXTRACTED_INTO: &str = "converted-media";
+
 const CONVERTED: &[Document] = &[
     Document {
         suffix: "docx",
@@ -97,14 +111,17 @@ const CONVERTED: &[Document] = &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
+                extracts: true,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
+                extracts: false,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
+                extracts: false,
             },
         ],
     },
@@ -115,14 +132,17 @@ const CONVERTED: &[Document] = &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
+                extracts: true,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
+                extracts: false,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
+                extracts: false,
             },
         ],
     },
@@ -133,14 +153,17 @@ const CONVERTED: &[Document] = &[
             Converter {
                 program: "pandoc",
                 arguments: "{} --extract-media=converted-media -o converted.md",
+                extracts: true,
             },
             Converter {
                 program: "textutil",
                 arguments: "-convert txt {}",
+                extracts: false,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
+                extracts: false,
             },
         ],
     },
@@ -150,6 +173,7 @@ const CONVERTED: &[Document] = &[
         converters: &[Converter {
             program: "pandoc",
             arguments: "{} --extract-media=converted-media -o converted.md",
+            extracts: true,
         }],
     },
     Document {
@@ -159,10 +183,12 @@ const CONVERTED: &[Document] = &[
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to csv {}",
+                extracts: false,
             },
             Converter {
                 program: "xlsx2csv",
                 arguments: "{} converted.csv",
+                extracts: false,
             },
         ],
     },
@@ -172,6 +198,7 @@ const CONVERTED: &[Document] = &[
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to csv {}",
+            extracts: false,
         }],
     },
     Document {
@@ -180,6 +207,7 @@ const CONVERTED: &[Document] = &[
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to csv {}",
+            extracts: false,
         }],
     },
     Document {
@@ -188,6 +216,7 @@ const CONVERTED: &[Document] = &[
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to txt {}",
+            extracts: false,
         }],
     },
     Document {
@@ -196,6 +225,7 @@ const CONVERTED: &[Document] = &[
         converters: &[Converter {
             program: "soffice",
             arguments: "--headless --convert-to txt {}",
+            extracts: false,
         }],
     },
     Document {
@@ -205,10 +235,12 @@ const CONVERTED: &[Document] = &[
             Converter {
                 program: "pdftotext",
                 arguments: "{} converted.txt",
+                extracts: false,
             },
             Converter {
                 program: "soffice",
                 arguments: "--headless --convert-to txt {}",
+                extracts: false,
             },
         ],
     },
@@ -227,17 +259,31 @@ fn conversion(requested: &str, named: impl Fn(&str) -> Option<String>) -> Option
     let found = document
         .converters
         .iter()
-        .find_map(|converter| Some((named(converter.program)?, converter.arguments)));
+        .find_map(|converter| Some((named(converter.program)?, converter)));
 
-    if let Some((program, arguments)) = found {
+    if let Some((program, converter)) = found {
         let spelled = if program.contains(' ') {
             format!("\"{program}\"")
         } else {
             program
         };
-        let arguments = arguments.replace("{}", requested);
+        let arguments = converter.arguments.replace("{}", requested);
+        // Said only where the converter actually found is one that extracts. A
+        // document whose whole content is a diagram converts to a heading and a
+        // caption, and the pictures beside the text are the half that survives
+        // it — but promising them of `soffice`, which reduces a picture to its
+        // alt text, would send the model looking for files that are not there.
+        let extracted = if converter.extracts {
+            format!(
+                ", and its pictures come out beside it into {EXTRACTED_INTO}/ \
+                 where each one can be attached to a prompt and looked at"
+            )
+        } else {
+            String::new()
+        };
         return Some(format!(
-            ". It is {what} — convert it and read what comes out, for example: {spelled} {arguments}"
+            ". It is {what} — convert it and read what comes out{extracted}, \
+             for example: {spelled} {arguments}"
         ));
     }
 
@@ -738,6 +784,49 @@ mod tests {
             said.ends_with("pandoc report.docx --extract-media=converted-media -o converted.md"),
             "said: {said}"
         );
+    }
+
+    #[test]
+    fn a_converter_that_extracts_says_the_pictures_can_be_attached() {
+        let said = conversion("report.docx", |program| Some(program.to_owned()))
+            .expect("a docx is a document this knows");
+
+        assert_eq!(
+            said,
+            ". It is a Word document \u{2014} convert it and read what comes out, and its \
+             pictures come out beside it into converted-media/ where each one can be \
+             attached to a prompt and looked at, for example: pandoc report.docx \
+             --extract-media=converted-media -o converted.md"
+        );
+    }
+
+    #[test]
+    fn a_converter_that_flattens_a_picture_promises_nothing_about_one() {
+        let said = conversion("report.docx", |program| {
+            (program == "soffice").then(|| program.to_owned())
+        })
+        .expect("a docx is a document this knows");
+
+        assert!(!said.contains("converted-media"), "said: {said}");
+        assert!(!said.contains("attached"), "said: {said}");
+    }
+
+    /// The sentence names a directory the command has to ask for, and the two
+    /// are written in different places. Either without the other is a lie a
+    /// reader only finds out about after running it.
+    #[test]
+    fn every_converter_that_extracts_asks_for_the_directory_the_sentence_names() {
+        for document in CONVERTED {
+            for converter in document.converters {
+                assert_eq!(
+                    converter.extracts,
+                    converter.arguments.contains(EXTRACTED_INTO),
+                    "{} {}",
+                    converter.program,
+                    converter.arguments
+                );
+            }
+        }
     }
 
     #[test]
