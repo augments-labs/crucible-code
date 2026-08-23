@@ -6,6 +6,15 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+**`/model` searches, and takes the effort with the model.** The picker is now a
+shelf over the whole shell — a search line that narrows on a model's name or its
+provider's, the providers beside the models they serve, and the rungs the marked
+model takes on a strip underneath. A rung is asked of a model, so choosing one
+and then being sent elsewhere to say how hard it should think was the same
+question put twice; `/effort` is still the way to change the rung on its own.
+
 ## [0.21.1] - 2026-08-23
 
 ### Added

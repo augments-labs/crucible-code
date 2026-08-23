@@ -106,8 +106,8 @@ choose Console account and enter an Anthropic API key.
 character and never the key. Account tokens and API keys go to
 `~/.crucible/auth.json`, a file only you can read. The session asks that
 provider from the next turn on — there is nothing to restart. Authentication
-never chooses a model or effort; `/model` and `/effort` stay separate,
-explicit choices.
+never chooses a model or effort; both stay explicit choices, and `/model` is
+where they are asked together.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
@@ -655,7 +655,7 @@ session.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/model` | Picks the model to ask from now on, or takes the one you name |
+| `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
@@ -666,13 +666,18 @@ session.
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
 
-`/model` on its own stands a panel where the prompt box was, holding every
-provider this build serves beside a few of the models each offers, with the one
-being asked now named above them. Taking a row off another provider's half moves
-the session to that provider. Escape leaves it and changes nothing. `/model
-<name>` skips the panel, and is also how to ask for a model the panel does not
-carry: the list is a shortcut past the vendor's documentation, not the limit of
-what the vendor serves.
+`/model` on its own stands a shelf over the whole shell, with the model being
+asked now named above it: a search line across the top, the providers this build
+serves in one pane beside the models in the other, and the rungs the marked model
+takes on a strip underneath. Type to narrow both panes at once — `openai` leaves
+everything that vendor serves, `sonnet` leaves the one model, and the line does
+not ask which kind of name it just got. <kbd>Tab</kbd> crosses between the panes,
+the up and down arrows walk whichever one the mark is in, the left and right
+arrows walk the rungs, and Enter takes the model and the rung under it together.
+Taking a row moves the session to whoever serves that model. Escape leaves it and
+changes nothing. `/model <name>` skips the shelf, and is also how to ask for a
+model the shelf does not carry: what it holds is a shortcut past the vendor's
+documentation, not the limit of what the vendor serves.
 
 Either way the name is written to `~/.crucible/config.json` under the provider
 this run is set up for, and the provider beside it, so the next crucible
@@ -689,7 +694,9 @@ Enter depends on the command:
 - **`/theme` and `/help`** are screen-only, and run at once, panel and all,
   with the transcript going on behind them.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
-  confirmed now but held for the turn that starts after.
+  confirmed now but held for the turn that starts after. The rung strip is empty
+  there and says so: how hard it thinks is something the running turn has already
+  taken, so that half waits for `/effort` between turns.
 - The rest — `/clear`, `/logout`, `/resume` and the like — move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
@@ -715,10 +722,12 @@ what was said rather than what it looked like, so the rows on screen are painted
 again from the theme now in force. See
 [Configuration](../configuration/configuration.md#output).
 
-`/effort` asks the same question over the rungs the model in force serves, and
-the answer is written to the same file beside the model. It draws a ladder
-rather than a panel: one track with the rungs under it, `Faster` at one end and
-`Smarter` at the other, walked with the left and right arrows. The mark opens on
+`/effort` asks over the rungs the model in force serves — the same ones the
+shelf `/model` stands puts on its strip — and is the way to change the rung
+without changing the model. The answer is written to the same file beside the
+model. It draws a ladder rather than a panel: one track with the rungs under it,
+`Faster` at one end and `Smarter` at the other, walked with the left and right
+arrows. The mark opens on
 `high` where nothing has chosen yet, which is a place to start walking from
 rather than a rung being asked for: leaving it leaves the session asking for
 none, and what applies then is the vendor's own default for that model. The
