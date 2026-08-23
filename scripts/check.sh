@@ -131,14 +131,19 @@ if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
     failed=1
 fi
 
-# Captured before the tests, because one of them is the schema gate and that one
-# writes: `the_checked_in_schema_is_what_this_generates` regenerates
-# `schema/crucible-code-schema.json` from `shape.rs`, and when the checked-in
-# copy has gone stale it rewrites the file and then fails. Every other section
-# here only reads the tree. That one does not, and a run that edited a tracked
-# file has to say which file rather than leave it to be found in `git status`.
-schema=schema/crucible-code-schema.json
-before=$(cksum "$schema" 2>/dev/null || true)
+# Captured before the tests, because two of them are agreement gates and those
+# two write. `the_checked_in_schema_is_what_this_generates` regenerates the
+# schema from `shape.rs`; `the_checked_in_table_is_what_this_generates`
+# regenerates the model table from the slice of the database recorded beside it.
+# Each rewrites its file and then fails where the checked-in copy has gone
+# stale. Every other section here only reads the tree. Those two do not, and a
+# run that edited a tracked file has to say which file rather than leave it to
+# be found in `git status`.
+generated=(schema/crucible-code-schema.json src/cli/models.rs)
+before=()
+for file in "${generated[@]}"; do
+    before+=("$(cksum "$file" 2>/dev/null || true)")
+done
 
 section "tests"
 if ! cargo test --workspace --locked; then
@@ -146,15 +151,18 @@ if ! cargo test --workspace --locked; then
     failed=1
 fi
 
-section "schema"
-# Not a second comparison — the test above is the comparison, and this is the
-# report of what it did to the tree. The distinction matters because the rewrite
-# means a stale schema fails once and passes on the next run, so the only run
-# that ever mentions it is the one somebody may not have read to the end.
-if [[ "$before" != "$(cksum "$schema" 2>/dev/null || true)" ]]; then
-    printf '    FAIL %s was stale; the tests regenerated it — review the diff and commit it\n' "$schema"
-    failed=1
-fi
+section "generated"
+# Not a second comparison — the tests above are the comparison, and this is the
+# report of what they did to the tree. The distinction matters because the
+# rewrite means a stale file fails once and passes on the next run, so the only
+# run that ever mentions it is the one somebody may not have read to the end.
+for index in "${!generated[@]}"; do
+    file=${generated[index]}
+    if [[ "${before[index]}" != "$(cksum "$file" 2>/dev/null || true)" ]]; then
+        printf '    FAIL %s was stale; the tests regenerated it — review the diff and commit it\n' "$file"
+        failed=1
+    fi
+done
 
 section "component fit sweep"
 # The sweep in `fits.rs` asserts that no component draws past the window it was

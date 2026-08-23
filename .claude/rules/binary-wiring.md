@@ -73,7 +73,9 @@ foot somebody is reading to find out what is going on.
 
 Nothing under it reaches a release. Most are bench probes, existing so
 `scripts/bench.sh` has something to measure; one writes a table that is checked
-in, run by hand and never by a build. Code shared between them belongs in a
+in, run by hand and never by a build. That one writes the slice of its input
+beside the table in the same run, because a generated file with no recorded
+input is a file only a diff ever checked. Code shared between them belongs in a
 module under `src/bin/`, not in the binary's own tree, and nothing in the binary
 may reach for it.
 
