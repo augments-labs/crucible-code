@@ -12,6 +12,8 @@
 
 mod anthropic;
 mod endpoint;
+#[cfg(test)]
+mod fake;
 mod json;
 mod moonshot;
 mod openai;

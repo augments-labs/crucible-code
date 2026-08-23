@@ -3,6 +3,7 @@ use crucible_core::{
 };
 
 use super::*;
+use crate::fake::{failed, found, picture};
 
 /// What a pointer finds when there is nothing there.
 const NOTHING: Value = Value::Null;
@@ -393,5 +394,129 @@ fn a_prompt_that_is_only_a_file_sends_no_empty_text_part() {
             "image_url": { "url": "data:image/png;base64,iVBORw==" }
         }]),
         "{body}"
+    );
+}
+
+/// A turn whose tool results the runner resolved these attachments for.
+fn answering(results: Vec<ToolResult>, attached: Vec<Attached<'static>>) -> Request<'static> {
+    let mut transcript = said("find me one");
+    transcript.push(Message::ToolResults(results));
+    let mut request = request(transcript);
+    request.attached = Box::leak(attached.into_boxed_slice());
+    request
+}
+
+/// One file the runner resolved, at its place across the message above.
+fn resolved(
+    index: usize,
+    media_type: &'static str,
+    modality: Modality,
+    content: Content<'static>,
+) -> Attached<'static> {
+    Attached {
+        message: 1,
+        index,
+        media_type,
+        modality,
+        content,
+    }
+}
+
+/// The picture a tool found, resolved.
+fn resolved_picture(index: usize) -> Attached<'static> {
+    resolved(index, "image/png", Modality::Image, Content::Bytes(PIXEL))
+}
+
+/// One call, answered with the words and files a tool came back with.
+fn one(output: ToolOutput) -> Vec<ToolResult> {
+    vec![ToolResult {
+        id: ToolId::new("call_1"),
+        output,
+    }]
+}
+
+#[test]
+fn a_tool_that_found_a_picture_sends_it_inside_the_result() {
+    let body = build(&answering(
+        one(found("one match: holiday.png", vec![picture()])),
+        vec![resolved_picture(0)],
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/1"),
+        &json!({
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": [
+                { "type": "text", "text": "one match: holiday.png" },
+                {
+                    "type": "image_url",
+                    "image_url": { "url": "data:image/png;base64,iVBORw==" }
+                }
+            ]
+        }),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_tool_that_only_found_a_picture_sends_no_empty_text_part() {
+    let body = build(&answering(
+        one(found("", vec![picture()])),
+        vec![resolved_picture(0)],
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/1/content"),
+        &json!([{
+            "type": "image_url",
+            "image_url": { "url": "data:image/png;base64,iVBORw==" }
+        }]),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_failed_result_that_found_a_file_marks_the_words_it_leads_with() {
+    let body = build(&answering(
+        one(failed("could not open it", vec![picture()])),
+        vec![resolved_picture(0)],
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/1/content/0"),
+        &json!({ "type": "text", "text": "error: could not open it" }),
+        "{body}"
+    );
+}
+
+#[test]
+fn each_result_gets_the_files_its_own_call_found() {
+    let body = build(&answering(
+        vec![
+            ToolResult {
+                id: ToolId::new("call_1"),
+                output: found("first", vec![picture()]),
+            },
+            ToolResult {
+                id: ToolId::new("call_2"),
+                output: found("second", vec![picture()]),
+            },
+        ],
+        vec![
+            resolved_picture(0),
+            resolved(1, "image/jpeg", Modality::Image, Content::Bytes(PIXEL)),
+        ],
+    ));
+
+    assert_eq!(
+        at(&body, "/messages/1/content/1/image_url/url"),
+        &json!("data:image/png;base64,iVBORw=="),
+        "the first call found the png: {body}"
+    );
+    assert_eq!(
+        at(&body, "/messages/2/content/1/image_url/url"),
+        &json!("data:image/jpeg;base64,iVBORw=="),
+        "the second found the jpeg: {body}"
     );
 }

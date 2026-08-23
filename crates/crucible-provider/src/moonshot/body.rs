@@ -159,8 +159,17 @@ fn append(messages: &mut Array<'_>, message: &Message, nth: usize, attached: &[A
         // rather than by position, which is what lets a turn's results arrive
         // in any order.
         Message::ToolResults(results) => {
+            // One message's files, handed out in the order the results claim
+            // them: an attachment's index is its place across the whole
+            // message, so each result takes as many as it holds and the next
+            // one starts where it stopped.
+            let mut files = attached.iter().filter(|one| one.message == nth);
             for result in results {
-                messages.object(|message| write_result(message, result));
+                let found: Vec<_> = files
+                    .by_ref()
+                    .take(result.output.attachments().len())
+                    .collect();
+                messages.object(|message| write_result(message, result, &found));
             }
         }
     }
@@ -216,16 +225,47 @@ fn arguments(args: &str) -> &str {
     if args.trim().is_empty() { "{}" } else { args }
 }
 
-/// One tool result, as its own message.
-fn write_result(message: &mut Object<'_>, result: &ToolResult) {
+/// One tool result, as its own message, and whatever files the tool found.
+///
+/// The parts array rests on the published schema rather than on a worked
+/// example: as read on 2026-08-22 the schema allows parts for `content` and
+/// does not narrow them by role, and no example shows a tool message using
+/// one. A result that found nothing keeps the string it always sent, so this
+/// is reached only by a call that went looking for a file.
+fn write_result(message: &mut Object<'_>, result: &ToolResult, found: &[&Attached<'_>]) {
     let text = result.output.text();
+    let failed = result.output.is_failed();
     message.text("role", "tool");
     message.text("tool_call_id", result.id.as_str());
-    if result.output.is_failed() {
-        message.prefixed_text("content", "error: ", text);
-    } else {
-        message.text("content", text);
+
+    if found.is_empty() {
+        if failed {
+            message.prefixed_text("content", "error: ", text);
+        } else {
+            message.text("content", text);
+        }
+        return;
     }
+
+    // The words lead, which is the other way round from a prompt: there the
+    // picture is what the vendor reads better first, and here the words are
+    // what say which file is which.
+    message.array("content", |content| {
+        if failed {
+            content.object(|part| {
+                part.text("type", "text");
+                part.prefixed_text("text", "error: ", text);
+            });
+        } else if !text.is_empty() {
+            content.object(|part| {
+                part.text("type", "text");
+                part.text("text", text);
+            });
+        }
+        for one in found {
+            content.object(|part| write_attached(part, one));
+        }
+    });
 }
 
 /// One tool, as advertised.

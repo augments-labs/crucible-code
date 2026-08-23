@@ -16,7 +16,7 @@ use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
-use crucible_core::{Attached, Attachment, Content, Message, Modality, Transcript};
+use crucible_core::{Attached, Attachment, Content, Modality, Transcript};
 
 /// The most raw attachment bytes one request may carry.
 ///
@@ -68,9 +68,7 @@ pub(crate) fn resolve(transcript: &Transcript) -> Resolved {
     let mut spent = 0;
 
     for (message, said) in transcript.messages().iter().enumerate().rev() {
-        let Message::User { attachments, .. } = said else {
-            continue;
-        };
+        let attachments = said.attachments();
         for (index, attachment) in attachments.iter().enumerate().rev() {
             held.push(Held {
                 message,
@@ -129,12 +127,8 @@ impl Resolved {
             .iter()
             .filter(|held| matches!(held.carried, Carried::Instead(_)))
             .filter_map(|held| {
-                let Some(Message::User { attachments, .. }) =
-                    transcript.messages().get(held.message)
-                else {
-                    return None;
-                };
-                attachments.get(held.index).cloned()
+                let said = transcript.messages().get(held.message)?;
+                said.attachments().get(held.index).map(|one| (*one).clone())
             })
             .collect()
     }

@@ -13,6 +13,7 @@ use std::fmt;
 use crate::diff::Diff;
 use crate::ids::ToolId;
 use crate::permission::{Approved, Sensitivity};
+use crate::transcript::Attachment;
 
 /// Why a tool call did not produce a result.
 ///
@@ -342,12 +343,15 @@ impl Watch for Unwatched {
 ///
 /// And on its way to the reader, which is not the same journey. The text is
 /// what both are shown; a [`Diff`] is what only the reader is, and it comes off
-/// at [`ToolOutput::forget_diff`] where the two copies part company.
+/// at [`ToolOutput::forget_diff`] where the two copies part company. Files go
+/// the other way: they are for the model to look at, so they stay on the copy
+/// the transcript keeps and are absent from the row that is drawn.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
     diff: Option<Diff>,
+    attachments: Box<[Attachment]>,
 }
 
 impl fmt::Debug for ToolOutput {
@@ -356,6 +360,7 @@ impl fmt::Debug for ToolOutput {
             .field("text", &"[redacted]")
             .field("failed", &self.failed)
             .field("diff", &self.diff)
+            .field("attachments", &self.attachments)
             .finish()
     }
 }
@@ -368,6 +373,7 @@ impl ToolOutput {
             text: text.into(),
             failed: false,
             diff: None,
+            attachments: Box::new([]),
         }
     }
 
@@ -379,6 +385,7 @@ impl ToolOutput {
             text: text.into(),
             failed: true,
             diff: None,
+            attachments: Box::new([]),
         }
     }
 
@@ -392,6 +399,39 @@ impl ToolOutput {
     pub fn showing(mut self, diff: Diff) -> Self {
         self.diff = Some(diff);
         self
+    }
+
+    /// The same result, with files the tool found for the model to look at.
+    ///
+    /// Paths rather than bytes, exactly as at the prompt: the runner is the one
+    /// thing that opens a file, once, for the one request that carries it.
+    ///
+    /// A file the user named at the prompt is a file the user chose. A file a
+    /// tool chose is not, so this takes the proof that the call was permitted —
+    /// the same verdict that let the tool read in the first place, and no
+    /// verdict kind of its own. The argument is never read. Requiring one is
+    /// the point: an [`Approved`] cannot be minted outside the permission
+    /// engine, so a tool that has not been permitted cannot reach this at all.
+    ///
+    /// ```compile_fail,E0061
+    /// use crucible_core::ToolOutput;
+    ///
+    /// let output = ToolOutput::ok("one match").with_attachments(Vec::new());
+    /// ```
+    #[must_use]
+    pub fn with_attachments(
+        mut self,
+        _approved: &Approved,
+        attachments: impl Into<Box<[Attachment]>>,
+    ) -> Self {
+        self.attachments = attachments.into();
+        self
+    }
+
+    /// The files this result asks the model to look at.
+    #[must_use]
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
     }
 
     /// The text the model sees.
@@ -456,6 +496,12 @@ impl ToolOutput {
         }
 
         self.text = format!("[cleared to make room — {freed} bytes]").into();
+
+        // The files go with the words. They cost the transcript almost
+        // nothing — an attachment is a path — but a request reads every one it
+        // still holds, so a result nobody will read again would go on sending
+        // whole pictures for a sentence saying it is gone.
+        self.attachments = Box::new([]);
         freed
     }
 
@@ -553,6 +599,77 @@ impl fmt::Debug for dyn Tool {
 mod tests {
     use super::*;
     use crate::diff::{Change, Line};
+    use crate::modality::Modality;
+    use crate::permission::{Ask, Permission, Remember, Settled, Target, Verdict};
+
+    /// Nobody to ask. A read is settled without a question in every mode, so a
+    /// test that reaches this has stopped testing what it meant to.
+    struct Unasked;
+
+    impl Ask for Unasked {
+        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            (Verdict::Deny, Remember::Never)
+        }
+    }
+
+    /// A verdict about the very read that found the file.
+    fn permitted() -> Approved {
+        let call = ToolCall {
+            id: ToolId::new("call-1"),
+            name: "read".into(),
+            args: ToolArgs::new("{}"),
+        };
+        let settled = Permission::new().decide(
+            &call,
+            &Sensitivity::ReadOnly {
+                target: Target::at("/w/pictures/holiday.png", Some("pictures/holiday.png")),
+            },
+            &mut Unasked,
+        );
+
+        let Settled::Approved(approved) = settled else {
+            panic!("a read is allowed without a question")
+        };
+        approved
+    }
+
+    fn holiday() -> Attachment {
+        Attachment {
+            path: "pictures/holiday.png".into(),
+            modality: Modality::Image,
+            media_type: "image/png".into(),
+            hash: [0xab; 32],
+        }
+    }
+
+    #[test]
+    fn a_tool_answers_with_the_file_it_found() {
+        let output = ToolOutput::ok("one match").with_attachments(&permitted(), [holiday()]);
+
+        assert_eq!(output.text(), "one match");
+        let [only] = output.attachments() else {
+            panic!("one file was attached")
+        };
+        assert_eq!(only.path.as_ref(), "pictures/holiday.png");
+    }
+
+    #[test]
+    fn a_result_that_attached_nothing_carries_nothing() {
+        assert!(ToolOutput::ok("done").attachments().is_empty());
+        assert!(ToolOutput::failed("no such file").attachments().is_empty());
+    }
+
+    #[test]
+    fn clearing_a_result_takes_the_files_it_showed_with_it() {
+        let mut output = ToolOutput::ok("m".repeat(ToolOutput::MIN_PRUNE_BYTES))
+            .with_attachments(&permitted(), [holiday()]);
+
+        assert!(output.prune() > 0);
+        assert!(
+            output.attachments().is_empty(),
+            "a result the model will never read again is not still sending a picture"
+        );
+    }
 
     #[test]
     fn output_carries_whether_the_model_should_treat_it_as_a_failure() {

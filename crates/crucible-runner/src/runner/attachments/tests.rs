@@ -1,10 +1,14 @@
 use std::fs;
 use std::path::Path;
 
-use crucible_core::{Attachment, Content, Message, Modality, Transcript};
+use crucible_core::{
+    Approved, Attachment, Content, Message, Modality, Permission, Sensitivity, Settled, Target,
+    ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Verdict, Workspace,
+};
 use sha2::{Digest as _, Sha256};
 
 use super::{CEILING, resolve};
+use crate::fake::Says;
 use crate::sample::Sample;
 
 /// Writes a file and returns the attachment naming it.
@@ -25,6 +29,36 @@ fn asked(text: &str, attachments: Vec<Attachment>) -> Message {
         text: text.into(),
         attachments: attachments.into(),
     }
+}
+
+/// The verdict that let a tool read, which is what lets it show.
+fn permitted(workspace: &Workspace) -> Approved {
+    let from = workspace.existing(".").expect("the workspace root");
+    let call = ToolCall {
+        id: ToolId::new("call-1"),
+        name: "read".into(),
+        args: ToolArgs::new("{}"),
+    };
+    let settled = Permission::new().decide(
+        &call,
+        &Sensitivity::ReadOnly {
+            target: Target::resolved(workspace, &from),
+        },
+        &mut Says::new(Verdict::Allow),
+    );
+
+    let Settled::Approved(approved) = settled else {
+        panic!("a read is allowed without a question")
+    };
+    approved
+}
+
+/// What a tool answered with, and the files it found.
+fn found(text: &str, attachments: Vec<Attachment>, approved: &Approved) -> Message {
+    Message::ToolResults(vec![ToolResult {
+        id: ToolId::new("call-1"),
+        output: ToolOutput::ok(text).with_attachments(approved, attachments),
+    }])
 }
 
 /// What the model said back, so two prompts are two turns.
@@ -310,5 +344,88 @@ fn nothing_resolved_survives_the_request() {
             Content::Instead(_)
         ),
         "the bytes were the last request's; the transcript kept only the reference"
+    );
+}
+
+#[test]
+fn what_a_tool_found_is_carried_like_what_a_prompt_named() {
+    let sample = Sample::new("attach-tool");
+    let workspace = sample.workspace();
+    let under = workspace.root().to_path_buf();
+    let approved = permitted(&workspace);
+
+    let mut transcript = Transcript::new();
+    transcript.push(Message::said("find me a picture"));
+    transcript.push(found(
+        "one match",
+        vec![
+            file(&under, "found-one.png", &[1; 16]),
+            file(&under, "found-two.png", &[2; 32]),
+        ],
+        &approved,
+    ));
+
+    let resolved = resolve(&transcript);
+    let attached = resolved.attached();
+    let [one, two] = attached.as_slice() else {
+        panic!("both files the tool found, in the order it found them");
+    };
+
+    assert!(matches!(one.content, Content::Bytes(bytes) if bytes == [1; 16]));
+    assert!(matches!(two.content, Content::Bytes(bytes) if bytes == [2; 32]));
+    assert_eq!((one.message, one.index), (1, 0));
+    assert_eq!((two.message, two.index), (1, 1));
+    assert_eq!(one.modality, Modality::Image);
+}
+
+#[test]
+fn a_tool_s_files_age_out_on_the_same_rule_as_a_prompt_s() {
+    let sample = Sample::new("attach-tool-over");
+    let workspace = sample.workspace();
+    let under = workspace.root().to_path_buf();
+    let approved = permitted(&workspace);
+    let third = CEILING / 3 + 1;
+
+    // Alternating on purpose: the rule is about bytes and about how recent
+    // they are, and it has never been about which half of a turn named them.
+    let mut transcript = Transcript::new();
+    for name in ["first.png", "second.png", "third.png", "fourth.png"] {
+        transcript.push(asked(name, vec![file(&under, name, &vec![7; third])]));
+        transcript.push(found(
+            name,
+            vec![file(&under, &format!("tool-{name}"), &vec![9; third])],
+            &approved,
+        ));
+    }
+
+    let resolved = resolve(&transcript);
+    let attached = resolved.attached();
+
+    assert_eq!(attached.len(), 8, "every attachment keeps its place");
+    let carried: Vec<bool> = attached
+        .iter()
+        .map(|one| matches!(one.content, Content::Bytes(_)))
+        .collect();
+    assert_eq!(
+        carried,
+        [false, false, false, false, false, false, true, true],
+        "the two newest fit, whichever half of a turn named them"
+    );
+
+    let aged = resolved.aged(&transcript);
+    assert_eq!(
+        aged.len(),
+        6,
+        "the six that stood in are named for the reader"
+    );
+    let oldest = aged.first().expect("the oldest of them");
+    assert!(
+        oldest.path.ends_with("first.png"),
+        "in transcript order: {}",
+        oldest.path
+    );
+    assert!(
+        aged.iter().any(|one| one.path.contains("tool-")),
+        "a file a tool found ages out beside one a prompt named"
     );
 }

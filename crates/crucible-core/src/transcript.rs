@@ -111,6 +111,25 @@ impl Message {
             attachments: Box::new([]),
         }
     }
+
+    /// Every file this message holds, in the order it holds them.
+    ///
+    /// A prompt names its own; a message of tool results holds whatever each
+    /// result attached, one result after the next. Flat rather than per
+    /// result, because a place in the message is the whole of an attachment's
+    /// address — what reads this weighs bytes against one request's ceiling
+    /// and has no use for which call inside the message found which file.
+    #[must_use]
+    pub fn attachments(&self) -> Vec<&Attachment> {
+        match self {
+            Self::User { attachments, .. } => attachments.iter().collect(),
+            Self::Agent { .. } => Vec::new(),
+            Self::ToolResults(results) => results
+                .iter()
+                .flat_map(|result| result.output.attachments())
+                .collect(),
+        }
+    }
 }
 
 impl fmt::Debug for Message {

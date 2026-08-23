@@ -154,8 +154,17 @@ fn append(items: &mut Array<'_>, message: &Message, nth: usize, attached: &[Atta
             }
         }
         Message::ToolResults(results) => {
+            // One message's files, handed out in the order the results claim
+            // them: an attachment's index is its place across the whole
+            // message, so each result takes as many as it holds and the next
+            // one starts where it stopped.
+            let mut files = attached.iter().filter(|one| one.message == nth);
             for result in results {
-                items.object(|item| write_result(item, result));
+                let found: Vec<_> = files
+                    .by_ref()
+                    .take(result.output.attachments().len())
+                    .collect();
+                items.object(|item| write_result(item, result, &found));
             }
         }
     }
@@ -234,15 +243,43 @@ fn arguments(args: &str) -> &str {
 ///
 /// Answered by `call_id` rather than by position, which is what lets a turn's
 /// results arrive in any order and lets several calls be answered at once.
-fn write_result(item: &mut Object<'_>, result: &ToolResult) {
+fn write_result(item: &mut Object<'_>, result: &ToolResult, found: &[&Attached<'_>]) {
     let text = result.output.text();
+    let failed = result.output.is_failed();
     item.text("type", "function_call_output");
     item.text("call_id", result.id.as_str());
-    if result.output.is_failed() {
-        item.prefixed_text("output", "error: ", text);
-    } else {
-        item.text("output", text);
+
+    // A string where a tool answered in words alone, which is every call made
+    // before a tool could find a file.
+    if found.is_empty() {
+        if failed {
+            item.prefixed_text("output", "error: ", text);
+        } else {
+            item.text("output", text);
+        }
+        return;
     }
+
+    // Parts, with the words leading — the other way round from a prompt, where
+    // the picture is what the vendor reads better first. Here the words are
+    // what say which file is which, and the prefix that marks a failure is on
+    // them because this wire still has nowhere else to put it.
+    item.array("output", |output| {
+        if failed {
+            output.object(|part| {
+                part.text("type", "input_text");
+                part.prefixed_text("text", "error: ", text);
+            });
+        } else if !text.is_empty() {
+            output.object(|part| {
+                part.text("type", "input_text");
+                part.text("text", text);
+            });
+        }
+        for one in found {
+            output.object(|part| write_attached(part, one));
+        }
+    });
 }
 
 /// One tool, as advertised.
