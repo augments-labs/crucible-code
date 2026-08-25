@@ -6,7 +6,7 @@ use crucible_core::{ApiKey, Fetch, Header, HeaderKey, Host, Search};
 use serde_json::json;
 
 use super::*;
-use crate::transport::Replay;
+use crate::transport::{Replay, Response, TransportError};
 
 /// The exact key that must never appear anywhere but a header value.
 const SECRET: &str = "sk-ant-do-not-log-me";
@@ -724,4 +724,99 @@ fn an_openai_fetch_refuses_an_address_that_names_no_host() {
         Err(SourceError::Address(_))
     ));
     assert!(replay.sent().url.is_empty(), "an opaque address was sent");
+}
+
+/// A transport that answers at once with a body that never ends — a gateway
+/// that keeps a connection producing long after the answer mattered.
+#[derive(Debug)]
+struct Endless;
+
+impl Transport for Endless {
+    fn post(
+        &self,
+        _url: &str,
+        _headers: Outgoing,
+        _body: String,
+        _cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        Ok(Response {
+            status: 200,
+            body: Box::new(Producing),
+        })
+    }
+}
+
+/// A body that produces bytes for as long as anything reads it.
+struct Producing;
+
+impl Read for Producing {
+    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
+        into.fill(b'x');
+        Ok(into.len())
+    }
+}
+
+#[test]
+fn cancelling_while_a_body_is_read_stays_a_cancel() {
+    // The cancel that request setup honoured stays reachable while the answer
+    // is read: a body still arriving after the user left the turn would
+    // otherwise be read to its bound before anybody looked up.
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let problem = posted(
+        Sending {
+            named: "test",
+            transport: &Endless,
+            endpoint: "https://example.test",
+        },
+        Outgoing::new(),
+        String::new(),
+        &cancel,
+    )
+    .expect_err("a cancelled read to say so");
+
+    assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
+}
+
+/// A gateway that answered its headers and then stalled without closing: every
+/// read is a wait that expired, spelled the way the transport spells one.
+struct Stalled;
+
+impl Read for Stalled {
+    fn read(&mut self, _into: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::Interrupted.into())
+    }
+}
+
+#[test]
+fn a_body_that_stalls_and_never_closes_gives_up_rather_than_holding_the_turn() {
+    let problem = filled(
+        "test",
+        Box::new(Stalled),
+        std::time::Duration::ZERO,
+        &Cancel::new(),
+    )
+    .expect_err("a stalled body to give up");
+
+    assert!(
+        problem.to_string().contains("it stopped part-way through"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_body_that_keeps_producing_bytes_cannot_outlive_the_elapsed_deadline() {
+    let problem = filled(
+        "test",
+        Box::new(Producing),
+        std::time::Duration::ZERO,
+        &Cancel::new(),
+    )
+    .expect_err("an endless body to give up");
+
+    assert!(
+        problem.to_string().contains("it stopped part-way through"),
+        "{problem}"
+    );
 }
