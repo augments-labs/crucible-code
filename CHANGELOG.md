@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-08-25
+
 ### Changed
 
 **Tool schemas are generated from the bounds the code holds.** Every tool now
@@ -2710,7 +2712,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.22.1...HEAD
+[0.22.1]: https://github.com/augments-labs/crucible-code/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/augments-labs/crucible-code/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/augments-labs/crucible-code/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/augments-labs/crucible-code/compare/v0.20.1...v0.21.0
