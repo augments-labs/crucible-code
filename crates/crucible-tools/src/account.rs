@@ -26,15 +26,53 @@
 use crucible_core::{Account, ToolArgs};
 
 use crate::args::Args;
+use crate::schema::{Field, Shape};
 
 /// The argument a call accounts for itself in.
-const SAID: &str = "description";
+pub(crate) const SAID: &str = "description";
 
 /// The argument it explains itself at length in.
-const TOLD: &str = "explanation";
+pub(crate) const TOLD: &str = "explanation";
 
 /// The argument a call asks to be left running in.
-const LEFT: &str = "background";
+pub(crate) const LEFT: &str = "background";
+
+/// The two argument declarations every schema that invites an account carries,
+/// spelled here so the names above and the prose around them cannot drift
+/// between tools.
+///
+/// `under` is what the panel draws the line beneath — a path, a command.
+/// `lead` opens the longer account — "What the change does" — and `tail` is
+/// the one sentence that differs by what the tool can do wrong.
+pub(crate) fn fields(under: &str, lead: &str, tail: &str) -> [Field; 2] {
+    [
+        Field {
+            name: SAID,
+            about: format!(
+                "One short line saying what this call is for, shown under the {under} to the \
+                 person deciding whether to allow it. It is cut to one row rather than folded, so \
+                 lead with the point and keep it near fifty characters."
+            ),
+            needed: false,
+            shape: Shape::Text,
+        },
+        Field {
+            name: TOLD,
+            about: format!(
+                "{lead}, why you want it, and what it costs if it is wrong. One string per \
+                 paragraph, opened with a key by the same person, so write it for them rather \
+                 than for yourself and do not restate the {under}: it is already on screen above \
+                 this. {tail}"
+            ),
+            needed: false,
+            shape: Shape::List {
+                of: Box::new(Shape::Text),
+                fewest: None,
+                most: None,
+            },
+        },
+    ]
+}
 
 /// The name a rejection would carry if one could get out of here.
 ///

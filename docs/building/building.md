@@ -20,9 +20,9 @@ means Git Bash or a Windows Subsystem for Linux shell; the build itself needs no
 shell.
 
 Nothing else: no OpenSSL, no `pkg-config`, no cmake, no Python, no node. A
-dependency that wanted one would need the justification comment rule 8 of the
-[contributor guide](../../CLAUDE.md) asks for, and this list is part of what
-that comment is weighed against.
+dependency that wanted one would need the justification comment every entry in
+`Cargo.toml` carries, and this list is part of what that comment is weighed
+against.
 
 ## Linux
 

@@ -33,13 +33,21 @@ the workspace ships as one unit and there is no per-crate version to drift.
    script decides rather than you reading a table; a non-zero exit blocks the
    release. A slower build is not a release, it is a bug that happens to
    compile. Keep the JSON with the tag — the next release compares against it.
+
+   This reading is the authoritative one. The release workflow runs the same
+   probes on a shared runner, but those numbers are a trend and publication
+   does not wait for them — a budget is decided here, before the tag exists.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.
-5. **The install path works from scratch.** Every gate above builds from this
-   tree with this machine's toolchain, so none of them can see what a shipped
-   binary needs from the machine it lands on. Package the artifact the way the
-   release workflow does and put it somewhere that holds nothing else:
+5. **The install path works from scratch** — advisory for now, off rather than
+   gone, the way the line ceiling is: the release workflow still runs its smoke
+   job but no longer waits for it before publishing, and this local run is
+   likewise worth doing when the packaging changed rather than on every tag.
+   Every gate above builds from this tree with this machine's toolchain, so
+   none of them can see what a shipped binary needs from the machine it lands
+   on. Package the artifact the way the release workflow does and put it
+   somewhere that holds nothing else:
 
    ```bash
    VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)

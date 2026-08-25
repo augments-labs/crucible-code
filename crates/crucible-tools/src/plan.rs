@@ -30,13 +30,14 @@
 //! bound was missed and by how much, and the model writes again.
 
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crucible_core::{
     Approved, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 use crate::args::Args;
+use crate::schema::{Field, Schema, Shape};
 
 /// The name the model calls.
 const NAME: &str = "todo_write";
@@ -69,33 +70,50 @@ const KEPT: usize = 64;
 const SAID: usize = 256;
 
 /// The root `description` is the tool's own; everything below it describes the
-/// arguments.
-const SCHEMA: &str = r#"{
-  "description": "Writes down the plan for the work in hand, replacing it whole. The user reads it as a panel above the prompt, and the call answers with the plan as it now stands. Worth using for work of several steps: write the plan out before starting, and call again as each task changes state.",
-  "type": "object",
-  "properties": {
-    "tasks": {
-      "type": "array",
-      "description": "Every task in the plan, in the order they should be read. This replaces the plan entirely, so a task left out of a call has been removed from the plan. At most 64 tasks, and at most 256 bytes each.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "task": {
-            "type": "string",
-            "description": "What the task is, in one line: Build the gate script."
-          },
-          "state": {
-            "type": "string",
-            "enum": ["open", "doing", "done"],
-            "description": "Where the task is. open is not started, and is what a task with no state is read as; doing is under way, and at most one task in a plan may be; done is finished."
-          }
-        },
-        "required": ["task", "state"]
-      }
+/// arguments. Every ceiling is spelled by the constant the code holds it
+/// with, so the sentence the model reads cannot drift from the bound the call
+/// meets.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Writes down the plan for the work in hand, replacing it whole. The user reads it \
+                as a panel above the prompt, and the call answers with the plan as it now \
+                stands. Worth using for work of several steps: write the plan out before \
+                starting, and call again as each task changes state."
+            .into(),
+        fields: vec![Field {
+            name: TASKS,
+            about: format!(
+                "Every task in the plan, in the order they should be read. This replaces the \
+                 plan entirely, so a task left out of a call has been removed from the plan. At \
+                 most {KEPT} tasks, and at most {SAID} bytes each."
+            ),
+            needed: true,
+            shape: Shape::List {
+                of: Box::new(Shape::Fields(vec![
+                    Field {
+                        name: TASK,
+                        about: "What the task is, in one line: Build the gate script.".into(),
+                        needed: true,
+                        shape: Shape::Text,
+                    },
+                    Field {
+                        name: STATE,
+                        about: format!(
+                            "Where the task is. {OPEN} is not started, and is what a task with \
+                             no state is read as; {DOING} is under way, and at most one task in \
+                             a plan may be; {DONE} is finished."
+                        ),
+                        needed: true,
+                        shape: Shape::Choice(&[OPEN, DOING, DONE]),
+                    },
+                ])),
+                fewest: None,
+                most: Some(KEPT),
+            },
+        }],
     }
-  },
-  "required": ["tasks"]
-}"#;
+    .text()
+});
 
 /// Where a task is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -279,7 +297,7 @@ impl Tool for TodoWrite {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {

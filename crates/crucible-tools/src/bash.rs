@@ -41,11 +41,20 @@ use crucible_core::{
     Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch, Workspace,
 };
 
+use std::sync::LazyLock;
+
 use crate::args::Args;
+use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 
 /// The name the model calls.
 const NAME: &str = "bash";
+
+/// The command line to run.
+const COMMAND: &str = "command";
+
+/// How long to allow it.
+const TIMEOUT: &str = "timeout";
 
 /// How long a command may take when the call does not say, in seconds.
 const SECONDS: usize = 120;
@@ -69,49 +78,63 @@ const TICK: Duration = Duration::from_millis(20);
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// Two of those arguments are not for this tool. The `description` and
-/// `explanation` under `properties` are never read here — they are drawn on the
-/// panel where somebody decides whether this call may run, and the reason they
-/// arrive with the call rather than being asked for when the panel opens is
-/// that the thread holding the terminal has no provider to ask. So they are
-/// declared here, at the one place a model is told what it may send, and read a
-/// layer up by [`crate::account`].
+/// Two of those arguments are not for this tool. The account fields declared
+/// last are never read here — they are drawn on the panel where somebody
+/// decides whether this call may run, and the reason they arrive with the call
+/// rather than being asked for when the panel opens is that the thread holding
+/// the terminal has no provider to ask. So they are declared here, at the one
+/// place a model is told what it may send, and read a layer up by
+/// [`crate::account`].
 ///
 /// Neither is required, and that is the whole of what keeps them optional in
 /// practice too: a call that says nothing about itself gets the panel it would
 /// have got before either existed, rather than a panel with a blank where an
 /// account of the command should be.
-const SCHEMA: &str = r#"{
-  "description": "Runs a shell command in the workspace root and returns its output and exit status.",
-  "type": "object",
-  "properties": {
-    "command": {
-      "type": "string",
-      "description": "The command line to run, as a shell would read it."
-    },
-    "timeout": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "How many seconds to allow before stopping it. Defaults to 120, and cannot exceed 600. Cannot be sent with background."
-    },
-    "background": {
-      "type": "boolean",
-      "description": "Leave the command running and answer at once, for something with no end of its own: a dev server, a file watcher, a tunnel. The answer names the number it is running as and carries whatever it printed in its first moment. A command that has already exited by then is reported as an ordinary result instead, so a failure still reaches you now. At most four may run at once."
-    },
-    "description": {
-      "type": "string",
-      "description": "One short line saying what this call is for, shown under the command to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
-    },
-    "explanation": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "What the command does, why you want it, and what it costs if it is wrong. One string per paragraph, opened with a key by the same person, so write it for them rather than for yourself and do not restate the command: it is already on screen above this. Where the line runs more than one command, account for each of them."
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    let mut fields = vec![
+        Field {
+            name: COMMAND,
+            about: "The command line to run, as a shell would read it.".into(),
+            needed: true,
+            shape: Shape::Text,
+        },
+        Field {
+            name: TIMEOUT,
+            about: format!(
+                "How many seconds to allow before stopping it. Defaults to {SECONDS}, and cannot \
+                 exceed {CEILING}. Cannot be sent with background."
+            ),
+            needed: false,
+            shape: Shape::Count(Whole {
+                least: 1,
+                most: Some(CEILING),
+            }),
+        },
+        Field {
+            name: crate::account::LEFT,
+            about: "Leave the command running and answer at once, for something with no end of \
+                    its own: a dev server, a file watcher, a tunnel. The answer names the number \
+                    it is running as and carries whatever it printed in its first moment. A \
+                    command that has already exited by then is reported as an ordinary result \
+                    instead, so a failure still reaches you now. At most four may run at once."
+                .into(),
+            needed: false,
+            shape: Shape::Flag,
+        },
+    ];
+    fields.extend(crate::account::fields(
+        "command",
+        "What the command does",
+        "Where the line runs more than one command, account for each of them.",
+    ));
+    Schema {
+        about: "Runs a shell command in the workspace root and returns its output and exit \
+                status."
+            .into(),
+        fields,
     }
-  },
-  "required": ["command"]
-}"#;
+    .text()
+});
 
 /// Runs shell commands in the workspace root.
 pub struct Bash {
@@ -258,33 +281,32 @@ impl Tool for Bash {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
-        let command = match Args::parse(NAME, args)
-            .and_then(|args| args.text("command").map(str::to_owned))
-        {
-            Ok(line) => command::read(&line),
-            // A call this malformed will be refused by `run`, but it still has
-            // to be given a sensitivity first — and the safe answer to "what is
-            // about to run" when nobody can read it is everything that was
-            // sent, reported as unreadable.
-            Err(_) => crucible_core::Command::Opaque(args.as_str().into()),
-        };
+        let command =
+            match Args::parse(NAME, args).and_then(|args| args.text(COMMAND).map(str::to_owned)) {
+                Ok(line) => command::read(&line),
+                // A call this malformed will be refused by `run`, but it still has
+                // to be given a sensitivity first — and the safe answer to "what is
+                // about to run" when nobody can read it is everything that was
+                // sent, reported as unreadable.
+                Err(_) => crucible_core::Command::Opaque(args.as_str().into()),
+            };
 
         Sensitivity::SpawnsProcess { command }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "command")
+        summary::field(NAME, args, COMMAND)
     }
 
     fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let command = args.text("command")?;
-        let seconds = args.count("timeout", SECONDS)?;
-        let background = args.flag("background", false)?;
+        let command = args.text(COMMAND)?;
+        let seconds = args.count(TIMEOUT, SECONDS)?;
+        let background = args.flag(crate::account::LEFT, false)?;
 
         if seconds > CEILING {
             return Ok(ToolOutput::failed(format!(
@@ -296,7 +318,7 @@ impl Tool for Bash {
         // deadline — that is what it is for — so a call that sent both asked for
         // two different things, and answering it with either would be answering a
         // question nobody put.
-        if background && args.holds("timeout") {
+        if background && args.holds(TIMEOUT) {
             return Ok(ToolOutput::failed(
                 "timeout does not apply to a command left running: send one or the other",
             ));

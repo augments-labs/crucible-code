@@ -9,15 +9,32 @@ use crucible_core::{
 };
 use globset::GlobBuilder;
 
+use std::sync::LazyLock;
+
 use crate::args::Args;
+use crate::bound::OUTPUT;
+use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "glob";
 
-/// The two orders a call can ask for, spelled as the model sends them.
+/// The glob to match.
+const PATTERN: &str = "pattern";
+
+/// Where to search — and, as an answer to [`SORT`], the alphabetical order.
+/// One spelling, two questions, which is the model's vocabulary rather than a
+/// collision here.
 const PATH: &str = "path";
+
+/// How many paths to give.
+const LIMIT: &str = "limit";
+
+/// What order to answer in.
+const SORT: &str = "sort";
+
+/// The other answer to [`SORT`]: most recently changed first.
 const MODIFIED: &str = "modified";
 
 /// How many paths one call answers with when it does not say.
@@ -38,32 +55,56 @@ const PATHS: usize = 200;
 const CEILING: usize = 1_000;
 
 /// The root `description` is the tool's own; everything below it describes the
-/// arguments.
-const SCHEMA: &str = r#"{
-  "description": "Lists files in the workspace whose path matches a glob. Skips anything gitignored.",
-  "type": "object",
-  "properties": {
-    "pattern": {
-      "type": "string",
-      "description": "The glob to match, for example **/*.rs or src/**/mod.rs."
-    },
-    "path": {
-      "type": "string",
-      "description": "A directory to search under, relative to the workspace root. Defaults to the whole workspace."
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "How many paths to return. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
-    },
-    "sort": {
-      "type": "string",
-      "enum": ["path", "modified"],
-      "description": "What order to answer in, and therefore which paths a limit keeps. path is alphabetical and the default; modified is most recently changed first, for finding what a project has been working on."
+/// arguments. Every ceiling is spelled by the constant the code holds it
+/// with, so the sentence the model reads cannot drift from the bound the call
+/// meets.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Lists files in the workspace whose path matches a glob. Skips anything \
+                gitignored."
+            .into(),
+        fields: vec![
+            Field {
+                name: PATTERN,
+                about: "The glob to match, for example **/*.rs or src/**/mod.rs.".into(),
+                needed: true,
+                shape: Shape::Text,
+            },
+            Field {
+                name: PATH,
+                about: "A directory to search under, relative to the workspace root. Defaults to \
+                        the whole workspace."
+                    .into(),
+                needed: false,
+                shape: Shape::Text,
+            },
+            Field {
+                name: LIMIT,
+                about: format!(
+                    "How many paths to return. Defaults to {PATHS}, and never more than \
+                     {CEILING} however large a number is sent. The answer is cut at {OUTPUT} \
+                     bytes as well, whichever comes first."
+                ),
+                needed: false,
+                shape: Shape::Count(Whole {
+                    least: 1,
+                    most: Some(CEILING),
+                }),
+            },
+            Field {
+                name: SORT,
+                about: format!(
+                    "What order to answer in, and therefore which paths a limit keeps. {PATH} is \
+                     alphabetical and the default; {MODIFIED} is most recently changed first, for \
+                     finding what a project has been working on."
+                ),
+                needed: false,
+                shape: Shape::Choice(&[PATH, MODIFIED]),
+            },
+        ],
     }
-  },
-  "required": ["pattern"]
-}"#;
+    .text()
+});
 
 /// Finds files in the workspace by path.
 #[derive(Debug)]
@@ -211,24 +252,24 @@ impl Tool for Glob {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
-            target: target::searched(&self.workspace, NAME, args, "path"),
+            target: target::searched(&self.workspace, NAME, args, PATH),
         }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "pattern")
+        summary::field(NAME, args, PATTERN)
     }
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let pattern = args.text("pattern")?;
-        let limit = args.count("limit", PATHS)?.min(CEILING);
-        let sort = match args.choice("sort", PATH, &[PATH, MODIFIED])? {
+        let pattern = args.text(PATTERN)?;
+        let limit = args.count(LIMIT, PATHS)?.min(CEILING);
+        let sort = match args.choice(SORT, PATH, &[PATH, MODIFIED])? {
             MODIFIED => Sort::Modified,
             _ => Sort::Path,
         };
@@ -244,7 +285,7 @@ impl Tool for Glob {
             return Ok(ToolOutput::failed(format!("{pattern} is not a valid glob")));
         };
 
-        let requested = args.optional_text("path")?.unwrap_or(".");
+        let requested = args.optional_text(PATH)?.unwrap_or(".");
         let from = match self.workspace.existing(requested) {
             Ok(path) => path,
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),

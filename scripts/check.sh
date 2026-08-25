@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Every gate that must pass before a commit. CI runs exactly this script, so a
 # green run here means a green run there.
+#
+# The text-walking sections below — process memory, links, rules frontmatter,
+# manifest comments — are guardrails rather than proofs. Each greps for the
+# shapes a slip usually takes, and a slip written another way walks past it.
+# Green means nothing it knows to look for was found, not that the prose is
+# right; the reviewer still owns that judgement.
 set -euo pipefail
 
 # An unmatched glob expands to itself, which turns "there are no rules files"

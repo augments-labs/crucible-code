@@ -348,9 +348,11 @@ jobs:
           digest=$(<artifact/digest-linux-x86_64)
           scripts/smoke.sh --no-provider --checksum "$digest" "$archive"
 
-  # What stops a tag whose build got slower: every probe carries its own limit
-  # and exits non-zero when it is over, so this job failing is the release not
-  # happening.
+  # Every probe carries its own limit and exits non-zero when it is over, so a
+  # build that got slower turns this job red. Red on the run, not a blocked
+  # release: `publish` deliberately does not wait for it — the note above
+  # `publish` says why — so what a failure here buys is a reading somebody goes
+  # to the run to see, before or after the tag.
   #
   # The numbers stay on the run rather than on the release. They are
   # shared-runner trend data, not the quiet-machine reading RELEASING.md
@@ -427,8 +429,13 @@ jobs:
   # `RELEASING.md` requires before the tag exists, and a shared runner's numbers
   # were never fit to overrule it — a red here still fails the run and is still
   # there to be read.
+  #
+  # `smoke-linux` is off the list for now too — off rather than gone, the way
+  # the line ceiling is in `ci.yml`. The job still runs and a red is still on
+  # the run to be read; while the project is this young, shipping does not wait
+  # on it. Restoring it is putting the name back in `needs`.
   publish:
-    needs: [build, build-linux, freebsd-x86_64, smoke-linux]
+    needs: [build, build-linux, freebsd-x86_64]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -24,18 +24,23 @@
 //! do is ask once and be handed everything.
 
 use std::fmt::Write as _;
+use std::sync::LazyLock;
 
 use crucible_core::{
     Approved, Revealed, Sensitivity, Summary, Target, Tool, ToolArgs, ToolError, ToolOutput, Watch,
 };
 
 use crate::args::Args;
+use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 
 #[cfg(test)]
 mod tests;
 
 const NAME: &str = "tool_search";
+
+/// What the model wants to do.
+const QUERY: &str = "query";
 
 /// The most one search may offer.
 ///
@@ -44,17 +49,26 @@ const NAME: &str = "tool_search";
 /// one tool that is always advertised.
 const MOST: usize = 3;
 
-const SCHEMA: &str = r#"{
-  "description": "Finds tools that are not in your current tool list and makes them available. Some tools are held back until asked for, so this list is not everything that exists. Search when a task needs something you cannot see — reaching the web, for instance. What you find is callable from your next message onward.",
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "What you want to do, in a word or two, for example web search or plan. A tool's exact name always matches itself. The closest few are offered, so ask for one job at a time rather than everything at once."
+/// The root `description` is the tool's own; the one argument is the query.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Finds tools that are not in your current tool list and makes them available. \
+                Some tools are held back until asked for, so this list is not everything that \
+                exists. Search when a task needs something you cannot see — reaching the web, \
+                for instance. What you find is callable from your next message onward."
+            .into(),
+        fields: vec![Field {
+            name: QUERY,
+            about: "What you want to do, in a word or two, for example web search or plan. A \
+                    tool's exact name always matches itself. The closest few are offered, so ask \
+                    for one job at a time rather than everything at once."
+                .into(),
+            needed: true,
+            shape: Shape::Text,
+        }],
     }
-  },
-  "required": ["query"]
-}"#;
+    .text()
+});
 
 /// One tool that is held back, as this one describes it.
 #[derive(Debug, Clone)]
@@ -95,7 +109,7 @@ impl Tool for ToolSearch {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     /// Reads nothing and reaches nothing. It changes what this session offers
@@ -108,12 +122,12 @@ impl Tool for ToolSearch {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "query")
+        summary::field(NAME, args, QUERY)
     }
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let query = args.text("query")?;
+        let query = args.text(QUERY)?;
 
         let mut ranked: Vec<(u8, &Held)> = self
             .held

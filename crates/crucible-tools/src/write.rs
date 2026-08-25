@@ -14,51 +14,63 @@ use crucible_core::{
     Watch, Workspace,
 };
 
+use std::sync::LazyLock;
+
 use crate::args::Args;
 use crate::atomic;
 use crate::changed;
 use crate::ledger::Ledger;
+use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "write";
 
+/// The file to write.
+const PATH: &str = "path";
+
+/// What to put in it.
+const CONTENT: &str = "content";
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// The `description` and `explanation` under `properties` are not for this tool
-/// and are never read here. They are drawn on the panel where somebody decides
-/// whether this call may run, and they arrive with the call because the thread
-/// holding the terminal has no provider to ask when the panel opens. Neither is
-/// required: a call that says nothing about itself gets the panel it would have
-/// got before either existed. [`crate::account`] is what reads them.
-const SCHEMA: &str = r#"{
-  "description": "Writes a file in the workspace, replacing it if it is already there. Creates missing parent directories on Unix; on Windows the parent directory must already exist.",
-  "type": "object",
-  "properties": {
-    "path": {
-      "type": "string",
-      "description": "The file to write, relative to the workspace root."
-    },
-    "content": {
-      "type": "string",
-      "description": "The complete new contents of the file."
-    },
-    "description": {
-      "type": "string",
-      "description": "One short line saying what this call is for, shown under the path to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
-    },
-    "explanation": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "What the file is becoming, why you want it, and what it costs if it is wrong. One string per paragraph, opened with a key by the same person, so write it for them rather than for yourself and do not restate the path: it is already on screen above this. Where a file is being replaced, account for what is in it now."
+/// The account fields declared last are not for this tool and are never read
+/// here. They are drawn on the panel where somebody decides whether this call
+/// may run, and they arrive with the call because the thread holding the
+/// terminal has no provider to ask when the panel opens. Neither is required:
+/// a call that says nothing about itself gets the panel it would have got
+/// before either existed. [`crate::account`] is what reads them.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    let mut fields = vec![
+        Field {
+            name: PATH,
+            about: "The file to write, relative to the workspace root.".into(),
+            needed: true,
+            shape: Shape::Text,
+        },
+        Field {
+            name: CONTENT,
+            about: "The complete new contents of the file.".into(),
+            needed: true,
+            shape: Shape::Text,
+        },
+    ];
+    fields.extend(crate::account::fields(
+        "path",
+        "What the file is becoming",
+        "Where a file is being replaced, account for what is in it now.",
+    ));
+    Schema {
+        about: "Writes a file in the workspace, replacing it if it is already there. Creates \
+                missing parent directories on Unix; on Windows the parent directory must already \
+                exist."
+            .into(),
+        fields,
     }
-  },
-  "required": ["path", "content"]
-}"#;
+    .text()
+});
 
 /// Writes a file inside the workspace.
 #[derive(Debug)]
@@ -82,17 +94,17 @@ impl Tool for Write {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
-            target: target::creatable(&self.workspace, NAME, args, "path"),
+            target: target::creatable(&self.workspace, NAME, args, PATH),
         }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "path")
+        summary::field(NAME, args, PATH)
     }
 
     fn remember(&self, args: &ToolArgs) -> Option<Remembered> {
@@ -101,8 +113,8 @@ impl Tool for Write {
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let requested = args.text("path")?;
-        let content = args.exact("content")?;
+        let requested = args.text(PATH)?;
+        let content = args.exact(CONTENT)?;
 
         // The parent has to exist before the path can be contained, because
         // containment is decided on a resolved path and only a directory that

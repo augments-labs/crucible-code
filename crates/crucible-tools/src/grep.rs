@@ -17,7 +17,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io;
 use std::str;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use crucible_core::{
     Approved, Cancel, Sensitivity, Summary, Tool, ToolArgs, ToolError, ToolOutput, Watch,
@@ -30,11 +30,37 @@ use grep_searcher::{
 use ignore::WalkState;
 use ignore::overrides::{Override, OverrideBuilder};
 
+use crate::bound::OUTPUT;
+use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "grep";
+
+/// What to look for.
+const PATTERN: &str = "pattern";
+
+/// Where to look.
+const PATH: &str = "path";
+
+/// Which files to look in.
+const GLOB: &str = "glob";
+
+/// Whether case matters.
+const IGNORE_CASE: &str = "ignore_case";
+
+/// Whether the pattern is exact text.
+const FIXED: &str = "fixed";
+
+/// Which shape of answer to give.
+const MODE: &str = "mode";
+
+/// How many lines to show around each match.
+const CONTEXT: &str = "context";
+
+/// How many results to give.
+const LIMIT: &str = "limit";
 
 /// How many results one call answers with when it does not say — matching
 /// lines, or matching files where that is what was asked for.
@@ -102,49 +128,95 @@ const NAMED: usize = 5;
 const MAX_LINE: usize = 256 * 1024;
 
 /// The root `description` is the tool's own; everything below it describes the
-/// arguments.
-const SCHEMA: &str = r#"{
-  "description": "Searches the contents of files in the workspace for a regular expression, or for exact text with fixed. Skips anything gitignored.",
-  "type": "object",
-  "properties": {
-    "pattern": {
-      "type": "string",
-      "description": "The regular expression to search for, or the exact text to find if fixed is true."
-    },
-    "path": {
-      "type": "string",
-      "description": "A file or directory to search, relative to the workspace root. Defaults to the whole workspace."
-    },
-    "glob": {
-      "type": "string",
-      "description": "Only search files whose path matches this glob, for example **/*.rs."
-    },
-    "ignore_case": {
-      "type": "boolean",
-      "description": "Match without regard to case. Defaults to false."
-    },
-    "fixed": {
-      "type": "boolean",
-      "description": "Read pattern as the exact text to find rather than as a regular expression, so characters like . ( [ * ? and | stand for themselves. Use this for anything copied out of a file. Defaults to false."
-    },
-    "mode": {
-      "type": "string",
-      "enum": ["content", "files"],
-      "description": "What to answer with: content for the matching lines themselves, files for the name of every file holding one. Defaults to content."
-    },
-    "context": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "How many lines to return either side of each match, the way grep -C does. Context lines are marked with dashes instead of colons and do not count towards limit. Defaults to 0, and never more than 20 however large a number is sent. Only content mode has lines to surround, so files mode ignores it."
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "How many results to return, counting matching lines in content mode and matching files in files mode. Defaults to 200, and never more than 1000 however large a number is sent. The answer is cut at 30000 bytes as well, whichever comes first."
+/// arguments. Every ceiling is spelled by the constant the code holds it
+/// with, so the sentence the model reads cannot drift from the bound the call
+/// meets.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Searches the contents of files in the workspace for a regular expression, or for \
+                exact text with fixed. Skips anything gitignored."
+            .into(),
+        fields: vec![
+            Field {
+                name: PATTERN,
+                about: "The regular expression to search for, or the exact text to find if fixed \
+                        is true."
+                    .into(),
+                needed: true,
+                shape: Shape::Text,
+            },
+            Field {
+                name: PATH,
+                about: "A file or directory to search, relative to the workspace root. Defaults \
+                        to the whole workspace."
+                    .into(),
+                needed: false,
+                shape: Shape::Text,
+            },
+            Field {
+                name: GLOB,
+                about: "Only search files whose path matches this glob, for example **/*.rs."
+                    .into(),
+                needed: false,
+                shape: Shape::Text,
+            },
+            Field {
+                name: IGNORE_CASE,
+                about: "Match without regard to case. Defaults to false.".into(),
+                needed: false,
+                shape: Shape::Flag,
+            },
+            Field {
+                name: FIXED,
+                about: "Read pattern as the exact text to find rather than as a regular \
+                        expression, so characters like . ( [ * ? and | stand for themselves. Use \
+                        this for anything copied out of a file. Defaults to false."
+                    .into(),
+                needed: false,
+                shape: Shape::Flag,
+            },
+            Field {
+                name: MODE,
+                about: format!(
+                    "What to answer with: {CONTENT} for the matching lines themselves, {FILES} \
+                     for the name of every file holding one. Defaults to {CONTENT}."
+                ),
+                needed: false,
+                shape: Shape::Choice(&[CONTENT, FILES]),
+            },
+            Field {
+                name: CONTEXT,
+                about: format!(
+                    "How many lines to return either side of each match, the way grep -C does. \
+                     Context lines are marked with dashes instead of colons and do not count \
+                     towards limit. Defaults to 0, and never more than {REACH} however large a \
+                     number is sent. Only {CONTENT} mode has lines to surround, so {FILES} mode \
+                     ignores it."
+                ),
+                needed: false,
+                shape: Shape::Count(Whole {
+                    least: 0,
+                    most: Some(REACH),
+                }),
+            },
+            Field {
+                name: LIMIT,
+                about: format!(
+                    "How many results to return, counting matching lines in {CONTENT} mode and \
+                     matching files in {FILES} mode. Defaults to {MATCHES}, and never more than \
+                     {CEILING} however large a number is sent. The answer is cut at {OUTPUT} \
+                     bytes as well, whichever comes first."
+                ),
+                needed: false,
+                shape: Shape::Count(Whole {
+                    least: 1,
+                    most: Some(CEILING),
+                }),
+            },
+        ],
     }
-  },
-  "required": ["pattern"]
-}"#;
+    .text()
+});
 
 /// Searches file contents inside the workspace.
 #[derive(Debug)]
@@ -620,27 +692,27 @@ impl Tool for Grep {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
-            target: target::searched(&self.workspace, NAME, args, "path"),
+            target: target::searched(&self.workspace, NAME, args, PATH),
         }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "pattern")
+        summary::field(NAME, args, PATTERN)
     }
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = crate::args::Args::parse(NAME, approved.args())?;
-        let pattern = args.text("pattern")?;
-        let limit = args.count("limit", MATCHES)?.min(CEILING);
+        let pattern = args.text(PATTERN)?;
+        let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
 
         let matcher = RegexMatcherBuilder::new()
-            .case_insensitive(args.flag("ignore_case", false)?)
-            .fixed_strings(args.flag("fixed", false)?)
+            .case_insensitive(args.flag(IGNORE_CASE, false)?)
+            .fixed_strings(args.flag(FIXED, false)?)
             .build(pattern);
         let Ok(matcher) = matcher else {
             return Ok(ToolOutput::failed(format!(
@@ -648,20 +720,20 @@ impl Tool for Grep {
             )));
         };
 
-        let requested = args.optional_text("path")?.unwrap_or(".");
+        let requested = args.optional_text(PATH)?.unwrap_or(".");
         let from = match self.workspace.existing(requested) {
             Ok(path) => path,
             Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
         };
 
-        let Ok(only) = self.only(args.optional_text("glob")?) else {
+        let Ok(only) = self.only(args.optional_text(GLOB)?) else {
             return Ok(ToolOutput::failed(format!(
                 "{} is not a valid glob",
-                args.optional_text("glob")?.unwrap_or_default()
+                args.optional_text(GLOB)?.unwrap_or_default()
             )));
         };
 
-        let mode = match args.choice("mode", CONTENT, &[CONTENT, FILES])? {
+        let mode = match args.choice(MODE, CONTENT, &[CONTENT, FILES])? {
             FILES => Mode::Files,
             _ => Mode::Content,
         };
@@ -670,7 +742,7 @@ impl Tool for Grep {
             matcher,
             only,
             mode,
-            context: args.whole("context", 0)?.min(REACH),
+            context: args.whole(CONTEXT, 0)?.min(REACH),
             limit,
         };
         let found = self.hunt(&from, query, &approved);

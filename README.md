@@ -37,6 +37,11 @@ and the release procedure blocks on them:
 | Peak RSS after a 20-turn session | ≤ 35 MB |
 | Worst paired median, `grep` tool / `rg` binary | ≤ 1.25× |
 | Render commits under token burst | ≥ 30/s |
+| Turn-band redraws while a command prints | ≥ 30/s |
+
+Each budget is owned by a probe in `scripts/bench.sh` that carries its own
+limit and fails when it is over, so this table is a summary and the script is
+the standard.
 
 The grep probe pairs each tool run with `rg` over representative workloads. Its
 worst paired median owns the budget; p95 and dispersion are diagnostic evidence.

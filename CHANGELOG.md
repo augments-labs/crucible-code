@@ -2,9 +2,19 @@
 
 Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version
+is 0.x, configuration files, session files and the command-line surface may
+change in any release with no deprecation period.
 
 ## [Unreleased]
+
+### Changed
+
+**Tool schemas are generated from the bounds the code holds.** Every tool now
+declares its arguments as one value that both renders the schema and names the
+fields the parser reads, so a ceiling the code enforces and the sentence
+describing it cannot drift apart. The schemas also state their numeric bounds
+as `minimum` and `maximum` rather than prose alone.
 
 ## [0.22.0] - 2026-08-24
 
