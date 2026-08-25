@@ -174,6 +174,108 @@ impl std::io::Write for Filling {
 }
 
 #[test]
+fn a_write_that_left_nothing_leaves_no_scar() {
+    // The disk refused the line before any of it landed, so the file is
+    // exactly as it was. The next line starts clean: a newline written to end
+    // a line that never began would put an empty line in the log for no
+    // damage at all.
+    let written = Written::default();
+    let session = Session::writing(
+        PathBuf::from("refused.jsonl"),
+        Filling {
+            written: Arc::clone(&written),
+            writes: 0,
+            // The first write of the first line, before a byte of it landed.
+            fails_at: 1,
+        },
+    );
+
+    session.append(&said("the line the disk refused"));
+    session.append(&said("the one after it"));
+    assert!(session.finish().is_some(), "the failure is still reported");
+
+    let log = String::from_utf8(written.lock().expect("the writer is gone").clone())
+        .expect("a log of text");
+    let lines: Vec<&str> = log.lines().collect();
+
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(
+        lines
+            .first()
+            .is_some_and(|line| wire::message(line).is_some()),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_fragment_nothing_can_finish_ends_the_log() {
+    // The disk took part of a line and then filled. No newline can mend that:
+    // ending the fragment makes a line that is not a message in the middle of
+    // the log, and replay refuses everything from there on. So nothing more is
+    // written, the file ends at the fragment, and replay reads it as what it
+    // is — a log torn at the tail, whole up to its last line.
+    let written = Written::default();
+    let session = Session::writing(
+        PathBuf::from("fragmented.jsonl"),
+        Fragmenting {
+            written: Arc::clone(&written),
+            writes: 0,
+            takes: 5,
+        },
+    );
+
+    session.append(&said("the line the disk tore"));
+    session.append(&said("the one after it"));
+    assert!(session.finish().is_some(), "the failure is still reported");
+
+    let log = written.lock().expect("the writer is gone").clone();
+
+    assert_eq!(log.len(), 5, "{}", String::from_utf8_lossy(&log));
+}
+
+/// A log that takes part of one write, fails the next, and then works again —
+/// a disk that filled in the middle of a line and was freed while the session
+/// went on.
+struct Fragmenting {
+    written: Written,
+    writes: usize,
+    /// How many bytes of the first write are taken before the disk fills.
+    takes: usize,
+}
+
+impl std::io::Write for Fragmenting {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.writes += 1;
+
+        match self.writes {
+            1 => {
+                let taken = self.takes.min(bytes.len());
+                self.written
+                    .lock()
+                    .expect("the test is holding it")
+                    .extend_from_slice(bytes.get(..taken).unwrap_or(bytes));
+                Ok(taken)
+            }
+            2 => Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "no space left on device",
+            )),
+            _ => {
+                self.written
+                    .lock()
+                    .expect("the test is holding it")
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
 fn every_message_reaches_the_file_in_the_order_it_happened() {
     let sample = Sample::new("session-order");
 
