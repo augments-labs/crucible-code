@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+**A failed write cannot tear the session log in the middle.** A line cut short
+by a full disk used to be followed by more lines, leaving a fragment replay
+refuses partway through the log; the writer now finishes a line only its
+newline was missing and writes nothing after a mid-line fragment, so a damaged
+log is whole up to its tail and `--continue` carries every turn before the
+cut.
+
 ## [0.22.1] - 2026-08-25
 
 ### Changed

@@ -23,29 +23,79 @@ pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
 /// not waiting for an answer: stopping here would fill the queue and block the
 /// turn instead of losing a log nobody can write anyway.
 ///
-/// Going on is what the newline is for. A line reaches the file as its bytes
-/// and then the newline that ends it, so a write that fails can stop between
-/// the two and leave a line with nothing after it — and the next line, appended
-/// straight onto that, makes one line that is neither message in the middle of
-/// the log. Starting the line after a failure with a newline of its own is what
-/// keeps the damage to the line that took it. Nothing was recorded where an
-/// empty line lands, which is why the replay reads past one.
+/// Going on is why every write counts its bytes: what a failure leaves in the
+/// file decides what may follow it, and there are three answers. A write that
+/// left nothing leaves the file exactly as it was, and the next line starts
+/// clean. A line whose bytes all landed and whose newline did not is ended
+/// with that newline before the next line starts, which completes the record
+/// it cut short. And a line torn in the middle is the one thing no byte can
+/// mend — a newline would make a line that is not a message in the middle of
+/// the log, and the replay refuses everything from there on — so from a
+/// fragment onward nothing more is written: the file ends at the fragment,
+/// which the replay reads as a log torn at the tail, whole up to its last
+/// line.
 pub(super) fn write<W: io::Write>(mut sink: W, lines: &Receiver<Box<str>>, trouble: &Trouble) {
+    // A line that landed whole and is still owed the newline that ends it.
     let mut torn = false;
+    // A fragment landed mid-line, and the file must end where it ends.
+    let mut dead = false;
 
     for line in lines {
-        let ended = if torn { "\n" } else { "" };
-
-        let Err(problem) = writeln!(sink, "{ended}{line}") else {
-            torn = false;
+        if dead {
             continue;
-        };
-
-        torn = true;
-
-        if let Ok(mut held) = trouble.lock() {
-            held.get_or_insert_with(|| problem.to_string().into());
         }
+
+        if torn {
+            if let (_, Some(problem)) = append(&mut sink, b"\n") {
+                record(trouble, &problem);
+                continue;
+            }
+            torn = false;
+        }
+
+        match append(&mut sink, line.as_bytes()) {
+            (_, None) => {
+                if let (_, Some(problem)) = append(&mut sink, b"\n") {
+                    torn = true;
+                    record(trouble, &problem);
+                }
+            }
+            (0, Some(problem)) => record(trouble, &problem),
+            (_, Some(problem)) => {
+                dead = true;
+                record(trouble, &problem);
+            }
+        }
+    }
+}
+
+/// Writes all of `bytes`, saying how many landed beside any failure.
+///
+/// [`io::Write::write_all`] with the count kept, because the count is the
+/// whole point: an error alone cannot say whether the file is untouched, torn
+/// between a line and its newline, or torn in the middle of one, and those are
+/// three different recoveries. A failed call is guaranteed to have written
+/// nothing, so the count is exact.
+fn append<W: io::Write>(sink: &mut W, bytes: &[u8]) -> (usize, Option<io::Error>) {
+    let mut written = 0;
+
+    while let Some(rest) = bytes.get(written..).filter(|rest| !rest.is_empty()) {
+        match sink.write(rest) {
+            Ok(0) => return (written, Some(io::ErrorKind::WriteZero.into())),
+            Ok(landed) => written += landed,
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
+            Err(problem) => return (written, Some(problem)),
+        }
+    }
+
+    (written, None)
+}
+
+/// Keeps the first failure for the main thread to find; later ones tell it
+/// nothing it can act on.
+fn record(trouble: &Trouble, problem: &io::Error) {
+    if let Ok(mut held) = trouble.lock() {
+        held.get_or_insert_with(|| problem.to_string().into());
     }
 }
 
