@@ -2,7 +2,9 @@
 
 Notable changes to crucible. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version
+is 0.x, configuration files, session files and the command-line surface may
+change in any release with no deprecation period.
 
 ## [Unreleased]
 

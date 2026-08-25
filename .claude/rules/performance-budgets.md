@@ -8,8 +8,10 @@ paths:
 # Performance is the feature
 
 First frame ≤20 ms, first input ≤60 ms, peak RSS ≤35 MB after a 20-turn session,
-grep's worst paired median ≤1.25× `rg` with p95 and dispersion as evidence, and
-≥30 rendered frames/s under burst.
+grep's worst paired median ≤1.25× `rg` with p95 and dispersion as evidence, ≥30
+rendered frames/s under burst, and ≥30 turn-band redraws/s while a command
+prints. Each is owned by a probe in `scripts/bench.sh` that carries its own
+limit, and the probe is the standard where this summary and the script differ.
 
 No blocking I/O on the startup path or the render path. The transcript is held
 whole and is what that RSS figure bounds; nothing *else* may grow with it, and a

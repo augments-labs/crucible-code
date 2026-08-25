@@ -62,12 +62,15 @@ Dependencies point down only, and cargo enforces it:
 
 ```
 core       -> (nothing)
+privacy    -> (nothing)
+tui        -> (nothing)
 config     -> core
 provider   -> core
 tools      -> core
-runner     -> core
-tui        -> core
-crucible-code -> all six
+auth       -> core, privacy
+session    -> core, privacy
+runner     -> core, session
+crucible-code -> all of them
 ```
 
 Adding a crate to `crucible-core` puts it in every other crate's build. Push it
@@ -84,7 +87,7 @@ belongs to `crucible-provider`, not to `core`.
 - **It must not print.** `print_stdout` and `print_stderr` are denied; a crate
   that writes to the terminal itself will corrupt the transcript.
 - **Weight is a feature decision.** Compile time, binary size and startup cost
-  all count against the budgets in `CONTRIBUTING.md`.
+  all count against the budgets in `scripts/bench.sh`.
 - **Its licence has to be on the list, and so does everything it drags in.** The
   binary is distributed under MIT, and that promise is only as true as what it
   statically links. `deny.toml` names the permissive licences this tree uses; a

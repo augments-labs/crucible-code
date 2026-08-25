@@ -109,7 +109,7 @@ INSTA_UPDATE=always cargo test --test whole_screen    # without it
 
 ## A pull request has one reason to change
 
-There is no ceiling on how many lines that comes to. What decides whether a
+No line ceiling is enforced on it for now. What decides whether a
 change is one pull request or several is whether it takes one summary to say
 what it does — a change that needs two is two, however short each of them turns
 out to be, and a module whose parts do not compile apart is one however long it
@@ -149,21 +149,16 @@ perf(tui): reuse the render buffer between frames
 Scope is the crate or area. The body explains *why*, since the diff already
 shows what — a short paragraph, not an essay. Reasoning that needs more than
 that belongs in a comment beside the code it explains, where the person who
-needs it is looking. The changelog is shorter still: a bold lead and a sentence
-or two, written for someone deciding whether to upgrade.
+needs it is looking. The changelog is shorter still: a bold lead and at most
+three sentences, written for someone deciding whether to upgrade.
 
 ## Performance is a reviewed property
 
 This project exists because the alternatives are slow and heavy, so a change
-that regresses the budget is a defect regardless of what it adds:
-
-| Measure | Budget |
-| --- | --- |
-| Time to first frame | ≤ 20 ms p95 |
-| Time to first input | ≤ 60 ms p95 |
-| Peak RSS after a 20-turn session | ≤ 35 MB |
-| Worst paired median, `grep` tool / `rg` binary | ≤ 1.25× |
-| Render commits under token burst | ≥ 30/s |
+that regresses a budget is a defect regardless of what it adds. The budgets
+live in `scripts/bench.sh` — one probe per budget, each carrying its own limit
+and failing when it is over, so the number and the measurement cannot drift
+apart — and `README.md` carries the table.
 
 The grep probe pairs each tool run with `rg` over representative workloads. Its
 worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
