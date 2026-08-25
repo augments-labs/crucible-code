@@ -82,6 +82,7 @@ mod program;
 mod read;
 #[cfg(test)]
 mod sample;
+mod schema;
 mod summary;
 mod target;
 mod tree;

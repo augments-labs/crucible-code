@@ -19,83 +19,115 @@ use crucible_core::{
     Watch, Workspace,
 };
 
+use std::sync::LazyLock;
+
 use crate::args::Args;
 use crate::atomic;
 use crate::changed;
+use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "edit";
 
+/// The file to change.
+const PATH: &str = "path";
+
+/// The exact text to replace.
+const FIND: &str = "find";
+
+/// What to put in its place.
+const REPLACE: &str = "replace";
+
+/// Whether every occurrence is replaced.
+const ALL: &str = "all";
+
+/// Several changes in one call.
+const EDITS: &str = "edits";
+
 /// The most source or resulting text one call holds for a whole-file edit.
 const FILE_LIMIT: usize = 1_000_000;
+
+/// One change, described once — the same three fields stand at the top level
+/// for a single change and inside each element of `edits` for several.
+fn change(within: &str) -> Vec<Field> {
+    vec![
+        Field {
+            name: FIND,
+            about: format!(
+                "The exact text to replace, copied from the file including its indentation.\
+                 {within}"
+            ),
+            needed: true,
+            shape: Shape::Text,
+        },
+        Field {
+            name: REPLACE,
+            about: "The text to put in its place. Empty to delete the text found.".into(),
+            needed: true,
+            shape: Shape::Text,
+        },
+        Field {
+            name: ALL,
+            about: "Replace every occurrence instead of requiring exactly one. Defaults to false."
+                .into(),
+            needed: false,
+            shape: Shape::Flag,
+        },
+    ]
+}
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// The `description` and `explanation` under `properties` are not for this tool
-/// and are never read here. They are drawn on the panel where somebody decides
-/// whether this call may run, and they arrive with the call because the thread
-/// holding the terminal has no provider to ask when the panel opens. Neither is
-/// required: a call that says nothing about itself gets the panel it would have
-/// got before either existed. [`crate::account`] is what reads them.
-const SCHEMA: &str = r#"{
-  "description": "Replaces exact text in a file in the workspace, either once or several times in one call. The text to find must appear exactly once unless all is true. Source and result must each be no larger than 1000000 bytes.",
-  "type": "object",
-  "properties": {
-    "path": {
-      "type": "string",
-      "description": "The file to change, relative to the workspace root."
-    },
-    "find": {
-      "type": "string",
-      "description": "The exact text to replace, copied from the file including its indentation. Send this and replace for a single change, or edits for several."
-    },
-    "replace": {
-      "type": "string",
-      "description": "The text to put in its place. Empty to delete the text found."
-    },
-    "all": {
-      "type": "boolean",
-      "description": "Replace every occurrence instead of requiring exactly one. Defaults to false."
-    },
-    "edits": {
-      "type": "array",
-      "description": "Several changes to make to the file in one call, instead of find and replace. They are made in order, each one looking at what the one before it left. If any of them cannot be made, none of them is made and the file is left as it was.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "find": {
-            "type": "string",
-            "description": "The exact text to replace, copied from the file including its indentation."
-          },
-          "replace": {
-            "type": "string",
-            "description": "The text to put in its place. Empty to delete the text found."
-          },
-          "all": {
-            "type": "boolean",
-            "description": "Replace every occurrence instead of requiring exactly one. Defaults to false."
-          }
-        },
-        "required": ["find", "replace"]
-      }
-    },
-    "description": {
-      "type": "string",
-      "description": "One short line saying what this call is for, shown under the path to the person deciding whether to allow it. It is cut to one row rather than folded, so lead with the point and keep it near fifty characters."
-    },
-    "explanation": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "What the change does, why you want it, and what it costs if it is wrong. One string per paragraph, opened with a key by the same person, so write it for them rather than for yourself and do not restate the path: it is already on screen above this. Where the call makes several changes, or replaces every occurrence, account for each place it lands."
+/// The account fields declared last are not for this tool and are never read
+/// here. They are drawn on the panel where somebody decides whether this call
+/// may run, and they arrive with the call because the thread holding the
+/// terminal has no provider to ask when the panel opens. Neither is required:
+/// a call that says nothing about itself gets the panel it would have got
+/// before either existed. [`crate::account`] is what reads them.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    let mut fields = vec![Field {
+        name: PATH,
+        about: "The file to change, relative to the workspace root.".into(),
+        needed: true,
+        shape: Shape::Text,
+    }];
+    let mut single = change(" Send this and replace for a single change, or edits for several.");
+    for one in &mut single {
+        one.needed = false;
     }
-  },
-  "required": ["path"]
-}"#;
+    fields.append(&mut single);
+    fields.push(Field {
+        name: EDITS,
+        about: "Several changes to make to the file in one call, instead of find and replace. \
+                They are made in order, each one looking at what the one before it left. If any \
+                of them cannot be made, none of them is made and the file is left as it was."
+            .into(),
+        needed: false,
+        shape: Shape::List {
+            of: Box::new(Shape::Fields(change(""))),
+            fewest: None,
+            most: None,
+        },
+    });
+    fields.extend(crate::account::fields(
+        "path",
+        "What the change does",
+        "Where the call makes several changes, or replaces every occurrence, account for each \
+         place it lands.",
+    ));
+    Schema {
+        about: format!(
+            "Replaces exact text in a file in the workspace, either once or several times in one \
+             call. The text to find must appear exactly once unless all is true. Source and \
+             result must each be no larger than {FILE_LIMIT} bytes."
+        ),
+        fields,
+    }
+    .text()
+});
 
 /// Replaces exact text in a file inside the workspace.
 #[derive(Debug)]
@@ -118,17 +150,17 @@ impl Tool for Edit {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::MutatesFile {
-            target: target::existing(&self.workspace, NAME, args, "path"),
+            target: target::existing(&self.workspace, NAME, args, PATH),
         }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "path")
+        summary::field(NAME, args, PATH)
     }
 
     fn remember(&self, args: &ToolArgs) -> Option<Remembered> {
@@ -137,8 +169,8 @@ impl Tool for Edit {
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let requested = args.text("path")?;
-        let listed = args.list("edits")?;
+        let requested = args.text(PATH)?;
+        let listed = args.list(EDITS)?;
         let wanted = changes(&args, listed.as_deref())?;
 
         if let Some(at) = wanted
@@ -269,13 +301,13 @@ fn changes<'a>(
 ) -> Result<Vec<Replacement<'a>>, ToolError> {
     let Some(each) = listed else {
         return Ok(vec![Replacement {
-            find: args.text("find")?,
-            replace: args.exact("replace")?,
-            all: args.flag("all", false)?,
+            find: args.text(FIND)?,
+            replace: args.exact(REPLACE)?,
+            all: args.flag(ALL, false)?,
         }]);
     };
 
-    if args.holds("find") || args.holds("replace") || args.holds("all") {
+    if args.holds(FIND) || args.holds(REPLACE) || args.holds(ALL) {
         return Err(args.wrong("send find and replace, or edits, but not both"));
     }
     if each.is_empty() {
@@ -285,9 +317,9 @@ fn changes<'a>(
     each.iter()
         .map(|one| {
             Ok(Replacement {
-                find: one.text("find")?,
-                replace: one.exact("replace")?,
-                all: one.flag("all", false)?,
+                find: one.text(FIND)?,
+                replace: one.exact(REPLACE)?,
+                all: one.flag(ALL, false)?,
             })
         })
         .collect()

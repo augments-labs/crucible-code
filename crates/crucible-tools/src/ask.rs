@@ -29,7 +29,7 @@
 //! model rewrites; the turn is worth more than the correction costs.
 
 use std::fmt::Write as _;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crucible_core::{
     Answer, Answered, Approved, Put, Question, Sensitivity, Summary, Target, Tool, ToolArgs,
@@ -37,6 +37,7 @@ use crucible_core::{
 };
 
 use crate::args::Args;
+use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 
 #[cfg(test)]
@@ -94,59 +95,117 @@ const SHORT: usize = 200;
 const LONG: usize = 500;
 
 /// The root `description` is the tool's own; everything below it describes the
-/// arguments.
-const SCHEMA: &str = r#"{
-  "description": "Asks the person at the keyboard to choose, and waits for their answer. Worth using when the work forks on something only they can settle — which of several shapes to build, which of several directions to take — and guessing would put the whole turn's output on the wrong side of the fork. Not worth using for anything you could find out by reading the workspace, and not worth using to confirm what they already told you. Ask once, with every question the fork needs, rather than a question at a time.",
-  "type": "object",
-  "properties": {
-    "questions": {
-      "type": "array",
-      "description": "The questions to put, in the order they should be answered. At most 4, and no two the same: past that this is a form rather than a question, and belongs in your reply instead.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "heading": {
-            "type": "string",
-            "description": "Two or three words naming this question, shown in a row of all of them so the reader can see where they are. At most 24 bytes: the row holds every heading at once, and a longer one costs the whole row."
-          },
-          "question": {
-            "type": "string",
-            "description": "The question itself, written to be answered rather than read. At most 500 bytes."
-          },
-          "several": {
-            "type": "boolean",
-            "description": "Whether more than one answer may be chosen. Leave it out for a question with one answer."
-          },
-          "answers": {
-            "type": "array",
-            "description": "The answers to offer, best first. At least 2 and at most 8, and no two the same. One answer is a statement rather than a question — say that in your reply instead. Two more are always added for you — one to write an answer you did not offer, and one to leave the whole thing and reply in the prompt — so do not offer either yourself.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "answer": {
-                  "type": "string",
-                  "description": "What this answer is called, in a few words. At most 200 bytes."
-                },
-                "says": {
-                  "type": "string",
-                  "description": "One line saying what choosing it means, for an answer whose name does not say it. Leave it out where the name is enough."
-                },
-                "shows": {
-                  "type": "array",
-                  "description": "What this answer would look like, row by row, for a question whose answer is a shape rather than a word — a layout, a format, a line of output. Drawn as given, under the answer, so write the rows as the reader would meet them. At most 10 rows of at most 200 bytes.",
-                  "items": { "type": "string" }
-                }
-              },
-              "required": ["answer"]
-            }
-          }
-        },
-        "required": ["heading", "question", "answers"]
-      }
+/// arguments. Every bound is spelled by the constant the code refuses with,
+/// so the sentence the model reads cannot drift from the refusal it meets.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Asks the person at the keyboard to choose, and waits for their answer. Worth \
+                using when the work forks on something only they can settle — which of several \
+                shapes to build, which of several directions to take — and guessing would put \
+                the whole turn's output on the wrong side of the fork. Not worth using for \
+                anything you could find out by reading the workspace, and not worth using to \
+                confirm what they already told you. Ask once, with every question the fork \
+                needs, rather than a question at a time."
+            .into(),
+        fields: vec![Field {
+            name: QUESTIONS,
+            about: format!(
+                "The questions to put, in the order they should be answered. At most \
+                 {MOST_QUESTIONS}, and no two the same: past that this is a form rather than a \
+                 question, and belongs in your reply instead."
+            ),
+            needed: true,
+            shape: Shape::List {
+                of: Box::new(Shape::Fields(vec![
+                    Field {
+                        name: HEADING,
+                        about: format!(
+                            "Two or three words naming this question, shown in a row of all of \
+                             them so the reader can see where they are. At most {HEADING_SHORT} \
+                             bytes: the row holds every heading at once, and a longer one costs \
+                             the whole row."
+                        ),
+                        needed: true,
+                        shape: Shape::Text,
+                    },
+                    Field {
+                        name: QUESTION,
+                        about: format!(
+                            "The question itself, written to be answered rather than read. At \
+                             most {LONG} bytes."
+                        ),
+                        needed: true,
+                        shape: Shape::Text,
+                    },
+                    Field {
+                        name: SEVERAL,
+                        about: "Whether more than one answer may be chosen. Leave it out for a \
+                                question with one answer."
+                            .into(),
+                        needed: false,
+                        shape: Shape::Flag,
+                    },
+                    Field {
+                        name: ANSWERS,
+                        about: format!(
+                            "The answers to offer, best first. At least {FEWEST_ANSWERS} and at \
+                             most {MOST_ANSWERS}, and no two the same. One answer is a statement \
+                             rather than a question — say that in your reply instead. Two more \
+                             are always added for you — one to write an answer you did not \
+                             offer, and one to leave the whole thing and reply in the prompt — \
+                             so do not offer either yourself."
+                        ),
+                        needed: true,
+                        shape: Shape::List {
+                            of: Box::new(Shape::Fields(vec![
+                                Field {
+                                    name: ANSWER,
+                                    about: format!(
+                                        "What this answer is called, in a few words. At most \
+                                         {SHORT} bytes."
+                                    ),
+                                    needed: true,
+                                    shape: Shape::Text,
+                                },
+                                Field {
+                                    name: SAYS,
+                                    about: "One line saying what choosing it means, for an \
+                                            answer whose name does not say it. Leave it out \
+                                            where the name is enough."
+                                        .into(),
+                                    needed: false,
+                                    shape: Shape::Text,
+                                },
+                                Field {
+                                    name: SHOWS,
+                                    about: format!(
+                                        "What this answer would look like, row by row, for a \
+                                         question whose answer is a shape rather than a word — \
+                                         a layout, a format, a line of output. Drawn as given, \
+                                         under the answer, so write the rows as the reader \
+                                         would meet them. At most {MOST_SHOWS} rows of at most \
+                                         {SHORT} bytes."
+                                    ),
+                                    needed: false,
+                                    shape: Shape::List {
+                                        of: Box::new(Shape::Text),
+                                        fewest: None,
+                                        most: Some(MOST_SHOWS),
+                                    },
+                                },
+                            ])),
+                            fewest: Some(FEWEST_ANSWERS),
+                            most: Some(MOST_ANSWERS),
+                        },
+                    },
+                ])),
+                fewest: Some(1),
+                most: Some(MOST_QUESTIONS),
+            },
+        }],
     }
-  },
-  "required": ["questions"]
-}"#;
+    .text()
+});
 
 /// Puts questions to whoever is at the keyboard.
 pub struct AskUser {
@@ -176,7 +235,7 @@ impl Tool for AskUser {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     /// Reads nothing and reaches nothing. It puts words on the screen and waits

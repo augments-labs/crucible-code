@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, ErrorKind, Read as _};
+use std::sync::LazyLock;
 
 use crucible_core::{
     Approved, Attachment, Cancel, Kind, Modality, Remembered, Sensitivity, Summary, Tool, ToolArgs,
@@ -12,11 +13,21 @@ use sha2::{Digest as _, Sha256};
 use crate::args::Args;
 use crate::bound::OUTPUT;
 use crate::ledger::Ledger;
+use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 use crate::target;
 
 /// The name the model calls.
 const NAME: &str = "read";
+
+/// The file to read. The one argument a call must send.
+const PATH: &str = "path";
+
+/// The first line to return.
+const OFFSET: &str = "offset";
+
+/// How many lines to return.
+const LIMIT: &str = "limit";
 
 /// How many lines one call answers with when it does not say.
 const LINES: usize = 2_000;
@@ -484,27 +495,51 @@ fn command(program: &str, arguments: &str, requested: &str) -> String {
 /// What the tool will not do is stated here rather than left to be discovered,
 /// which is the same reason every ceiling below is written beside the argument
 /// that reaches it: a bound met is one wasted call, and a bound read is none.
-const SCHEMA: &str = r#"{
-  "description": "Reads a text file from the workspace and returns it with line numbers. A picture comes back attached, to be looked at rather than read. A Word document, spreadsheet, slide deck, e-book, PDF or video must be turned into text or pictures by a command first, and the answer says which one where the file's name gives it away.",
-  "type": "object",
-  "properties": {
-    "path": {
-      "type": "string",
-      "description": "The file to read, relative to the workspace root."
-    },
-    "offset": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "The first line to return, counting from 1. Defaults to the start of the file."
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "How many lines to return. Defaults to 2000, and never more than 10000 however large a number is sent. The answer is also cut at 30000 bytes, whichever comes first."
+/// The ceilings are spelled by the constants the code holds them with, so the
+/// sentence the model reads cannot drift from the bound the call meets.
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    Schema {
+        about: "Reads a text file from the workspace and returns it with line numbers. A picture \
+                comes back attached, to be looked at rather than read. A Word document, \
+                spreadsheet, slide deck, e-book, PDF or video must be turned into text or \
+                pictures by a command first, and the answer says which one where the file's name \
+                gives it away."
+            .into(),
+        fields: vec![
+            Field {
+                name: PATH,
+                about: "The file to read, relative to the workspace root.".into(),
+                needed: true,
+                shape: Shape::Text,
+            },
+            Field {
+                name: OFFSET,
+                about: "The first line to return, counting from 1. Defaults to the start of the \
+                        file."
+                    .into(),
+                needed: false,
+                shape: Shape::Count(Whole {
+                    least: 1,
+                    most: None,
+                }),
+            },
+            Field {
+                name: LIMIT,
+                about: format!(
+                    "How many lines to return. Defaults to {LINES}, and never more than {CEILING} \
+                     however large a number is sent. The answer is also cut at {OUTPUT} bytes, \
+                     whichever comes first."
+                ),
+                needed: false,
+                shape: Shape::Count(Whole {
+                    least: 1,
+                    most: Some(CEILING),
+                }),
+            },
+        ],
     }
-  },
-  "required": ["path"]
-}"#;
+    .text()
+});
 
 /// Reads a file from the workspace.
 #[derive(Debug)]
@@ -674,17 +709,17 @@ impl Tool for Read {
     }
 
     fn schema(&self) -> &'static str {
-        SCHEMA
+        SCHEMA.as_str()
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
-            target: target::existing(&self.workspace, NAME, args, "path"),
+            target: target::existing(&self.workspace, NAME, args, PATH),
         }
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, "path")
+        summary::field(NAME, args, PATH)
     }
 
     fn remember(&self, args: &ToolArgs) -> Option<Remembered> {
@@ -693,9 +728,9 @@ impl Tool for Read {
 
     fn run(&self, approved: Approved, _watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
-        let requested = args.text("path")?;
-        let from = args.count("offset", 1)?;
-        let limit = args.count("limit", LINES)?.min(CEILING);
+        let requested = args.text(PATH)?;
+        let from = args.count(OFFSET, 1)?;
+        let limit = args.count(LIMIT, LINES)?.min(CEILING);
 
         // A path outside the workspace, or one that is not there, is something
         // the model can correct by sending a different path.
@@ -1427,5 +1462,30 @@ mod tests {
 
         assert!(matches!(sensitivity, Sensitivity::ReadOnly { .. }));
         assert_eq!(sensitivity.to_string(), "read one.txt");
+    }
+
+    #[test]
+    fn the_schema_declares_what_the_parser_reads_with_the_bounds_the_code_holds() {
+        let sample = Sample::new("read-schema");
+        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let value: serde_json::Value = serde_json::from_str(tool.schema()).unwrap();
+        let at = |path: &str| value.pointer(path).expect(path);
+
+        assert_eq!(at("/type"), "object");
+        assert_eq!(at("/required"), &serde_json::json!(["path"]));
+        let named: Vec<&String> = at("/properties").as_object().unwrap().keys().collect();
+        assert_eq!(
+            named,
+            ["limit", "offset", "path"].iter().collect::<Vec<_>>()
+        );
+        assert_eq!(at("/properties/offset/minimum"), 1);
+        assert_eq!(at("/properties/limit/minimum"), 1);
+
+        // The default, the ceiling and the byte cut are stated where the model
+        // reads them, spelled by the constants the code holds them with.
+        let told = at("/properties/limit/description").as_str().unwrap();
+        assert!(told.contains(&LINES.to_string()), "{told}");
+        assert!(told.contains(&CEILING.to_string()), "{told}");
+        assert!(told.contains(&OUTPUT.to_string()), "{told}");
     }
 }

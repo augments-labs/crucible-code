@@ -6,6 +6,14 @@ Notable changes to crucible. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+**Tool schemas are generated from the bounds the code holds.** Every tool now
+declares its arguments as one value that both renders the schema and names the
+fields the parser reads, so a ceiling the code enforces and the sentence
+describing it cannot drift apart. The schemas also state their numeric bounds
+as `minimum` and `maximum` rather than prose alone.
+
 ## [0.22.0] - 2026-08-24
 
 ### Changed
