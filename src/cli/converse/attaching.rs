@@ -456,7 +456,13 @@ fn pictured(text: &str) -> Option<PathBuf> {
     let path = if let Some(uri) = line.strip_prefix("file://") {
         // `file://host/path` names another machine's file; only an empty
         // authority — `file:///path` — is this one's.
-        PathBuf::from(decoded(uri.strip_prefix('/').map(|_| uri)?))
+        let mut spelled = decoded(uri.strip_prefix('/').map(|_| uri)?);
+        // On Windows the slash that marked the empty authority stands before
+        // the drive letter — `file:///C:/…` spells `C:/…`.
+        if cfg!(windows) && spelled.as_bytes().get(2) == Some(&b':') {
+            spelled.remove(0);
+        }
+        PathBuf::from(spelled)
     } else if Path::new(line).is_absolute() {
         PathBuf::from(line)
     } else {

@@ -714,7 +714,11 @@ fn a_file_uri_on_the_clipboard_names_the_picture_it_points_at() {
         .expect("the sample base")
         .join("Screen Shot.png");
     fs::write(&outside, PNG).expect("a picture to point at");
-    let uri = format!("file://{}", written(&outside).replace(' ', "%20"));
+    // A file manager spells the path with forward slashes behind an empty
+    // authority, which on Windows puts the URI's own slash before the drive
+    // letter: `file:///C:/…`.
+    let slashed = written(&outside).replace('\\', "/").replace(' ', "%20");
+    let uri = format!("file:///{}", slashed.trim_start_matches('/'));
 
     assert_eq!(pictured(&uri), Some(outside.clone()));
     assert_eq!(
