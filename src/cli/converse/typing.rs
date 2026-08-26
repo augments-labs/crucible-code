@@ -1173,6 +1173,12 @@ pub(super) fn during<T: Terminal>(
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
             None => stand(renderer, editor, footing, says, style)?,
         }
+
+        // After the frame, never before it: Compacted and its successor may
+        // already be waiting in the bounded inbox, but this pass has now offered
+        // the factual 100% state to the renderer. The next ordinary beat removes
+        // only that live row; no worker sleep and no committed scrollback.
+        turning.finished_frame();
     }
 
     Ok(Meanwhile::Nothing)

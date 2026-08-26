@@ -265,6 +265,12 @@ impl Scripted {
             .count()
     }
 
+    /// Every event still waiting, for ordering assertions that need more than
+    /// one event kind.
+    fn events(&self) -> Vec<Event> {
+        self.seen.try_iter().collect()
+    }
+
     /// How much transcript each request carried, in order.
     fn asked(&self) -> Vec<usize> {
         self.sent

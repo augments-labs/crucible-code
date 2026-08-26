@@ -294,6 +294,7 @@ impl Runner {
         if let Some(calibration) = self.session.calibrated() {
             self.load.measured(calibration);
         }
+        self.load.resumed();
     }
 
     /// Puts this runner on a different session, and hands back the one it was

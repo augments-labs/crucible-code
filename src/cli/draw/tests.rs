@@ -317,6 +317,44 @@ fn a_newline_in_a_summary_does_not_become_a_second_line() {
 }
 
 #[test]
+fn a_pretty_structured_result_does_not_use_its_bare_opening_as_the_summary() {
+    let object = ToolOutput::ok("{\n  \"state\": \"done\"\n}");
+    let array = ToolOutput::ok("[\n  {\n    \"state\": \"done\"\n  }\n]");
+    let empty = ToolOutput::ok("{\n}");
+
+    assert!(
+        hung(&object, WIDE, Style::plain()).contains("\"state\": \"done\""),
+        "{}",
+        hung(&object, WIDE, Style::plain())
+    );
+    assert!(
+        hung(&array, WIDE, Style::plain()).contains("\"state\": \"done\""),
+        "{}",
+        hung(&array, WIDE, Style::plain())
+    );
+    assert!(
+        !matches!(summary(empty.text()).trim(), "{" | "}" | "[" | "]"),
+        "{}",
+        hung(&empty, WIDE, Style::plain())
+    );
+
+    // This is presentation only. The complete raw output is still retained for
+    // the expansion key, including both structural lines.
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    let mut kept = Kept::default();
+    returning(&mut renderer, &mut kept, object.text());
+    assert_eq!(kept.newest().next().map(Whole::text), Some(object.text()));
+}
+
+#[test]
+fn a_bracketed_diagnostic_is_not_mistaken_for_a_structural_opening() {
+    assert_eq!(
+        hung(&ToolOutput::failed("[exit status 3]"), WIDE, Style::plain()),
+        "  └ ✗ [exit status 3]"
+    );
+}
+
+#[test]
 fn output_shows_its_first_line_and_says_how_much_more_there_was() {
     // And names the key that gives the rest of it back, in the same breath. A
     // count on its own tells the reader what they are missing without telling

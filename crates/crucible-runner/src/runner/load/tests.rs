@@ -256,6 +256,120 @@ fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording()
 }
 
 #[test]
+fn an_equal_overhead_resume_measurement_stays_exact_and_persistable() {
+    let mut load = Load::default();
+    load.recorded(&results(300));
+    load.requesting(Some(&"i".repeat(500)), &[]);
+    let reading = Calibration {
+        carried: Carried::new(100),
+        spent: Spend::new(10),
+        sent: 806,
+        overhead: 500,
+    };
+
+    load.measured(reading);
+
+    assert_eq!(load.calibrated(), Some(reading));
+}
+
+#[test]
+fn a_fresh_report_cannot_make_an_uncompacted_resumed_window_gain_visible_room() {
+    let mut load = Load::default();
+    load.recorded(&results(2_550_000));
+    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    assert_eq!(load.left(Some(922_000), 36_000), Some(3));
+
+    // The persisted reading is rejected because fixed content changed, then the
+    // first request in this process proves the cautious recount over-counted.
+    load.measured(Calibration {
+        carried: Carried::new(711_628),
+        spent: Spend::new(452),
+        sent: 2_570_482,
+        overhead: 16_431,
+    });
+    load.responding(0);
+    load.carried(Carried::new(720_000));
+
+    assert!(
+        load.tokens() < 800_000,
+        "the fresh provider report was ignored"
+    );
+    assert!(
+        load.calibrated().is_some(),
+        "the display floor prevented fresh accounting from becoming exact"
+    );
+    load.measured(Calibration {
+        carried: Carried::new(900_000),
+        spent: Spend::NONE,
+        sent: 3_000_000,
+        overhead: 20_000,
+    });
+    assert_eq!(
+        load.left(Some(922_000), 36_000),
+        Some(3),
+        "the prompt claimed room was freed without compaction"
+    );
+}
+
+#[test]
+fn a_resume_without_a_persisted_measurement_still_holds_its_starting_reading() {
+    let mut load = Load::default();
+    load.recorded(&results(2_550_000));
+    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    load.resumed();
+    assert_eq!(load.left(Some(922_000), 36_000), Some(3));
+
+    load.responding(0);
+    load.carried(Carried::new(720_000));
+
+    assert_eq!(load.left(Some(922_000), 36_000), Some(3));
+}
+
+#[test]
+fn replacing_context_clears_the_resumed_display_floor() {
+    let mut load = Load::default();
+    load.recorded(&results(2_550_000));
+    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    load.measured(Calibration {
+        carried: Carried::new(711_628),
+        spent: Spend::new(452),
+        sent: 2_570_482,
+        overhead: 16_431,
+    });
+    assert_eq!(load.left(Some(922_000), 36_000), Some(3));
+
+    load.replaced();
+    load.recorded(&results(600_000));
+
+    assert_eq!(load.left(Some(922_000), 36_000), Some(77));
+}
+
+#[test]
+fn a_resume_rejects_a_measurement_that_did_not_include_all_current_overhead() {
+    let mut load = Load::default();
+    load.recorded(&results(300));
+    load.requesting(Some(&"i".repeat(700)), &[]);
+
+    load.measured(Calibration {
+        carried: Carried::new(100),
+        spent: Spend::new(10),
+        sent: 600,
+        overhead: 500,
+    });
+
+    assert_eq!(load.calibrated(), None);
+    assert_eq!(load.tokens(), 336, "the cautious recount was replaced");
+
+    load.responding(0);
+    load.carried(Carried::new(100));
+    assert_eq!(
+        load.tokens(),
+        100,
+        "the rejected resume measurement contaminated fresh accounting"
+    );
+}
+
+#[test]
 fn an_estimate_has_a_conservative_window_percentage() {
     let mut load = Load::default();
     load.recorded(&results(50_000));
