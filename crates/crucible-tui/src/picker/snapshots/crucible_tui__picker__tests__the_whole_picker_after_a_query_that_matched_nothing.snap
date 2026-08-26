@@ -1,0 +1,24 @@
+---
+source: crates/crucible-tui/src/picker/tests.rs
+expression: "picture(&picker.within(100, 20, Glyphs::Unicode), 100)"
+---
+<Quiet>╭</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</><Quiet> Search</>  deploy                                                                                   <Quiet>│</>
+<Quiet>╰</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╯</>
+ <Quiet>Resume a session · 5 of 5 · ~/Projects/Github/augments-labs/crucible-code</>
+
+ <Quiet>no session holds "deploy"</>              <Quiet>│</>  <Quiet>nothing to show</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+
+ <Quiet>↑↓ to walk · ctrl+r to rename · type to search · esc to cancel</>

@@ -37,6 +37,7 @@ use crate::ladder::Ladder;
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
 use crate::panel::{Offered, Panel};
+use crate::picker::{Kept, Picker};
 use crate::plan::{Plan, State, Task};
 use crate::prompt::Prompt;
 use crate::row::Row;
@@ -499,6 +500,67 @@ fn a_shelf_fits_the_window_it_stands_in() {
         ..shelf
     };
     down("a shelf with nothing on it", |columns, room, glyphs| {
+        bare.within(columns, room, glyphs)
+    });
+}
+
+#[test]
+fn a_picker_fits_the_window_it_stands_in() {
+    // The other component that fills its room, so the height half of the sweep
+    // is the one doing the work again. The fixtures are the states its
+    // arithmetic is least safe in — a title and a branch far too long for the
+    // list's share of the split, a preview row that will not break, a rename in
+    // flight, and then nothing at all with a query still standing.
+    const SESSIONS: [Kept<'static>; 3] = [
+        Kept {
+            title: LONG,
+            when: PROSE,
+            branch: LONG,
+        },
+        Kept {
+            title: PROSE,
+            when: LONG,
+            branch: "",
+        },
+        Kept {
+            title: "a",
+            when: "now",
+            branch: LONG,
+        },
+    ];
+    let preview: Vec<Row> = [LONG, PROSE, "", LONG]
+        .iter()
+        .map(|line| Row::new().then(Slot::Plain, *line))
+        .collect();
+
+    let picker = Picker {
+        heading: PROSE,
+        query: PROSE,
+        typed: 12,
+        hint: LONG,
+        sessions: &SESSIONS,
+        marked: 2,
+        renaming: Some(LONG),
+        preview: &preview,
+        preview_meta: PROSE,
+        takes: LONG,
+        nothing: PROSE,
+        noview: LONG,
+        keys: (PROSE, LONG),
+        pointer: Some((6, 3)),
+    };
+    down("a picker", |columns, room, glyphs| {
+        picker.within(columns, room, glyphs)
+    });
+
+    let bare = Picker {
+        sessions: &[],
+        marked: 0,
+        renaming: None,
+        preview: &[],
+        ..picker
+    };
+    down("a picker with nothing on it", |columns, room, glyphs| {
         bare.within(columns, room, glyphs)
     });
 }

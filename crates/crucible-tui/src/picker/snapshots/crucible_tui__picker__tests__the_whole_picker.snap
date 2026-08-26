@@ -1,0 +1,34 @@
+---
+source: crates/crucible-tui/src/picker/tests.rs
+expression: "picture(&picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode), 100)"
+---
+<Quiet>╭</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╮</>
+<Quiet>│</><Quiet> Search</>    <Quiet>a session, or a branch</>                                                                 <Quiet>│</>
+<Quiet>╰</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╯</>
+ <Quiet>Resume a session · 5 of 5 · ~/Projects/Github/augments-labs/crucible-code</>
+
+ <Accent> </> Prompt history with arrow navigation <Quiet>│</> › scripts/check.sh passes — publish the release
+   <Quiet>now · main</>                           <Quiet>│</>
+ <Accent> </> /plugin                              <Quiet>│</> ● Release is live with all artifacts. Running the
+   <Quiet>7 hours ago · fix/background-command</> <Quiet>│</>   after-tag smoke against the published tarball.
+ <Accent> </> /plugin                              <Quiet>│</>
+   <Quiet>8 hours ago · fix/minor-session-disp</> <Quiet>│</> ● Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)
+ <Accent> </> /clear                               <Quiet>│</>   └ all smoke gates passed
+   <Quiet>13 hours ago · main</>                  <Quiet>│</>
+ <Accent>›</> <Strong>Release 0.23.0 smoke gates</>           <Quiet>│</> ● crucible 0.23.0 is published. All seven
+   <Quiet>17 hours ago · main</>                  <Quiet>│</>   platforms built, publish attested and
+                                        <Quiet>│</>   checksummed. ↓ wheel to see more
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</>
+                                        <Quiet>│</> <Quiet>──────────────────────────────────────────────────────────</>
+                                        <Quiet>│</> <Quiet>17 hours ago · 7 messages · main</>
+                                        <Quiet>│</> <Quiet>Enter to resume · Esc to cancel</>
+
+ <Quiet>↑↓ to walk · ctrl+r to rename · type to search · esc to cancel</>
