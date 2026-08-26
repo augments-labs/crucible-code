@@ -177,12 +177,7 @@ pub(crate) fn event<T: Terminal>(
             renderer.settle()?;
             renderer.apart()?;
             renderer.landmark();
-            renderer.present(&crucible_tui::Prompt::committed(
-                line.as_str(),
-                columns,
-                style.glyphs(),
-                style.palette().bands(),
-            ))
+            prompt(renderer, line, style)
         }
 
         // One block: the row that says what came back, and under it the lines a
@@ -313,20 +308,27 @@ pub(crate) fn queued<T: Terminal>(
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
-
     // The same row a typed line is owed, for the same reason: what was asked is
     // a block, and a block is parted from the one above it. A line queued during
     // a turn lands under the answer that turn produced, which is exactly where
     // the blank belongs.
     renderer.apart()?;
     renderer.landmark();
-    renderer.present(&crucible_tui::Prompt::committed(
-        said,
-        columns,
-        style.glyphs(),
-        style.palette().bands(),
-    ))
+    prompt(renderer, said.to_owned(), style)
+}
+
+/// Commits one prompt from source that can be laid out again after a resize.
+fn prompt<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: String,
+    style: Style,
+) -> Result<(), TerminalError> {
+    renderer.responsive(
+        said.len(),
+        Box::new(move |columns| {
+            crucible_tui::Prompt::committed(&said, columns, style.glyphs(), style.palette().bands())
+        }),
+    )
 }
 
 /// Names the files a prompt sent, on rows under it.
@@ -851,9 +853,20 @@ pub(crate) fn came_back<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let beyond = beyond(&output);
-    let rows = finished_rows(&output, renderer.columns(), style);
-
-    renderer.present(&rows)?;
+    let rows = if output.diff().is_some_and(|diff| !diff.is_empty()) && renderer.is_terminal() {
+        let retained = output.clone();
+        let rows = finished_rows(&retained, renderer.columns(), style);
+        let bytes = retained.diff().map_or(0, Diff::retained);
+        renderer.responsive(
+            bytes,
+            Box::new(move |columns| finished_rows(&retained, columns, style)),
+        )?;
+        rows
+    } else {
+        let rows = finished_rows(&output, renderer.columns(), style);
+        renderer.present(&rows)?;
+        rows
+    };
 
     // After the rows and not before them, because this is what the rows could
     // not say: a result the row said the whole of is a result nobody has to be

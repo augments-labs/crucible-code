@@ -1,7 +1,8 @@
 //! The record: what crucible has drawn, and what of it is on screen.
 //!
 //! The alternate screen has no scrollback, so this process is the one keeping
-//! it. What that costs is bounded on purpose — [`MOST`] lines, oldest dropped —
+//! it. What that costs is bounded on purpose — [`MOST`] retained units, oldest
+//! dropped —
 //! because the budget in `CONTRIBUTING.md` is a ceiling on the whole process
 //! and a store that grew with the session would spend it on rows nobody is
 //! looking at. What falls off the top is not lost: the session log holds every
@@ -12,21 +13,18 @@
 //! reflows. Only the lines the viewport covers are folded and painted, and that
 //! is what keeps a frame proportional to the window rather than to the session.
 //!
-//! Two kinds of line, because two kinds of thing arrive here. Prose *flows*:
-//! the model's answer and a tool's output were written as text and a wrap is
-//! the only thing deciding where a row ends, so the width they are folded at is
-//! whatever the window is now. A component's rows are *set*: a table, a diff, a
-//! box were laid out against a width by something that is no longer here to lay
-//! them out again, so a narrower window clips them rather than pretending it
-//! can fold what it did not build.
+//! Three kinds of line, because three kinds of thing arrive here. Prose
+//! *flows*: the model's answer and a tool's output were written as text and a
+//! wrap is the only thing deciding where a row ends, so the width they are
+//! folded at is whatever the window is now. A component whose source is still
+//! held is *responsive*: a prompt or a diff is laid out again at the new width.
+//! Everything else is *set*: a table or a box laid out by something that is gone
+//! is clipped rather than pretending it can be rebuilt.
 //!
-//! One block is set and is laid out again anyway, because for that one the
-//! reason above is not true. The opening is drawn from facts read once at
-//! launch and kept for the whole session, so what laid it is still here — and
-//! it is the block a reader is most often looking at when they reach for the
-//! corner of the window. [`Record::opens`] takes what laid it rather than only
-//! what it laid, and a resize replaces those lines with the same card drawn for
-//! the window there is now.
+//! The opening is responsive for the same reason. It is drawn from facts read
+//! once at launch and kept for the whole session, so what laid it is still here
+//! and a resize replaces those lines with the same card drawn for the window
+//! there is now.
 
 use std::fmt;
 
@@ -36,14 +34,21 @@ use std::ops::Range;
 use crate::color::Slot;
 use crate::row::Row;
 
-/// The most lines the record keeps.
+/// The most retained units the record keeps.
 ///
-/// Lines rather than turns, because a turn is not a size: one that read a file
-/// is thousands of lines and one that answered a question is four. At roughly
-/// the width of a window this is a few megabytes and tens of screens of
-/// scrolling, which is deeper than a terminal's own default and far inside the
-/// peak the budget allows.
+/// An ordinary line costs one. Responsive source is charged in window-sized
+/// byte units as well, because a prompt or diff is not a size merely because it
+/// draws as one block. At roughly the width of a window this is a few megabytes
+/// and tens of screens of scrolling, deeper than a terminal's own default and
+/// far inside the peak budget.
 const MOST: usize = 20_000;
+
+/// Bytes of retained responsive source charged as one ordinary record line.
+///
+/// A prompt or diff keeps source that fixed rows used to discard after layout.
+/// Charging it in window-sized units keeps that new hold under the record's
+/// existing ceiling without making every ordinary line count its allocation.
+const RETAINED_ROW_BYTES: usize = 80;
 
 /// The most prompt landmarks the map keeps.
 ///
@@ -52,12 +57,44 @@ const MOST: usize = 20_000;
 const MOST_LANDMARKS: usize = 256;
 
 /// One line of the record, and whether a narrower window may re-fold it.
-#[derive(Debug, Clone)]
 enum Line {
     /// Text that was written as text. Folded at whatever the window is now.
     Flowed(Row),
+    /// One row of a component rebuilt from retained source at each width.
+    Responsive {
+        /// The display rows at the record's current width.
+        rows: Vec<Row>,
+        /// How many ordinary record lines this retained source costs.
+        weight: usize,
+        /// What lays the whole block out at a width.
+        lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    },
     /// Rows a component laid out against a width. Clipped, never re-folded.
     Set(Row),
+}
+
+impl Line {
+    /// Its share of the record's retained-memory ceiling.
+    fn weight(&self) -> usize {
+        match self {
+            Self::Responsive { weight, .. } => *weight,
+            Self::Flowed(_) | Self::Set(_) => 1,
+        }
+    }
+}
+
+impl fmt::Debug for Line {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Flowed(row) => out.debug_tuple("Flowed").field(row).finish(),
+            Self::Responsive { rows, weight, .. } => out
+                .debug_struct("Responsive")
+                .field("rows", &rows.len())
+                .field("weight", weight)
+                .finish_non_exhaustive(),
+            Self::Set(row) => out.debug_tuple("Set").field(row).finish(),
+        }
+    }
 }
 
 /// The opening, and what can draw it again.
@@ -89,7 +126,8 @@ impl fmt::Debug for Opening {
 /// reader is looking.
 #[derive(Debug)]
 pub(crate) struct Record {
-    /// Lines, oldest first. The last is the one streamed text is appended to.
+    /// Logical lines, oldest first. A responsive one may draw several rows.
+    /// The last flowed line is the one streamed text is appended to.
     lines: VecDeque<Line>,
     /// How many display rows each line folds to at [`Self::columns`].
     ///
@@ -110,6 +148,8 @@ pub(crate) struct Record {
     before: usize,
     /// The width every height above was worked out at.
     columns: usize,
+    /// Retained-memory units across the logical lines currently held.
+    weight: usize,
     /// How many display rows the record comes to, in total.
     ///
     /// The sum of [`Self::tall`], kept rather than added up: see above.
@@ -186,6 +226,7 @@ impl Record {
             ends: VecDeque::new(),
             before: 0,
             columns,
+            weight: 0,
             rows: 0,
             gone: 0,
             top: Spot { line: 0, into: 0 },
@@ -217,6 +258,20 @@ impl Record {
     pub(crate) fn lay(&mut self, rows: impl IntoIterator<Item = Row>) {
         for row in rows {
             self.put(Line::Set(row));
+        }
+    }
+
+    /// Lay down one block whose width-independent source remains available.
+    ///
+    /// One logical record line however many display rows the component needs.
+    /// Its stable line number therefore survives a resize that changes its
+    /// height, and only a viewport covering it clones the rows already laid out.
+    pub(crate) fn responsive(&mut self, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+        self.end();
+        let rows = responsive_rows(lay(self.columns));
+        if !rows.is_empty() {
+            let weight = rows.len().max(retained.div_ceil(RETAINED_ROW_BYTES)).max(1);
+            self.put(Line::Responsive { rows, weight, lay });
         }
     }
 
@@ -255,9 +310,11 @@ impl Record {
 
         for _ in 0..opening.lines {
             self.lines.remove(at);
+            self.weight = self.weight.saturating_sub(1);
         }
         for (step, row) in laid.into_iter().enumerate() {
             self.lines.insert(at + step, Line::Set(row));
+            self.weight = self.weight.saturating_add(1);
         }
 
         // The reader's place is a line number, and there are now a different
@@ -311,13 +368,21 @@ impl Record {
     fn put(&mut self, line: Line) {
         self.open = false;
         let tall = Self::measure(&line, self.columns);
+        self.weight = self.weight.saturating_add(line.weight());
         self.lines.push_back(line);
         self.tall.push_back(tall);
         let after = self.ends.back().copied().unwrap_or(self.before) + usize::from(tall);
         self.ends.push_back(after);
         self.rows += usize::from(tall);
-        while self.lines.len() > MOST {
-            self.lines.pop_front();
+        self.spill();
+    }
+
+    /// Drops oldest logical lines until the record is back under its ceiling.
+    fn spill(&mut self) {
+        while self.weight > MOST && self.lines.len() > 1 {
+            if let Some(line) = self.lines.pop_front() {
+                self.weight = self.weight.saturating_sub(line.weight());
+            }
             let tall = self.tall.pop_front().unwrap_or(0);
             self.before = self.ends.pop_front().unwrap_or(self.before);
             self.rows -= usize::from(tall);
@@ -352,6 +417,7 @@ impl Record {
     fn measure(line: &Line, columns: usize) -> u16 {
         match line {
             Line::Flowed(row) => u16::try_from(row.folds(columns)).unwrap_or(u16::MAX),
+            Line::Responsive { rows, .. } => u16::try_from(rows.len()).unwrap_or(u16::MAX),
             Line::Set(_) => 1,
         }
     }
@@ -379,6 +445,9 @@ impl Record {
         match self.lines.back() {
             None => true,
             Some(Line::Flowed(row)) => !self.open && row.text().trim().is_empty(),
+            Some(Line::Responsive { rows, .. }) => {
+                rows.last().is_none_or(|row| row.text().trim().is_empty())
+            }
             Some(Line::Set(row)) => row.text().trim().is_empty(),
         }
     }
@@ -398,6 +467,7 @@ impl Record {
         self.gone += self.lines.len();
         self.lines.clear();
         self.tall.clear();
+        self.weight = 0;
         self.rows = 0;
         self.top = Spot {
             line: self.gone,
@@ -557,8 +627,12 @@ impl Record {
             return false;
         };
 
-        let (Line::Flowed(row) | Line::Set(row)) = line;
-        row.kinds().any(|kind| kind == slot)
+        match line {
+            Line::Flowed(row) | Line::Set(row) => row.kinds().any(|kind| kind == slot),
+            Line::Responsive { rows, .. } => {
+                rows.iter().any(|row| row.kinds().any(|kind| kind == slot))
+            }
+        }
     }
 
     /// Move the band `by` display rows, and say whether it moved.
@@ -757,6 +831,7 @@ impl Record {
         }
         self.columns = columns;
         self.relay(columns);
+        self.relay_responsive(columns);
         self.rows = 0;
         self.before = 0;
         self.tall.clear();
@@ -767,6 +842,7 @@ impl Record {
             self.rows += usize::from(tall);
             self.ends.push_back(self.rows);
         }
+        self.spill();
         self.top.into = 0;
     }
 
@@ -839,13 +915,29 @@ impl Record {
         }
     }
 
+    /// Rebuilds responsive blocks once for the new width.
+    fn relay_responsive(&mut self, columns: usize) {
+        for line in &mut self.lines {
+            if let Line::Responsive { rows, lay, .. } = line {
+                *rows = responsive_rows(lay(columns));
+            }
+        }
+    }
+
     /// A line as the display rows it comes to at the current width.
     fn fold(&self, line: &Line) -> Vec<Row> {
         match line {
             Line::Flowed(row) => row.fold(self.columns),
+            Line::Responsive { rows, .. } => rows.clone(),
             Line::Set(row) => vec![row.clipped(self.columns)],
         }
     }
+}
+
+/// Caps one responsive layout to the record's existing display-row ceiling.
+fn responsive_rows(mut rows: Vec<Row>) -> Vec<Row> {
+    rows.truncate(MOST);
+    rows
 }
 
 impl MapSpan {
@@ -923,6 +1015,49 @@ mod tests {
         let record = filled(8, 40);
 
         assert!(record.covering(0, 5).is_empty());
+    }
+
+    #[test]
+    fn a_responsive_block_changes_height_without_renumbering_later_lines() {
+        let mut record = Record::new(8);
+        record.responsive(
+            32,
+            Box::new(|columns| {
+                let rows = if columns < 6 { 3 } else { 1 };
+                (0..rows)
+                    .map(|row| Row::plain(format!("responsive {row}")))
+                    .collect()
+            }),
+        );
+        record.landmark();
+        record.write(Slot::Plain, "after\n");
+        let after = record.landmarks.front().copied().expect("a landmark");
+        assert_eq!(after, 1, "one responsive block is one logical line");
+
+        record.resized(5);
+
+        assert_eq!(record.landmarks.front().copied(), Some(after));
+        assert_eq!(record.start_of(after), Some(3));
+        assert_eq!(record.lines(), 2);
+    }
+
+    #[test]
+    fn responsive_source_pays_into_the_same_bounded_record() {
+        let mut record = Record::new(40);
+        record.responsive(
+            RETAINED_ROW_BYTES * (MOST - 1),
+            Box::new(|_| vec![Row::plain("large retained source")]),
+        );
+        record.write(Slot::Plain, "newest\n");
+
+        assert_eq!(record.weight, MOST);
+        assert_eq!(record.lines.len(), 2);
+
+        record.write(Slot::Plain, "one more\n");
+
+        assert_eq!(record.weight, 2);
+        assert_eq!(record.lines.len(), 2);
+        assert_eq!(said(&record, 2), ["newest", "one more"]);
     }
 
     #[test]
@@ -1033,6 +1168,7 @@ mod tests {
     fn measured(line: &Line) -> String {
         match line {
             Line::Flowed(row) | Line::Set(row) => row.text(),
+            Line::Responsive { rows, .. } => rows.iter().map(Row::text).collect(),
         }
     }
 

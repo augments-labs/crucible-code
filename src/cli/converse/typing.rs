@@ -1837,8 +1837,6 @@ fn said<T: Terminal>(
     let typed = editor.take();
     let said = chosen.map_or(typed, str::to_owned);
 
-    let columns = renderer.columns();
-
     // Back to the foot before a word of it is drawn: what was just sent is
     // about to be answered at the bottom, and somebody who had scrolled up to
     // read is done doing that the moment they send something.
@@ -1852,12 +1850,18 @@ fn said<T: Terminal>(
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
     renderer.landmark();
-    renderer.present(&Prompt::committed(
-        &said,
-        columns,
-        style.glyphs(),
-        style.palette().bands(),
-    ))?;
+    let responsive = said.clone();
+    renderer.responsive(
+        responsive.len(),
+        Box::new(move |columns| {
+            Prompt::committed(
+                &responsive,
+                columns,
+                style.glyphs(),
+                style.palette().bands(),
+            )
+        }),
+    )?;
 
     Ok(Asked::Said(Said::new(said, local)))
 }

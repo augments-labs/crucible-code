@@ -190,6 +190,19 @@ impl Diff {
         self.dropped
     }
 
+    /// Bytes retained for drawing this change again.
+    ///
+    /// The line text is the variable part; numbers, tags and the boxed slice are
+    /// fixed per bounded line and charged conservatively beside it. Used by the
+    /// renderer's retained-record ceiling, never as a serialized size.
+    #[must_use]
+    pub fn retained(&self) -> usize {
+        self.lines.iter().fold(0_usize, |held, line| {
+            held.saturating_add(line.text.len())
+                .saturating_add(std::mem::size_of::<Line>())
+        })
+    }
+
     /// Whether the call left the file exactly as it was.
     #[must_use]
     pub fn is_empty(&self) -> bool {

@@ -426,7 +426,11 @@ fn a_search_declares_the_hosted_tool_and_keeps_the_query_off_the_vendor_store() 
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
 
     assert_eq!(sent.pointer("/tools/0/type").unwrap(), &json!("web_search"));
-    assert_eq!(sent.pointer("/input").unwrap(), &json!("rust async traits"));
+    assert_eq!(
+        sent.pointer("/input/0"),
+        Some(&json!({ "role": "user", "content": "rust async traits" })),
+        "the ChatGPT Responses endpoint requires a list of messages: {sent}",
+    );
     assert_eq!(sent.pointer("/model").unwrap(), &json!("gpt-5.6"));
 
     // A query is the user's words, and this endpoint retains a response for
@@ -687,6 +691,14 @@ fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
 
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
+    assert_eq!(
+        sent.pointer("/input/0"),
+        Some(&json!({
+            "role": "user",
+            "content": "Open https://docs.rs/serde and reproduce its contents as text."
+        })),
+        "the ChatGPT Responses endpoint requires a list of messages: {sent}",
+    );
     assert_eq!(
         sent.pointer("/tools/0/filters/allowed_domains/0").unwrap(),
         &json!("docs.rs"),

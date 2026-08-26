@@ -8,6 +8,18 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-08-26
+
+### Fixed
+
+**OpenAI account web tools send a request their endpoint accepts.** `web_search`
+and `web_fetch` sent the public API's valid short string form, which the ChatGPT
+Responses endpoint refused; both now send the one-message list both accept.
+
+**Prompts and file changes adapt when the terminal is resized.** Submitted user
+prompts and the green and red blocks from `edit` and `write` are laid out again
+at the new width instead of keeping the wrapping or clipping of the old one.
+
 ## [0.23.0] - 2026-08-26
 
 ### Changed
@@ -2825,7 +2837,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/augments-labs/crucible-code/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/augments-labs/crucible-code/compare/v0.22.1...v0.23.0
 [0.22.1]: https://github.com/augments-labs/crucible-code/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/augments-labs/crucible-code/compare/v0.21.1...v0.22.0

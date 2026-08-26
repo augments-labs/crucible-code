@@ -755,12 +755,37 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Writes a responsive block into the transcript, keeping what draws it.
+    ///
+    /// For committed components whose width-independent source remains in hand:
+    /// prompts and file changes. The closure is retained by the bounded record
+    /// and called only when the terminal width changes; ordinary frames read the
+    /// rows built for the current width. `retained` is the source bytes it closes
+    /// over, charged against that record's ceiling.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn responsive(
+        &mut self,
+        retained: usize,
+        lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return self.present(&lay(self.columns()));
+        }
+
+        self.record.responsive(retained, lay);
+        self.draw()
+    }
+
     /// Writes the opening into the transcript, keeping what draws it.
     ///
     /// Everything else handed to [`Self::present`] arrives as rows and stays as
     /// rows: what laid them out is a component that answered once and went, so
-    /// a narrower window clips them. The opening is the exception, and the only
-    /// one. It is drawn from facts read once at launch and held for the whole
+    /// a narrower window clips them. The opening also retains its source and is
+    /// drawn again from facts read once at launch and held for the whole
     /// session, so what laid it is still here to lay it again — and it is what
     /// a reader is looking at when they take the corner of a fresh window and
     /// pull.
