@@ -8,6 +8,8 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-26
+
 ### Added
 
 - **The arrow keys walk back through prompts you have already sent.** On an
@@ -2884,7 +2886,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...v0.24.0
 [0.23.5]: https://github.com/augments-labs/crucible-code/compare/v0.23.4...v0.23.5
 [0.23.4]: https://github.com/augments-labs/crucible-code/compare/v0.23.3...v0.23.4
 [0.23.3]: https://github.com/augments-labs/crucible-code/compare/v0.23.2...v0.23.3
