@@ -57,10 +57,11 @@ value inside crucible, which is the whole of why nobody is asked about it —
 there is no target for a rule to be written about. [Writing down the
 plan](planning.md) is the rest of it.
 
-Two files are outside every tool's reach in every mode: `config.json` and
-`config.local.json` inside any directory named `.crucible`. [The files no tool
-may write](../permissions/permissions.md#the-files-no-tool-may-write) says why
-that one cannot be a rule.
+Two files are outside the file tools' reach in every mode: `config.json` and
+`config.local.json` directly inside any directory named `.crucible`. [The files
+the file tools may not
+write](../permissions/permissions.md#the-files-the-file-tools-may-not-write) says
+why and spells out the `bash` exception.
 
 ## Every answer is bounded, and says when it was cut
 

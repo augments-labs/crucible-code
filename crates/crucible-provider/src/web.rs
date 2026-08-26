@@ -593,6 +593,21 @@ impl OpenAiWeb {
     }
 }
 
+/// Writes one side request as the message list both Responses services accept.
+///
+/// The published API documents both a bare string and a list. The `ChatGPT`
+/// Responses service answers the string with `Input must be a list`, and its own
+/// client sends a list, so this takes the common shape rather than branching on
+/// which credential selected the otherwise shared protocol.
+fn openai_input(body: &mut crate::json::Object<'_>, text: &str) {
+    body.array("input", |input| {
+        input.object(|message| {
+            message.text("role", "user");
+            message.text("content", text);
+        });
+    });
+}
+
 impl Search for OpenAiWeb {
     fn name(&self) -> &'static str {
         OPENAI
@@ -620,7 +635,7 @@ impl Search for OpenAiWeb {
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
-            body.text("input", query);
+            openai_input(body, query);
             // This endpoint retains a response for retrieval unless told
             // otherwise, and a query is the user's words.
             body.boolean("store", false);
@@ -925,8 +940,8 @@ impl Fetch for OpenAiWeb {
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
-            body.text(
-                "input",
+            openai_input(
+                body,
                 &format!("Open {url} and reproduce its contents as text."),
             );
             body.boolean("store", false);

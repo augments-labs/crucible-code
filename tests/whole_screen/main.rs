@@ -369,9 +369,10 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     );
     let mut window = Watched::allowing("theme-mid-turn", 60, 24, &vendor, "bash(*)");
 
-    // The first word of the answer proves the turn is running before the
-    // command is sent.
-    window.types_and_catches("start it\r", "the quick brown fox");
+    // The final word of this long answer proves it is whole before the panel
+    // opens. Catching the first left the snapshot dependent on how many later
+    // deltas happened to arrive before the next key was read.
+    window.types_and_catches("start it\r", "lazy dog.");
 
     // The picker stands over the box: its title row is the stable mark, and
     // the theme list under it is what choosing moves through.
@@ -695,9 +696,9 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
     // the transcript above them both, since this process owns all three now.
     //
     // What is drawn again is not the same as what is laid out again. Text is
-    // folded at whatever the window is now, so the line being typed re-wraps
-    // inside a narrower box, and a card arranged into columns by something that
-    // has since gone is clipped rather than folded.
+    // folded at whatever the window is now, and components whose source is still
+    // held — the opening, submitted prompts and file-change blocks — are laid out
+    // again. A card arranged by something that is gone is clipped instead.
     //
     // The opening is the one card that has not gone: it is drawn from facts
     // read once at launch and held for the session, so it is arranged again for

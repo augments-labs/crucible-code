@@ -75,9 +75,6 @@ one runs under.
 A step changes one thing and no others. The rules you wrote hold exactly as
 they did, and anything already allowed for the session stays allowed.
 
-A step changes one thing and no others. The rules you wrote hold exactly as
-they did, and anything already allowed for the session stays allowed.
-
 ## Naming the one you want
 
 `/mode allowEdits` puts the session in that mode outright, spelled the way

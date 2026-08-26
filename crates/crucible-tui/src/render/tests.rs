@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::*;
 use crate::color::{Palette, Slot, Theme};
+use crate::prompt::Prompt;
 use crate::row::Row;
 use crate::terminal::{Picture, Recording};
 
@@ -507,6 +508,24 @@ fn a_resize_folds_the_record_again_rather_than_redrawing_it_wrongly() {
     drawn.resized().unwrap();
 
     assert_eq!(drawn.screen().row(0), "the quick brown fox jumps");
+}
+
+#[test]
+fn a_committed_prompt_is_laid_out_again_when_the_window_widens() {
+    let mut drawn = Drawn::new(20, 8);
+    let said = "the quick brown fox jumps";
+    drawn
+        .responsive(
+            said.len(),
+            Box::new(move |columns| Prompt::committed(said, columns, Glyphs::Unicode, false)),
+        )
+        .unwrap();
+    assert!(drawn.screen().said().len() > 1, "the prompt did not wrap");
+
+    drawn.render.terminal.resize(40, 8);
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.screen().row(0), format!("› {said}"));
 }
 
 #[test]

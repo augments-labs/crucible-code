@@ -1,12 +1,13 @@
 //! What reaches the terminal for each event, and what a question reads like.
 
+use std::cell::Cell;
 use std::path::Path;
 
 use crucible_core::{
     Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
     ToolArgs, ToolId, TurnError, TurnId, Workspace, written,
 };
-use crucible_tui::Recording;
+use crucible_tui::{Picture, Recording, Size};
 
 use super::*;
 use crate::cli::kept::Whole;
@@ -20,6 +21,49 @@ fn here() -> Workspace {
 /// A terminal wide enough that the compact ceilings are what bound a line,
 /// rather than the window.
 const WIDE: usize = 200;
+
+/// A recording whose reported size can change through a shared reference.
+struct Resizing {
+    written: String,
+    size: Cell<Size>,
+}
+
+impl Resizing {
+    fn new(columns: usize, rows: usize) -> Self {
+        Self {
+            written: String::new(),
+            size: Cell::new(Size { columns, rows }),
+        }
+    }
+
+    fn resize(&self, columns: usize, rows: usize) {
+        self.size.set(Size { columns, rows });
+    }
+
+    fn picture(&self) -> Picture {
+        let size = self.size.get();
+        Picture::of(&self.written, size.columns, size.rows)
+    }
+}
+
+impl Terminal for Resizing {
+    fn size(&self) -> Result<Size, TerminalError> {
+        Ok(self.size.get())
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.written.push_str(text);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn is_terminal(&self) -> bool {
+        true
+    }
+}
 
 /// How much of a call's arguments a compact line shows.
 fn args() -> usize {
@@ -990,6 +1034,39 @@ fn a_line_too_wide_for_the_window_is_cut_inside_it() {
     for row in block(&long, 40, unicode()) {
         assert_eq!(row.columns(), 40, "{:?}", row.text());
     }
+}
+
+#[test]
+fn a_change_is_laid_out_again_when_the_window_widens() {
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(Diff::new([Line::new(
+        9,
+        Change::Added,
+        "the quick brown fox jumps",
+    )]));
+    let mut renderer = Renderer::new(Resizing::new(24, 8));
+    let style = Style::plain();
+    came_back(
+        &mut renderer,
+        &mut Kept::default(),
+        &ToolId::new("a"),
+        output,
+        style,
+    )
+    .expect("the change to draw");
+    assert!(!renderer.terminal().picture().row(1).contains("jumps"));
+
+    renderer.terminal().resize(48, 8);
+    renderer.resized().expect("the change to reflow");
+
+    assert!(
+        renderer
+            .terminal()
+            .picture()
+            .row(1)
+            .contains("the quick brown fox jumps"),
+        "{}",
+        renderer.terminal().picture().row(1),
+    );
 }
 
 #[test]

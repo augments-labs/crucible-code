@@ -292,11 +292,10 @@ fn a_blank_row_parts_the_prompt_from_the_answer_above_it() {
 }
 
 #[test]
-fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
-    // The defect this closes: the row was handed over unwrapped, the terminal
-    // broke it, and the record counted one where the screen showed several. A
-    // caller that means to point at a row later reads this number, so a count
-    // short by two points two rows off.
+fn a_wrapped_prompt_is_one_stable_record_line_however_many_rows_it_draws() {
+    // One logical prompt may occupy several display rows. Keeping one stable
+    // line number is what lets a resize change that height without moving every
+    // landmark and click target after it; the renderer still draws every row.
     let mut renderer = Renderer::new(Recording::new(24, 24));
     let line = "why does the grep probe walk the whole tree before it reports";
     let mut editor = typed(line);
@@ -312,7 +311,8 @@ fn a_wrapped_prompt_grows_the_record_by_every_row_it_actually_drew() {
     )
     .expect("the line to be taken");
 
-    assert_eq!(renderer.lines(), drawn);
+    assert_eq!(renderer.lines(), 1);
+    assert_eq!(renderer.terminal().picture().said().len(), drawn);
 }
 
 #[test]

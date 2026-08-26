@@ -22,6 +22,16 @@ fn a_diff_counts_the_lines_that_moved_and_not_the_ones_it_kept() {
 }
 
 #[test]
+fn retained_bytes_include_line_text_and_storage() {
+    let diff = Diff::new([
+        Line::new(1, Change::Removed, "old"),
+        Line::new(1, Change::Added, "new text"),
+    ]);
+
+    assert!(diff.retained() >= "old".len() + "new text".len());
+}
+
+#[test]
 fn a_diff_that_moved_nothing_is_empty_however_many_lines_it_carries() {
     // Which is what a call that found what it was looking for and replaced it
     // with itself produces. The lines around it are still lines.

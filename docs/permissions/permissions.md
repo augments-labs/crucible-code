@@ -185,10 +185,9 @@ a turn.
 
 Both durations remember exactly what the question named.
 
-- For a file change, it is the tool. `session` on a `write` stops asking about
-  `write`, and `edit` is still asked about separately. Both are already
-  confined to the [directories the session reaches](directories.md), so
-  remembering the name does not widen what they can touch.
+- For a file change, it is the tool **and the resolved path**. `session` on a
+  `write` to `src/a.rs` stops asking about that write; another path asks again,
+  and `edit` is separate too.
 - For a command, it is the tool **and the whole command**, with runs of
   whitespace collapsed. `session` on `cargo test` stops asking about
   `cargo test`; `cargo build` — same program, different command — asks again.
@@ -208,14 +207,18 @@ an ignored-by-convention file is still a filename a repository can commit, and
 crucible cannot distinguish the two sources safely. Project files may add
 `ask` and `deny` policy because both narrow what can happen.
 
-## The files no tool may write
+## The files the file tools may not write
 
-No tool may change the files permissions are configured from: `config.json`
-and `config.local.json` inside any directory named `.crucible`, including the
-one in your home directory. Not in any mode, and not under any rule — a single
-write there could put an allow for everything into the next start, so that
-refusal cannot be entrusted to the rules and modes it would defeat. Reading
-them stays ordinary; it is how a session begins.
+`write` and `edit` may not change `config.json` or `config.local.json` directly
+inside any directory named `.crucible`, including the one in your home
+directory. Not in any mode, and not under any rule: a single write there could
+put an allow for everything into the next start, so that refusal cannot be
+entrusted to the rules and modes it would defeat. Reading them stays ordinary;
+it is how a session begins.
+
+`bash` remains the exception. An approved shell reaches anything you do, so a
+command can change those files; `fullAccess` runs one without asking. Use a
+`deny bash(*)` rule where no shell command should be able to change policy.
 
 ## The guarantee underneath
 
