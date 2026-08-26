@@ -645,6 +645,13 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
         "the result never said how to reach it: {}",
         output.text()
     );
+    assert!(
+        output
+            .text()
+            .contains("completion is reported automatically; do not poll or wait"),
+        "the result invited the model to monitor work Crucible already watches: {}",
+        output.text()
+    );
     assert_eq!(left.running().len(), 1);
 
     // And it is ended by letting go of the registry, which is what the process

@@ -75,6 +75,13 @@ const FIRST: Duration = Duration::from_millis(200);
 /// cancelled turn stops promptly, long enough to cost nothing.
 const TICK: Duration = Duration::from_millis(20);
 
+/// What the model is told after a command is handed to the background registry.
+///
+/// The registry owns watching it from that point on. Without this sentence, a
+/// model sees only that the call returned while work continues and may spend the
+/// next step inventing a way to poll it — duplicating the watcher already here.
+const LEFT_RUNNING: &str = "completion is reported automatically; do not poll or wait";
+
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
@@ -423,7 +430,7 @@ impl Tool for Bash {
 
                 match left.keep(command, taking) {
                     Some(number) => Ok(ToolOutput::ok(format!(
-                        "{printed}\n\n[left running as #{number}]"
+                        "{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]"
                     ))),
                     None => Ok(ToolOutput::failed(format!(
                         "{MOST} commands are already running; stop one before leaving another"

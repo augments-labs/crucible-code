@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-08-26
+
+### Fixed
+
+**A background command tells the agent to leave it running.** Its result now
+says completion is reported automatically and not to poll or wait, avoiding a
+second command that watches work Crucible already watches.
+
 ## [0.23.2] - 2026-08-26
 
 ### Fixed
@@ -2847,7 +2855,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.3...HEAD
+[0.23.3]: https://github.com/augments-labs/crucible-code/compare/v0.23.2...v0.23.3
 [0.23.2]: https://github.com/augments-labs/crucible-code/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/augments-labs/crucible-code/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/augments-labs/crucible-code/compare/v0.22.1...v0.23.0
