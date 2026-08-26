@@ -343,7 +343,7 @@ fn a_tool_result_keeps_a_known_window_reading_present() {
 }
 
 #[test]
-fn large_streamed_tool_identity_arguments_and_late_spend_move_the_known_reading() {
+fn exact_usage_cannot_make_streamed_tool_content_appear_to_free_room() {
     let id = "i".repeat(10_000);
     let args = format!(r#"{{"padding":"{}"}}"#, "a".repeat(40_000));
     let script = Script::new(vec![
@@ -366,7 +366,7 @@ fn large_streamed_tool_identity_arguments_and_late_spend_move_the_known_reading(
 
     assert_eq!(
         scripted.left(),
-        [Some(72), Some(70), Some(65), Some(70), Some(69)]
+        [Some(72), Some(70), Some(65), Some(65), Some(65)]
     );
 }
 
@@ -674,7 +674,11 @@ fn changing_model_replaces_its_limits_and_reestimates_the_load() {
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
     scripted.runner.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(72));
+    assert_eq!(
+        scripted.runner.left(),
+        Some(32),
+        "the exact output correction visibly freed uncompacted context"
+    );
 
     scripted
         .runner
@@ -727,7 +731,11 @@ fn changing_provider_reestimates_usage_reported_by_the_old_one() {
     let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
     scripted.runner.model.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(72));
+    assert_eq!(
+        scripted.runner.left(),
+        Some(32),
+        "the exact output correction visibly freed uncompacted context"
+    );
 
     scripted.runner.serve(Box::new(Elsewhere));
 

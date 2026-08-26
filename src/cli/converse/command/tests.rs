@@ -37,6 +37,24 @@ fn every_command_is_reached_by_the_name_it_is_listed_under() {
 }
 
 #[test]
+fn every_command_decides_what_it_can_do_mid_turn() {
+    let live = [Command::Help, Command::Theme];
+    let deferred = [Command::Model, Command::Mode];
+
+    for command in EVERY {
+        match command.mid_turn() {
+            MidTurn::Live => assert!(live.contains(&command), "{command:?}"),
+            MidTurn::Deferred => assert!(deferred.contains(&command), "{command:?}"),
+            MidTurn::Refused(why) => {
+                assert!(!live.contains(&command), "{command:?}");
+                assert!(!deferred.contains(&command), "{command:?}");
+                assert!(!why.trim().is_empty(), "{command:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn everything_the_list_offers_is_something_a_line_can_run() {
     // The menu, `/help` and the match that runs one walk the same array, and
     // this is what says so. A name on the list that no line names is a row

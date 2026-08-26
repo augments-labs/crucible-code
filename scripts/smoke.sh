@@ -8,8 +8,8 @@
 #     scripts/smoke.sh --no-provider v0.0.1  skip the live provider gate
 #     scripts/smoke.sh --checksum HEX FILE   verify a local tarball first
 #
-# `scripts/check.sh` proves the source is correct and `scripts/bench.sh` proves
-# it is fast. Both build from this tree, with this machine's toolchain, in this
+# The deterministic gates check the source and `scripts/bench.sh` checks speed.
+# Both build from this tree, with this machine's toolchain, in this
 # working directory — so neither can see the ways a *shipped* binary fails: a
 # library only the build machine has, a certificate store the container has not
 # got, a first run that needs a home directory nobody created.

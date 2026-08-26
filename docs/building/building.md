@@ -85,8 +85,8 @@ while working and the release build to check a number.
 scripts/check.sh
 ```
 
-Formatting, clippy with `-D warnings`, the tests, the file-length ceiling,
-dependency pinning and the rest of it. CI runs exactly this script, so a green
-run here is a green run there — on this platform. The other platforms are
-answered by CI, which runs clippy and the tests on macOS and Windows for every
-pull request, or by [building for them yourself](cross-compiling.md).
+The compatibility command runs the deterministic Rust and repository checks
+expected on a contributor machine. CI calls those named gates independently,
+runs Rust tests on macOS and Windows, and supplies dependency and performance
+jobs of its own; [workflow ownership](../../.github/workflows/README.md) has the
+map. You can also [build for another platform yourself](cross-compiling.md).

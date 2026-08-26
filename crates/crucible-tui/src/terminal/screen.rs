@@ -40,7 +40,7 @@ pub enum ScreenError {
 ///
 /// Dropping it hands the terminal back, including on an early return and on a
 /// panic — every panic, because a build that would not unwind one is refused in
-/// [`raw`](super::raw). What it does not cover is a process killed outright,
+/// `raw` mode. What it does not cover is a process killed outright,
 /// where no code of this program's runs at all.
 pub struct Screen {
     /// What gives the screen back, called once, by [`Drop`].

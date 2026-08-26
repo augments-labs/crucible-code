@@ -8,9 +8,9 @@ on:
 
 # Read for everything by default. Only one job here writes anything back, and
 # the token every other job is handed is a token that cannot. That matters most
-# in `freebsd-x86_64`: it checks the repository out, which leaves the token in
-# `.git/config` inside the workspace, and then hands that workspace to a
-# third-party action running a virtual machine. Least privilege is what keeps a
+# in `freebsd-x86_64`: it checks the repository out and then hands that
+# workspace to a third-party action running a virtual machine. Checkout does not
+# persist the token, and least privilege is what keeps a
 # future compromise of that action a failed build rather than a force-push.
 permissions:
   contents: read
@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # A tag that disagrees with the manifest ships a binary whose --version
       # lies. Catch it before anything is built.
@@ -40,8 +42,8 @@ jobs:
             exit 1
           fi
 
-      # The same gate CI runs. The tag names a commit CI already proved green,
-      # but a published artifact is not the place to trust that.
+      # Re-run the deterministic local aggregate. Blocking CI already checked
+      # dependency policy and performance before this commit reached main.
       - run: scripts/check.sh
 
       - name: Release notes from the changelog
@@ -109,6 +111,8 @@ jobs:
         run: dnf install -y binutils curl-minimal gcc git gzip tar
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The toolchain remains the exact one in rust-toolchain.toml. rustup is
       # only the installer here, because the base image deliberately carries no
@@ -185,6 +189,8 @@ jobs:
             exe: .exe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # `--locked` makes dependency resolution reproduce the tag. Runner and
       # linker inputs are native platform inputs, so byte-for-byte reproducible
@@ -254,6 +260,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1.5.3
         with:
@@ -319,6 +327,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # `bwrap` is what smoke.sh builds its sandbox with. Upstream publishes a
       # source tarball and nothing else, so unlike the `rg` above there is no
@@ -372,8 +382,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The same binary, pinned the same way, as the budgets job in ci.yml —
+      # The same binary, pinned the same way, as the job in performance.yml —
       # and it has to stay the same one, because the two report a ratio against
       # it and a ratio means nothing next to a ratio against something else.
       # Fetched rather than installed: a package manager hands over whichever
@@ -430,10 +442,9 @@ jobs:
   # were never fit to overrule it — a red here still fails the run and is still
   # there to be read.
   #
-  # `smoke-linux` is off the list for now too — off rather than gone, the way
-  # the line ceiling is in `ci.yml`. The job still runs and a red is still on
-  # the run to be read; while the project is this young, shipping does not wait
-  # on it. Restoring it is putting the name back in `needs`.
+  # `smoke-linux` is off the list for now. The job still runs and a red is still
+  # on the run to be read; publication does not wait on it. Restoring the block
+  # is putting the name back in `needs`.
   publish:
     needs: [build, build-linux, freebsd-x86_64]
     runs-on: ubuntu-latest

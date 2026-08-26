@@ -1,0 +1,66 @@
+name: blocking-ci
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+concurrency:
+  group: blocking-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-policy:
+    name: Dependency policy
+    uses: ./.github/workflows/dependency-policy.yml
+
+  performance:
+    name: Performance
+    uses: ./.github/workflows/performance.yml
+
+  repo-checks:
+    name: Repository checks
+    uses: ./.github/workflows/repo-checks.yml
+
+  rust-ci:
+    name: Rust CI
+    uses: ./.github/workflows/rust-ci.yml
+
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs:
+      - dependency-policy
+      - performance
+      - repo-checks
+      - rust-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful checks
+        env:
+          DEPENDENCY_POLICY: ${{ needs.dependency-policy.result }}
+          PERFORMANCE: ${{ needs.performance.result }}
+          REPO_CHECKS: ${{ needs.repo-checks.result }}
+          RUST_CI: ${{ needs.rust-ci.result }}
+        run: |
+          set -euo pipefail
+
+          failed=0
+          for result in \
+            "dependency-policy=$DEPENDENCY_POLICY" \
+            "performance=$PERFORMANCE" \
+            "repo-checks=$REPO_CHECKS" \
+            "rust-ci=$RUST_CI"; do
+            name=${result%%=*}
+            state=${result#*=}
+            echo "$name: $state"
+            if [[ "$state" != success ]]; then
+              failed=1
+            fi
+          done
+
+          exit "$failed"

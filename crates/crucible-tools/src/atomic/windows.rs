@@ -272,14 +272,14 @@ impl Temporary {
         let size = u32::try_from(bytes)
             .map_err(|_| io::Error::other("the rename request is too large"))?;
         let mut status = IO_STATUS_BLOCK::default();
-        // SAFETY: `info` describes the initialized buffer above, `status` is
-        // writable, and the source handle has DELETE access. The ntdll boundary
-        // honors the held RootDirectory; the Win32 wrapper rejects it.
         let class = if replace {
             FileRenameInformationEx
         } else {
             FileRenameInformation
         };
+        // SAFETY: `info` describes the initialized buffer above, `status` is
+        // writable, and the source handle has DELETE access. The ntdll boundary
+        // honors the held RootDirectory; the Win32 wrapper rejects it.
         let renamed = unsafe {
             NtSetInformationFile(
                 self.file.as_raw_handle() as HANDLE,

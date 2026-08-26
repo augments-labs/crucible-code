@@ -1,7 +1,7 @@
 [package]
 name = "crucible-config"
 description = "Where crucible's own files are, what they may say, and which of them wins."
-publish = false
+publish.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

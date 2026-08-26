@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
-use crucible_core::{Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId};
+use crucible_core::{
+    Compacting, Delta, Event, Mode, Permission, Revealed, Rules, StopReason, ToolId,
+};
 use crucible_runner::{Model, Session, Tools};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
@@ -160,6 +162,77 @@ fn a_turn_streams_what_the_model_said_and_the_loop_comes_back_for_more() {
     let written = conversing(vec![saying("hello")], Tools::new(), "hi\n");
 
     assert!(written.contains("hello"), "{written}");
+}
+
+#[test]
+fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
+    // Drive the same `Turn` event loop an explicit `/compact` uses, but post its
+    // completion directly. This isolates the boundary under test: `Compacted`
+    // and its replacement reading are queued, then every sender disappears.
+    let (post, seen) = sync_channel(CAPACITY);
+    post.send(Seen::Turn(Event::Compacting {
+        why: Compacting::Asked,
+        part: 91,
+    }))
+    .expect("progress to fit");
+    post.send(Seen::Turn(Event::Compacted {
+        compacted: crucible_core::Compacted {
+            why: Compacting::Asked,
+            replaced: 2,
+            before: 80,
+            after: 20,
+            kept: 1,
+        },
+    }))
+    .expect("completion to fit");
+    drop(post);
+
+    let terms = plain();
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending,
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &opening,
+    );
+    let mut turning = Turning::started(None);
+    let mut says = typing::under(&scripted(Script::new(Vec::new()), Tools::new()));
+    let (reply, _) = channel();
+    let (give, _) = channel();
+    let answering = Answering { reply, give };
+    let mut seen = Inbox::new(seen);
+    let mut drawn = Ok(());
+    let mut meanwhile = typing::Meanwhile::Nothing;
+    let mut leaving = None;
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let started = Instant::now();
+    let mut turn = Turn {
+        turning: &mut turning,
+        held: &mut held,
+        says: &mut says,
+        seen: &mut seen,
+        answering: &answering,
+        drawn: &mut drawn,
+        meanwhile: &mut meanwhile,
+        leaving: &mut leaving,
+        terms: &terms,
+    };
+
+    while turn.step(&mut renderer) {}
+
+    let elapsed = started.elapsed();
+    assert!(
+        turning.completion_wait(Instant::now()).is_none(),
+        "the completed footing never expired"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(450),
+        "the disconnected completion stood for only {elapsed:?}"
+    );
 }
 
 #[test]

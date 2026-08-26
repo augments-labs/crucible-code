@@ -18,7 +18,7 @@ use crate::error::ConfigError;
 ///
 /// Read before any configuration file is opened — it is what says where the
 /// user's file *is* — which makes it the one setting of crucible's own that a
-/// file cannot carry. [`crate::env::too_late`] is what refuses it there, rather
+/// file cannot carry. `crate::env::too_late` is what refuses it there, rather
 /// than letting it be written somewhere it would quietly never apply.
 pub const HOME: &str = "CRUCIBLE_CODE_HOME";
 

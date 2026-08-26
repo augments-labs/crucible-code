@@ -1,7 +1,7 @@
 [package]
 name = "crucible-tui"
 description = "Full-screen terminal rendering: prompt, streaming transcript, permission prompts."
-publish = false
+publish.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

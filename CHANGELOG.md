@@ -8,6 +8,18 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.23.5] - 2026-08-26
+
+### Fixed
+
+- **Native web search and fetch work with ChatGPT accounts again.** OpenAI side requests now use the streaming Responses shape the account endpoint requires, read both public-API and account-style completion events, and reject truncated or model-only answers instead of reporting them as empty results. Hosted web operations are required; Anthropic operations are bounded to one use, and Kimi search now sends the official bounded request fields and rejects malformed success bodies.
+
+- **Live context status no longer appears to regain room without compaction.** Fresh provider counts still decide accounting and safety, while the visible percentage keeps the fullest state already shown during an active uncompacted run instead of reading `0%`, rising, and falling again as exact usage corrects local estimates. The compaction bar now takes exactly two thirds of its former responsive width, and a completed recap remains visibly at `100%` for half a second without delaying the worker.
+
+### Internal
+
+- **Agent guidance and CI now have one owner per concern.** One unavoidable clean-room rule remains always loaded; architecture, dependency, writing and gate procedures are on-demand skills, while compiler tests and deterministic repository checks enforce observable policy. Blocking CI now aggregates focused Rust, repository, dependency and performance workflows, verifies successful jobs leave a clean worktree, compiles every feature and public documentation link, and no longer measures pull requests by changed-line count; shared Cargo metadata and dependencies are inherited from the workspace root, and the root README is a user-facing front door rather than a second manual.
+
 ## [0.23.4] - 2026-08-26
 
 ### Changed
@@ -2864,7 +2876,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.4...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...HEAD
+[0.23.5]: https://github.com/augments-labs/crucible-code/compare/v0.23.4...v0.23.5
 [0.23.4]: https://github.com/augments-labs/crucible-code/compare/v0.23.3...v0.23.4
 [0.23.3]: https://github.com/augments-labs/crucible-code/compare/v0.23.2...v0.23.3
 [0.23.2]: https://github.com/augments-labs/crucible-code/compare/v0.23.1...v0.23.2

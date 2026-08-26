@@ -129,6 +129,7 @@ fn a_search_declares_the_server_tool_and_sends_the_query_as_the_message() {
 
     assert_eq!(sent.pointer("/tools/0/type").unwrap(), &json!(SEARCH_TOOL));
     assert_eq!(sent.pointer("/tools/0/name").unwrap(), &json!("web_search"));
+    assert_eq!(sent.pointer("/tools/0/max_uses").unwrap(), &json!(1));
     assert_eq!(
         sent.pointer("/messages/0/content").unwrap(),
         &json!("rust async traits"),
@@ -189,12 +190,34 @@ fn an_answer_that_is_not_json_is_a_protocol_failure_rather_than_a_panic() {
 
 #[test]
 fn a_search_that_found_nothing_answers_with_nothing_rather_than_failing() {
-    let empty = json!({ "content": [{ "type": "text", "text": "I could not find it." }] });
+    let empty = json!({
+        "content": [{
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_1",
+            "content": []
+        }]
+    });
     let found = source(200, empty.to_string())
         .search("x", &Cancel::new())
-        .expect("an answer with no results to parse");
+        .expect("an empty search result to parse");
 
     assert!(found.is_empty());
+}
+
+#[test]
+fn an_anthropic_answer_without_its_required_search_call_is_not_no_results() {
+    let answered = json!({
+        "content": [{ "type": "text", "text": "I answered from memory." }]
+    });
+
+    let problem = source(200, answered.to_string())
+        .search("x", &Cancel::new())
+        .expect_err("an answer without the required search result to fail");
+
+    assert!(
+        problem.to_string().contains("without searching"),
+        "{problem}"
+    );
 }
 
 #[test]
@@ -292,7 +315,7 @@ fn a_fetch_the_vendor_refused_says_which_way_it_refused() {
 
 /// An answer shaped as the Responses API documents one: a search action, then
 /// prose whose citations mark which run each address supports.
-fn responded(text: &str, annotations: &serde_json::Value) -> String {
+fn response(text: &str, annotations: &serde_json::Value) -> serde_json::Value {
     json!({
         "output": [
             { "type": "web_search_call", "id": "ws_1", "status": "completed" },
@@ -303,7 +326,16 @@ fn responded(text: &str, annotations: &serde_json::Value) -> String {
             }
         ]
     })
-    .to_string()
+}
+
+/// The streaming shape accepted by both the public Responses API and the
+/// `ChatGPT` account endpoint: the terminal event owns the completed response.
+fn responded(text: &str, annotations: &serde_json::Value) -> String {
+    let event = json!({
+        "type": "response.completed",
+        "response": response(text, annotations),
+    });
+    format!("event: response.completed\ndata: {event}\n\ndata: [DONE]\n\n")
 }
 
 fn openai(status: u16, body: impl Into<String>) -> (OpenAiWeb, Arc<Replay>) {
@@ -400,6 +432,31 @@ fn an_index_past_the_end_yields_no_extract_instead_of_dying() {
 }
 
 #[test]
+fn a_completed_openai_search_with_no_hosted_call_is_not_an_empty_result() {
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "I answered from memory.", "annotations": [] }]
+            }]
+        }
+    });
+    let stream = format!("event: response.completed\ndata: {completed}\n\n");
+
+    let problem = openai(200, stream)
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("an answer without the required search call to fail");
+
+    assert!(
+        problem.to_string().contains("without searching"),
+        "{problem}"
+    );
+}
+
+#[test]
 fn one_address_cited_twice_is_one_result() {
     let body = responded(
         "Two sentences. Both from one place.",
@@ -433,10 +490,164 @@ fn a_search_declares_the_hosted_tool_and_keeps_the_query_off_the_vendor_store() 
     );
     assert_eq!(sent.pointer("/model").unwrap(), &json!("gpt-5.6"));
 
+    // The ChatGPT account endpoint serves only the streaming Responses shape;
+    // the public API accepts the same shape, so one request works for both.
+    assert_eq!(sent.pointer("/stream").unwrap(), &json!(true));
+    assert_eq!(sent.pointer("/tool_choice").unwrap(), &json!("required"));
+
     // A query is the user's words, and this endpoint retains a response for
     // retrieval unless it is told not to.
     assert_eq!(sent.pointer("/store").unwrap(), &json!(false));
     assert!(!replay.sent().body.contains(SECRET));
+    assert!(
+        replay
+            .sent()
+            .headers
+            .iter()
+            .any(|(name, value)| name == "accept" && value == "text/event-stream"),
+        "the request did not ask for SSE",
+    );
+}
+
+#[test]
+fn a_chatgpt_stream_can_carry_output_in_finished_item_events() {
+    // The public endpoint repeats the whole output on response.completed. The
+    // account backend can leave that list empty after narrating every item.
+    let call = json!({
+        "type": "response.output_item.done",
+        "item": { "type": "web_search_call", "id": "ws_1", "status": "completed" },
+    });
+    let message = json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": "one useful source",
+                "annotations": [{
+                    "type": "url_citation",
+                    "url": "https://example.com",
+                    "start_index": 0,
+                    "end_index": 17
+                }]
+            }]
+        },
+    });
+    let completed = json!({
+        "type": "response.completed",
+        "response": { "output": [] },
+    });
+    let stream = format!(
+        "event: response.output_item.done\ndata: {call}\n\n\
+         event: response.output_item.done\ndata: {message}\n\n\
+         event: response.completed\ndata: {completed}\n\n"
+    );
+
+    let found = openai(200, stream)
+        .0
+        .search("x", &Cancel::new())
+        .expect("an account response that parses");
+
+    let first = found.first().expect("one account result");
+    assert_eq!(found.len(), 1);
+    assert_eq!(first.url.as_ref(), "https://example.com");
+    assert_eq!(first.extract.as_ref(), "one useful source");
+}
+
+#[test]
+fn an_openai_stream_failure_carries_its_code_and_message() {
+    let failed = json!({
+        "type": "response.failed",
+        "response": {
+            "status": "failed",
+            "error": { "code": "server_error", "message": "the model is overloaded" }
+        }
+    });
+    let stream = format!("event: response.failed\ndata: {failed}\n\n");
+
+    let problem = openai(200, stream)
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("a failed stream to fail the search");
+
+    let said = problem.to_string();
+    assert!(said.contains("server_error"), "{said}");
+    assert!(said.contains("the model is overloaded"), "{said}");
+}
+
+/// A transport whose streamed response pauses and raises the caller's cancel.
+#[derive(Debug)]
+struct CancellingStream {
+    cancel: Cancel,
+}
+
+impl Transport for CancellingStream {
+    fn post(
+        &self,
+        _url: &str,
+        _headers: Outgoing,
+        _body: String,
+        _cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        let cancel = self.cancel.clone();
+        Ok(Response {
+            status: 200,
+            body: Box::new(
+                crate::transport::Paused::saying([crate::transport::Said::Nothing])
+                    .meanwhile(move || cancel.request()),
+            ),
+        })
+    }
+}
+
+#[test]
+fn cancelling_while_an_openai_event_is_quiet_stays_a_cancel() {
+    let cancel = Cancel::new();
+    let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+    let source = OpenAiWeb::new(
+        Endpoint::fixed("https://api.openai.com/v1/responses"),
+        Box::new(credential),
+        Box::new(CancellingStream {
+            cancel: cancel.clone(),
+        }),
+        "gpt-5.6",
+    );
+
+    let problem = source
+        .search("x", &cancel)
+        .expect_err("a cancelled stream to stop");
+
+    assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
+}
+
+#[test]
+fn an_openai_stream_that_ends_without_a_completion_is_not_an_empty_search() {
+    let created = json!({ "type": "response.created", "response": { "id": "resp_1" } });
+    let stream = format!("event: response.created\ndata: {created}\n\n");
+
+    let problem = openai(200, stream)
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("a truncated stream to fail the search");
+
+    assert!(
+        problem.to_string().contains("before response.completed"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_done_sentinel_without_a_completion_is_not_a_completion() {
+    let problem = openai(200, "data: [DONE]\n\n")
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("a sentinel without its terminal event to fail");
+
+    assert!(
+        problem.to_string().contains("before response.completed"),
+        "{problem}"
+    );
 }
 
 #[test]
@@ -572,6 +783,7 @@ fn a_fetch_asks_for_room_the_page_itself_will_take() {
         sent.pointer("/tools/0/max_content_tokens").is_some(),
         "the tool was not told what to keep: {sent}",
     );
+    assert_eq!(sent.pointer("/tools/0/max_uses").unwrap(), &json!(1));
 }
 
 fn kimi(status: u16, body: impl Into<String>) -> (MoonshotWeb, Arc<Replay>) {
@@ -616,6 +828,20 @@ fn kimi_code_answers_a_query_with_its_own_results() {
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
     assert_eq!(sent.pointer("/text_query").unwrap(), &json!("serde"));
+    assert_eq!(sent.pointer("/limit").unwrap(), &json!(5));
+    assert_eq!(
+        sent.pointer("/enable_page_crawling").unwrap(),
+        &json!(false),
+    );
+    assert_eq!(sent.pointer("/timeout_seconds").unwrap(), &json!(30));
+    assert!(
+        replay
+            .sent()
+            .headers
+            .iter()
+            .any(|(name, value)| name == "user-agent" && value.starts_with("crucible/")),
+        "the caller did not identify itself",
+    );
     assert_eq!(replay.sent().url, MoonshotWeb::SEARCH.as_str());
     assert!(!replay.sent().body.contains(SECRET));
 }
@@ -650,6 +876,16 @@ fn kimi_code_refuses_an_address_that_names_no_host_before_sending_it() {
 }
 
 #[test]
+fn a_kimi_success_without_its_required_results_list_is_not_no_results() {
+    let problem = kimi(200, "{}")
+        .0
+        .search("x", &Cancel::new())
+        .expect_err("a malformed success to fail");
+
+    assert!(problem.to_string().contains("search_results"), "{problem}");
+}
+
+#[test]
 fn a_kimi_refusal_carries_its_status_and_never_the_key() {
     let problem = kimi(401, "unauthorized")
         .0
@@ -666,23 +902,27 @@ fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
     // This vendor has no standalone fetch; opening a page is an action inside
     // its search tool. The search is confined to the host a verdict was reached
     // about, because a search let loose reaches hosts nobody approved.
-    let opened = json!({
-        "output": [
-            {
-                "type": "web_search_call",
-                "id": "ws_1",
-                "status": "completed",
-                "action": { "type": "open_page", "url": "https://docs.rs/serde" }
-            },
-            {
-                "type": "message",
-                "role": "assistant",
-                "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
-            }
-        ]
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "status": "completed",
+                    "action": { "type": "open_page", "url": "https://docs.rs/serde" }
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
+                }
+            ]
+        }
     });
+    let stream = format!("event: response.completed\ndata: {completed}\n\n");
 
-    let (source, replay) = openai(200, opened.to_string());
+    let (source, replay) = openai(200, stream);
     let page = source
         .fetch("https://docs.rs/serde", &Cancel::new())
         .expect("a page");
@@ -704,6 +944,37 @@ fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
         &json!("docs.rs"),
         "the search was not confined to the approved host: {sent}",
     );
+    assert_eq!(sent.pointer("/tool_choice").unwrap(), &json!("required"));
+}
+
+#[test]
+fn an_openai_fetch_that_only_searched_for_the_page_is_not_a_page() {
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "status": "completed",
+                    "action": { "type": "search", "query": "docs.rs serde" }
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "a search summary", "annotations": [] }]
+                }
+            ]
+        }
+    });
+    let stream = format!("event: response.completed\ndata: {completed}\n\n");
+
+    let problem = openai(200, stream)
+        .0
+        .fetch("https://docs.rs/serde", &Cancel::new())
+        .expect_err("a search action not to count as opening a page");
+
+    assert!(problem.to_string().contains("without opening"), "{problem}");
 }
 
 #[test]
@@ -711,15 +982,19 @@ fn an_openai_fetch_that_never_opened_the_page_is_not_a_page() {
     // This vendor will write about an address from memory. An answer that
     // arrives with no search call behind it was not fetched, and handing it
     // back as a page is the one failure the caller cannot see.
-    let invented = json!({
-        "output": [{
-            "type": "message",
-            "role": "assistant",
-            "content": [{ "type": "output_text", "text": "I know that site well.", "annotations": [] }]
-        }]
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "I know that site well.", "annotations": [] }]
+            }]
+        }
     });
+    let stream = format!("event: response.completed\ndata: {completed}\n\n");
 
-    let problem = openai(200, invented.to_string())
+    let problem = openai(200, stream)
         .0
         .fetch("https://docs.rs/serde", &Cancel::new())
         .expect_err("an unfetched answer to be refused");

@@ -76,7 +76,7 @@ impl Ledger {
     /// not the session the next `write` is in, and a record that outlived its
     /// session would answer for one the agent has left.
     ///
-    /// A poisoned lock is the same case as [`Ledger::record`]'s and is left the
+    /// A poisoned lock is the same case as `Ledger::record`'s and is left the
     /// same way. What it costs here is a read, and it cannot cost a file: a
     /// record that failed to empty says a file was seen by a session that did
     /// see it.

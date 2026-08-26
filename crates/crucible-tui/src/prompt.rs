@@ -483,7 +483,7 @@ impl Prompt<'_> {
     /// The caret again, so the record reads the way the box did, and the rows
     /// under it indented to match — a line that wrapped reads as one line
     /// rather than as a stack of separate ones, which is the arrangement
-    /// [`Prompt::typed`] already uses while it is being written.
+    /// `Prompt::typed` already uses while it is being written.
     ///
     /// Wrapped here rather than left to the terminal. The renderer counts the
     /// rows it drew so that it can move back over them, and `present` does not

@@ -1,0 +1,47 @@
+name: performance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  budgets:
+    name: Performance budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Install the pinned rg comparison binary
+        env:
+          RIPGREP_VERSION: 15.0.0
+          RIPGREP_SHA256: 253ad0fd5fef0d64cba56c70dccdacc1916d4ed70ad057cc525fcdb0c3bbd2a7
+        run: |
+          set -euo pipefail
+          stem=ripgrep-$RIPGREP_VERSION-x86_64-unknown-linux-musl
+          curl --proto '=https' --tlsv1.2 --fail --location --silent \
+            --show-error --output rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/$RIPGREP_VERSION/$stem.tar.gz"
+          printf '%s  rg.tar.gz\n' "$RIPGREP_SHA256" | sha256sum --check --strict -
+          tar xzf rg.tar.gz "$stem/rg"
+          sudo install -m 755 "$stem/rg" /usr/local/bin/rg
+          rm -rf rg.tar.gz "$stem"
+          rg --version | head -1
+
+      - run: scripts/bench.sh > budgets.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: budgets
+          path: budgets.json
+          if-no-files-found: error
+
+      - run: rm budgets.json
+      - uses: ./.github/actions/check-clean-worktree

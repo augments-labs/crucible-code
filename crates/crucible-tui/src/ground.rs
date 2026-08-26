@@ -14,7 +14,7 @@
 //! `None` rather than a default: what the caller does about an unanswered
 //! question is the caller's decision, and one taken here would be taken again
 //! there, out of sight of whatever else it knows by then. What the palette does
-//! do with `None` is in [`crate::color`], beside the table it does it from.
+//! do with `None` is in `crate::color`, beside the table it does it from.
 
 /// Which way the terminal's own background goes.
 ///

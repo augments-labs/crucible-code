@@ -1252,7 +1252,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// Read by a component that can grow, which asks how much room there is
     /// before it does. How much of that room it may actually have is
-    /// [`crate::bands`]'s answer and not the component's.
+    /// `crate::bands`'s answer and not the component's.
     #[must_use]
     pub fn rows(&self) -> usize {
         self.size.rows

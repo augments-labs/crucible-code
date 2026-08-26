@@ -1,7 +1,7 @@
 [package]
 name = "crucible-core"
 description = "Domain types and the traits every other crucible crate implements."
-publish = false
+publish.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
