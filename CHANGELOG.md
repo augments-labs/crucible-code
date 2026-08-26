@@ -6,6 +6,8 @@ Notable changes to crucible. Format follows
 is 0.x, configuration files, session files and the command-line surface may
 change in any release with no deprecation period.
 
+## [Unreleased]
+
 ## [0.23.0] - 2026-08-26
 
 ### Changed
