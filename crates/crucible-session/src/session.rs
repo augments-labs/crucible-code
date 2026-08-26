@@ -20,6 +20,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
@@ -53,7 +54,7 @@ const SUFFIX: &str = "jsonl";
 
 /// How many names a new session tries before it gives up.
 ///
-/// A name carries twenty-four bits of randomness inside one millisecond, so a
+/// A name carries seventy-four bits of randomness inside one millisecond, so a
 /// second attempt is already a rarity and a third is one nobody will see. What
 /// the bound is really for is the other reason every name comes back taken — a
 /// directory that has stopped behaving — where a loop with no end to it is a
@@ -137,7 +138,7 @@ pub enum SessionError {
 
     /// Every name a new session tried was already spoken for.
     ///
-    /// A name carries a millisecond and twenty-four bits of randomness, so one
+    /// A name carries a millisecond and seventy-four bits of randomness, so one
     /// collision is rare and a run of them says something else is wrong with
     /// the directory. Reported rather than retried for ever: a session that
     /// cannot be named is one the user can be told about, and a loop that never
@@ -181,18 +182,34 @@ pub struct Session {
     /// where the log still says. `None` in a session that was started rather
     /// than continued, and in one whose log stopped before it could say.
     calibration: Option<Calibration>,
+    /// How many messages this session holds, kept as they are appended.
+    ///
+    /// A continued session starts from what the replay handed back, so the
+    /// number is what a continue would replay — a compacted log counts its
+    /// transcript, not its lines. Written to the index once, from [`Drop`],
+    /// which is also what repairs the zero a legacy session was indexed with.
+    messages: AtomicUsize,
     trouble: Trouble,
 }
 
 impl Session {
     /// Begins recording a new session in `directory`.
     ///
+    /// `branch` is what the workspace's version control had checked out, where
+    /// the caller could look — this crate does not run git. It goes into the
+    /// header once and is served back by [`recent`]; a caller that cannot say
+    /// passes `None` and the header simply never learns one.
+    ///
     /// # Errors
     ///
     /// [`SessionError`] when the directory or the file cannot be made, and
     /// [`SessionError::Taken`] where every name it minted was already spoken
     /// for.
-    pub fn start(directory: &Path, workspace: &Workspace) -> Result<Self, SessionError> {
+    pub fn start(
+        directory: &Path,
+        workspace: &Workspace,
+        branch: Option<&str>,
+    ) -> Result<Self, SessionError> {
         privacy::directory(directory).map_err(|source| SessionError::Directory {
             at: directory.display().to_string().into(),
             source,
@@ -202,18 +219,19 @@ impl Session {
         // welcome itself reads only the fixed index this makes.
         index::ensure(directory)?;
 
-        Self::naming(directory, workspace, SessionId::new)
+        Self::naming(directory, workspace, branch, SessionId::new)
     }
 
     /// Starts a session under the first name `name` mints that nothing holds.
     ///
     /// The minting is a parameter so that a test can hand over one that is
-    /// already taken. A collision is one name in sixteen million, so this is
-    /// the path no ordinary run reaches — and code nothing has ever run is code
-    /// nobody knows the behaviour of.
+    /// already taken. A collision needs two of seventy-four random bits in one
+    /// millisecond, so this is the path no ordinary run reaches — and code
+    /// nothing has ever run is code nobody knows the behaviour of.
     fn naming(
         directory: &Path,
         workspace: &Workspace,
+        branch: Option<&str>,
         mut name: impl FnMut() -> SessionId,
     ) -> Result<Self, SessionError> {
         for _ in 0..NAMES {
@@ -234,7 +252,7 @@ impl Session {
                 return Err(problem);
             }
 
-            let header = wire::header(&id, workspace.root());
+            let header = wire::header(&id, workspace.root(), branch);
             writeln!(file, "{header}").map_err(|source| SessionError::Log {
                 at: path.display().to_string().into(),
                 source,
@@ -358,6 +376,9 @@ impl Session {
         let mut session = Self::writing(path.to_owned(), open(path)?);
         session.claim = held;
         session.calibration = calibration;
+        // What a continue replays is what the session now holds: a stale or
+        // legacy index count is repaired from here when the session ends.
+        session.messages = AtomicUsize::new(transcript.len());
 
         Ok((session, transcript))
     }
@@ -372,6 +393,7 @@ impl Session {
             writer: None,
             claim: None,
             calibration: None,
+            messages: AtomicUsize::new(0),
             trouble: Trouble::default(),
         }
     }
@@ -400,6 +422,7 @@ impl Session {
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
         drop(to.send(wire::line(message).into()));
+        self.messages.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records that room was made, and what the notes stand in place of.
@@ -518,9 +541,25 @@ impl Session {
             writer: Some(writer),
             claim: None,
             calibration: None,
+            messages: AtomicUsize::new(0),
             trouble,
         }
     }
+}
+
+/// Saves `title` as what every later listing calls the session `id` names.
+///
+/// The override sits in the index rather than the log: the log is the record
+/// of what happened, and what a row is called is presentation. It is flattened
+/// and bounded where it is written — see [`Recorded::title`] for how it is
+/// served back — and a title that flattens to nothing clears the override. A
+/// session the fixed newest window has let go of is left as it is.
+///
+/// # Errors
+///
+/// [`SessionError`] when the index could not be read or replaced.
+pub fn retitle(directory: &Path, id: &SessionId, title: &str) -> Result<(), SessionError> {
+    index::retitle(directory, id, title)
 }
 
 /// Takes `path` for a session starting now, or `None` where the name is
@@ -589,6 +628,13 @@ impl Drop for Session {
 
         if let Some(writer) = self.writer.take() {
             drop(writer.join());
+        }
+
+        // After the join, so the count the index keeps is of lines that made
+        // it to the disk. Ignored on failure like every write the index gets:
+        // it is decoration on the welcome screen, not the record.
+        if let (Some(id), Some(directory)) = (self.id.as_ref(), self.path.parent()) {
+            let _ = index::tally(directory, id, self.messages.load(Ordering::Relaxed));
         }
     }
 }

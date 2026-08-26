@@ -645,7 +645,7 @@ fn a_file_read_before_a_resume_has_to_be_read_again_after_one() {
 
     // Closed before the loop starts, so the list has one row and `/resume 1`
     // names it.
-    let earlier = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let earlier = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     earlier.append(&Message::said("what was asked before"));
     drop(earlier);
 

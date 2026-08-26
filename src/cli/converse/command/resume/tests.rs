@@ -41,7 +41,7 @@ fn standing(sample: &Sample) -> Standing {
 
 /// A session recorded in `sample` and closed again, holding one exchange.
 fn recorded(sample: &Sample, asked: &str) -> Session {
-    let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
 
     session.append(&Message::said(asked));
     session.append(&Message::Agent {
@@ -295,7 +295,7 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
     let sample = Sample::new("resume-leaving");
     drop(recorded(&sample, "the one picked up"));
 
-    let leaving = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let leaving = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let left = leaving.path().to_owned();
     let mut runner = over(leaving);
 

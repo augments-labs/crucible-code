@@ -373,7 +373,7 @@ mod tests {
         let scratch = Scratch::new("worked");
         let workspace = scratch.workspace();
 
-        let session = Session::start(&scratch.logs(), &workspace).expect("a new session");
+        let session = Session::start(&scratch.logs(), &workspace, None).expect("a new session");
         session.append(&Message::said("count the columns in the tail"));
         // Dropping is what waits for the queue, so the file is whole after it.
         drop(session);

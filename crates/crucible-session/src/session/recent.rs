@@ -43,7 +43,7 @@ const READ: u64 = 64 * 1024;
 /// Wider than any terminal, because what fits is the component's question, and
 /// far short of what a prompt can be — this is a title, and the rest of it is
 /// in the log.
-const TITLE: usize = 512;
+pub(super) const TITLE: usize = 512;
 
 /// One session that was recorded in this directory before.
 #[derive(Debug, Clone)]
@@ -52,6 +52,13 @@ pub struct Recorded {
     id: SessionId,
     /// The first thing asked of it, on one line.
     asked: Box<str>,
+    /// The branch its header said the workspace had checked out, where the
+    /// caller that started it could say.
+    branch: Option<Box<str>>,
+    /// How many messages its log holds, as the index counted them.
+    messages: usize,
+    /// The title somebody saved over the first prompt, where they did.
+    titled: Option<Box<str>>,
 }
 
 impl Recorded {
@@ -77,6 +84,32 @@ impl Recorded {
     pub fn asked(&self) -> &str {
         &self.asked
     }
+
+    /// The branch the session began on, where its header says.
+    ///
+    /// `None` for a log whose header never learned one — every session a
+    /// format 7 build recorded, and any started where nothing could say.
+    #[must_use]
+    pub fn branch(&self) -> Option<&str> {
+        self.branch.as_deref()
+    }
+
+    /// How many messages the session's log holds.
+    ///
+    /// Zero for a session indexed before counting existed; the count is
+    /// repaired the next time that session is continued.
+    #[must_use]
+    pub fn messages(&self) -> usize {
+        self.messages
+    }
+
+    /// What the row is called: the saved title where somebody set one, and the
+    /// first prompt otherwise. As flattened as [`Recorded::asked`], by the
+    /// same rule.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        self.titled.as_deref().unwrap_or(&self.asked)
+    }
 }
 
 /// The sessions recorded for `workspace`, newest first, at most `wanted` of
@@ -97,12 +130,16 @@ pub fn recent(directory: &Path, workspace: &Workspace, wanted: usize) -> Vec<Rec
         return found;
     }
 
-    // One fixed-size file supplies the names, so first-frame work does not
-    // grow with the number of logs in the directory.
-    let logs = index::logs(directory, EXAMINED).unwrap_or_default();
+    // One fixed-size file supplies the names — and the count and title kept
+    // beside each — so first-frame work does not grow with the number of logs
+    // in the directory.
+    let entries = index::entries(directory, EXAMINED).unwrap_or_default();
 
-    for path in logs {
-        if let Some(session) = read(&path, workspace) {
+    for entry in entries {
+        let path = directory.join(format!("{}.{}", entry.id.as_str(), super::SUFFIX));
+        if let Some(mut session) = read(&path, workspace) {
+            session.messages = entry.messages;
+            session.titled = entry.title;
             found.push(session);
 
             if found.len() == wanted {
@@ -151,7 +188,19 @@ fn read(path: &Path, workspace: &Workspace) -> Option<Recorded> {
             // A session whose first prompt was nothing but spaces has no row to
             // draw: the number and the date with a gap between them says less
             // than leaving it out does.
-            return (!asked.is_empty()).then_some(Recorded { id, asked });
+            return (!asked.is_empty()).then_some(Recorded {
+                id,
+                asked,
+                // Flattened like the prompt: a git branch cannot hold a
+                // control character, but a file on disk can claim anything.
+                branch: opening
+                    .branch
+                    .as_deref()
+                    .map(single)
+                    .filter(|branch| !branch.is_empty()),
+                messages: 0,
+                titled: None,
+            });
         }
     }
 }
@@ -162,7 +211,10 @@ fn read(path: &Path, workspace: &Workspace) -> Option<Recorded> {
 /// frame after it would move the cursor to the wrong place. Whitespace of any
 /// kind collapses to one space, so a prompt somebody wrote over five lines
 /// still reads as a sentence, and leading and trailing runs go entirely.
-fn single(text: &str) -> Box<str> {
+///
+/// The index borrows this for saved titles, so a title and a first prompt are
+/// bounded and flattened by the same rule rather than by two that drift.
+pub(super) fn single(text: &str) -> Box<str> {
     let mut said = String::new();
     let mut spacing = false;
 

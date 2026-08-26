@@ -29,12 +29,12 @@ fn a_name_another_session_is_recording_under_is_refused_rather_than_written_into
     // into one file. Neither notices, and what the next `--continue` reads back
     // is one session's prompts with another's answers under them.
     let sample = Sample::new("session-collision");
-    let running = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let running = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let taken = recording(&running);
     let path = running.path().to_owned();
     running.append(&said("what the first session said"));
 
-    let problem = Session::naming(&sample.logs(), &sample.workspace(), || taken.clone())
+    let problem = Session::naming(&sample.logs(), &sample.workspace(), None, || taken.clone())
         .expect_err("every name it tried was taken");
 
     assert!(matches!(problem, SessionError::Taken { .. }), "{problem}");
@@ -58,13 +58,14 @@ fn a_name_that_is_taken_is_passed_over_for_the_next_one_minted() {
     // What a collision costs: a name. The session starts under the next one and
     // the user is told nothing, because nothing about their session went wrong.
     let sample = Sample::new("session-collision-retry");
-    let running = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let running = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let taken = recording(&running);
     let free = named("0000000000001-000001");
 
     let started = Session::naming(
         &sample.logs(),
         &sample.workspace(),
+        None,
         minting(&[taken, free.clone()]),
     )
     .expect("the session under the second name");
@@ -97,6 +98,7 @@ fn a_mark_another_crucible_holds_is_a_name_in_use_even_with_no_log_beside_it() {
     let started = Session::naming(
         &sample.logs(),
         &sample.workspace(),
+        None,
         minting(&[named("0000000000001-000001"), named("0000000000002-000002")]),
     )
     .expect("the session under the second name");
@@ -167,7 +169,7 @@ fn a_session_belonging_to_another_workspace_is_not_reachable_by_naming_it() {
     // identifier that names another one did not come off it. What it would
     // continue is somebody else's transcript, in this directory's terminal.
     let sample = Sample::new("session-named-elsewhere");
-    let session = Session::start(&sample.logs(), &sample.elsewhere()).expect("a new session");
+    let session = Session::start(&sample.logs(), &sample.elsewhere(), None).expect("a new session");
     let id = session
         .path()
         .file_stem()
@@ -209,7 +211,7 @@ fn a_session_named_from_a_build_that_spelled_things_differently_says_which() {
 #[test]
 fn a_session_another_crucible_has_open_is_refused_by_name_too() {
     let sample = Sample::new("session-named-busy");
-    let open = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let open = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     let id = open
         .path()
         .file_stem()
@@ -509,7 +511,7 @@ fn a_session_another_crucible_still_has_open_is_not_continued_over() {
     // writing to one file. What comes back afterwards is one conversation's
     // prompts interleaved with another's, and neither process notices.
     let sample = Sample::new("session-open");
-    let running = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+    let running = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
     running.append(&said("still going"));
 
     let problem = Session::resume(&sample.logs(), &sample.workspace()).expect_err("still open");

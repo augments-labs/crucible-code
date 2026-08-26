@@ -529,7 +529,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
     // sixty-four-log bound. The pause is outside the timed region.
     for nth in 0..LOGS {
         let workspace = if USABLE.contains(&nth) { &here } else { &away };
-        let session = crucible_runner::Session::start(sessions, workspace)?;
+        let session = crucible_runner::Session::start(sessions, workspace, None)?;
         if let Some(id) = session.id() {
             planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
         }

@@ -168,7 +168,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
         let (session, transcript) = Session::resume(sessions, workspace)?;
         (session, Some(transcript))
     } else {
-        (Session::start(sessions, workspace)?, None)
+        (Session::start(sessions, workspace, None)?, None)
     };
 
     // Read before the provider is handed over, because which vendor is being

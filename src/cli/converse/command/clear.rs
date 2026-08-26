@@ -54,7 +54,7 @@ pub(super) fn run<T: Terminal>(
         return Ok(renderer.present(&rows)?);
     }
 
-    let session = match Session::start(&terms.sessions, &terms.workspace) {
+    let session = match Session::start(&terms.sessions, &terms.workspace, None) {
         Ok(session) => session,
         // A path is in every one of these, so it is committed rather than
         // presented — the same as `/resume`'s. Nothing else changes: the
@@ -216,7 +216,8 @@ mod tests {
             stop: Some(StopReason::Yielded),
         };
 
-        let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+        let session =
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
         session.append(&Message::said(asked));
         session.append(&answered);
 
@@ -425,7 +426,8 @@ mod tests {
         // second one about to be, which is two files for a session that never
         // happened -- and `--continue` picks the newest of them.
         let sample = Sample::new("clear-said-nothing");
-        let session = Session::start(&sample.logs(), &sample.workspace()).expect("a new session");
+        let session =
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
         let held = session.id().cloned().expect("a recorded session");
         let mut runner = Runner::new(
             Box::new(Script::new(Vec::new())),
