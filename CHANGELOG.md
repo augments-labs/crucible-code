@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-08-26
+
+### Fixed
+
+- **Only a command that can be left running offers <kbd>Ctrl+B</kbd>.** Native
+  web search, fetch and other synchronous tools no longer display a background
+  action they cannot perform; Bash calls keep the hint and keybinding, with the
+  capability carried explicitly from the tool through the runner.
+
 ## [0.24.0] - 2026-08-26
 
 ### Added
@@ -2886,7 +2895,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/augments-labs/crucible-code/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/augments-labs/crucible-code/compare/v0.23.5...v0.24.0
 [0.23.5]: https://github.com/augments-labs/crucible-code/compare/v0.23.4...v0.23.5
 [0.23.4]: https://github.com/augments-labs/crucible-code/compare/v0.23.3...v0.23.4
