@@ -377,6 +377,10 @@ fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // The picker stands over the box: its title row is the stable mark, and
     // the theme list under it is what choosing moves through.
     window.types_and_catches("/theme\r", "Theme");
+    // `catches` stops at the first frame with the title. Drain the remainder of
+    // that one redraw so a chunk boundary cannot leave the old transcript row
+    // above an otherwise complete panel in the snapshot.
+    window.catches("the theme panel was opened", "fox");
 
     insta::assert_snapshot!(window.picture());
 }
