@@ -296,9 +296,9 @@ fn output(text: &str, file: &str, key: &str, value_of: &str) -> Result<String, C
     let Some(output) = value.get("output") else {
         return Ok(splice::insert(text, root, |indent| match indent {
             Some(indent) => {
-                format!("\"output\": {{\n{indent}  \"theme\": {written}\n{indent}}}")
+                format!("\"output\": {{\n{indent}  \"{key}\": {written}\n{indent}}}")
             }
-            None => format!("\"output\": {{\"theme\": {written}}}"),
+            None => format!("\"output\": {{\"{key}\": {written}}}"),
         }));
     };
 
