@@ -24,7 +24,7 @@
 //! last, so the key that went too far is the key that goes further.
 
 use crucible_tui::{
-    Caret, Editor, Head, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal, Typed,
+    Caret, Editor, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal, Typed,
 };
 
 use crate::cli::Fatal;
@@ -221,13 +221,12 @@ fn sliding(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
 
 /// The rows the window keeps for itself while something stands in it.
 ///
-/// The head at the top and the row that maps the transcript at the foot. A
-/// component is handed the whole height of the window and lays itself out
-/// against it, and these two are already spoken for — rows asked for past them
-/// are laid out and then dropped off the bottom, which costs the keys row
-/// first. Under-asking costs nothing: the transcript is above and fills what is
-/// left.
-const CHROME: usize = Head::ROWS + 1;
+/// The row that maps the transcript at the foot. A component is handed the
+/// whole height of the window and lays itself out against it, and that row is
+/// already spoken for — rows asked for past it are laid out and then dropped
+/// off the bottom, which costs the keys row first. Under-asking costs nothing:
+/// the transcript is above and fills what is left.
+const CHROME: usize = 1;
 
 /// What came off the shelf: a model, and the rung marked under it.
 ///

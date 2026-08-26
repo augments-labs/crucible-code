@@ -83,7 +83,6 @@ impl Post for std::sync::mpsc::Sender<Event> {
 }
 
 /// One record of something that happened.
-#[derive(Debug)]
 pub enum Event {
     /// A turn began.
     TurnStarted {
@@ -244,6 +243,61 @@ pub enum Event {
     },
 }
 
+/// By hand, because two variants carry conversation text of their own and they
+/// go opposite ways: a steered line is the reader's, redacted the way
+/// [`crate::Message::User`] redacts the same words, while a delta's prose is
+/// deliberately shown — it is the model's own prose on its way to the screen.
+/// Everything else delegates, and what needs redacting redacts itself.
+impl std::fmt::Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TurnStarted { turn } => {
+                f.debug_struct("TurnStarted").field("turn", turn).finish()
+            }
+            Self::Delta { text } => f.debug_struct("Delta").field("text", text).finish(),
+            Self::ToolRequested { call, summary } => f
+                .debug_struct("ToolRequested")
+                .field("call", call)
+                .field("summary", summary)
+                .finish(),
+            Self::Wrote { call, text } => f
+                .debug_struct("Wrote")
+                .field("call", call)
+                .field("text", text)
+                .finish(),
+            Self::ToolFinished { call, output } => f
+                .debug_struct("ToolFinished")
+                .field("call", call)
+                .field("output", output)
+                .finish(),
+            Self::Retrying => f.write_str("Retrying"),
+            Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
+            Self::Compacting { why, part } => f
+                .debug_struct("Compacting")
+                .field("why", why)
+                .field("part", part)
+                .finish(),
+            Self::Compacted { compacted } => f
+                .debug_struct("Compacted")
+                .field("compacted", compacted)
+                .finish(),
+            Self::Spent { spend } => f.debug_struct("Spent").field("spend", spend).finish(),
+            Self::TurnFinished { turn, stop } => f
+                .debug_struct("TurnFinished")
+                .field("turn", turn)
+                .field("stop", stop)
+                .finish(),
+            Self::Failed { error } => f.debug_struct("Failed").field("error", error).finish(),
+            Self::Aged { files } => f.debug_struct("Aged").field("files", files).finish(),
+            Self::Unread { files } => f.debug_struct("Unread").field("files", files).finish(),
+            Self::Steered { line: _ } => f
+                .debug_struct("Steered")
+                .field("line", &"[redacted]")
+                .finish(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +411,21 @@ mod tests {
         let shown = format!("{event:?}");
         assert!(!shown.contains("wrote-debug-canary"), "{shown}");
         assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn an_event_never_shows_what_the_reader_typed() {
+        // A steered line is the reader's own words, and the transcript's
+        // [`Message::User`] already redacts the same words once they are a
+        // message. The moment between typing and joining the turn is not a
+        // moment they stop being theirs.
+        let event = Event::Steered {
+            line: "steered-debug-canary".to_owned(),
+        };
+
+        let shown = format!("{event:?}");
+        assert!(!shown.contains("steered-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
     }
 
     #[test]

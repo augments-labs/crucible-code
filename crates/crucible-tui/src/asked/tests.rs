@@ -555,6 +555,48 @@ fn a_specimen_past_the_bound_is_cut_and_the_row_says_by_how_much() {
 }
 
 #[test]
+fn a_specimen_stands_beside_the_answers_where_both_fit_whole() {
+    // The reader is choosing between shapes, so the shape belongs beside the
+    // choices rather than under them — but only where neither gives ground:
+    // every answer unfolded and the widest specimen uncut. Narrower than
+    // that, the box keeps to the rows under the answers, where the full
+    // width keeps most of the picture.
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 1;
+
+    let drawn = art(&panel, 100, 40);
+    assert!(
+        drawn
+            .iter()
+            .any(|row| row.contains("Compact") && row.contains('┌')),
+        "{drawn:#?}"
+    );
+
+    let drawn = art(&panel, 80, 40);
+    assert!(
+        !drawn
+            .iter()
+            .any(|row| row.contains("Compact") && row.contains('┌')),
+        "the box squeezed in where it cannot stand whole: {drawn:#?}"
+    );
+    assert!(drawn.iter().any(|row| row.contains('┌')), "{drawn:#?}");
+}
+
+#[test]
+fn the_whole_panel_with_a_specimen_beside_the_answers() {
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.at = 2;
+    panel.question = "You have no status line. Which one shall I set up here?";
+    panel.marked = 1;
+
+    insta::assert_snapshot!(dump(&panel.within(100, 40, Glyphs::Unicode).0, 100));
+}
+
+#[test]
 fn a_question_with_no_specimens_draws_no_block() {
     let answers = languages();
     let stops = stops();
@@ -709,6 +751,59 @@ fn a_note_being_written_takes_the_cursor_rather_than_the_answer() {
         "{row:?}"
     );
     assert_eq!(caret.column, 1 + 4 + "Note: ".len() + 21);
+}
+
+#[test]
+fn a_line_past_what_the_row_has_room_for_slides_inside_it() {
+    // The line is typed on one row, so past the room it slides rather than
+    // folds: what is shown is the columns just behind the cursor — the reader
+    // is watching what they type — and the caret never leaves the frame.
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.marked = 2;
+    let written = format!("{}TAIL-END99", "x".repeat(50));
+    panel.writing = Some(Writing {
+        text: &written,
+        column: 60,
+        placeholder: "Something else",
+    });
+
+    let (rows, caret) = panel.within(40, 40, Glyphs::Unicode);
+    let caret = caret.expect("the cursor belongs in the line being written");
+    let row = rows.get(caret.row).expect("a row the panel drew");
+
+    assert!(row.text().contains("TAIL-END99"), "{:?}", row.text());
+    assert!(
+        caret.column < 39,
+        "the caret walked into the frame: {caret:?}"
+    );
+    assert_eq!(caret.column, 1 + 2 + 1 + " 3. ".len() + 30);
+}
+
+#[test]
+fn a_note_past_what_the_row_has_room_for_slides_the_same_way() {
+    let answers = languages();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.at_note = true;
+    let written = format!("{}TAIL-END99", "x".repeat(50));
+    panel.writing = Some(Writing {
+        text: &written,
+        column: 60,
+        placeholder: "",
+    });
+
+    let (rows, caret) = panel.within(40, 40, Glyphs::Unicode);
+    let caret = caret.expect("the cursor belongs in the note");
+    let row = rows.get(caret.row).expect("a row the panel drew");
+
+    assert!(row.text().contains("TAIL-END99"), "{:?}", row.text());
+    assert!(
+        caret.column < 39,
+        "the caret walked into the frame: {caret:?}"
+    );
+    assert_eq!(caret.column, 1 + 4 + "Note: ".len() + 25);
 }
 
 #[test]

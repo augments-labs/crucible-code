@@ -55,7 +55,7 @@ use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
 use crate::row::Row;
-use crate::width::{clip, columns as wide, fold, spoken};
+use crate::width::{clip, columns as wide, cut, fold, spoken};
 
 /// What a row spends on the frame: one column of edge on each side.
 const AROUND: usize = 2;
@@ -73,6 +73,9 @@ const GAP: usize = 3;
 /// What a chosen mark costs an answer: the brackets, the mark, and the space
 /// after it.
 const CHOSEN: usize = 4;
+
+/// Blank columns between the answers and a box standing beside them.
+const APART: usize = 2;
 
 /// The most rows of a specimen the block will draw, the row that counts what
 /// was left out included.
@@ -277,27 +280,49 @@ impl Asked<'_> {
             rows.push(framed(Row::new(), inner, glyphs));
         }
 
+        let beside = self.beside(inner);
+        let left = beside.map_or(inner, |beside| beside.left);
+        let mut listed = Vec::new();
         for (at, answer) in self.answers.iter().enumerate() {
             if at == self.marked && !self.at_note && self.writing.is_some() {
                 caret = Some(Caret {
-                    row: rows.len(),
-                    column: 1 + self.written(at),
+                    row: rows.len() + listed.len(),
+                    column: 1 + self.written(at, left),
                 });
             }
-            rows.extend(self.answered(at, answer, laid));
+            listed.extend(self.answered(at, answer, left, laid));
+        }
+
+        if let Some(beside) = beside {
+            let aside = self.aside(beside, glyphs);
+            for at in 0..listed.len().max(aside.len()) {
+                let mut row = listed.get(at).cloned().unwrap_or_default();
+                if let Some(shape) = aside.get(at) {
+                    row.pad(beside.left + APART);
+                    row = row.join(shape.clone());
+                }
+                rows.push(framed(row, inner, glyphs));
+            }
+        } else {
+            rows.extend(listed.into_iter().map(|row| framed(row, inner, glyphs)));
         }
 
         if let Some(note) = self.noted(laid) {
             if self.at_note && self.writing.is_some() {
+                let room = inner
+                    .saturating_sub(PAYLOAD + wide(NOTED))
+                    .saturating_sub(SAID);
                 caret = Some(Caret {
                     row: rows.len(),
-                    column: 1 + PAYLOAD + wide(NOTED) + self.column(),
+                    column: 1 + PAYLOAD + wide(NOTED) + self.column().min(last(room)),
                 });
             }
             rows.push(note);
         }
 
-        rows.extend(self.shown(laid));
+        if beside.is_none() {
+            rows.extend(self.shown(laid));
+        }
 
         if !self.leaves.is_empty() {
             if spacing.opening {
@@ -321,8 +346,13 @@ impl Asked<'_> {
 
     /// Where the cursor sits on the answer at `at`, counted from the first
     /// column inside the frame.
-    fn written(&self, at: usize) -> usize {
-        SAID + 1 + wide(&format!(" {}. ", at + 1)) + self.column()
+    ///
+    /// Held to the room the row has: past it the line slides under the cursor
+    /// rather than the cursor leaving the frame, so the cursor stands on the
+    /// last column the row owns and the columns behind it are what is drawn.
+    fn written(&self, at: usize, inner: usize) -> usize {
+        let front = SAID + 1 + wide(&format!(" {}. ", at + 1));
+        front + self.column().min(last(inner.saturating_sub(front)))
     }
 
     /// How far into the line being written the cursor is, and zero where
@@ -347,10 +377,11 @@ impl Asked<'_> {
             .inner
             .saturating_sub(PAYLOAD + wide(NOTED))
             .saturating_sub(SAID);
+        let column = writing.map_or(0, |writing| writing.column);
         let row = Row::new()
             .then(Slot::Plain, " ".repeat(PAYLOAD))
             .then(Slot::Quiet, NOTED)
-            .then(Slot::Plain, clip(&spoken(text), room));
+            .then(Slot::Plain, slid(&spoken(text), column, room).to_owned());
 
         Some(framed(row, laid.inner, laid.glyphs))
     }
@@ -365,17 +396,31 @@ impl Asked<'_> {
             return None;
         }
 
+        // Measured on the rows that will be drawn: past the bound the last row
+        // counts what was left out instead, and a box sized to rows nobody
+        // sees would cut the count that replaced them. The dot is measured by
+        // a one-column stand-in, which is what it is in every glyph set.
         let wide = self
             .answers
             .iter()
             .flat_map(|answer| {
                 if answer.shows.is_empty() {
-                    vec![NOTHING]
+                    vec![NOTHING.to_owned()]
+                } else if answer.shows.len() > MOST {
+                    let counted = answer.shows.len() - (MOST - 1);
+                    answer
+                        .shows
+                        .get(..MOST - 1)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|line| (*line).to_owned())
+                        .chain(std::iter::once(format!("· {counted} more rows")))
+                        .collect()
                 } else {
-                    answer.shows.to_vec()
+                    answer.shows.iter().map(|line| (*line).to_owned()).collect()
                 }
             })
-            .map(|line| wide(clip(line, room)))
+            .map(|line| wide(clip(&line, room)))
             .max()
             .unwrap_or_default();
 
@@ -387,6 +432,47 @@ impl Asked<'_> {
             .unwrap_or(1);
 
         Some((wide, tall))
+    }
+
+    /// The box standing beside the answers, or `None` where the window cannot
+    /// hold both whole.
+    ///
+    /// Beside means neither gives ground: every answer name unfolded and the
+    /// widest specimen uncut. Anything narrower keeps the box under the
+    /// answers instead, where the full width keeps most of the picture — a
+    /// squeezed column of either would be worse than the walk down to it.
+    fn beside(&self, inner: usize) -> Option<Beside> {
+        let names = self
+            .answers
+            .iter()
+            .map(|answer| wide(&spoken(answer.answer)))
+            .max()
+            .unwrap_or_default();
+        let (wide, tall) = self.boxed(inner)?;
+        let left = inner.checked_sub(wide + 4 + APART)?;
+
+        (left >= self.gutter() + names).then_some(Beside { left, wide, tall })
+    }
+
+    /// The box's rows on their own, for standing beside the answers.
+    fn aside(&self, beside: Beside, glyphs: Glyphs) -> Vec<Row> {
+        let Beside { wide, tall, .. } = beside;
+        let bar = glyphs.horizontal();
+        let mut rows = vec![Row::new().then(Slot::Quiet, format!("┌{}┐", bar.repeat(wide + 2)))];
+
+        for at in 0..tall {
+            let (slot, line) = self.showing(at, wide, glyphs);
+            let mut row = Row::new()
+                .then(Slot::Quiet, glyphs.vertical())
+                .then(Slot::Plain, " ")
+                .then(slot, line);
+            row.pad(3 + wide);
+            rows.push(row.then(Slot::Quiet, glyphs.vertical()));
+        }
+
+        rows.push(Row::new().then(Slot::Quiet, format!("└{}┘", bar.repeat(wide + 2))));
+
+        rows
     }
 
     /// The specimen of the marked answer, in the box the whole question shares.
@@ -623,16 +709,15 @@ impl Asked<'_> {
     }
 
     /// One answer's rows: the caret, the number, the box where there is one,
-    /// the words, and the quiet row under them.
+    /// the words, and the quiet row under them. Unframed, and no wider than
+    /// `across`, so the caller can stand a box beside them before framing.
     ///
     /// A continuation row opens under the answer's own first column rather than
     /// under its number, so a folded answer reads as one answer and the column
     /// of numbers stays a column.
-    fn answered(&self, at: usize, answer: &Choice<'_>, laid: Laid) -> Vec<Row> {
+    fn answered(&self, at: usize, answer: &Choice<'_>, across: usize, laid: Laid) -> Vec<Row> {
         let Laid {
-            inner,
-            glyphs,
-            spacing,
+            glyphs, spacing, ..
         } = laid;
         let marked = at == self.marked;
         let number = format!(" {}. ", at + 1);
@@ -644,7 +729,7 @@ impl Asked<'_> {
             && !self.at_note
             && let Some(writing) = self.writing
         {
-            let room = inner.saturating_sub(front);
+            let room = across.saturating_sub(front);
             let (slot, text) = if writing.text.is_empty() {
                 (Slot::Quiet, writing.placeholder)
             } else {
@@ -655,17 +740,17 @@ impl Asked<'_> {
                 .then(Slot::Plain, " ".repeat(SAID))
                 .then(Slot::Accent, glyphs.caret())
                 .then(Slot::Strong, &number)
-                .then(slot, clip(&spoken(text), room));
+                .then(slot, slid(&spoken(text), writing.column, room).to_owned());
 
-            return vec![framed(row, inner, glyphs)];
+            return vec![row];
         }
 
         let name = spoken(answer.answer);
-        let mut rows: Vec<Row> = fold(&name, inner.saturating_sub(front))
+        let mut rows: Vec<Row> = fold(&name, across.saturating_sub(front))
             .into_iter()
             .enumerate()
             .map(|(row, line)| {
-                let opening = if row == 0 {
+                if row == 0 {
                     let mut open = Row::new()
                         .then(Slot::Plain, " ".repeat(SAID))
                         .then(Slot::Accent, if marked { glyphs.caret() } else { " " })
@@ -687,16 +772,14 @@ impl Asked<'_> {
                     Row::new()
                         .then(Slot::Plain, " ".repeat(front))
                         .then(slot, line)
-                };
-
-                framed(opening, inner, glyphs)
+                }
             })
             .collect();
 
         if spacing.says && !answer.says.is_empty() {
             let says = spoken(answer.says);
-            let line = clip(&says, inner.saturating_sub(front));
-            rows.push(framed(said(front, Slot::Quiet, line), inner, glyphs));
+            let line = clip(&says, across.saturating_sub(front));
+            rows.push(said(front, Slot::Quiet, line));
         }
 
         rows
@@ -716,6 +799,15 @@ impl Asked<'_> {
                 clip(&spoken(self.leaves), across.saturating_sub(front - SAID)),
             )
     }
+}
+
+/// The box standing beside the answers: the columns the answers keep, and the
+/// box's content width and height.
+#[derive(Debug, Clone, Copy)]
+struct Beside {
+    left: usize,
+    wide: usize,
+    tall: usize,
 }
 
 /// How a row is being drawn: the width inside the frame, the characters, and
@@ -781,6 +873,28 @@ fn edge(glyphs: Glyphs) -> Row {
 fn framed(mut row: Row, inner: usize, glyphs: Glyphs) -> Row {
     row.pad(inner);
     edge(glyphs).join(row).join(edge(glyphs))
+}
+
+/// The window of `text` a row of `room` columns shows while a cursor stands
+/// `column` columns into it.
+///
+/// A line being typed slides rather than folds: the reader is watching what
+/// they type, so what the row keeps is the columns just behind the cursor —
+/// everything earlier goes off the left edge, and the cursor itself never
+/// leaves the frame. Until the line outgrows the room this is [`clip`].
+fn slid(text: &str, column: usize, room: usize) -> &str {
+    let behind = column.saturating_sub(last(room));
+    let ahead = match cut(text, behind) {
+        Some(at) => text.get(at..).unwrap_or_default(),
+        None => "",
+    };
+
+    clip(ahead, room)
+}
+
+/// The last column a cursor may stand on in a row of `room` columns.
+fn last(room: usize) -> usize {
+    room.saturating_sub(1)
 }
 
 /// A row of `text` in `slot`, opening `indent` columns in.

@@ -172,7 +172,7 @@ pub(super) fn picked_while<T: Terminal>(
 /// Whether a switch is confirmed, with the consequence said first.
 ///
 /// The pick is held for the next turn rather than applied now, and the next
-/// turn is the one that re-reads the history against the new model — so that
+/// turn is the one that re-reads the transcript against the new model — so that
 /// is said, and agreed to, before anything is held. `false` where the reader
 /// goes back to the picker instead.
 pub(super) fn confirmed<T: Terminal>(
@@ -185,7 +185,7 @@ pub(super) fn confirmed<T: Terminal>(
     // provider/model spelling is what `--model` and the config are for.
     let name = selected.model.shown;
     let says = format!(
-        "This conversation is cached for the current model. Switching to {name} means the full history gets re-read on your next message."
+        "This session is cached for the current model. Switching to {name} means the full transcript gets re-read on your next message."
     );
     let switch = format!("switch to {name}");
     let rows = [

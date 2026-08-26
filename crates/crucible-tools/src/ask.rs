@@ -88,8 +88,14 @@ const HEADING_SHORT: usize = 24;
 /// writing rows nobody will ever see.
 const MOST_SHOWS: usize = 10;
 
-/// How long a heading, an answer or a row of a specimen may be, in bytes.
-const SHORT: usize = 200;
+/// How long an answer, its one-line meaning or a row of a specimen may be, in
+/// bytes.
+///
+/// The same length a question gets: an answer is folded across the panel the
+/// way the question above it is, so what bounds it is the reader's patience
+/// rather than a row — and a specimen row past the panel's width is clipped,
+/// which its own description says.
+const SHORT: usize = 500;
 
 /// How long a question may be, in bytes.
 const LONG: usize = 500;

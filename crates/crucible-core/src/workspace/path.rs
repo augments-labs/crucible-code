@@ -7,7 +7,14 @@ use std::sync::Arc;
 
 use super::{PathError, open, written};
 
-/// A path proven to be inside the workspace.
+/// A path proven under a directory containment was settled against.
+///
+/// Almost always a directory the workspace reaches, which is why everything
+/// below speaks of the workspace. The one exception is a read the user was
+/// asked about: [`Workspace::outside`](super::Workspace::outside) proves such
+/// a path against its own parent, and nothing that writes can be handed one,
+/// because `write` and `edit` resolve their paths through the containing
+/// entry points themselves.
 ///
 /// There is no public constructor: the only way to hold one is to have asked
 /// a [`Workspace`](super::Workspace) for it, so a function taking this type

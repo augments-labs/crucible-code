@@ -1,7 +1,8 @@
 # Tools
 
 Eleven tools, and the model chooses which one to call. Three of them only look —
-`read`, `grep` and `glob` — and are never asked about. Three of them change
+`read`, `grep` and `glob` — and ask only when the path they name leads outside
+the workspace. Three of them change
 something — `edit`, `write` and `bash` — and ask until a rule or a mode answers
 for you. Two of them leave your machine: `web_search` and `web_fetch` are asked
 about in every mode but `fullAccess`, and appear only where the session has

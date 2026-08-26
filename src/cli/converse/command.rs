@@ -592,7 +592,7 @@ fn answer<T: Terminal>(
         Wanted::Known {
             command: Command::Clear,
             ..
-        } => clear::run(renderer, runner, terms)?,
+        } => clear::run(renderer, runner, held, terms)?,
 
         Wanted::Unknown(word) => {
             renderer.commit(&format!("! no such command: {word}"))?;

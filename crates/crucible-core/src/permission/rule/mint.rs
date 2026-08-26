@@ -49,7 +49,9 @@ impl fmt::Display for Minted {
 #[must_use]
 pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
     let subject = match sensitivity {
-        Sensitivity::ReadOnly { target } | Sensitivity::MutatesFile { target } => {
+        Sensitivity::ReadOnly { target }
+        | Sensitivity::ReadsOutside { target }
+        | Sensitivity::MutatesFile { target } => {
             // The spelling somebody would recognise, falling back to the only
             // name a file outside the working directory has.
             target.below_root().or_else(|| target.absolute())?

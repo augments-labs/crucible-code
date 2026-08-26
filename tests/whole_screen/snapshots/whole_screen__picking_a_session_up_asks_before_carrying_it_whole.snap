@@ -3,12 +3,12 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 22,0 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|                                                                                |
+|authentication: anthropic · environment variable ANTHROPIC_API_KEY              |
+|                                                                                |
+|› say something                                                                 |
 |                                                                                |
 |The first thing this session said.                                              |
-|                                                                                |
-|────────────────────────────────────────────────────────────────────────────────|
-|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |This session is large                                                           |

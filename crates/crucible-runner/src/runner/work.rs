@@ -110,7 +110,14 @@ impl Work<'_> {
                 } else {
                     ""
                 });
-                went = Went::OutputLimit;
+                // The boundary is why the turn ends only where nothing already
+                // ended it: a cancellation or a refusal whose stand-in answer
+                // crossed the room is still a cancellation or a refusal, and
+                // relabelling it would hand the model a limit to work around.
+                went = match went {
+                    Went::On | Went::OutputLimit => Went::OutputLimit,
+                    Went::Stopped(_) | Went::Refused(_) => went,
+                };
             }
             produced = produced.saturating_add(output.text().len());
 
@@ -457,6 +464,21 @@ mod tests {
         let (results, went) = proof.pass(&[call("a", "read")]);
 
         assert_eq!(texts(&results), [NOT_RUN]);
+        assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
+    }
+
+    #[test]
+    fn a_cancellation_is_not_relabelled_when_its_stand_in_crosses_the_boundary() {
+        // The turn ended because the user stopped it. That the stand-in answer
+        // did not fit the room left is a fact about the room, and reporting the
+        // boundary instead would turn "the user stopped this" into a limit the
+        // model would try to work around.
+        let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read"));
+        proof.cancel.request();
+
+        let (results, went, _) = proof.within(&[call("a", "read")], 0, 0);
+
+        assert_eq!(texts(&results), [""]);
         assert!(matches!(went, Went::Stopped(StopReason::Cancelled)));
     }
 

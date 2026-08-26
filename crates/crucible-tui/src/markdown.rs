@@ -1107,8 +1107,13 @@ impl Markdown {
 
     /// The slot everything read right now is written under.
     fn slot(&self) -> Slot {
-        if self.inside != Inside::Prose || self.line.code || self.line.quoted {
+        if self.inside != Inside::Prose || self.line.quoted {
             Slot::Quiet
+        } else if self.line.code {
+            // Above everything a phrase can otherwise be: backticks say the
+            // reader is being handed something to copy or go and find, and
+            // that is worth more to them than the weight around it.
+            Slot::Code
         } else if self.line.marked == Marked::Done {
             Slot::Done
         } else if self.line.emphasis.struck {

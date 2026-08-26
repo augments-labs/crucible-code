@@ -203,10 +203,10 @@ impl Rules {
     /// settled once, about the directory it walks, so a rule written about a
     /// file below that directory has no other moment to be honoured in.
     ///
-    /// `ask` rules come along with the `deny` ones because a read is never put
-    /// to the user — an `ask` about one has already become a refusal by the
-    /// time any tool sees it, and a walk honouring only half the rules written
-    /// about it would leave the other half looking like protection.
+    /// `ask` rules come along with the `deny` ones because a walk cannot ask
+    /// from inside itself — the call was settled before it started. A file an
+    /// `ask` rule names is left out of the walk rather than waved through;
+    /// naming it to `read` is what puts the question.
     pub(super) fn denials(&self, tool: &str) -> Denials {
         Denials(
             self.deny

@@ -533,7 +533,7 @@ impl Carried {
 /// spread over as many deltas as the provider chose to send, then a close. The
 /// runner assembles them, because every provider splits them differently and
 /// the assembly is the same either way.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Delta {
     /// Prose, to be shown as it arrives.
     Text(Box<str>),
@@ -558,6 +558,27 @@ pub enum Delta {
     Carried(Carried),
     /// The model stopped, and why.
     Stopped(StopReason),
+}
+
+/// By hand: a call's name and arguments are the model writing — a whole file,
+/// sometimes — and [`crate::ToolCall`] already redacts the assembled call, so
+/// the same content half-assembled redacts too. Prose is deliberately shown,
+/// for the reason [`crate::Event::Delta`]'s is: it is on its way to the screen.
+impl fmt::Debug for Delta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => f.debug_tuple("Text").field(text).finish(),
+            Self::ToolStarted { id: _, name: _ } => f
+                .debug_struct("ToolStarted")
+                .field("id", &"[redacted]")
+                .field("name", &"[redacted]")
+                .finish(),
+            Self::ToolArgs(_) => f.debug_tuple("ToolArgs").field(&"[redacted]").finish(),
+            Self::Spent(spend) => f.debug_tuple("Spent").field(spend).finish(),
+            Self::Carried(carried) => f.debug_tuple("Carried").field(carried).finish(),
+            Self::Stopped(stop) => f.debug_tuple("Stopped").field(stop).finish(),
+        }
+    }
 }
 
 /// A stream of deltas from one request.
@@ -638,6 +659,33 @@ impl fmt::Debug for dyn DeltaStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_delta_never_shows_what_a_tool_call_carries() {
+        // A tool call's arguments hold whatever the model is writing — a whole
+        // file, sometimes — and [`crate::ToolCall`] already redacts them. The
+        // same content half-assembled is the same content. Prose is the
+        // neighbouring case and is deliberately not redacted, for the reason
+        // [`crate::Event::Delta`] gives: it is on its way to the screen.
+        let started = Delta::ToolStarted {
+            id: ToolId::new("delta-id-canary"),
+            name: "delta-name-canary".into(),
+        };
+        let args = Delta::ToolArgs("delta-args-canary".into());
+
+        for (delta, canary) in [
+            (&started, "delta-id-canary"),
+            (&started, "delta-name-canary"),
+            (&args, "delta-args-canary"),
+        ] {
+            let shown = format!("{delta:?}");
+            assert!(!shown.contains(canary), "{shown}");
+            assert!(shown.contains("redacted"), "{shown}");
+        }
+
+        let prose = format!("{:?}", Delta::Text("streamed prose".into()));
+        assert!(prose.contains("streamed prose"), "{prose}");
+    }
 
     #[test]
     fn every_rung_is_read_back_from_the_word_it_is_written_as() {

@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x16 cursor 12,4 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
 |the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
 |brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |

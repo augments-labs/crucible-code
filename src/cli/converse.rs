@@ -38,13 +38,12 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_core::{
     Answer as Chosen, Answered, Attachment, Cancel, Compacting, Event, Mode, Post as _, Question,
-    Remember, Revealed, Room, Sensitivity, ToolCall, Verdict, Workspace,
+    Remember, Revealed, Room, Sensitivity, Spend, ToolCall, Verdict, Workspace,
 };
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ledger, Plan};
 use crucible_tui::{
-    Editor, Head, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling,
-    Terminal,
+    Editor, Key, Pasting, Pressed, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal,
 };
 
 use super::draw;
@@ -360,7 +359,12 @@ pub(crate) fn converse<T: Terminal>(
     // the line being typed, the lines finished behind it, what a result had no
     // room to say, the view over it, the plan, and where an answer comes from.
     // Held in one value for the reason its own prose gives.
-    let mut held = Held::new(terms.plan.clone(), terms.sending, Answers { input, keys });
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending,
+        Answers { input, keys },
+        opening,
+    );
 
     // The opening is the first thing in the transcript, which is where a
     // reader scrolls back to find it. Written down rather than stood over the
@@ -408,14 +412,10 @@ pub(crate) fn converse<T: Terminal>(
         // here instead.
         renderer.resized()?;
 
-        // The row at the top of the window. Said here rather than once at
-        // startup because the renderer is handed the row and not a place to
-        // read it from, and a session that reopens the screen — a view, a
-        // resize — is one that has to be told again. What it says cannot
-        // change: the directory is fixed for as long as the session is.
-        renderer.heads(Head {
-            root: opening.root(),
-        })?;
+        // The fixed foot — the transcript-map door. Said here rather than
+        // once at startup because a session that reopens the screen — a view,
+        // a resize — is one that has to be told again.
+        renderer.foots()?;
 
         // A view opened during the last turn is still open, and it was standing
         // in the rows the box is about to take. So it moves into the region
@@ -471,7 +471,16 @@ pub(crate) fn converse<T: Terminal>(
         if let Some(said) = batched(&mut held.queued, &terms.steer) {
             draw::queued(renderer, &said, style)?;
 
-            let attached = attaching::beside(renderer, &runner, &terms.workspace, &said, style)?;
+            let attached = attaching::beside(
+                renderer,
+                &runner,
+                &terms.workspace,
+                attaching::Sent {
+                    prompt: &said,
+                    images: &held.images,
+                },
+                style,
+            )?;
             let work = Work::Turn(said, attached);
             let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
             runner = back;
@@ -489,6 +498,7 @@ pub(crate) fn converse<T: Terminal>(
             runner: &mut runner,
             editor: &mut held.editor,
             planning: &mut held.planning,
+            images: &mut held.images,
             left,
             keys,
         };
@@ -558,8 +568,16 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        let attached =
-            attaching::beside(renderer, &runner, &terms.workspace, &prompt, terms.style())?;
+        let attached = attaching::beside(
+            renderer,
+            &runner,
+            &terms.workspace,
+            attaching::Sent {
+                prompt: &prompt,
+                images: &held.images,
+            },
+            terms.style(),
+        )?;
         let work = Work::Turn(prompt, attached);
         let (back, leaving) = ran(runner, renderer, terms, work, &mut held)?;
         runner = back;
@@ -1164,15 +1182,20 @@ fn sent(
                 // a turn — the bar, the clock, the box taking the next prompt,
                 // the key that stops it — is what a reader waiting on a
                 // compaction needs, and none of it is about a turn.
-                Work::Room(why) => match runner.compact(why, &relay, &running) {
-                    Ok(Room::Made(_)) => Did::Reported,
-                    Ok(Room::Nothing) => Did::Nothing,
-                    Ok(Room::Stopped) => Did::Stopped,
-                    Err(problem) => {
-                        relay.post(Event::Failed { error: problem });
-                        Did::Reported
+                // No turn is running, so the reading starts at nothing and
+                // what it comes to is the recap request's own cost — posted
+                // on the way, which is all the row above the box asks.
+                Work::Room(why) => {
+                    match runner.compact(why, &relay, &running, &mut Spend::default()) {
+                        Ok(Room::Made(_)) => Did::Reported,
+                        Ok(Room::Nothing) => Did::Nothing,
+                        Ok(Room::Stopped) => Did::Stopped,
+                        Err(problem) => {
+                            relay.post(Event::Failed { error: problem });
+                            Did::Reported
+                        }
                     }
-                },
+                }
             };
 
             (runner, did)
@@ -1416,17 +1439,30 @@ struct Held<'a> {
     /// it runs on the worker thread — and what this holds is a copy of the plan
     /// and the setting of the key that opens it, both of which outlive it.
     planning: Planning,
+    /// The images pasted at the prompt, in the order they were pasted. The
+    /// paste puts `[image N]` in the line and the path of the Nth here, and a
+    /// prompt saying the marker sends the image. For the session rather than
+    /// for a prompt, so a later prompt can still say an earlier number.
+    images: Vec<Box<str>>,
     /// Whether the log's trouble has been said. Once is all it is worth, for
     /// the reason [`troubled`] gives.
     told: bool,
     /// Where the answer to a permission question comes from.
     answers: Answers<'a>,
+    /// The card the session opened with, which `/clear` and `/resume` write
+    /// again at the top of the record they start over.
+    opening: &'a draw::opening::Standing,
 }
 
 impl<'a> Held<'a> {
     /// What a session starts with: nothing typed, nothing queued, nothing kept
     /// and nothing said, over the plan the tools were built with.
-    fn new(plan: Plan, sending: Sending, answers: Answers<'a>) -> Self {
+    fn new(
+        plan: Plan,
+        sending: Sending,
+        answers: Answers<'a>,
+        opening: &'a draw::opening::Standing,
+    ) -> Self {
         Self {
             // The one editor that takes a newline: a prompt is a paragraph, not
             // a line, and the box grows a row for each. Every other editor — a
@@ -1440,8 +1476,10 @@ impl<'a> Held<'a> {
             viewing: queueing::Standing::default(),
             listing: leaving::Leaving::default(),
             planning: Planning::new(plan),
+            images: Vec::new(),
             told: false,
             answers,
+            opening,
         }
     }
 }

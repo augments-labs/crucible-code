@@ -713,9 +713,7 @@ impl Tool for Read {
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly {
-            target: target::existing(&self.workspace, NAME, args, PATH),
-        }
+        target::reads(&self.workspace, NAME, args, PATH)
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
@@ -732,17 +730,12 @@ impl Tool for Read {
         let from = args.count(OFFSET, 1)?;
         let limit = args.count(LIMIT, LINES)?.min(CEILING);
 
-        // A path outside the workspace, or one that is not there, is something
-        // the model can correct by sending a different path.
-        let path = match self.workspace.existing(requested) {
+        // A path that is not there is something the model can correct by
+        // sending a different path. One outside the workspace is opened only
+        // on the say-so the `Approved` in hand carries.
+        let path = match target::opened(&self.workspace, &approved, requested) {
             Ok(path) => path,
-            Err(crucible_core::PathError::Escapes { .. }) => {
-                return Ok(ToolOutput::failed(format!(
-                    "{requested} resolves outside the workspace. Ask the user to attach it, or have \
-                     them add its directory to permissions.extraDirectories."
-                )));
-            }
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+            Err(problem) => return Ok(ToolOutput::failed(problem)),
         };
 
         if path.as_path().is_dir() {
@@ -1025,16 +1018,81 @@ mod tests {
     }
 
     #[test]
-    fn a_path_outside_the_workspace_is_refused_without_reading_it() {
-        let sample = Sample::new("read-escape");
+    fn a_path_outside_the_workspace_is_read_once_the_user_says_yes() {
+        let sample = Sample::new("read-outside");
         let outside = sample.outside("secret.txt", "classified");
 
         let output = read(&sample, &format!(r#"{{"path":"{outside}"}}"#));
 
-        assert!(output.is_failed());
-        assert!(!output.text().contains("classified"));
-        assert!(output.text().contains("Ask the user to attach it"));
-        assert!(output.text().contains("permissions.extraDirectories"));
+        assert!(!output.is_failed(), "{}", output.text());
+        assert!(output.text().contains("classified"));
+    }
+
+    #[test]
+    fn a_link_retargeted_after_the_verdict_leads_outside_and_is_refused() {
+        // The defect this catches: `run` fell back to resolving outside the
+        // workspace whenever a path escaped, whether or not the verdict in
+        // hand was reached about an outside read. A link pointing inside when
+        // the call was decided and outside by the time it ran would have been
+        // read with nobody asked.
+        let sample = Sample::new("read-retarget");
+        sample.write("inside.txt", "the file the verdict was about\n");
+        let secret = sample.outside("secret.txt", "nobody was asked about this\n");
+        crate::sample::symlink("inside.txt", sample.root().join("door.txt"));
+
+        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let approved = allowed(&tool, r#"{"path":"door.txt"}"#);
+
+        std::fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+        crate::sample::symlink(&secret, sample.root().join("door.txt"));
+
+        let output = tool.run(approved, &Unwatched).unwrap();
+        assert!(output.is_failed(), "{}", output.text());
+        assert!(
+            !output.text().contains("nobody was asked"),
+            "{}",
+            output.text()
+        );
+    }
+
+    #[test]
+    fn an_outside_path_is_put_to_the_user_before_it_is_read() {
+        use crucible_core::{Mode, Permission, Remember, Rules, Settled, ToolCall, Verdict};
+
+        struct Counting(usize);
+        impl crucible_core::Ask for Counting {
+            fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+                self.0 += 1;
+                (Verdict::Allow, Remember::Never)
+            }
+        }
+
+        let sample = Sample::new("read-outside-asked");
+        let outside = sample.outside("secret.txt", "classified");
+        let tool = Read::new(sample.workspace(), Cancel::new(), Ledger::new());
+        let call = ToolCall {
+            id: crucible_core::ToolId::new("outside-1"),
+            name: tool.name().into(),
+            args: ToolArgs::new(format!(r#"{{"path":"{outside}"}}"#)),
+        };
+
+        let sensitivity = tool.sensitivity(&call.args);
+        let mut counting = Counting(0);
+        let settled = Permission::with(Mode::default(), Rules::new()).decide(
+            &call,
+            &sensitivity,
+            &mut counting,
+        );
+
+        assert_eq!(
+            counting.0, 1,
+            "a read that leaves the workspace is asked about"
+        );
+        let Settled::Approved(approved) = settled else {
+            panic!("the answer above was yes");
+        };
+        let output = tool.run(approved, &Unwatched).unwrap();
+        assert!(output.text().contains("classified"));
     }
 
     #[test]

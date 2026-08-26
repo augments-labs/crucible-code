@@ -1145,10 +1145,17 @@ pub(crate) fn notice(stop: StopReason) -> Option<&'static str> {
 /// three rows it knows it drew.
 fn asked(call: &ToolCall, sensitivity: &Sensitivity, columns: usize) -> Vec<String> {
     let said = match sensitivity {
-        // Never reached through the permission engine, which allows or refuses
-        // a read and never asks about one. Here so that a tool reclassified
-        // later still has a question to show rather than a blank one.
+        // Reached only through an `ask` rule somebody wrote about exactly
+        // this path — no mode asks about a read inside the workspace.
         Sensitivity::ReadOnly { target } => format!("? {} wants to read: {target}", call.name),
+
+        // The target is absolute, which already says it is nobody's file in
+        // this workspace; the caption says so in words because the path alone
+        // asks the reader to notice.
+        Sensitivity::ReadsOutside { target } => format!(
+            "? {} wants to read, outside the workspace: {target}",
+            call.name
+        ),
 
         Sensitivity::MutatesFile { target } => format!("? {} wants to change: {target}", call.name),
 

@@ -696,9 +696,7 @@ impl Tool for Grep {
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly {
-            target: target::searched(&self.workspace, NAME, args, PATH),
-        }
+        target::searches(&self.workspace, NAME, args, PATH)
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
@@ -721,9 +719,11 @@ impl Tool for Grep {
         };
 
         let requested = args.optional_text(PATH)?.unwrap_or(".");
-        let from = match self.workspace.existing(requested) {
+        // A directory outside the workspace is walked only on the say-so the
+        // `Approved` in hand carries.
+        let from = match crate::target::opened(&self.workspace, &approved, requested) {
             Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+            Err(problem) => return Ok(ToolOutput::failed(problem)),
         };
 
         let Ok(only) = self.only(args.optional_text(GLOB)?) else {

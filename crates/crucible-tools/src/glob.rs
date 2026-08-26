@@ -256,9 +256,7 @@ impl Tool for Glob {
     }
 
     fn sensitivity(&self, args: &ToolArgs) -> Sensitivity {
-        Sensitivity::ReadOnly {
-            target: target::searched(&self.workspace, NAME, args, PATH),
-        }
+        target::searches(&self.workspace, NAME, args, PATH)
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
@@ -286,9 +284,11 @@ impl Tool for Glob {
         };
 
         let requested = args.optional_text(PATH)?.unwrap_or(".");
-        let from = match self.workspace.existing(requested) {
+        // A directory outside the workspace is listed only on the say-so the
+        // `Approved` in hand carries.
+        let from = match crate::target::opened(&self.workspace, &approved, requested) {
             Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+            Err(problem) => return Ok(ToolOutput::failed(problem)),
         };
 
         // The walk runs to the end even once `limit` paths are in hand, which
@@ -783,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_outside_the_workspace_is_refused() {
+    fn a_path_outside_the_workspace_is_listed_once_the_user_says_yes() {
         let sample = tree("glob-escape");
         sample.outside("secret.txt", "");
         let outside = format!("{}/../outside", sample.named());
@@ -793,8 +793,8 @@ mod tests {
             &format!(r#"{{"pattern":"**/*","path":"{outside}"}}"#),
         );
 
-        assert!(output.is_failed());
-        assert!(!output.text().contains("secret.txt"));
+        assert!(!output.is_failed(), "{}", output.text());
+        assert!(output.text().contains("secret.txt"));
     }
 
     #[test]
@@ -903,5 +903,20 @@ mod tests {
             "a link out of the workspace was listed: {}",
             output.text()
         );
+    }
+
+    #[test]
+    fn a_pattern_below_an_outside_directory_is_listed_once_the_user_says_yes() {
+        let sample = Sample::new("glob-outside");
+        sample.outside("photo.png", "");
+        let directory = sample.beside("outside");
+
+        let output = glob(
+            &sample,
+            &format!(r#"{{"pattern":"**/*.png","path":"{directory}"}}"#),
+        );
+
+        assert!(!output.is_failed(), "{}", output.text());
+        assert!(output.text().contains("photo.png"));
     }
 }

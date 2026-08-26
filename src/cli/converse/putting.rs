@@ -139,8 +139,13 @@ impl Held {
             })
             .collect();
 
+        // The offer until a line is written, and the line from then on: the row
+        // that will be taken is the one place the reader can check what they
+        // wrote, and a row still saying the offer reads as the line having been
+        // dropped.
+        let written = self.wrote.text();
         choices.push(Choice {
-            answer: ELSE,
+            answer: if written.is_empty() { ELSE } else { written },
             says: "",
             chosen: None,
             shows: &[],

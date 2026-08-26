@@ -76,11 +76,11 @@ before writing `allow: ["bash(*)"]`.
 
 ## Reads
 
-Rules reach reads, but a read is never put to you: it is allowed, or refused
-without a question. So `deny read(.env)` refuses silently even under
-`fullAccess`. An `ask` rule that matches a read becomes a refusal — whoever
-wrote it asked not to have that read go through unwatched, and refusing is the
-only remaining answer that respects that.
+Rules reach reads. `deny read(.env)` refuses silently even under
+`fullAccess`, and an `ask` rule that matches a read puts the question — the
+one way a read inside the workspace reaches you, since without a rule it is
+allowed in every mode. A read that leads outside the workspace asks on its
+own, the way a command does.
 
 ## Searching
 
@@ -98,8 +98,10 @@ the call — the call runs, and the walk skips the file.
 ```
 
 That searches the rest of the workspace and returns nothing from `private`,
-not even that a file is there. An `ask` rule reads the same way, since an `ask`
-about a read is already a refusal.
+not even that a file is there. An `ask` rule reads the same way inside a
+walk — a search cannot stop to ask from the middle of itself, so a file the
+rule names is left out rather than waved through, and naming it to `read` is
+what puts the question.
 
 A rule names one tool, so each tool that can reach a file needs its own.
 `deny read(private/**)` stops `read` and leaves `grep` free to print the lines

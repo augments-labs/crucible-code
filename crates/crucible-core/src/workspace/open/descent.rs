@@ -87,6 +87,14 @@ pub(super) fn walked_regular(
     files: &mut WalkFiles,
     path: &WorkspacePath,
 ) -> Result<File, PathError> {
+    // A walk rooted at one file yields only that file, and its parent lies
+    // above the walk root — outside what `walked` can prove. There are no
+    // siblings for a cached directory to serve, so the file takes its own
+    // descent from the directory it was proven against.
+    if path.as_path() == files.from.as_path() {
+        return opened(path, Access::ReadFile);
+    }
+
     let parent = path.as_path().parent().unwrap_or(path.as_path());
     let cached = files
         .parent

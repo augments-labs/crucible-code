@@ -62,11 +62,12 @@ impl Mode {
 
     /// The disposition for a call the rules said nothing about.
     ///
-    /// A read is allowed in every mode. It is not that reading is harmless —
-    /// `deny` rules exist because it is not — but that a question nobody would
-    /// meaningfully answer is a question that trains people to press yes.
-    /// Standing policy is where a read is stopped, and standing policy is a
-    /// rule rather than a mode.
+    /// A read inside the workspace is allowed in every mode. It is not that
+    /// reading is harmless — `deny` rules exist because it is not — but that a
+    /// question nobody would meaningfully answer is a question that trains
+    /// people to press yes. Standing policy is where such a read is stopped,
+    /// and standing policy is a rule rather than a mode. A read that leaves
+    /// the workspace is the exception, and is asked about below.
     pub(super) fn default_arm(self, sensitivity: &Sensitivity) -> Disposition {
         // One row per kind of call, one arm per mode inside it. Nothing is
         // closed with a wildcard: a mode added here, or a sensitivity added
@@ -75,6 +76,15 @@ impl Mode {
         match sensitivity {
             Sensitivity::ReadOnly { .. } => match self {
                 Self::Ask | Self::AllowEdits | Self::FullAccess => Disposition::Allow,
+            },
+
+            // A read that leaves the workspace reaches a file nobody handed
+            // over, so it is asked about the way a command is — and allowed
+            // where a command is, because `fullAccess` already hands the
+            // shell everything this could reach.
+            Sensitivity::ReadsOutside { .. } => match self {
+                Self::Ask | Self::AllowEdits => Disposition::Ask,
+                Self::FullAccess => Disposition::Allow,
             },
 
             Sensitivity::MutatesFile { .. } => match self {

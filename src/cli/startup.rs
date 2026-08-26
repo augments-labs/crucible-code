@@ -207,7 +207,7 @@ pub(super) fn assemble(startup: &Startup<'_>) -> Result<Runner, Fatal> {
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,
 /// and a session that is picked up without one opens the way a new session does.
-fn planned(plan: &Plan, transcript: &Transcript) {
+pub(super) fn planned(plan: &Plan, transcript: &Transcript) {
     let called = transcript.messages().iter().rev().find_map(|message| {
         let Message::Agent { calls, .. } = message else {
             return None;

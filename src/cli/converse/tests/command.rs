@@ -596,12 +596,11 @@ fn clearing_starts_a_session_and_leaves_the_loop_running() {
     );
 
     assert_eq!(asked, 2, "{written}");
-    assert!(written.contains("started a new session"), "{written}");
-    assert!(written.contains("2 messages left behind"), "{written}");
     assert!(
-        written.contains("what is on screen stays where it is"),
-        "{written}"
+        !written.contains("started a new session"),
+        "the screen after a clear is a fresh start, not an announcement: {written}"
     );
+    assert!(written.contains("answered again"), "{written}");
 }
 
 #[test]

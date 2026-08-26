@@ -27,15 +27,32 @@ use std::sync::{Arc, Mutex};
 ///
 /// Cloning shares the queue rather than copying it, so a clone handed to the
 /// turn's thread sees the lines the input thread pushed.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Steer(Arc<Mutex<Waiting>>);
+
+/// By hand: the lines are the reader's own words waiting to join the turn, and
+/// [`crate::Event::Steered`] redacts the same words on their way out.
+impl std::fmt::Debug for Steer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (lines, held) = self
+            .0
+            .lock()
+            .map(|waiting| (waiting.lines.len(), waiting.held))
+            .unwrap_or_default();
+
+        f.debug_struct("Steer")
+            .field("lines", &format_args!("{lines} redacted"))
+            .field("held", &held)
+            .finish()
+    }
+}
 
 /// The lines, and whether the turn may have them yet.
 ///
 /// One lock over both, because the two are one fact: a turn that read the lines
 /// and the hold separately could take a line the reader had just opened the
 /// queue to edit.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Waiting {
     /// The lines, oldest first.
     lines: VecDeque<String>,
@@ -155,6 +172,18 @@ impl Steer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_queue_never_shows_what_the_reader_typed() {
+        // The lines are the reader's own words waiting to join the turn, and
+        // [`crate::Event::Steered`] redacts the same words on their way out.
+        let steer = Steer::new();
+        steer.say("steer-debug-canary".to_owned());
+
+        let shown = format!("{steer:?}");
+        assert!(!shown.contains("steer-debug-canary"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
+    }
 
     #[test]
     fn a_new_queue_has_nothing_to_say() {

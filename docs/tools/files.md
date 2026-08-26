@@ -2,7 +2,8 @@
 
 Three tools name one file and work on it: `read` looks, `edit` replaces part of
 it, `write` puts down the whole thing. All three take a path relative to the
-workspace root and refuse one that leads outside it.
+workspace root. `edit` and `write` refuse one that leads outside it; `read`
+puts it to you and follows your answer.
 
 ## `read`
 
@@ -174,9 +175,10 @@ crucible extracts nothing and chooses no frames. The commands are suggestions,
 run — if you allow it — by [`bash`](commands.md), and the pictures that come out
 are read like any other.
 
-Reading is never asked about. It is allowed, or refused by a `deny`
-[rule](../permissions/rules.md), and the question is answered without being put
-to you.
+Reading inside the workspace is not asked about: it is allowed, or refused by
+a `deny` [rule](../permissions/rules.md), and the question is answered without
+being put to you. A path that leads outside the workspace is the exception —
+that read is put to you the way a command is, and runs only on your yes.
 
 ## `edit`
 

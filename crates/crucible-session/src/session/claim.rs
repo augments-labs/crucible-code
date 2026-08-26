@@ -97,10 +97,14 @@ pub(super) fn claim(log: &Path) -> Result<Claimed, io::Error> {
 ///
 /// # Errors
 ///
-/// When the mark beside the log cannot be made or the lock cannot be taken.
+/// When the mark beside the log cannot be made. A lock the filesystem cannot
+/// take is not an error, for the reason [`claim`] gives: this sits on the path
+/// every start and every resume walks, so refusing there would refuse all of
+/// them for good, and what the missing guard costs is two simultaneous starts
+/// racing one bounded index replacement rather than anything in a log.
 pub(super) fn exclusive(log: &Path) -> Result<Claim, io::Error> {
     let held = privacy::mark(&beside(log))?;
-    held.lock()?;
+    drop(held.lock());
     Ok(Claim { held })
 }
 

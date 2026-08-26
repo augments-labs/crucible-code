@@ -29,12 +29,18 @@ const WRAPPERS: &[&str] = &[
     // for a container workflow would have waved through every program on the
     // machine.
     "env", "nice", "nohup", "sudo", "su", "doas", "time", "timeout", "watch", "xargs",
-    // Run a command somewhere else, or once per thing found.
-    "chroot", "find", "ionice", "runuser", "setsid", "ssh", "stdbuf", "taskset",
+    // Run a command somewhere else, or once per thing found. The less familiar
+    // spellings of the same classes are listed with the familiar ones, for the
+    // reason `su` sits beside `sudo`: a lock, a namespace, a scheduler, a
+    // tracer and a fan-out each run the command line they are handed.
+    "chroot", "chrt", "find", "flock", "gdb", "ionice", "ltrace", "nsenter", "parallel", "runuser",
+    "setpriv", "setsid", "ssh", "stdbuf", "strace", "taskset", "unshare",
     // Shell builtins that execute text, source a file, or change how a later
-    // part of the same line resolves its program.
-    ".", "alias", "builtin", "cd", "command", "eval", "exec", "export", "read", "set", "source",
-    "trap", "umask", "unalias", "unset",
+    // part of the same line resolves its program — including every spelling
+    // bash gives assignment with export semantics, and `hash -p`, which points
+    // a program name somewhere else for the rest of the line.
+    ".", "alias", "builtin", "cd", "command", "declare", "enable", "eval", "exec", "export", "hash",
+    "local", "read", "readonly", "set", "source", "trap", "typeset", "umask", "unalias", "unset",
 ];
 
 /// Whether this program runs whatever it is handed.
@@ -68,6 +74,7 @@ fn interpreter(program: &str) -> bool {
         "cscript",
         "deno",
         "dotnet",
+        "expect",
         "gawk",
         "groovy",
         "java",

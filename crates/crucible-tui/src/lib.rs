@@ -2,8 +2,8 @@
 //! the permission prompt.
 //!
 //! A session takes the alternate screen and every cell on it is this process's.
-//! The window is cut into bands once — a head, the transcript, what stands
-//! over the box, the box, and a foot — and each row is addressed by its number,
+//! The window is cut into bands once — the transcript, what stands over the
+//! box, the box, and a foot — and each row is addressed by its number,
 //! so a frame writes the rows whose text is not already there and touches
 //! nothing else.
 //!
@@ -35,7 +35,6 @@ mod expanded;
 mod fits;
 mod glyphs;
 pub mod ground;
-mod head;
 mod ladder;
 pub mod markdown;
 mod menu;
@@ -64,7 +63,6 @@ pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
 pub use glyphs::Glyphs;
 pub use ground::{Ground, is_light};
-pub use head::Head;
 pub use ladder::Ladder;
 pub use markdown::Markdown;
 pub use menu::{Listed, Menu};

@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 28] {
+fn all() -> [Slot; 29] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -91,6 +91,7 @@ fn all() -> [Slot; 28] {
             Slot::Number => 25,
             Slot::Name => 26,
             Slot::Operator => 27,
+            Slot::Code => 28,
         }
     }
 
@@ -123,6 +124,7 @@ fn all() -> [Slot; 28] {
         Slot::Number,
         Slot::Name,
         Slot::Operator,
+        Slot::Code,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {

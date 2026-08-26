@@ -12,19 +12,23 @@
 //! which is the last chance to say that its log stopped being written, and what
 //! it was allowed for the rest of *its* run is forgotten by the runner — see
 //! [`Runner::pick_up`]. The record of what has been read is emptied with it,
-//! because it answers for the session being left rather than for this run.
+//! because it answers for the session being left rather than for this run —
+//! and so are the images pasted, the tools looked up and the plan, which then
+//! comes back as the session picked up last wrote it, the same read a
+//! `--continue` does.
 //!
 //! The screen goes the same way. What is put back is a different conversation
 //! rather than the next thing that happened in the one on it, so the transcript
-//! is emptied and the session picked up replaces it — and what was held behind
-//! the rows of the old one is dropped with them, because a key that opens what
-//! is behind a row nobody can see is worse than a row that offers nothing.
+//! is emptied and the session picked up replaces it, under the opening card and
+//! exactly as a launch would have drawn it — and what was held behind the rows
+//! of the old one is dropped with them, because a key that opens what is behind
+//! a row nobody can see is worse than a row that offers nothing.
 
 use std::time::SystemTime;
 
 use crucible_core::Compacting;
 use crucible_runner::{Recorded, Runner, Session, recent};
-use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::draw::when;
@@ -111,7 +115,6 @@ fn picking<T: Terminal>(
             }
         };
 
-    let messages = transcript.len();
     let left = runner.pick_up(session, transcript);
 
     // The files remembered were read by the session just left, and `write`
@@ -119,6 +122,21 @@ fn picking<T: Terminal>(
     // none of them, however much of it comes back off the disk: what a log holds
     // is what was said, not what the tools of that run had looked at.
     terms.ledger.forget();
+
+    // The plan the panel is drawn from goes the same way, and then comes back
+    // as the session picked up left it — the same read a `--continue` does, so
+    // resuming here or from the command line stands the same plan over the box.
+    terms.plan.forget();
+    crate::cli::startup::planned(&terms.plan, runner.transcript());
+
+    // The tools looked up belong to the conversation that looked them up. Left
+    // standing they would be advertised to a session that never asked.
+    terms.revealed.forget();
+
+    // The images pasted were named by markers in prompts of the session just
+    // left, and the numbering starts over with the session. Held on, one would
+    // ride the first prompt after the resume that says `[image 1]`.
+    held.images.clear();
 
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
@@ -138,22 +156,13 @@ fn picking<T: Terminal>(
     held.kept.forget();
     renderer.empties()?;
 
-    renderer.present(
-        // Read here rather than carried in: one row is dated against one
-        // instant however it was reached, unlike the list above, which is
-        // several rows and has to share one.
-        &picked_up(
-            picked,
-            messages,
-            SystemTime::now(),
-            columns,
-            terms.style().glyphs(),
-        ),
-    )?;
-
-    // Both of these are what a session picked up on the command line gets, and
-    // for the same reason: what it already said, and what it costs to carry,
-    // are facts about the session rather than about which way reached it.
+    // All three of these are what a session picked up on the command line
+    // gets, in the same order and for the same reason: the card at the top,
+    // what it already said under the card, and what it costs to carry are
+    // facts about the session rather than about which way reached it — so a
+    // reader scrolling back after a `/resume` finds exactly the screen a
+    // launch would have drawn.
+    held.opening.commit(renderer)?;
     super::super::replaying::replayed(
         renderer,
         runner,
@@ -162,38 +171,6 @@ fn picking<T: Terminal>(
         terms.style(),
     )?;
     super::super::resuming::asked(renderer, runner, terms, held.answers.keys)
-}
-
-/// The rows that say what was picked up.
-///
-/// It names the session rather than the number that reached it, because the
-/// list is read again between being printed and being picked from.
-fn picked_up(
-    picked: &Recorded,
-    held: usize,
-    now: SystemTime,
-    columns: usize,
-    glyphs: Glyphs,
-) -> Vec<Row> {
-    let said = match held {
-        1 => "1 message".to_owned(),
-        _ => format!("{held} messages"),
-    };
-
-    vec![
-        Row::new().then(Slot::Plain, clip(picked.asked(), columns)),
-        Row::new().then(
-            Slot::Quiet,
-            clip(
-                &format!(
-                    "{said} {} started {}",
-                    glyphs.dot(),
-                    when::ago(picked.started(), now)
-                ),
-                columns,
-            ),
-        ),
-    ]
 }
 
 /// The list, numbered from one.

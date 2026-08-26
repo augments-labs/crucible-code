@@ -476,9 +476,16 @@ impl Load {
     ///
     /// The reserve is outside the usable window: it is the room the exchange in
     /// progress may still need for its answer and tool results. This makes the
-    /// reading reach zero at the same boundary [`Self::full`] uses. The usable
-    /// capacity is the denominator, so a fresh ordinary session still reads as
-    /// one hundred percent.
+    /// reading reach zero at the same boundary [`Self::full`] uses.
+    ///
+    /// The fixed request content — system instructions and tool schemas — is
+    /// outside the denominator for the same kind of reason: every request
+    /// carries it, including the first, so it is part of what the window *is*
+    /// for this session rather than something the session spent. Measured
+    /// against the room the transcript may actually use, a session that has
+    /// said nothing reads as one hundred percent — while the boundary where
+    /// this reads zero is still exactly the one [`Self::full`] guards, because
+    /// the fixed cost leaves the numerator untouched.
     ///
     /// Rounded down, so a reading of `1%` is never drawn over a usable window
     /// that has already run out.
@@ -487,8 +494,15 @@ impl Load {
         let window = u64::from(window?);
         let usable = window.saturating_sub(reserve);
         let used = self.tokens().min(usable);
+        let fixed = self.bytes_to_tokens(self.overhead).min(used);
 
-        u8::try_from((usable - used) * 100 / usable.max(1)).ok()
+        u8::try_from(
+            ((usable - used) * 100)
+                .checked_div(usable.saturating_sub(fixed).max(1))
+                .unwrap_or(0)
+                .min(100),
+        )
+        .ok()
     }
 
     /// Whether there is no longer room for another exchange.

@@ -61,8 +61,8 @@ to be present.
 Whichever rung settled it, the answer is at the right of the row under the
 prompt box, which names the vendor before the model in the `provider/model`
 shape `--model` takes back. That row stands for the whole session and is said
-again whenever one of the three changes, so it keeps up when `/login` hands the session to another
-vendor mid-way. The welcome card deliberately carries no provider, model or
+again whenever one of the three changes, so it keeps up when `/model` hands the
+session to another vendor mid-way. The welcome card deliberately carries no provider, model or
 effort because it is the first thing in the transcript and is scrolled away from
 rather than kept up to date.
 
@@ -288,14 +288,16 @@ authentication is established by the next request; a rejected key stays stored
 until `/logout <provider>` removes it.
 
 The session is then set up with that provider from the next turn on, without
-restarting. Authentication selects neither [model](#which-model) nor
-[effort](#how-hard-to-think); where neither was already chosen, `/model` is the
-next explicit step.
+restarting — unless another provider is already answering, in which case the
+session keeps the provider and model it has and the line points at `/model`,
+where switching is chosen rather than implied. Authentication selects neither
+[model](#which-model) nor [effort](#how-hard-to-think); where neither was
+already chosen, `/model` is the next explicit step.
 
-`provider` is written down for the login too, because a credential says a
-vendor can be reached and never which to ask — logging in is somebody saying
-which, and the next run here should not have to be asked again. That still
-selects neither a model nor an effort.
+Where the login is what set the session up, `provider` is written down for it
+too, because a credential says a vendor can be reached and never which to ask —
+logging in is somebody saying which, and the next run here should not have to
+be asked again. That still selects neither a model nor an effort.
 
 Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.

@@ -63,11 +63,13 @@ fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     load.requesting(Some("system one"), &[]);
     load.responding(0);
     load.carried(Carried::new(100));
-    assert_eq!(load.left(Some(200), 0), Some(50));
+    // The ten fixed bytes are 59 tokens at this session's reported rate, and
+    // they come out of the denominator: 100 of 141 transcript tokens left.
+    assert_eq!(load.left(Some(200), 0), Some(70));
 
     load.requesting(Some("system two"), &[]);
 
-    assert_eq!(load.left(Some(200), 0), Some(20));
+    assert_eq!(load.left(Some(200), 0), Some(29));
     assert!(
         load.tokens() > 100,
         "the replacement overhead disappeared from the estimate"
@@ -88,7 +90,9 @@ fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
     load.carried(Carried::new(1_000));
 
     assert_eq!(load.tokens(), 1_000, "request overhead was counted twice");
-    assert_eq!(load.left(Some(2_000), 0), Some(50));
+    // The 664 fixed bytes are 689 tokens at the reported rate; what is left is
+    // measured against the 1 311 the transcript may use.
+    assert_eq!(load.left(Some(2_000), 0), Some(76));
 }
 
 #[test]
@@ -313,6 +317,24 @@ fn the_reading_is_a_percentage_of_the_room_the_transcript_may_use() {
     assert_eq!(load.left(Some(200_000), 36_000), Some(100));
     load.carried(Carried::new(82_000));
     assert_eq!(load.left(Some(200_000), 36_000), Some(50));
+}
+
+#[test]
+fn a_session_that_has_said_nothing_reads_as_a_whole_window() {
+    // The system instructions and tool schemas are in the first request before
+    // a word is typed, so a fresh session pays them however it goes on. They
+    // are what the reading measures against rather than something already
+    // spent: a session that has said nothing has all of its room left.
+    let mut load = Load::default();
+    let tools = [ToolSchema {
+        name: "read",
+        schema: Box::leak("s".repeat(30_000).into_boxed_str()),
+    }];
+
+    load.requesting(Some(&"i".repeat(6_000)), &tools);
+
+    assert_eq!(load.left(Some(200_000), 36_000), Some(100));
+    assert!(!load.full(Some(200_000), 36_000));
 }
 
 #[test]

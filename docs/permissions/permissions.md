@@ -4,8 +4,9 @@ Nothing changes a file or starts a process without a decision. The decision
 comes from three places, tried in order: [rules](rules.md) you wrote speak
 first, the [mode](modes.md) answers for calls no rule mentions, and when what
 they settle on is "ask", the question below appears. With nothing configured,
-that is every change and every command. Reading is the exception in every mode:
-a read is allowed, or refused by a rule, and never asked about.
+that is every change, every command, and every read that leaves the workspace.
+A read inside it is the exception in every mode: allowed, or refused by a rule,
+with a question only where an `ask` rule names exactly that path.
 
 The row under the prompt box always shows the mode in force, and names the key
 that steps it:

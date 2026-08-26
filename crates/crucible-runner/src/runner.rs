@@ -764,7 +764,13 @@ impl Runner {
                 events.post(Event::Carried {
                     left: counting.left(),
                 });
-                match self.made_room(Compacting::Full, events, cancel, &mut fruitless)? {
+                match self.made_room(
+                    Compacting::Full,
+                    events,
+                    cancel,
+                    &mut fruitless,
+                    &mut counting.spent,
+                )? {
                     // Re-enter the boundary check against the reduced load.
                     // A prune that helped but did not help enough may still need
                     // the complete-active-pass recap before any request is safe.
@@ -797,7 +803,13 @@ impl Runner {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
                     if self.compacting.automatic =>
                 {
-                    match self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
+                    match self.made_room(
+                        Compacting::Refused,
+                        events,
+                        cancel,
+                        &mut fruitless,
+                        &mut counting.spent,
+                    )? {
                         After::Carry => continue,
                         After::Stopped => return Ok(StopReason::Cancelled),
                         After::Stuck => {
@@ -822,10 +834,30 @@ impl Runner {
             // the reason this reason is not folded in with the ceiling that
             // cuts an answer short.
             if said == StopReason::WindowExceeded {
+                // What streamed before the cut was produced and delivered, so
+                // it is written down with the reason it stopped — whether the
+                // loop goes on to make room or hands the stop back. A record
+                // that dropped it would end the stream mid-sentence with no
+                // explanation, which a turn is promised never to do.
+                bounds.heard(&answer);
+                let (text, _calls) = answer.finish();
+                if !text.is_empty() {
+                    self.record(Message::Agent {
+                        text,
+                        calls: Vec::new(),
+                        stop: Some(said),
+                    });
+                }
                 if !self.compacting.automatic {
                     return Ok(said);
                 }
-                match self.made_room(Compacting::Refused, events, cancel, &mut fruitless)? {
+                match self.made_room(
+                    Compacting::Refused,
+                    events,
+                    cancel,
+                    &mut fruitless,
+                    &mut counting.spent,
+                )? {
                     After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
                     After::Stopped => return Ok(StopReason::Cancelled),
@@ -914,14 +946,19 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`] where the request for the recap itself failed.
+    // The spend joins the cancel and the events on the way down, and bundling
+    // them would drag all three through every signature the cancel already
+    // crosses. The lint counts to five; making room needs six.
+    #[allow(clippy::too_many_arguments)]
     fn made_room(
         &mut self,
         why: Compacting,
         events: &dyn Post,
         cancel: &Cancel,
         fruitless: &mut u8,
+        spent: &mut Spend,
     ) -> Result<After, TurnError> {
-        match self.compact(why, events, cancel)? {
+        match self.compact(why, events, cancel, spent)? {
             // Not counted against the goes this loop is allowed, because it was
             // not a go: nothing was replaced and nobody is going to ask again.
             Room::Stopped => return Ok(After::Stopped),

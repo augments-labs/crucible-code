@@ -6,7 +6,7 @@ use crate::tool::{ToolArgs, ToolCall};
 use crate::workspace::{Workspace, WorkspacePath};
 
 use super::rule::Denials;
-use super::{Target, Verdict};
+use super::{Sensitivity, Target, Verdict};
 
 /// Proof that a verdict was reached and it was to allow.
 ///
@@ -47,18 +47,37 @@ pub struct Approved {
     /// without one, and one cannot be built without an allow.
     _grant: Grant,
 
+    /// What the verdict was reached about the call *doing* — which is part of
+    /// what was decided, so it travels with the proof. A tool that resolves
+    /// its path again in `run` reads this to learn what kind of call the
+    /// question described, because the filesystem may answer differently by
+    /// then and the verdict does not stretch to the new answer.
+    sensitivity: Sensitivity,
+
     /// What this call may still not read, however far it reaches on its own.
     denied: Denials,
 }
 
 impl Approved {
     /// Minted by the engine, once a verdict has been reached about this call.
-    pub(super) fn new(call: ToolCall, grant: Grant, denied: Denials) -> Self {
+    pub(super) fn new(
+        call: ToolCall,
+        sensitivity: Sensitivity,
+        grant: Grant,
+        denied: Denials,
+    ) -> Self {
         Self {
             call,
             _grant: grant,
+            sensitivity,
             denied,
         }
+    }
+
+    /// What the verdict was reached about the call doing.
+    #[must_use]
+    pub fn sensitivity(&self) -> &Sensitivity {
+        &self.sensitivity
     }
 
     /// Whether a rule refuses a file this call reached by itself.
@@ -136,7 +155,10 @@ mod tests {
         // cannot dispatch a proof about `write` to something else, whatever it
         // happens to be holding beside it.
         let grant = Grant::issue(Verdict::Allow).expect("an allow mints one");
-        let approved = Approved::new(call(), grant, Rules::new().denials("write"));
+        let sensitivity = Sensitivity::MutatesFile {
+            target: Target::at("/w/src/a.rs", Some("src/a.rs")),
+        };
+        let approved = Approved::new(call(), sensitivity, grant, Rules::new().denials("write"));
 
         assert_eq!(approved.tool(), "write");
         assert_eq!(approved.args().as_str(), r#"{"path":"src/a.rs"}"#);

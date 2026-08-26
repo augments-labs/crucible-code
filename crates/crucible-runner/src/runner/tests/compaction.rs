@@ -47,7 +47,12 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
 
     scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect("a structured recap");
 
     assert_eq!(scripted.left(), [Some(99)]);
@@ -70,7 +75,12 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
 
     scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect("a structured recap");
 
     assert_eq!(
@@ -91,7 +101,12 @@ fn the_structured_recap_uses_its_configured_ceiling_capped_by_the_model() {
     capped.turn("second").expect("a middle to replace");
     capped
         .runner
-        .compact(Compacting::Asked, &capped.events, &capped.cancel)
+        .compact(
+            Compacting::Asked,
+            &capped.events,
+            &capped.cancel,
+            &mut Spend::default(),
+        )
         .expect("a model-capped recap");
 
     assert_eq!(
@@ -118,7 +133,12 @@ fn a_recap_cut_off_at_its_token_ceiling_replaces_nothing() {
 
     let problem = scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect_err("a truncated recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
@@ -140,10 +160,43 @@ fn a_cleanly_stopped_but_malformed_recap_replaces_nothing() {
 
     let problem = scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect_err("a malformed recap must not replace context");
 
     assert!(matches!(problem, TurnError::RecapIncomplete));
+    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
+}
+
+#[test]
+fn a_recap_past_the_response_ceiling_replaces_nothing() {
+    // The recap stream is the one response of a turn that does not pass
+    // through the loop's own bounds, so it holds this ceiling itself. A
+    // provider that streams without end would otherwise grow `said` without
+    // limit — and a recap too large to be notes is not notes.
+    let note = "x".repeat(3 * 1024 * 1024);
+    let script = Script::new(vec![saying("first"), saying("second"), recap(&note)]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.compacting = keeping_one();
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    let before = scripted.runner.transcript().messages().to_vec();
+
+    let problem = scripted
+        .runner
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
+        .expect_err("an unbounded recap must not replace context");
+
+    assert!(matches!(problem, TurnError::RecapIncomplete), "{problem:?}");
     assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
 }
 
@@ -178,7 +231,12 @@ fn a_recap_stopped_part_way_replaces_nothing() {
 
     let made = scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect("a recap somebody stopped is not a failure");
 
     assert_eq!(made, Room::Stopped, "a stopped recap made room");
@@ -187,6 +245,52 @@ fn a_recap_stopped_part_way_replaces_nothing() {
         before.as_slice(),
         "a stopped recap changed the transcript"
     );
+}
+
+#[test]
+fn a_recap_whose_connection_broke_says_so_and_replaces_nothing() {
+    // The failure is the provider's, and the reason handed on is the
+    // provider's own — a recap that broke off reading as "incomplete" sends
+    // the reader looking at the model's notes when the thing that went wrong
+    // was the wire. The transcript stands exactly as it was either way.
+    let script = Script::breaking(vec![vec![Delta::Text("## Goal\nhalf the".into())]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.compacting = keeping_one();
+
+    let mut earlier = Transcript::new();
+    earlier.push(Message::said("first"));
+    earlier.push(Message::Agent {
+        text: "one".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+    earlier.push(Message::said("second"));
+    earlier.push(Message::Agent {
+        text: "two".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+    scripted.runner = scripted.runner.resuming(earlier);
+    let before = scripted.runner.transcript().messages().to_vec();
+
+    let problem = scripted
+        .runner
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
+        .expect_err("a broken connection is a failure, not a recap");
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::Provider(ProviderError::Transport { .. })
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(scripted.runner.transcript().messages(), before.as_slice());
 }
 
 #[test]
@@ -260,6 +364,120 @@ fn a_full_window_is_answered_by_making_room_and_the_turn_carries_on() {
         scripted.said().contains("carried on"),
         "the turn did not carry on after making room"
     );
+}
+
+#[test]
+fn an_answer_cut_off_by_the_window_is_recorded_before_room_is_made() {
+    // The provider streamed half an answer and then ran out of room. Making
+    // room and asking again is the remedy, but the half that arrived was
+    // produced and paid for — dropping it silently ends that stream
+    // mid-sentence with no record, which is the truncation this crate promises
+    // never to write.
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("x".repeat(15_000).into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Text("half an answer".into()),
+            Delta::Stopped(StopReason::WindowExceeded),
+        ],
+        recap("notes to self"),
+        vec![
+            Delta::Text("asked again".into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+
+    let mut scripted = Scripted::within(script, 20_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+
+    let stop = scripted.turn("go").expect("the turn to carry on");
+
+    assert_eq!(stop, StopReason::Yielded);
+    assert!(
+        scripted
+            .runner
+            .transcript()
+            .messages()
+            .contains(&Message::Agent {
+                text: "half an answer".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::WindowExceeded),
+            }),
+        "the cut-off answer left no record"
+    );
+}
+
+#[test]
+fn an_answer_cut_off_by_the_window_is_recorded_when_room_is_not_made() {
+    // The same stop with compaction turned off: the turn ends instead of
+    // making room, and what arrived before the cut still belongs to the
+    // transcript, marked with the reason it stopped.
+    let script = Script::new(vec![vec![
+        Delta::Text("half".into()),
+        Delta::Stopped(StopReason::WindowExceeded),
+    ]]);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.compacting = Compaction {
+        automatic: false,
+        ..Compaction::default()
+    };
+
+    let stop = scripted.turn("go").expect("a refusal is not a failure");
+
+    assert_eq!(stop, StopReason::WindowExceeded);
+    assert_eq!(
+        scripted.runner.transcript().messages(),
+        [
+            Message::said("go"),
+            Message::Agent {
+                text: "half".into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::WindowExceeded),
+            },
+        ]
+    );
+}
+
+#[test]
+fn what_the_recap_request_spent_joins_the_turns_spend() {
+    // The recap is a response of the turn like any other: the turn asked for
+    // it, the provider produced tokens for it, and a spend reading that skipped
+    // it would leave the ceiling and the row both counting a turn cheaper than
+    // it ran. Across responses readings add, so the recap's 500 lands on the 90
+    // already spent, and the final response's 30 lands on both.
+    let mut notes = recap("notes to self");
+    notes.insert(notes.len() - 1, Delta::Spent(Spend::new(500)));
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("x".repeat(15_000).into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(12_000)),
+            Delta::Spent(Spend::new(90)),
+            Delta::ToolStarted {
+                id: ToolId::new("a"),
+                name: "missing".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        notes,
+        vec![
+            Delta::Text("carried on".into()),
+            Delta::Spent(Spend::new(30)),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+    ]);
+    let mut scripted = Scripted::within(script, 20_000, keeping_one());
+    scripted.turn("first").expect("a turn to compact from");
+    let _ = scripted.spent();
+
+    scripted.turn("go").expect("the turn to carry on");
+
+    assert_eq!(scripted.spent(), [90, 590, 620]);
 }
 
 #[test]
@@ -576,7 +794,12 @@ fn a_compaction_clears_the_bulk_of_old_tool_output_before_the_recap() {
 
     let room = scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect("a recap");
 
     // The clearing freed real room, so the compaction has to say so: `before`
@@ -666,7 +889,12 @@ fn a_turn_that_outweighs_the_budget_is_not_kept_whole_for_being_recent() {
 
     scripted
         .runner
-        .compact(Compacting::Asked, &scripted.events, &scripted.cancel)
+        .compact(
+            Compacting::Asked,
+            &scripted.events,
+            &scripted.cancel,
+            &mut Spend::default(),
+        )
         .expect("a recap");
 
     let standing = scripted.runner.transcript().messages();

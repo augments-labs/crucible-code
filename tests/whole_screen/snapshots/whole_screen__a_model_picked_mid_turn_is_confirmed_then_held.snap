@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 100x24 cursor 22,0 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace                             |
+|                                                                                                    |
 |authentication: anthropic · environment variable ANTHROPIC_API_KEY                                  |
 |                                                                                                    |
 |› start it                                                                                          |
@@ -16,7 +16,7 @@ expression: window.picture()
 |                                                                                                    |
 |Switch model?                                                                                       |
 |                                                                                                    |
-|This conversation is cached for the current model. Switching to claude-opus-5 means the full history|
+|This session is cached for the current model. Switching to claude-opus-5 means the full transcript  |
 |gets re-read on your next message.                                                                  |
 |                                                                                                    |
 |› Yes                                                                                               |

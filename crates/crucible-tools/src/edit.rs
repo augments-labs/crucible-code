@@ -49,6 +49,12 @@ const EDITS: &str = "edits";
 /// The most source or resulting text one call holds for a whole-file edit.
 const FILE_LIMIT: usize = 1_000_000;
 
+/// The most changes one call may list. The count is an argument like any
+/// other, and each entry costs a scan of the whole file — so a list with no
+/// ceiling would let one bounded call buy unbounded work. Far above any list a
+/// call has a reason to send, and far below the point the scans add up.
+const MOST_EDITS: usize = 256;
+
 /// One change, described once — the same three fields stand at the top level
 /// for a single change and inside each element of `edits` for several.
 fn change(within: &str) -> Vec<Field> {
@@ -109,7 +115,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
         shape: Shape::List {
             of: Box::new(Shape::Fields(change(""))),
             fewest: None,
-            most: None,
+            most: Some(MOST_EDITS),
         },
     });
     fields.extend(crate::account::fields(
@@ -312,6 +318,12 @@ fn changes<'a>(
     }
     if each.is_empty() {
         return Err(args.wrong("edits is empty"));
+    }
+    if each.len() > MOST_EDITS {
+        return Err(args.wrong(format!(
+            "edits lists {} changes, and at most {MOST_EDITS} fit one call",
+            each.len()
+        )));
     }
 
     each.iter()

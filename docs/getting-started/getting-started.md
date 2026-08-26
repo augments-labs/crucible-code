@@ -131,12 +131,8 @@ cd ~/code/my-project
 crucible
 ```
 
-The row along the top of the window says where the session is: the working
-directory, and nothing else on it. It stands for as long as the session does,
-so that is still there after a long scroll back.
-
-Under it, it opens with a card naming the release and the root it is standing
-on, beside the last few sessions started in this directory. A separate row
+It opens with a card naming the release and the root it is standing on, beside
+the last few sessions started in this directory. A separate row
 under the card names the active non-secret
 authentication source, such as a stored account or `OPENAI_API_KEY`. The card
 still opens when a remembered provider has lost that credential; its provider,
@@ -164,11 +160,17 @@ stood for, so a snippet written with tabs is still indented -- on screen and in
 the prompt that is sent. Anything else a terminal can hide in a paste is left
 out, since drawn it would move a cursor this process had already placed.
 
-<kbd>Ctrl+V</kbd> between turns reads an image from the operating-system
-clipboard. It imports the PNG into the session's private attachment store and
-puts that attachment's quoted path in the box; ordinary text paste still uses
-the terminal's paste action. A clipboard image can therefore be sent without a
-file in the project, and a pasted image remains available to `--continue`.
+<kbd>Ctrl+V</kbd> reads an image from the operating-system clipboard. It
+imports the PNG into the session's private attachment store and puts a marker
+such as `[image 1]` in the box, numbered in the order the images were pasted;
+ordinary text paste still uses the terminal's paste action. The marker can be
+written into any later prompt of the same session to attach that image again,
+and a clipboard holding a copied image *file* — a path, or a `file://` address
+the way a file manager copies one — pastes the picture it points at. A
+clipboard image can therefore be sent without a file in the project, and a
+pasted image remains available to `--continue`. When nothing readable is on
+the clipboard, the reason is written under the box and the next keystroke
+clears it.
 
 A path can do the same explicitly. A relative image path names a file in the
 workspace as before; an absolute image path outside it is imported rather than
@@ -459,8 +461,8 @@ true about them.
 
 The answer itself is read as markdown rather than printed with the markers still
 in it. A heading loses its hashes and stands out, one `*` or `_` around a phrase
-leans on it and two raise its voice, backticks leave a run of code toned down,
-and a fenced
+leans on it and two raise its voice, backticks put a run of code — a command, a
+path, a name — in the theme's accent so it stands out of the prose, and a fenced
 block is toned for its whole length with the fence lines and the language
 written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
@@ -778,9 +780,9 @@ itself, the record of which files it read, or the plan standing over the box,
 all three of which belonged to it — a plan that outlived its session would
 describe work the agent has no memory of. The panel comes down with it; the
 mode does not move, because it is where you are running crucible rather than
-something a session decided. What is on screen stays there and stays scrollable:
-the command empties the agent's memory, and reading back through what you have
-already done is the reason you would want it emptied.
+something a session decided. The screen empties too, down to the welcome card
+a fresh start draws: the one you left is read back with `/resume` rather than
+by scrolling into it.
 
 `/resume` lists this directory's last nine [sessions](../sessions/sessions.md),
 newest first, each numbered and shown with when it started and what it was first
@@ -858,8 +860,8 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Ten tools, advertised in the order a model tends to reach for them. Six are
-always in the list. The rest are **held back**: they exist and they work, and the
+Eleven tools, advertised in the order a model tends to reach for them. Seven
+are always in the list. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
@@ -873,11 +875,13 @@ sessions never write a plan or ask a question about the world.
 | `write` | Creates or overwrites a file | yes |
 | `bash` | Runs a command | yes |
 | `todo_write` | Writes down the plan | no |
+| `ask_user` | Puts a question to you | no |
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
 | `tool_search` | Finds a tool that is not in the list | no |
 
-Reads never ask. Anything that changes a file or starts a process does, until
+Reads inside the workspace never ask; one that leads outside it puts the path
+to you first. Anything that changes a file or starts a process asks, until
 you configure rules or a mode that answer for you — see
 [Permissions](../permissions/index.md). [Tools](../tools/index.md) is what each
 one takes, what bounds its answer, and what it says when it hits that bound.
