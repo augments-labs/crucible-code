@@ -91,7 +91,7 @@ as an ordinary result. The answer names the number it is running as:
 VITE v5.4.2  ready in 412 ms
 ➜  Local:   http://localhost:5173/
 
-[left running as #1]
+[left running as #1; completion is reported automatically; do not poll or wait]
 ```
 
 `timeout` and `background` together are refused rather than one of them ignored: a
