@@ -309,6 +309,10 @@ impl Tool for Bash {
         summary::field(NAME, args, COMMAND)
     }
 
+    fn backgroundable(&self, _args: &ToolArgs) -> bool {
+        self.leaving.is_some()
+    }
+
     fn run(&self, approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text(COMMAND)?;

@@ -48,14 +48,35 @@ fn after(event: &Event) -> &'static str {
 }
 
 fn requested() -> Event {
+    requested_as("read", false)
+}
+
+fn requested_as(name: &str, backgroundable: bool) -> Event {
     Event::ToolRequested {
         call: ToolCall {
             id: ToolId::new("a"),
-            name: "read".into(),
+            name: name.into(),
             args: ToolArgs::new("{}"),
         },
         summary: Summary::new("src/main.rs"),
+        backgroundable,
     }
+}
+
+#[test]
+fn the_active_call_decides_whether_the_background_key_is_live() {
+    let mut turning = Turning::started(None);
+    assert!(!turning.can_background());
+
+    turning.saw(&requested_as("web_search", false));
+    assert!(!turning.can_background());
+
+    turning.saw(&Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("done"),
+    });
+    turning.saw(&requested_as("bash", true));
+    assert!(turning.can_background());
 }
 
 #[test]
@@ -450,7 +471,7 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
     turning.saw(&requested());
     let standing = said(&turning);
 
-    assert_eq!(standing.len(), CALLING, "{standing:?}");
+    assert_eq!(standing.len(), CALLING - 1, "{standing:?}");
 
     // By position, since what is under test is the order: the call over the
     // row that says a turn is running, and a blank above the call and
@@ -460,12 +481,13 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
 
     assert!(at(0).is_empty(), "{standing:?}");
     assert!(at(1).contains("Read(src/main.rs)"), "{standing:?}");
-    // Directly under the call with no blank between them: it is a caption on
-    // the call rather than a second thing beside it.
-    assert!(at(2).contains("(ctrl+b to background)"), "{standing:?}");
-    assert!(at(3).is_empty(), "{standing:?}");
-    assert!(at(4).contains("running"), "{standing:?}");
-    assert!(at(5).is_empty(), "{standing:?}");
+    assert!(at(2).is_empty(), "{standing:?}");
+    assert!(at(3).contains("running"), "{standing:?}");
+    assert!(at(4).is_empty(), "{standing:?}");
+    assert!(
+        !standing.iter().any(|row| row.contains("ctrl+b")),
+        "a read call advertised Bash's background action: {standing:?}"
+    );
 }
 
 /// What a running call has printed, as an event.
@@ -524,12 +546,27 @@ fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
 }
 
 #[test]
+fn a_native_web_call_does_not_offer_to_leave_it_running() {
+    for name in ["web_search", "web_fetch"] {
+        let mut turning = Turning::started(None);
+        turning.saw(&requested_as(name, false));
+
+        let rows = turning.rows(&nothing(), 80, Style::plain(), 24);
+        assert!(
+            !rows.iter().any(|row| row.text().contains("ctrl+b")),
+            "{name} advertised an unavailable action: {:?}",
+            rows.iter().map(Row::text).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anything() {
     // A command silent for thirty-eight seconds is the one most worth putting
     // down, so the row that offers it cannot wait for output to justify
     // itself. It gains the counts in front of the offer once there are any.
     let mut turning = Turning::started(None);
-    turning.saw(&requested());
+    turning.saw(&requested_as("bash", true));
 
     let rows = |turning: &Turning| {
         turning
@@ -708,6 +745,7 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
             args: ToolArgs::new("{}"),
         },
         summary: Summary::new(about),
+        backgroundable: false,
     };
 
     turning.saw(&requested("read", "read", "src/main.rs"));
@@ -789,6 +827,7 @@ fn a_terminal_event_drains_every_pending_call_in_request_order() {
                 args: ToolArgs::new("{}"),
             },
             summary: Summary::new(path),
+            backgroundable: false,
         });
     }
 

@@ -147,6 +147,7 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
         Event::ToolRequested {
             call: call(name, args),
             summary: Summary::new(summary),
+            backgroundable: false,
         },
         &here(),
         Style::plain(),

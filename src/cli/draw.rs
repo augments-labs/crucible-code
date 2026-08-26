@@ -164,7 +164,7 @@ pub(crate) fn event<T: Terminal>(
         // it is live until the tool answers, standing in the footing with a
         // mark that moves, and a line that is still moving is not one the
         // transcript can hold. It commits through [`returned`].
-        Event::ToolRequested { call, summary } => {
+        Event::ToolRequested { call, summary, .. } => {
             kept.calling(call.id.clone(), called(&call, &summary));
             renderer.settle()
         }

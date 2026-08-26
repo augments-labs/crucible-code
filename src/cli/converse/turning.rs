@@ -83,13 +83,14 @@ const FRAME: usize = 3;
 /// where none does.
 const QUEUED: usize = ROWS + 1;
 
-/// And with a call standing over it: the blank that parts them, the call, and the
-/// row under it offering to leave the command running.
+/// And with a backgroundable call standing over it: the blank that parts them,
+/// the call, and the row under it offering to leave the command running.
 ///
-/// Three rather than two, because the offer is drawn from the moment the call is
-/// out. It is one row and it is the only thing on screen that says what a key
-/// would do about the command in front of you, so it belongs with the call rather
-/// than with the sample the call's output gives way as.
+/// Three rather than two, because the offer is drawn from the moment a call that
+/// supports it is out. It is one row and it is the only thing on screen that says
+/// what a key would do about the command in front of you, so it belongs with the
+/// call rather than with the sample the call's output gives way as. A call that
+/// cannot be left running needs one fewer row.
 ///
 /// The call line is what a narrow window gives up first, because it is the one
 /// of the four that a second look gets back anyway: the tool answers and the
@@ -251,6 +252,8 @@ struct Calling {
     said: String,
     /// What this call has printed while it runs.
     printing: Printing,
+    /// Whether the call can be left to finish after its tool answers the turn.
+    backgroundable: bool,
 }
 
 /// The prompts waiting behind a turn, as the panel draws them.
@@ -349,7 +352,7 @@ impl Printing {
     /// Never the sample without the count: five rows out of forty-one, with
     /// nothing saying so, is a reader who believes they are looking at the whole
     /// of what the command has printed.
-    fn rows(&self, columns: usize, spare: usize, style: Style) -> Vec<Row> {
+    fn rows(&self, columns: usize, spare: usize, style: Style, backgroundable: bool) -> Vec<Row> {
         // One row for the offer, whatever else there is room for. It is drawn from
         // the moment the call is out, because a command that has printed nothing
         // for half a minute is the one somebody most wants to put down — and a
@@ -359,7 +362,8 @@ impl Printing {
             return Vec::new();
         }
 
-        let held = spare.saturating_sub(1).min(SAMPLE);
+        let has_caption = backgroundable || self.lines() > 0;
+        let held = spare.saturating_sub(usize::from(has_caption)).min(SAMPLE);
 
         let glyphs = style.glyphs();
         let room = columns.saturating_sub(INSET);
@@ -372,7 +376,7 @@ impl Printing {
         if !self.partial.is_empty() {
             shown.push(&self.partial);
         }
-        shown.truncate(shown.len().min(held.max(1)));
+        shown.truncate(shown.len().min(held));
 
         // The last of them. What a build is doing now is the question the sample
         // answers, and its first five lines answered it a minute ago.
@@ -393,10 +397,13 @@ impl Printing {
         // any, and the offer either way. A command silent for half a minute is the
         // one somebody most wants to put down, so the offer cannot wait for output
         // to justify itself.
-        let said = match self.lines() {
-            0 => BACKGROUND.to_owned(),
-            1 => format!("1 line {} {} {BACKGROUND}", glyphs.dot(), sized(self.bytes)),
-            lines => format!(
+        let said = match (self.lines(), backgroundable) {
+            (0, false) => return rows,
+            (0, true) => BACKGROUND.to_owned(),
+            (1, false) => format!("1 line {} {}", glyphs.dot(), sized(self.bytes)),
+            (1, true) => format!("1 line {} {} {BACKGROUND}", glyphs.dot(), sized(self.bytes)),
+            (lines, false) => format!("{lines} lines {} {}", glyphs.dot(), sized(self.bytes)),
+            (lines, true) => format!(
                 "{lines} lines {} {} {BACKGROUND}",
                 glyphs.dot(),
                 sized(self.bytes)
@@ -462,6 +469,8 @@ struct Drawn {
     beat: u64,
     /// The call standing over the row, where one is.
     calling: Option<String>,
+    /// Whether that call carries the background offer under it.
+    backgroundable: bool,
     /// The prompts named under it, where any are waiting.
     queued: Queued,
     /// How many pieces the running command had printed, which is what stands in
@@ -560,15 +569,21 @@ impl Turning {
         // line has to come back, or a call that was made leaves no record —
         // which is the one thing a transcript may not do.
         let returned = match event {
-            Event::ToolRequested { call, summary } => {
+            Event::ToolRequested {
+                call,
+                summary,
+                backgroundable,
+            } => {
                 let said = draw::called(call, summary);
                 if let Some(calling) = self.calling.iter_mut().find(|one| one.id == call.id) {
                     calling.said = said;
+                    calling.backgroundable = *backgroundable;
                 } else {
                     self.calling.push_back(Calling {
                         id: call.id.clone(),
                         said,
                         printing: Printing::default(),
+                        backgroundable: *backgroundable,
                     });
                 }
                 Vec::new()
@@ -651,6 +666,17 @@ impl Turning {
         returned
     }
 
+    /// Whether the call at the front of the turn can be left running.
+    ///
+    /// The key reader asks the same live state the hint is drawn from, so a key
+    /// which is not advertised cannot leave a request behind for a later Bash
+    /// call to consume.
+    pub(super) fn can_background(&self) -> bool {
+        self.calling
+            .front()
+            .is_some_and(|calling| calling.backgroundable)
+    }
+
     /// Says the turn has been asked to stop.
     pub(super) fn interrupting(&mut self) {
         self.doing = Doing::Interrupting;
@@ -675,6 +701,10 @@ impl Turning {
             // bytes, taken at most four times a second, and it is freed the
             // moment the tool answers — nothing here grows with the transcript.
             calling: self.calling.front().map(|calling| calling.said.clone()),
+            backgroundable: self
+                .calling
+                .front()
+                .is_some_and(|calling| calling.backgroundable),
 
             // And the same for the prompt waiting, which is why it was cut
             // before it was kept: what is cloned here is a row of it rather
@@ -796,15 +826,18 @@ impl Turning {
         // its own turn will say it.
         let spare = room.saturating_sub(QUEUED);
         let panel_rows = self.queued.rows(spare, columns, style);
-        let standing = if panel_rows.is_empty() {
+        let calling = self.calling.front();
+        let standing = if calling
+            .is_some_and(|calling| calling.backgroundable || calling.printing.lines() > 0)
+        {
             CALLING
         } else {
-            CALLING + panel_rows.len()
-        };
+            CALLING.saturating_sub(1)
+        } + panel_rows.len();
 
         let mut rows = Vec::new();
 
-        if let Some(calling) = self.calling.front().filter(|_| room > standing) {
+        if let Some(calling) = calling.filter(|_| room > standing) {
             rows.push(Row::new());
             rows.push(self.call(&calling.said, columns, style));
 
@@ -813,14 +846,16 @@ impl Turning {
             // key that stands a result whole stands this too — so it is the first
             // to give way and it gives way without saying so.
             // What is left after every row that never gives way has taken its
-            // own is the sample's, and the sample's alone: the offer under the
-            // call is counted in `standing` above, because a call with no way to
-            // put it down is the one thing this row must never be.
-            rows.extend(
-                calling
-                    .printing
-                    .rows(columns, room.saturating_sub(standing), style),
-            );
+            // own is the sample's, and the sample's alone: the caption under the
+            // call is counted in `standing` above whenever there is one. For a
+            // backgroundable call that is the offer; for any call that printed it
+            // is the bounded count that keeps a sample from reading as the whole.
+            rows.extend(calling.printing.rows(
+                columns,
+                room.saturating_sub(standing),
+                style,
+                calling.backgroundable,
+            ));
         }
 
         rows.push(Row::new());

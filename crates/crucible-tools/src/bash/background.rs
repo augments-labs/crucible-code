@@ -168,15 +168,6 @@ impl Background {
         self.asked.swap(false, Ordering::Relaxed)
     }
 
-    /// Forgets a request nobody took.
-    ///
-    /// A press that arrived while no command was running would otherwise be
-    /// answered by whichever one started next, which is a command let go of by a
-    /// keystroke aimed at something else.
-    pub fn forget(&self) {
-        self.asked.store(false, Ordering::Relaxed);
-    }
-
     /// Takes a running command, answering with the number it is now known by.
     ///
     /// `None` where the cap is already met, and then the caller still owns the
