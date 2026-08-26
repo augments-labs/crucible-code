@@ -756,7 +756,7 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
         return row;
     }
 
-    let said = output.text().lines().next().unwrap_or_default();
+    let said = summary(output.text());
 
     if beyond == 0 {
         row.push(Slot::Quiet, clipped(said, room, glyphs));
@@ -788,6 +788,31 @@ fn finished(output: &ToolOutput, beyond: usize, window: usize, style: Style) -> 
     row.push(Slot::Quiet, shut);
 
     row
+}
+
+/// One human-facing line from a tool's complete result.
+///
+/// Pretty-printers put braces and brackets on lines of their own. Those lines
+/// describe layout rather than what came back, so an output that starts that way
+/// takes its first non-structural content line. Deliberately narrower than JSON
+/// parsing: a shell command may print fragments, diagnostics and any other text,
+/// and a first line such as `[exit status 3]` remains exactly what it said.
+fn summary(text: &str) -> &str {
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or_default();
+
+    if structural(first) {
+        lines
+            .find(|line| !line.trim().is_empty() && !structural(line))
+            .unwrap_or_default()
+    } else {
+        first
+    }
+}
+
+/// Whether a line says only the nesting a pretty-printer put around content.
+fn structural(line: &str) -> bool {
+    matches!(line.trim().trim_end_matches(','), "{" | "}" | "[" | "]")
 }
 
 /// The two halves of what a cut result offers: how much it cut, and the door.

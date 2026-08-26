@@ -55,7 +55,26 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
         )
         .expect("a structured recap");
 
-    assert_eq!(scripted.left(), [Some(99)]);
+    let events = scripted.events();
+    let finished = events
+        .iter()
+        .position(|event| matches!(event, Event::Compacting { part: 100, .. }))
+        .expect("a final complete progress event");
+    let compacted = events
+        .iter()
+        .position(|event| matches!(event, Event::Compacted { .. }))
+        .expect("a completed compaction event");
+    assert!(finished < compacted, "{events:?}");
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Carried { left } => Some(*left),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [Some(99)]
+    );
     assert_eq!(scripted.runner.left(), Some(99));
 }
 

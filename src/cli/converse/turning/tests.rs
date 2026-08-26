@@ -3,7 +3,7 @@
 use crucible_core::{
     Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnError, TurnId,
 };
-use crucible_tui::{Glyphs, Palette};
+use crucible_tui::Glyphs;
 
 use super::*;
 
@@ -189,8 +189,50 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
             kept: 1,
         },
     });
-    assert!(turning.making.is_none());
+    assert_eq!(turning.part, 100);
     assert_eq!(turning.doing, Doing::Interrupting);
+}
+
+#[test]
+fn completed_compaction_draws_one_full_frame_before_the_bar_disappears() {
+    let mut turning = Turning::started(None);
+    turning.saw(&Event::Compacting {
+        why: Compacting::Asked,
+        part: 64,
+    });
+    turning.saw(&Event::Compacted {
+        compacted: crucible_core::Compacted {
+            why: Compacting::Asked,
+            replaced: 3,
+            before: 80,
+            after: 20,
+            kept: 1,
+        },
+    });
+
+    let complete = turning
+        .rows(&nothing(), 80, Style::plain(), 24)
+        .into_iter()
+        .map(|row| row.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(complete.contains("compacting"), "{complete:?}");
+    assert!(complete.contains("100%"), "{complete:?}");
+    assert!(turning.moved(), "the completed bar did not produce a frame");
+
+    turning.finished_frame();
+    assert!(
+        turning.moved(),
+        "clearing the completed bar did not guarantee a following frame"
+    );
+    let gone = turning
+        .rows(&nothing(), 80, Style::plain(), 24)
+        .into_iter()
+        .map(|row| row.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!gone.contains('%'), "{gone:?}");
+    assert!(gone.contains("thinking"), "{gone:?}");
 }
 
 #[test]
@@ -278,6 +320,74 @@ fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
         gutter,
         "{under:?}"
     );
+}
+
+#[test]
+fn another_compaction_before_the_completed_frame_keeps_the_new_progress() {
+    let mut turning = Turning::started(None);
+    turning.saw(&Event::Compacting {
+        why: Compacting::Asked,
+        part: 64,
+    });
+    turning.saw(&Event::Compacted {
+        compacted: crucible_core::Compacted {
+            why: Compacting::Asked,
+            replaced: 3,
+            before: 80,
+            after: 20,
+            kept: 1,
+        },
+    });
+    turning.saw(&Event::Compacting {
+        why: Compacting::Full,
+        part: 12,
+    });
+
+    turning.finished_frame();
+
+    assert_eq!(turning.making, Some(Compacting::Full));
+    assert_eq!(turning.part, 12);
+}
+
+#[test]
+fn an_in_progress_value_cannot_claim_or_clear_completion() {
+    let mut turning = Turning::started(None);
+    turning.saw(&Event::Compacting {
+        why: Compacting::Asked,
+        part: u8::MAX,
+    });
+
+    assert_eq!(turning.part, 99);
+    turning.finished_frame();
+    assert!(turning.making.is_some());
+}
+
+#[test]
+fn the_compaction_bar_uses_more_cells_when_the_window_has_them_and_never_overflows() {
+    let style = Style::plain();
+    let glyphs = style.glyphs();
+    let short = making(50, 44, style).expect("a short bar");
+    let long = making(50, 80, style).expect("a long bar");
+    let cells = |row: &Row| {
+        row.text()
+            .matches(glyphs.filled())
+            .count()
+            .saturating_add(row.text().matches(glyphs.hollow()).count())
+    };
+
+    assert!(cells(&long) > BAR, "{}", long.text());
+    assert!(
+        cells(&long) > cells(&short),
+        "{} / {}",
+        short.text(),
+        long.text()
+    );
+
+    for columns in 0..=80 {
+        if let Some(row) = making(64, columns, style) {
+            assert!(row.columns() <= columns, "{columns}: {}", row.text());
+        }
+    }
 }
 
 #[test]
@@ -699,51 +809,60 @@ fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
 }
 
 #[test]
-fn the_mark_on_a_live_call_pulses_and_the_words_beside_it_do_not_move() {
-    // Two frames, half a beat apart. The mark is painted one way and then
-    // the other; everything after it is the same string in the same
-    // columns, because a call line that changed width four times a second
-    // would be unreadable next to the row it stands over.
-    // Against a palette that writes colour, because the pulse *is* colour:
-    // on a terminal without any, the two faces are the same mark and the
-    // row is still and correct. What is under test is the beat reaching the
-    // slot, so the instrument has to be one that can tell two slots apart.
+fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
     let style = Style::plain();
-    let palette = Palette::resolve(true, Theme::Dark, None, &|name| {
-        (name == "COLORTERM").then(|| "truecolor".to_owned())
-    });
     let now = Instant::now();
 
-    // One beat apart to the microsecond, rather than two readings of the
-    // clock a beat apart in wall time: what is under test is that the face
-    // changes from one beat to the next, and a machine that stalled between
-    // two readings would be testing how long the stall was.
-    let face = |beat: Duration| {
+    // Exact beats rather than sleeps: a stalled test process must not decide
+    // which animation frames are compared.
+    let face = |beat: u64| {
         let moment = Turning {
-            since: now.checked_sub(beat).expect("a clock past its own epoch"),
+            since: now
+                .checked_sub(Duration::from_millis(250 * beat))
+                .expect("a clock past its own epoch"),
             ..Turning::started(None)
         };
 
         moment.call("Read(src/main.rs)", 80, style)
     };
-    let (lit, dim) = (face(Duration::ZERO), face(Duration::from_millis(250)));
+    let frames = (0..4).map(face).collect::<Vec<_>>();
+    let dots = frames
+        .iter()
+        .map(|row| row.text().matches(style.glyphs().called()).count())
+        .collect::<Vec<_>>();
 
-    assert_ne!(
-        lit.paint(&palette),
-        dim.paint(&palette),
-        "the mark did not pulse"
+    assert_eq!(dots, [1, 0, 1, 0]);
+    let command_columns = frames
+        .iter()
+        .map(|row| {
+            let text = row.text();
+            let (before, _) = text.split_once("Read").expect("the command");
+            crucible_tui::columns(before)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        command_columns
+            .windows(2)
+            .all(|pair| pair.first() == pair.last()),
+        "the command shifted between frames: {command_columns:?}"
     );
+    for row in &frames {
+        assert!(row.text().ends_with("Read(src/main.rs)"), "{}", row.text());
+        assert!(row.columns() <= 80, "{}", row.text());
+        assert_eq!(row.kinds().next(), Some(Slot::Accent), "{row:?}");
+    }
 
-    // What the row says rather than what it is painted as, because the words
-    // are two spans now — the tool's name in the accent and its arguments in
-    // the quieter colour — and a sequence between them is bytes rather than
-    // a column the words moved by.
-    for face in [&lit, &dim] {
-        assert!(
-            face.text().ends_with("Read(src/main.rs)"),
-            "{}",
-            face.text()
-        );
+    for columns in 0..=20 {
+        for beat in 0..4 {
+            let row = Turning {
+                since: now
+                    .checked_sub(Duration::from_millis(250 * beat))
+                    .expect("a clock past its own epoch"),
+                ..Turning::started(None)
+            }
+            .call("Read(a/very/long/path.rs)", columns, style);
+            assert!(row.columns() <= columns, "{columns}: {}", row.text());
+        }
     }
 }
 

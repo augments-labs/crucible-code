@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-08-26
+
+### Fixed
+
+**Live session status now reflects what actually changed.** Tool results skip
+standalone JSON braces and brackets, running-call dots blink without changing
+colour, and resumed context percentages no longer gain room before compaction.
+Compaction progress uses more of a wide terminal and shows a full `100%` frame
+before returning to the turn.
+
 ## [0.23.1] - 2026-08-26
 
 ### Fixed
@@ -2837,7 +2847,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.23.2...HEAD
+[0.23.2]: https://github.com/augments-labs/crucible-code/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/augments-labs/crucible-code/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/augments-labs/crucible-code/compare/v0.22.1...v0.23.0
 [0.22.1]: https://github.com/augments-labs/crucible-code/compare/v0.22.0...v0.22.1

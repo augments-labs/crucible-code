@@ -38,8 +38,6 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Compacting, Event, ToolId};
-#[cfg(test)]
-use crucible_tui::Theme;
 use crucible_tui::{Prompt, Row, Slot, Working};
 
 use super::super::draw;
@@ -119,12 +117,22 @@ const BACKGROUND: &str = "(ctrl+b to background)";
 /// rather than a promise.
 const SAMPLE: usize = 5;
 
-/// How wide the bar under the word is, in columns.
+/// The least width the bar under the word keeps when it is shown.
 ///
-/// The same figure the panel that offers to make room uses, because the two
-/// pictures are one picture at two moments and a bar that changed width between
-/// them would read as a different thing.
+/// Below this the whole row gives way rather than drawing a progress sliver. On
+/// a wider window the bar takes the room available up to [`BAR_MAX`], so the
+/// extra columns become useful resolution rather than empty space.
 const BAR: usize = 28;
+
+/// The most progress cells a wide window gives the bar.
+///
+/// Enough for one cell per percentage point. More would repeat values rather
+/// than add information, and this keeps every frame bounded by a small constant
+/// even on an unusually wide terminal.
+const BAR_MAX: usize = 100;
+
+/// Columns beside the progress cells: the gap and the longest percentage.
+const BAR_TAIL: usize = 6;
 
 /// How far in the sample stands, in columns.
 ///
@@ -187,12 +195,12 @@ pub(super) struct Turning {
     /// How much usable room remained before compaction at the latest reading,
     /// or `None` where no window is known.
     left: Option<u8>,
-    /// Why room is being made, and `None` when it is not.
+    /// Why room is being made, and `None` when no progress row remains.
     ///
-    /// What the row under the word says while it happens — the reason rather
-    /// than a fixed sentence, because a window that filled and a provider that
-    /// refused are different things to be told, and neither is true when
-    /// somebody simply asked.
+    /// Kept for one frame after [`Event::Compacted`] with `part` at 100, so the
+    /// completed work is visible before the live footing returns to thinking.
+    /// [`Self::finished_frame`] removes it after that frame has been offered to
+    /// the renderer; no transcript row is committed for this live state.
     making: Option<Compacting>,
     /// How much of the notes has been written, as a percentage.
     ///
@@ -201,6 +209,8 @@ pub(super) struct Turning {
     /// and this is how much of it has, which is the only thing here that is
     /// actually known.
     part: u8,
+    /// Whether the next successful live frame is the completed bar's one frame.
+    completing: bool,
     /// The calls whose tools are out, in the order they were requested.
     ///
     /// A response may ask for several before any of them runs. Each keeps its
@@ -464,6 +474,7 @@ impl Turning {
             left,
             making: None,
             part: 0,
+            completing: false,
             spent: None,
             calling: VecDeque::new(),
             queued: Queued::default(),
@@ -583,9 +594,17 @@ impl Turning {
             Event::Carried { left } => self.left = *left,
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
-                self.part = *part;
+                self.part = (*part).min(99);
+                self.completing = false;
             }
-            Event::Compacted { .. } => self.making = None,
+            // Keep completion in the footing until one 100% frame has been
+            // offered to the renderer. The runner posts that fact first; the
+            // assignment is defensive against an older or synthetic producer
+            // that sends only Compacted, and has no effect without `making`.
+            Event::Compacted { .. } => {
+                self.part = 100;
+                self.completing = self.making.is_some();
+            }
             _ => {}
         }
 
@@ -602,6 +621,9 @@ impl Turning {
             // Room having been made puts the turn back where a finished tool
             // does: waiting on the model, with the next request not yet asked.
             Event::ToolFinished { .. } if !self.calling.is_empty() => Doing::Running,
+            // Completion keeps its own word for the one full frame. The frame
+            // acknowledgement below moves it to thinking when the bar goes.
+            Event::Compacted { .. } if self.completing => Doing::Compacting,
             Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,
@@ -665,6 +687,28 @@ impl Turning {
 
         self.drawn = Some(now);
         moved
+    }
+
+    /// Clears live completion after its 100% frame has been drawn.
+    ///
+    /// Called by the rendering owner, not by the event handler: receiving
+    /// [`Event::Compacted`] and removing its bar in one pass would leave no frame
+    /// in which completion exists. Idempotent so timeout frames and terminal
+    /// failures cannot resurrect or advance anything.
+    pub(super) fn finished_frame(&mut self) {
+        if !self.completing {
+            return;
+        }
+
+        self.making = None;
+        self.completing = false;
+        if self.doing == Doing::Compacting {
+            self.doing = Doing::Thinking;
+        }
+        // `moved` stored the 100% picture immediately before this state was
+        // cleared. Invalidate it so the next beat cannot compare the no-bar
+        // state to an older equal beat and leave completion standing.
+        self.drawn = None;
     }
 
     /// The latest session reading, carried into the turn and updated by
@@ -784,16 +828,20 @@ impl Turning {
 fn making(part: u8, columns: usize, style: Style) -> Option<Row> {
     let glyphs = style.glyphs();
     let gutter = Working::gutter(glyphs);
+    let bar = columns
+        .saturating_sub(gutter)
+        .saturating_sub(BAR_TAIL)
+        .min(BAR_MAX);
 
-    if part == 0 || columns < gutter + BAR + 8 {
+    if part == 0 || bar < BAR {
         return None;
     }
 
-    let full = usize::from(part) * BAR / 100;
+    let full = usize::from(part.min(100)) * bar / 100;
     let row = Row::new()
         .then(Slot::Quiet, " ".repeat(gutter))
         .then(Slot::Plain, glyphs.filled().repeat(full))
-        .then(Slot::Quiet, glyphs.hollow().repeat(BAR - full))
+        .then(Slot::Quiet, glyphs.hollow().repeat(bar - full))
         .then(Slot::Quiet, format!("  {part}%"));
 
     (row.columns() <= columns).then_some(row)
@@ -802,25 +850,22 @@ fn making(part: u8, columns: usize, style: Style) -> Option<Row> {
 impl Turning {
     /// The line for the call whose tool is out.
     ///
-    /// The mark pulses rather than turning: a call is one thing waiting on one
-    /// answer, and the row below it is already carrying the mark that says the
-    /// turn as a whole is moving. Two marks cycling through four faces beside
-    /// each other read as two independent things rather than as one inside the
-    /// other. On the same beat as that one, so the footing moves as one picture.
+    /// The dot appears and disappears on the same beat as the turn's own mark.
+    /// Visibility supplies the motion; when visible it stays in the theme's
+    /// accent instead of cycling through colours. Its empty face is a space in
+    /// that same one-column field, so the command does not move between frames
+    /// or when the live call becomes a committed one.
     ///
-    /// The words go through the same clipping the committed line uses, so the
-    /// line does not change shape at the moment it stops moving.
+    /// The words go through the same clipping the committed line uses, so no
+    /// face can make the terminal wrap a row the renderer counted as one.
     fn call(&self, said: &str, columns: usize, style: Style) -> Row {
-        let lit = Working::beat(self.running()).is_multiple_of(2);
-        let slot = if lit { Slot::Accent } else { Slot::Quiet };
+        let glyphs = style.glyphs();
+        let visible = Working::beat(self.running()).is_multiple_of(2);
+        let mark = if visible { glyphs.called() } else { " " };
+        let row = Row::new().then(Slot::Accent, mark).clipped(columns);
 
-        let row = Row::new().then(slot, style.glyphs().called());
-
-        // The mark alone where the window left no room for the words, as the
-        // committed line does: the space after it would be the one column a
-        // window that narrow has not got.
         match draw::words(said, columns, style) {
-            words if words.is_empty() => row,
+            words if words.is_empty() || row.is_empty() => row,
             words => row.then(Slot::Plain, " ").join(words),
         }
     }

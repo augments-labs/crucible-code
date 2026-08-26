@@ -103,6 +103,13 @@ impl Counting {
     }
 }
 
+/// A conservative resumed reading retained only for the prompt.
+#[derive(Debug, Clone, Copy)]
+struct Visible {
+    used: u64,
+    fixed: u64,
+}
+
 /// What the next request would carry.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct Load {
@@ -133,6 +140,13 @@ pub(super) struct Load {
     unreported: u64,
     /// Estimated content bytes in the request whose input count was reported.
     sent: u64,
+    /// Conservative resume estimate kept as the visible floor.
+    ///
+    /// Present only when a persisted measurement could not safely calibrate this
+    /// request because its fixed content changed. The next provider report may
+    /// correct accounting, but cannot make the uncompacted prompt claim context
+    /// was freed. [`Self::replaced`] clears it with actual context replacement.
+    visible: Option<Visible>,
     /// System-instruction and tool-schema bytes in that request.
     sent_overhead: u64,
     /// Identity of the fixed request content that report covered.
@@ -246,11 +260,17 @@ impl Load {
     /// else — so it is never written down, and length is what a log can carry.
     /// What length cannot tell apart is two same-sized sets of instructions,
     /// which moves the reading by the difference between two texts of one size
-    /// and only until the next response reports for itself. Every ordinary way
-    /// the fixed content changes — another model, another tool, another mode —
-    /// changes its size, and is refused here and estimated as before.
+    /// and only until the next response reports for itself.
+    ///
+    /// A different fixed length is refused as calibration: the reading may be
+    /// from another model or another set of instructions, so neither its token
+    /// count nor its byte rate is this request's to use. The cautious recount is
+    /// retained only as a display floor until actual compaction replaces context;
+    /// a fresh provider report may correct accounting without making the prompt
+    /// claim the session gained room it did not free.
     pub(super) fn measured(&mut self, calibration: Calibration) {
         if self.overhead != calibration.overhead {
+            self.hold_visible();
             return;
         }
 
@@ -264,6 +284,23 @@ impl Load {
         self.output_reported = true;
         self.unreported = 0;
         self.appended = 0;
+    }
+
+    /// Keeps this load's cautious recount as the prompt's visible floor.
+    ///
+    /// Called once on resume. Repeated calls keep the first reading: a later
+    /// call must not be able to raise a floor by measuring ordinary live state.
+    pub(super) fn resumed(&mut self) {
+        self.hold_visible();
+    }
+
+    fn hold_visible(&mut self) {
+        if self.visible.is_none() {
+            self.visible = Some(Visible {
+                used: self.tokens(),
+                fixed: self.bytes_to_tokens(self.overhead),
+            });
+        }
     }
 
     /// What this load would have a session remember, where it knows exactly.
@@ -493,8 +530,13 @@ impl Load {
     pub(super) fn left(&self, window: Option<u32>, reserve: u64) -> Option<u8> {
         let window = u64::from(window?);
         let usable = window.saturating_sub(reserve);
-        let used = self.tokens().min(usable);
-        let fixed = self.bytes_to_tokens(self.overhead).min(used);
+        let current = Visible {
+            used: self.tokens(),
+            fixed: self.bytes_to_tokens(self.overhead),
+        };
+        let visible = self.visible.unwrap_or(current);
+        let used = current.used.max(visible.used).min(usable);
+        let fixed = current.fixed.max(visible.fixed).min(used);
 
         u8::try_from(
             ((usable - used) * 100)

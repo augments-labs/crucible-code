@@ -214,6 +214,11 @@ impl Runner {
             Recap::Stopped => return Ok(Room::Stopped),
         };
 
+        // Completion is a fact only once a structured recap is whole. It goes
+        // immediately before Compacted below, preserving event order without
+        // sleeping the worker; the renderer holds it for one live frame.
+        events.post(crucible_core::Event::Compacting { why, part: 100 });
+
         let mut messages = std::mem::take(&mut self.transcript).into_messages();
 
         // Drained rather than collected into a second transcript: this is the
