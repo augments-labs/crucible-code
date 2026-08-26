@@ -111,9 +111,9 @@ const PROCESSES: usize = 64;
 
 /// The model the sampled session asks for.
 ///
-/// Deliberately a name no table entry answers. Those twenty turns are the ones
-/// the budget has always been written about, and a real name would bring a real
-/// window with it and change what they measure.
+/// Deliberately a name no table entry answers. The fixture explicitly gives it
+/// a large operational window below so provider defaults cannot turn the stable
+/// twenty-turn memory workload into a compaction workload.
 #[cfg(target_os = "linux")]
 const SAMPLED: &str = "bench";
 
@@ -341,7 +341,8 @@ impl Scratch {
         let config = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
              \"provider\": \"anthropic\",\n  \"providers\": {{\n    \
-             \"anthropic\": {{\"model\": \"{model}\", \"baseUrl\": \"{endpoint}\"}}\n  \
+             \"anthropic\": {{\"model\": \"{model}\", \"baseUrl\": \"{endpoint}\", \
+             \"defaultContextWindow\": 1000000}}\n  \
              }},\n  \"output\": {{\"color\": \"never\"}}\n}}\n"
         );
         fs::write(home.join("config.json"), config)?;

@@ -76,7 +76,7 @@ Keyed by provider name — `anthropic`, `moonshot`, `openai`.
 | `effort` | How hard to think before answering, when `--effort` does not say. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
-| `contextWindow` | How many tokens a model accepts, keyed by the model name. |
+| `contextWindow` | Tokens Crucible uses before making room, keyed by model name. |
 | `defaultContextWindow` | The same, for any model of this provider not named above. |
 
 `effort` is one of `low`, `medium`, `high`, `xhigh` or `max`, and it is set per
@@ -116,16 +116,17 @@ describe the model you had just left:
 { "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
 ```
 
-crucible knows the limits of the models it offers and asks for nothing here
-unless you disagree with one — check your provider's documentation, because a
-vendor may serve the same model at more than one size. `defaultContextWindow`
-covers a model crucible has never heard of, which is otherwise a session with no
-reading on screen and no compaction until the provider refuses a request.
+Without either setting, Crucible follows conservative operational windows:
+200,000 tokens for Anthropic, 272,000 for OpenAI, and 262,144 for Moonshot. A
+known model with a smaller native limit keeps the smaller figure, and an unknown
+model of a known provider gets that provider's default rather than silently
+bypassing it. Native 1M support therefore does not make 1M the session default.
 
-Neither is sent anywhere. They decide when crucible makes room, and nothing
-else, so setting one too large means a request the provider refuses — recovered
-by compacting and asking again — while setting one too small means a session
-that compacts earlier than it had to.
+Use `contextWindow` to opt a named model into a larger operational window, or
+`defaultContextWindow` for every otherwise-unnamed model of one provider. Neither
+is sent anywhere: they decide when Crucible makes room and what its meter reads,
+and nothing else. Setting one too large may let a request reach the provider's
+real limit and be refused; setting one too small compacts earlier than necessary.
 
 ### `compaction`
 

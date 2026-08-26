@@ -814,19 +814,25 @@ fn compacting(settings: &Settings) -> Compaction {
     }
 }
 
-/// How much this model accepts at once, in tokens, or nothing where nobody
-/// knows.
+/// How much of this model's window a session uses before making room.
 ///
-/// What a layer wrote down first, then what the generated table says. There is
-/// no third answer and deliberately no default: a window invented here would be
-/// wrong by a factor nobody could see, and a session would throw most of itself
-/// away — or die at the vendor — before anybody could tell why. Where nothing is
-/// known the turn simply runs without a proactive bound, and the provider
-/// refusing is what makes room instead.
+/// A configured figure is explicit and wins, including one that opts into a
+/// model's million-token window. Without one, known native limits are held under
+/// a conservative provider default: long context is available, but using it is
+/// a choice rather than the starting behavior. The provider cap also
+/// covers names released after this build, while an unknown provider still has
+/// no number to guess from.
 pub(super) fn window(provider: &str, model: &str, settings: &Settings) -> Option<u32> {
-    settings
-        .context_window(provider, model)
-        .or_else(|| super::facts(provider, model).map(|facts| facts.window))
+    settings.context_window(provider, model).or_else(|| {
+        let default = match provider {
+            "anthropic" => 200_000,
+            "openai" => 272_000,
+            "moonshot" => 262_144,
+            _ => return None,
+        };
+        let native = super::facts(provider, model).map_or(default, |facts| facts.window);
+        Some(native.min(default))
+    })
 }
 
 /// What this model reads, where this build has heard of it.

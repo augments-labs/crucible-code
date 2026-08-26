@@ -136,6 +136,19 @@ ones it has:
 crucible: no provider called gemini; this build has anthropic, moonshot, openai
 ```
 
+## How much context is used
+
+A model's native maximum is not Crucible's default operating point. Without an
+explicit configuration, Crucible makes room at 200,000 tokens for Anthropic,
+272,000 for OpenAI, and 262,144 for Moonshot. A model with a smaller native limit
+stays smaller.
+
+This is local context management, not a request parameter. Anthropic's current
+Opus, Sonnet and Fable models and Kimi K3 may accept 1M natively, while the
+OpenAI models offered here expose a larger maximum; Crucible still compacts at
+the figures above. To opt in deliberately, set the named model under
+`providers.<name>.contextWindow`, or set `defaultContextWindow` for that provider.
+
 ## How hard to think
 
 Models that reason before answering take a rung saying how much of that to do.
