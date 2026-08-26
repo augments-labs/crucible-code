@@ -1167,7 +1167,7 @@ fn a_window_too_short_for_both_drops_the_call_before_the_row() {
     let mut turning = Turning::started(None);
     turning.saw(&requested());
 
-    let rows = turning.rows(&nothing(), 80, Style::plain(), CALLING);
+    let rows = turning.rows(&nothing(), 80, Style::plain(), CALLING - 1);
     let said = rows.iter().map(Row::text).collect::<String>();
 
     assert_eq!(rows.len(), ROWS, "{said:?}");

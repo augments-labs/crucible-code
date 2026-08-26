@@ -978,7 +978,6 @@ pub(super) fn during<T: Terminal>(
 
         match meant(arrived) {
             Meant::Background if turning.can_background() => background.ask(),
-            Meant::Background => {}
             // Taken back and re-wrapped above, before the view could have been
             // handed the same press. What is left to say is that the picture no
             // longer matches, which is what the redraw below reads.
@@ -1179,7 +1178,7 @@ pub(super) fn during<T: Terminal>(
                 renderer.notched(back)?;
             }
 
-            Meant::PasteImage | Meant::Ignored => {}
+            Meant::Background | Meant::PasteImage | Meant::Ignored => {}
         }
     }
 
