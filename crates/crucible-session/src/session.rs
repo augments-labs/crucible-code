@@ -25,16 +25,19 @@ use std::thread::{self, JoinHandle};
 
 use crucible_core::{Calibration, Message, SessionId, Transcript, Workspace};
 
+mod beside;
 mod claim;
 mod index;
 mod log;
 mod privacy;
+mod prompts;
 mod recent;
 mod replay;
 mod wire;
 
 use claim::{Claim, Claimed, claim};
 use log::{Trouble, make, open, shorten};
+pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
 use replay::{Replayed, belongs, newest, replay};
 
@@ -73,6 +76,19 @@ pub enum SessionError {
     /// The bounded newest-session index could not be read or replaced.
     #[error("could not use the session index {at}: {source}")]
     Index {
+        /// Which file.
+        at: Box<str>,
+        /// What the operating system said.
+        source: io::Error,
+    },
+
+    /// The bounded prompt history could not be read or replaced.
+    ///
+    /// Separate from [`SessionError::Index`] because they are separate files
+    /// with separate bounds, and the name in the message is the whole of what
+    /// tells a reader which one stopped working.
+    #[error("could not use the prompt history {at}: {source}")]
+    History {
         /// Which file.
         at: Box<str>,
         /// What the operating system said.

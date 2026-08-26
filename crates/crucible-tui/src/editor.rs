@@ -476,6 +476,49 @@ impl Editor {
         std::mem::take(&mut self.said)
     }
 
+    /// Puts `text` in as the whole of the line, cursor after it.
+    ///
+    /// What an arrow reaching back through the retained prompts does to the
+    /// box. Not a paste and not a run of key presses: a paste past a certain
+    /// length is drawn as the label saying how much of it there is, which is
+    /// right for a blob somebody dropped in and wrong for a line they wrote by
+    /// hand and are about to edit; and a run of presses would be one frame and
+    /// one list rebuild per character of somebody else's sentence.
+    ///
+    /// Sanitized like a paste all the same, because it comes off a disk: a
+    /// break survives on an editor that has rows for one, an escape does not,
+    /// and a tab arrives as the spaces every other way in spells it with.
+    ///
+    /// A line already standing is [`Typed::Ignored`], which is what keeps the
+    /// two ends of a walk from costing a frame each.
+    pub fn put(&mut self, text: &str) -> Typed {
+        let multiline = self.multiline;
+        let mut plain = String::with_capacity(text.len().min(Self::MAX_BYTES));
+
+        for character in text.chars() {
+            match character {
+                '\n' if multiline => plain.push('\n'),
+                '\t' => plain.push_str(TAB),
+                kept if !kept.is_control() => plain.push(kept),
+                _ => {}
+            }
+
+            if plain.len() > Self::MAX_BYTES {
+                return Typed::Refused;
+            }
+        }
+
+        if plain == self.said {
+            return Typed::Ignored;
+        }
+
+        self.clear();
+        if plain.is_empty() {
+            return Typed::Changed;
+        }
+        self.insert_text(&plain)
+    }
+
     /// Empties the line without taking it anywhere.
     pub fn clear(&mut self) {
         self.said.clear();

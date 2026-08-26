@@ -224,6 +224,7 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
     let prompt = Prompt {
         draft: crate::Draft::at(PROSE, 4),
         left: crate::Remaining::new(Some(57)),
+        history: crate::Recalled::new(87, 100),
         mode: "ask before edits",
         tone: Slot::Quiet,
         hint: "ctrl+j for a new line",

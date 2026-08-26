@@ -12,14 +12,14 @@
 //! before its header is written: a crash in between leaves a candidate readers
 //! validate and skip, rather than a complete log discovery can never find.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_core::SessionId;
 
+use super::beside::Beside;
 use super::claim;
 use super::replay::logs as legacy_logs;
 use super::{SUFFIX, SessionError};
@@ -35,9 +35,6 @@ pub(super) const ENTRIES: usize = 256;
 
 /// Greater than the header and [`ENTRIES`] maximum-length identifiers.
 const BYTES: u64 = 32 * 1024;
-
-/// How many exclusive temporary names a replacement tries.
-const NAMES: usize = 32;
 
 /// Builds the index once for flat logs written before it existed.
 pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
@@ -144,7 +141,7 @@ fn replace(path: &Path, ids: &[SessionId]) -> Result<(), SessionError> {
             io::Error::other("session index has no parent directory"),
         )
     })?;
-    let mut beside = Beside::new(directory).map_err(|source| problem(path, source))?;
+    let mut beside = Beside::new(directory, "recent").map_err(|source| problem(path, source))?;
 
     {
         let file = beside.file().map_err(|source| problem(path, source))?;
@@ -168,66 +165,9 @@ fn problem(path: &Path, source: io::Error) -> SessionError {
     }
 }
 
-/// An exclusively-created sibling removed unless its rename lands.
-#[derive(Debug)]
-struct Beside {
-    path: PathBuf,
-    file: Option<File>,
-    landed: bool,
-}
-
-impl Beside {
-    fn new(directory: &Path) -> io::Result<Self> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-
-        for _ in 0..NAMES {
-            let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = directory.join(format!(".recent.{}.{}.tmp", std::process::id(), sequence));
-            match crucible_privacy::create_write(&path) {
-                Ok(file) => {
-                    return Ok(Self {
-                        path,
-                        file: Some(file),
-                        landed: false,
-                    });
-                }
-                Err(problem) if problem.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(problem) => return Err(problem.into_io()),
-            }
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "could not find a free name for the session index replacement",
-        ))
-    }
-
-    fn file(&mut self) -> io::Result<&mut File> {
-        self.file
-            .as_mut()
-            .ok_or_else(|| io::Error::other("session index temporary is already closed"))
-    }
-
-    fn over(mut self, path: &Path) -> io::Result<()> {
-        drop(self.file.take());
-        crucible_privacy::replace(&self.path, path)
-            .map_err(crucible_privacy::PrivacyError::into_io)?;
-        self.landed = true;
-        Ok(())
-    }
-}
-
-impl Drop for Beside {
-    fn drop(&mut self) {
-        if !self.landed {
-            drop(self.file.take());
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::str::FromStr as _;
 
     use crate::sample::Sample;

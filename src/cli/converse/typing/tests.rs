@@ -7,8 +7,9 @@
 
 use crucible_core::{Mode, Permission, Rules, ToolArgs};
 use crucible_runner::{Model, Session, Tools};
-use crucible_tui::{Key, Recording};
+use crucible_tui::{Aimed, Key, Recording};
 
+use super::drawing::writing;
 use super::*;
 use crate::cli::fake::Script;
 
@@ -37,6 +38,115 @@ fn engine(mode: Mode) -> Runner {
 /// The row a session in this mode is drawn with.
 fn settled(mode: Mode) -> Says {
     saying(&engine(mode))
+}
+
+/// A walk over nothing, with nowhere to write what is said back to.
+///
+/// The box reads the same either way: what an arrow does with a history is
+/// asserted where the history lives, and every test here is about the row.
+fn unwalked() -> Recalling {
+    Recalling::default()
+}
+
+/// A walk over `held`, oldest last, with nowhere to write.
+fn walking(held: &[&str]) -> Recalling {
+    Recalling::holding(held.iter().map(|said| (*said).to_owned()).collect())
+}
+
+#[test]
+fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is_edited() {
+    // The one place the walk and the box meet: the walk counts, the border
+    // draws, and the field between them is the whole of the coupling. What
+    // ends the walk is asserted where the walk lives — what is asserted here
+    // is that the border went with it.
+    let renderer = roomy();
+    let says = settled(Mode::Ask);
+    let mut recalling = walking(&["first", "second", "third"]);
+    let mut editor = Editor::new();
+
+    assert!(recalling.back(&mut editor));
+
+    let boxed = boxing(
+        &renderer,
+        &editor,
+        &says,
+        Bordering {
+            left: None,
+            history: recalling.place(),
+        },
+        Style::plain(),
+    );
+    let border = boxed
+        .rows
+        .iter()
+        .find(|row| row.text().contains("history"))
+        .map(crucible_tui::Row::text)
+        .unwrap_or_default();
+    assert!(border.contains("history 1/100"), "{:?}", boxed.rows);
+
+    // The key the reader reaches for when the line is nearly what they wanted.
+    editor.press(Key::Backspace);
+    recalling.standing(&editor);
+
+    let boxed = boxing(
+        &renderer,
+        &editor,
+        &says,
+        Bordering {
+            left: None,
+            history: recalling.place(),
+        },
+        Style::plain(),
+    );
+    assert!(
+        boxed.rows.iter().all(|row| !row.text().contains("history")),
+        "{:?}",
+        boxed.rows
+    );
+}
+
+#[test]
+fn a_line_the_arrow_put_in_the_box_leaves_the_border_when_it_is_sent() {
+    // Pressing return is choosing the prompt, and a chosen prompt is a line
+    // like any other: the count belonged to the walk, and the walk is over.
+    let mut renderer = roomy();
+    let says = settled(Mode::Ask);
+    let mut recalling = walking(&["first", "second"]);
+    let mut editor = Editor::new();
+
+    assert!(recalling.back(&mut editor));
+    assert_ne!(recalling.place(), Recalled::default());
+
+    let open = Opened::default();
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &open,
+        &mut recalling,
+        Style::plain(),
+    )
+    .unwrap();
+    let Asked::Said(_) = asked else {
+        panic!("the recalled prompt to be said");
+    };
+
+    assert_eq!(recalling.place(), Recalled::default());
+
+    let boxed = boxing(
+        &renderer,
+        &editor,
+        &says,
+        Bordering {
+            left: None,
+            history: recalling.place(),
+        },
+        Style::plain(),
+    );
+    assert!(
+        boxed.rows.iter().all(|row| !row.text().contains("history")),
+        "{:?}",
+        boxed.rows
+    );
 }
 
 /// The same, with the offer to leave standing under it.
@@ -116,6 +226,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             runner: &mut runner,
             editor: &mut editor,
             planning: &mut nothing(),
+            recalling: &mut unwalked(),
             images: &mut Vec::new(),
             left: &crucible_tools::Background::new(),
             keys: false,
@@ -141,7 +252,12 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -161,7 +277,7 @@ fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says),
+        around(&nothing(), &Opened::default(), &says, Recalled::default()),
     )
     .expect("the box to be drawn");
 
@@ -180,7 +296,12 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -201,7 +322,12 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -231,7 +357,12 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &mut renderer,
         &editor,
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
     let boxed = renderer.terminal().written().len();
@@ -240,6 +371,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -280,6 +412,7 @@ fn a_blank_row_parts_the_prompt_from_the_answer_above_it() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -307,6 +440,7 @@ fn a_wrapped_prompt_is_one_stable_record_line_however_many_rows_it_draws() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -326,6 +460,7 @@ fn no_blank_row_is_spent_at_the_top_of_a_session() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -345,6 +480,7 @@ fn a_second_prompt_in_a_row_is_parted_from_the_first_by_one_blank_and_no_more() 
             &mut renderer,
             &mut editor,
             &Opened::default(),
+            &mut unwalked(),
             Style::plain(),
         )
         .expect("the line to be taken");
@@ -364,6 +500,7 @@ fn the_editor_is_empty_afterwards_and_ready_for_the_next_line() {
         &mut renderer,
         &mut editor,
         &Opened::default(),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -432,7 +569,12 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &mut renderer,
         &typed("/m"),
         Style::plain(),
-        around(&nothing(), &listing("/m"), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &listing("/m"),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -475,7 +617,7 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
             &mut renderer,
             &typed("/m"),
             Style::plain(),
-            around(&nothing(), opened, &settled(Mode::Ask)),
+            around(&nothing(), opened, &settled(Mode::Ask), Recalled::default()),
         )
         .expect("the box to be drawn");
 
@@ -498,7 +640,12 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -519,7 +666,12 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &mut renderer,
         &Editor::new(),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &leaving(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &leaving(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -582,6 +734,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
         &mut renderer,
         &mut editor,
         &listing("/resu"),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -600,6 +753,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
         &mut renderer,
         &mut editor,
         &listing("what does /resume do"),
+        &mut unwalked(),
         Style::plain(),
     )
     .expect("the line to be taken");
@@ -796,6 +950,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
             turning: &turning,
             planning: &planning,
             opened_list: &Opened::default(),
+            history: Recalled::default(),
         },
         &says,
         Style::plain(),
@@ -835,6 +990,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
             turning: &turning,
             planning: &planning,
             opened_list: &Opened::default(),
+            history: Recalled::default(),
         },
         &says,
         Style::plain(),
@@ -885,7 +1041,12 @@ fn the_plan_stands_above_the_box_between_turns() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&planned(3), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &planned(3),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -908,7 +1069,12 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &mut alone,
         &typed("hi"),
         Style::plain(),
-        around(&plan, &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &plan,
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -917,7 +1083,12 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &mut beside,
         &typed("/m"),
         Style::plain(),
-        around(&plan, &listing("/m"), &settled(Mode::Ask)),
+        around(
+            &plan,
+            &listing("/m"),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -966,7 +1137,12 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
         &mut renderer,
         &editor,
         Style::plain(),
-        around(&nothing(), &Opened::default(), &settled(Mode::Ask)),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &settled(Mode::Ask),
+            Recalled::default(),
+        ),
     )
     .expect("the compact paste to be drawn");
     assert!(
@@ -998,14 +1174,17 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
         &mut renderer,
         &editor,
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says),
+        around(&nothing(), &Opened::default(), &says, Recalled::default()),
     )
     .unwrap();
 
     let prompt = writing(
         &editor,
         &says,
-        says.left,
+        Bordering {
+            left: says.left,
+            history: Recalled::default(),
+        },
         false,
         Prompt::room(renderer.rows()),
     );
@@ -1050,7 +1229,14 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
-    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &open,
+        &mut unwalked(),
+        Style::plain(),
+    )
+    .unwrap();
     let Asked::Said(said) = asked else {
         panic!("the pasted prompt to be said");
     };
@@ -1073,7 +1259,14 @@ fn a_visible_command_prefix_cannot_authorize_a_compact_pasted_argument() {
     let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
-    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &open,
+        &mut unwalked(),
+        Style::plain(),
+    )
+    .unwrap();
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
@@ -1092,7 +1285,14 @@ fn padded_compact_source_cannot_hide_a_full_access_local_command() {
     let open = Opened::filtered(editor.projection().text(), Glyphs::Unicode);
     let mut renderer = roomy();
 
-    let asked = said(&mut renderer, &mut editor, &open, Style::plain()).unwrap();
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &open,
+        &mut unwalked(),
+        Style::plain(),
+    )
+    .unwrap();
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };

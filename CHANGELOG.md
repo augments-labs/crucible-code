@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **The arrow keys walk back through prompts you have already sent.** On an
+  empty line <kbd>↑</kbd> and <kbd>↓</kbd> reach the last hundred prompts typed
+  in this directory, kept between sessions, and the top border of the box counts
+  the walk as `history 1/100`. Editing the line ends the walk and takes the count
+  with it, and a wrapped line or an open command list keeps the keys it had.
+
 ## [0.23.5] - 2026-08-26
 
 ### Fixed

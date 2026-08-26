@@ -73,6 +73,21 @@ const BEFORE_LINE: usize = FRAMED_ROW;
 /// says on the right, so that the two never read as one sentence.
 const APART: usize = 2;
 
+/// How much rule stands between the top left corner and a label inset into it.
+///
+/// Enough to read as a corner the label is set into rather than as a corner the
+/// label is written on. The space either side of the words is counted
+/// separately, so the shortest top edge that can carry one is this, the two
+/// spaces, the words, and the [`AFTER`] the rule keeps on the far side.
+const BEFORE: usize = 2;
+
+/// And how much of it has to survive on the other side of that label.
+///
+/// One column, which is the whole of the difference between a rule with a word
+/// set into it and a rule that stops at a word. A box whose top edge cannot
+/// spare it is drawn with no label at all.
+const AFTER: usize = 1;
+
 /// What a framed box costs beyond the line itself: two borders and the status
 /// row under them.
 ///
@@ -164,6 +179,46 @@ impl Remaining {
     }
 }
 
+/// Where in the retained prompts the line standing in the box came from.
+///
+/// A place and a count together, because neither is worth drawing without the
+/// other: `87` says nothing about how far back it is, and a walk that could
+/// report one without the other is one that has lost track of what it is
+/// walking.
+///
+/// Nothing by default, which is the state the box is in for the whole of a
+/// session nobody reaches back through.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Recalled(Option<(usize, usize)>);
+
+impl Recalled {
+    /// The `at`th prompt back, of `of` a walk may ever reach.
+    ///
+    /// Counted from the newest, so the first press back is `1` and the number
+    /// rises as the walk goes on. The pair reads as a position in a journey the
+    /// reader is making rather than as an address in a file they cannot see: on
+    /// the first press it says how far they have come and how far they may go,
+    /// and both halves keep meaning that for the whole of the walk.
+    ///
+    /// `of` is the window and not how much of it is filled, so it is the same
+    /// number on the first day as on the hundredth.
+    ///
+    /// A place outside the prompts it counts is nothing, the way an unknown
+    /// window reading is: the two numbers come off one walk, so a pair that
+    /// disagrees is a caller that has miscounted, and a border drawn from it
+    /// would say the line came from a prompt that is not there.
+    #[must_use]
+    pub fn new(at: usize, of: usize) -> Self {
+        Self((at > 0 && at <= of).then_some((at, of)))
+    }
+
+    /// What the top border says, where there is anything to say.
+    fn said(self) -> Option<String> {
+        let (at, of) = self.0?;
+        Some(format!("history {at}/{of}"))
+    }
+}
+
 /// A nonzero command count and whether its one visible control is pointed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CommandCount {
@@ -208,6 +263,10 @@ pub struct Prompt<'a> {
     pub draft: Draft<'a>,
     /// How much of the model window remains, or that it is not known.
     pub left: Remaining,
+    /// Where in the retained prompts the line in the box came from, while the
+    /// arrows are what put it there. Nothing while the line is somebody's own,
+    /// and then the top border is the rule it has always been.
+    pub history: Recalled,
     /// What the status row says the mode in force is.
     pub mode: &'a str,
     /// The colour that mode's own sentence is drawn in. Not the border's: see
@@ -342,7 +401,6 @@ impl Prompt<'_> {
             self.bare(columns, glyphs)
         } else {
             let bar = glyphs.horizontal();
-            let (open, opened) = glyphs.top();
             let (close, closed) = glyphs.bottom();
             let across = bar.repeat(columns.saturating_sub(2));
 
@@ -356,7 +414,7 @@ impl Prompt<'_> {
 
             let mut rows = vec![
                 reading,
-                Row::new().then(Self::BORDER, format!("{open}{across}{opened}")),
+                Row::new().then(Self::BORDER, self.opening(columns, glyphs)),
             ];
             rows.extend(self.typed(columns, glyphs));
             rows.push(Row::new().then(Self::BORDER, format!("{close}{across}{closed}")));
@@ -625,6 +683,43 @@ impl Prompt<'_> {
                 row
             })
             .collect()
+    }
+
+    /// The rule across the top of the box, with the place in the history set
+    /// into it where there is one and where it fits.
+    ///
+    /// Set into the top edge rather than given a row, because it is a fact
+    /// about the line inside the box and the rows either side are spoken for:
+    /// the window reading stands above and the mode stands below. A border is
+    /// the one part of a container everything drawn on it is read as belonging
+    /// to, which is exactly what is wanted here and exactly what made the row
+    /// under the box wrong for it.
+    ///
+    /// Whole or not at all, the same bargain the model on the status row makes:
+    /// half of `87/100` is a number, and a number that is not the place is
+    /// worse than saying nothing. What never gives way is the rule's own width
+    /// — the border under the box is laid out against the same one, and a top
+    /// edge a column short of it is the first thing an eye finds.
+    fn opening(&self, columns: usize, glyphs: Glyphs) -> String {
+        // The two spaces that hold the words off the rule either side of them.
+        const APART: usize = 2;
+
+        let bar = glyphs.horizontal();
+        let (open, opened) = glyphs.top();
+        let inner = columns.saturating_sub(2);
+        let said = self
+            .history
+            .said()
+            .filter(|said| BEFORE + APART + width::columns(said) + AFTER <= inner);
+
+        let Some(said) = said else {
+            return format!("{open}{}{opened}", bar.repeat(inner));
+        };
+
+        let before = bar.repeat(BEFORE);
+        let after = bar.repeat(inner - BEFORE - APART - width::columns(&said));
+
+        format!("{open}{before} {said} {after}{opened}")
     }
 
     /// The rows the line is typed on, inside the frame.

@@ -327,6 +327,15 @@ one is how you forget a session. A `.jsonl.lock` beside one is where the claim
 above is taken; it holds nothing, and an empty one left by a crash is only a
 file.
 
+One more file sits beside them: `prompt.history`, holding the lines the arrow
+keys walk back through. It is one file for every directory rather than one per
+directory, so it cannot grow with the number of checkouts you work in, and each
+line records which directory it was typed in so only that directory's prompts
+are offered back. Each directory keeps its
+newest hundred prompts and no more, and the file itself is bounded again across
+all of them, so it cannot grow either with how long you work or with how many
+checkouts you work in. Deleting it is how you forget what you have typed.
+
 ### If you used crucible 0.0.2 or earlier
 
 Sessions used to live under `$XDG_DATA_HOME/crucible/sessions`, falling back to
