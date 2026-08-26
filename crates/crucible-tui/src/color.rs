@@ -115,6 +115,12 @@ pub enum Slot {
     Emphasis,
     /// A phrase the answer wrote and then took back.
     Struck,
+    /// A span of inline code: a command, a path, a name written in backticks.
+    ///
+    /// Worth the accent, because what the reader is meant to copy or go and
+    /// find should read in the theme's own voice rather than in the grey a
+    /// hint wears — grey is for what can be skipped, and a path cannot.
+    Code,
     /// The mode that lets a file be written without asking.
     AllowEdits,
     /// The mode that asks about nothing at all.
@@ -620,6 +626,10 @@ impl Slot {
     /// `None` for the slots whose value is not in any table: the prompt band
     /// is worked out from the reader's own ground, so the palette holds it
     /// rather than the theme.
+    // The lint would fold `Code` into `Accent` because they share an ink
+    // today, but they are different meanings that a theme may one day split;
+    // the comment on `Code` carries the reasoning.
+    #[allow(clippy::match_same_arms)]
     const fn ink(self, theme: Theme) -> Option<Ink> {
         let tones = theme.tones();
 
@@ -665,6 +675,12 @@ impl Slot {
                 indexed: "\x1b[9m",
                 basic: "\x1b[9m",
             },
+            // The accent's own ink, deliberately: a span of code is something
+            // the reader is being handed, and the theme has one colour for
+            // what it wants a reader's eye on. Sharing the ink and not the
+            // slot keeps the two meanings apart where a theme might one day
+            // split them.
+            Self::Code => tones.accent,
             Self::AllowEdits | Self::DoneMark => tones.green,
             Self::FullAccess | Self::DoingMark => tones.amber,
             // Weight and nothing else, at every rung: the reader's own

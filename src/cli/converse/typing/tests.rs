@@ -42,7 +42,7 @@ fn settled(mode: Mode) -> Says {
 /// The same, with the offer to leave standing under it.
 fn leaving(mode: Mode) -> Says {
     Says {
-        asking: Some(LEAVING),
+        asking: Some(std::borrow::Cow::Borrowed(LEAVING)),
         ..settled(mode)
     }
 }
@@ -116,6 +116,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             runner: &mut runner,
             editor: &mut editor,
             planning: &mut nothing(),
+            images: &mut Vec::new(),
             left: &crucible_tools::Background::new(),
             keys: false,
         },

@@ -14,9 +14,9 @@ use super::{Pattern, Rule};
 /// Whether any rule covers some part of this call.
 pub(super) fn any(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) -> bool {
     match sensitivity {
-        Sensitivity::ReadOnly { target } | Sensitivity::MutatesFile { target } => {
-            covered(rules, call, target)
-        }
+        Sensitivity::ReadOnly { target }
+        | Sensitivity::ReadsOutside { target }
+        | Sensitivity::MutatesFile { target } => covered(rules, call, target),
         Sensitivity::SpawnsProcess {
             command: Command::Understood { parts, .. },
         } => parts.iter().any(|part| runs(rules, call, part)),
@@ -40,9 +40,9 @@ pub(super) fn any(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) ->
 /// Whether the rules together cover the whole of this call.
 pub(super) fn all(rules: &[Rule], call: &ToolCall, sensitivity: &Sensitivity) -> bool {
     match sensitivity {
-        Sensitivity::ReadOnly { target } | Sensitivity::MutatesFile { target } => {
-            covered(rules, call, target)
-        }
+        Sensitivity::ReadOnly { target }
+        | Sensitivity::ReadsOutside { target }
+        | Sensitivity::MutatesFile { target } => covered(rules, call, target),
         Sensitivity::SpawnsProcess {
             command: Command::Understood { parts, .. },
         } => {

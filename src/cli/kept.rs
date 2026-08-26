@@ -15,13 +15,10 @@
 //! it, so what this costs is the same after four hundred turns as after four —
 //! the rule the whole renderer is built to keep.
 //!
-//! What decides whether it outlives a session is what happened to the rows that
-//! made the offers. `/clear` opens a new session and deletes nothing: the rows
-//! of the old one are still in the transcript, still saying how many lines they
-//! could not fit and still naming the key that gives them back, so this is left
-//! exactly as it was. `/resume` empties the transcript — the session picked up
-//! replaces what was on screen rather than following it — and this is emptied
-//! with it. Either way the rule is the same one: what is held here is what a row
+//! It does not outlive the rows that made the offers. `/clear` and `/resume`
+//! both empty the transcript — what follows either is a different conversation
+//! rather than the next thing that happened in this one — and this is emptied
+//! with it. The rule is the same one both ways: what is held here is what a row
 //! somebody can still see has offered.
 //!
 //! One kind of cut is not here and cannot be. A call that changed a file is

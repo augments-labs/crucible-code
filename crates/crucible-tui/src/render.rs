@@ -32,7 +32,6 @@ use crate::clipboard;
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
-use crate::head::Head;
 use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
@@ -161,18 +160,6 @@ impl Standing {
     }
 }
 
-/// What the row at the top of the window says, in its own words.
-///
-/// Held rather than the row it becomes, because the row is laid out against a
-/// window that changes size and what it says does not. Owned rather than
-/// borrowed for the same reason: it outlives every call that sets it, and what
-/// it names belongs to the session rather than to a frame.
-#[derive(Debug)]
-struct Heading {
-    /// The directory the session is bound to.
-    root: String,
-}
-
 /// Draws the session onto a screen this process owns.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
@@ -181,17 +168,10 @@ pub struct Renderer<T: Terminal> {
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
-    /// What the row at the top says, and that row laid out for this window.
-    ///
-    /// Both, because the second is what a frame puts down and the first is what
-    /// a resize lays out again. This is the one component this crate lays out
-    /// itself: everything else standing is handed over as rows and dropped when
-    /// the window changes under it, and a row that is meant to be there the
-    /// whole session cannot be a row the caller has to remember to put back.
-    /// The opening is laid out again too and is not one of these — it is a line
-    /// of the record rather than a band, and [`Self::opens`] says how.
-    heading: Option<Heading>,
-    crowned: Option<Row>,
+    /// Whether a session has named itself, which is what the fixed foot — the
+    /// transcript-map door — belongs to. Before one has, there is no transcript
+    /// to travel and no door to offer.
+    footed: bool,
     /// Whether the pointer is over the transcript-map door in the fixed foot.
     ///
     /// One bit rather than its column, because every motion on the same side of
@@ -288,8 +268,7 @@ impl<T: Terminal> Renderer<T> {
             record: Record::new(size.columns),
             terminal,
             standing: Standing::default(),
-            heading: None,
-            crowned: None,
+            footed: false,
             map_pointed: false,
             prompt_target: None,
             pointed_changed: false,
@@ -579,7 +558,6 @@ impl<T: Terminal> Renderer<T> {
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown = Markdown::new(glyphs);
-        self.crown();
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -637,15 +615,12 @@ impl<T: Terminal> Renderer<T> {
         self.notch = rows;
     }
 
-    /// Puts the row at the top of the window and keeps it there.
+    /// Tells this renderer a session is on screen, which puts the fixed foot —
+    /// the transcript-map door — on the bottom row and keeps it there.
     ///
-    /// The one thing on screen that is neither the transcript nor something
-    /// standing over the box: it says which directory the session is bound to
-    /// and is held against the top while everything under it moves.
-    ///
-    /// Said at each prompt because that is where a resize is first known. What
-    /// it says cannot change during a session, so the renderer owns the laid-out
-    /// row and restores it at the new width itself.
+    /// Said at each prompt because that is where a resize is first known.
+    /// Where the session is bound is not said here: the welcome card carries
+    /// the directory, as a line of the record like any other.
     ///
     /// Nothing at all happens where output is redirected, for the reason
     /// [`Renderer::live`] draws nothing there.
@@ -653,32 +628,13 @@ impl<T: Terminal> Renderer<T> {
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn heads(&mut self, head: Head<'_>) -> Result<(), TerminalError> {
+    pub fn foots(&mut self) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
 
-        self.heading = Some(Heading {
-            root: head.root.to_owned(),
-        });
-        self.crown();
+        self.footed = true;
         self.draw()
-    }
-
-    /// Lays the head row out for the window as it is now.
-    ///
-    /// Called wherever what it is drawn against moves: the size, and the set of
-    /// characters it may draw with.
-    fn crown(&mut self) {
-        let glyphs = self.glyphs;
-        let columns = self.size.columns;
-
-        self.crowned = self.heading.as_ref().map(|heading| {
-            Head {
-                root: &heading.root,
-            }
-            .row(columns, glyphs)
-        });
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -1100,7 +1056,6 @@ impl<T: Terminal> Renderer<T> {
         self.unselects();
         self.map.close();
         self.map_pointed = false;
-        self.crown();
 
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
@@ -1374,13 +1329,11 @@ impl<T: Terminal> Renderer<T> {
         Bands::share(
             self.size.rows,
             Wants {
-                head: self.crowned.as_ref().map_or(0, |_| Head::ROWS),
                 turn: self.standing.turn.len(),
                 prompt: self.standing.prompt.len(),
-                // The bottom control belongs to a session, the same as the
-                // fixed head. Before a session has named itself there is no
-                // transcript-map door to offer.
-                foot: self.crowned.as_ref().map_or(0, |_| 1),
+                // The bottom control belongs to a session. Before one has
+                // named itself there is no transcript-map door to offer.
+                foot: usize::from(self.footed),
             },
         )
     }
@@ -1422,12 +1375,6 @@ impl<T: Terminal> Renderer<T> {
         let pointed = self.palette.pointing(true);
         self.painted.selects(self.taken);
         self.painted.open(self.size.rows, self.size.columns);
-
-        if let Some(crowned) = &self.crowned {
-            for at in bands.head.start..bands.head.end {
-                self.painted.paint(at, crowned, &palette);
-            }
-        }
 
         let showing = self.record.view(bands.transcript.len());
         for at in bands.transcript.start..bands.transcript.end {

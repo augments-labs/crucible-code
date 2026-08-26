@@ -7,7 +7,12 @@
 //! [`Runner::pick_up`], which is also what drops the permission answers given
 //! for the rest of a session that is now over. The record of what has been read
 //! is emptied here for the same reason, exactly as `/resume` empties it, and so
-//! is the plan the panel above the box is drawn from.
+//! are the images pasted at the prompt, the plan the panel above the box is
+//! drawn from and the screen itself —
+//! an empty context drawn under a full transcript would read as a conversation
+//! the agent has no memory of. What goes back up is the opening card and
+//! nothing else, so the screen after a clear is the screen a fresh start
+//! draws.
 //!
 //! What was said is not deleted. The log it was written to is closed and stays
 //! on the disk, so the session is on `/resume`'s list like any other and
@@ -18,25 +23,33 @@
 
 use crucible_core::Transcript;
 use crucible_runner::{Runner, Session};
-use crucible_tui::{Glyphs, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 
+use super::super::Held;
 use super::Terms;
 
 /// Runs it.
 pub(super) fn run<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &mut Runner,
+    held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
-    let held = runner.transcript().len();
 
     // A session that has said nothing is already the empty one this would go
     // and open. Starting a second log here would leave two files for a session
-    // that never happened, and `--continue` offers the newer of them.
-    if held == 0 {
+    // that never happened, and `--continue` offers the newer of them. The
+    // screen is still emptied: whatever a command printed belongs behind the
+    // clear the same as a conversation would.
+    if runner.transcript().is_empty() {
+        held.kept.forget();
+        held.images.clear();
+        renderer.empties()?;
+        held.opening.commit(renderer)?;
+
         let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
         return Ok(renderer.present(&rows)?);
     }
@@ -83,41 +96,26 @@ pub(super) fn run<T: Terminal>(
         renderer.commit(&format!("! {problem}"))?;
     }
 
-    renderer.present(&started(held, columns, terms.style().glyphs()))?;
+    // The transcript on screen was said by the session just left, and an empty
+    // context is what was asked for — a screen still holding it would read as a
+    // conversation the agent under the box has no memory of. What was held of
+    // that session's results goes with the rows that offered them: a key
+    // opening what is behind a row nobody can see is worse than no offer.
+    held.kept.forget();
+
+    // The images pasted go too: the markers naming them were in prompts of the
+    // session just left, and the numbering starts over with the session. Held
+    // on, one would ride the first prompt after the clear that says `[image 1]`.
+    held.images.clear();
+    renderer.empties()?;
+
+    // The opening again, and nothing else: a screen that looks exactly like a
+    // fresh start is the whole of what says one happened. The card's facts
+    // were read at launch, so its list of recent sessions does not yet name
+    // the one just left — the price of a card that never disagrees with the
+    // one the launch drew.
+    held.opening.commit(renderer)?;
     Ok(())
-}
-
-/// What `/clear` says, having left `held` messages behind.
-///
-/// Three rows for three things a user would otherwise have to find out. The
-/// first is what happened. The second is that nothing was destroyed, and where
-/// it went — this command reads like a delete and is not one. The third is that
-/// the transcript above the box stays exactly where it is and stays scrollable:
-/// what a new session empties is what the model is sent, not what the reader
-/// can still read.
-fn started(held: usize, columns: usize, glyphs: Glyphs) -> Vec<Row> {
-    let said = match held {
-        1 => "1 message".to_owned(),
-        _ => format!("{held} messages"),
-    };
-
-    vec![
-        Row::new().then(Slot::Plain, clip("started a new session", columns)),
-        Row::new().then(
-            Slot::Quiet,
-            clip(
-                &format!(
-                    "{said} left behind {} /resume picks that session up again",
-                    glyphs.dot()
-                ),
-                columns,
-            ),
-        ),
-        Row::new().then(
-            Slot::Quiet,
-            clip("what is on screen stays where it is", columns),
-        ),
-    ]
 }
 
 #[cfg(test)]
@@ -128,19 +126,45 @@ mod tests {
     use crucible_core::{Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
     use crucible_runner::{Model, Runner, Session, Tools, recent};
     use crucible_tools::{Ledger, Plan};
-    use crucible_tui::{Glyphs, Recording, Renderer};
+    use crucible_tui::{Recording, Renderer};
 
     use crate::cli::Fatal;
+    use crate::cli::converse::{Answers, Held};
+    use crate::cli::draw::opening::{Opening, Standing};
     use crate::cli::fake::Script;
     use crate::cli::sample::Sample;
     use crate::cli::style::Style;
 
     use super::super::Terms;
-    use super::{run, started};
+    use super::run;
 
-    /// What a list of rows says, row by row.
-    fn art(rows: &[crucible_tui::Row]) -> Vec<String> {
-        rows.iter().map(crucible_tui::Row::text).collect()
+    /// What a session holds, for a session holding nothing — the same holder
+    /// `/resume`'s tests lend their runs.
+    fn lent<'a>(input: &'a mut dyn std::io::BufRead, opening: &'a Standing) -> Held<'a> {
+        Held::new(
+            crucible_tools::Plan::new(),
+            crucible_tui::Sending::default(),
+            Answers { input, keys: false },
+            opening,
+        )
+    }
+
+    /// The opening card a clear puts back, read off `sample`'s workspace.
+    fn standing(sample: &Sample) -> Standing {
+        Standing::new(
+            &Opening {
+                credential: None,
+                model: Some("script"),
+                provider: None,
+                unasked: "",
+                trouble: None,
+                workspace: &sample.workspace(),
+                sessions: &[],
+                update: None,
+                style: Style::plain(),
+            },
+            std::time::SystemTime::now(),
+        )
     }
 
     /// The terms a clear is run under: a session directory of the sample's own,
@@ -217,10 +241,13 @@ mod tests {
     }
 
     /// Runs `/clear` against `runner`, and says what reached the terminal.
-    fn clearing(terms: &Terms, runner: &mut Runner) -> String {
+    fn clearing(sample: &Sample, terms: &Terms, runner: &mut Runner) -> String {
         let mut renderer = Renderer::new(Recording::new(80, 24));
+        let mut input = std::io::empty();
+        let opening = standing(sample);
+        let mut held = lent(&mut input, &opening);
 
-        run(&mut renderer, runner, terms).expect("the terminal to be written");
+        run(&mut renderer, runner, &mut held, terms).expect("the terminal to be written");
 
         renderer.terminal().written().to_string()
     }
@@ -265,12 +292,58 @@ mod tests {
         let mut runner = talking(&sample, "what was said before");
         let left = runner.session().id().cloned().expect("a recorded session");
 
-        clearing(&terms(&sample, &Ledger::new(), &Plan::new()), &mut runner);
+        clearing(
+            &sample,
+            &terms(&sample, &Ledger::new(), &Plan::new()),
+            &mut runner,
+        );
 
         let now = runner.session().id().cloned().expect("a recorded session");
         assert_ne!(now, left, "the session in hand is the one that was left");
         assert_eq!(runner.transcript().len(), 0, "the transcript came with it");
         assert_eq!(listed(&sample, 1), ["what was said before"]);
+    }
+
+    #[test]
+    fn clearing_takes_the_screen_and_what_was_held_behind_it() {
+        // An empty context is what `/clear` promises, and the screen is part of
+        // it: rows left standing were said by a session the agent has no memory
+        // of, and what was held behind those rows goes with them — a key
+        // opening what is behind a row nobody can see is worse than no offer.
+        let sample = Sample::new("clear-empties-the-screen");
+        let mut runner = talking(&sample, "what was said before");
+        let terms = terms(&sample, &Ledger::new(), &Plan::new());
+
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        renderer
+            .commit("a row of the session being left")
+            .expect("the terminal to be written");
+
+        let mut input = std::io::empty();
+        let opening = standing(&sample);
+        let mut held = lent(&mut input, &opening);
+        let call = crucible_core::ToolId::new("call-1");
+        held.kept.calling(call.clone(), "read".into());
+        held.kept
+            .finished(&call, "what the row had no room for".into(), 3);
+        assert_eq!(held.kept.newest().count(), 1);
+
+        run(&mut renderer, &mut runner, &mut held, &terms).expect("the terminal to be written");
+
+        let picture = renderer.terminal().picture().rows().join("\n");
+        assert!(
+            !picture.contains("a row of the session being left"),
+            "{picture}"
+        );
+        assert!(
+            !picture.contains("started a new session"),
+            "the screen after a clear is a fresh start, not an announcement: {picture}"
+        );
+        assert!(
+            picture.contains("Tips"),
+            "the opening card stands where the transcript was: {picture}"
+        );
+        assert_eq!(held.kept.newest().count(), 0);
     }
 
     #[test]
@@ -287,9 +360,31 @@ mod tests {
         ));
         assert_eq!(plan.tasks().len(), 1);
 
-        clearing(&terms(&sample, &Ledger::new(), &plan), &mut runner);
+        clearing(&sample, &terms(&sample, &Ledger::new(), &plan), &mut runner);
 
         assert!(plan.tasks().is_empty());
+    }
+
+    #[test]
+    fn an_image_pasted_before_a_clear_is_not_attached_after_it() {
+        // The paste put `[image 1]` in a prompt of the session being left, and
+        // the numbering starts over with the session. An image still held here
+        // would be attached to the first prompt after the clear that says the
+        // marker — a picture the agent was never shown and the user never sent
+        // it.
+        let sample = Sample::new("clear-forgets-the-images");
+        let mut runner = talking(&sample, "what was said before");
+        let terms = terms(&sample, &Ledger::new(), &Plan::new());
+
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        let mut input = std::io::empty();
+        let opening = standing(&sample);
+        let mut held = lent(&mut input, &opening);
+        held.images.push("a-picture.png".into());
+
+        run(&mut renderer, &mut runner, &mut held, &terms).expect("the terminal to be written");
+
+        assert!(held.images.is_empty());
     }
 
     #[test]
@@ -301,11 +396,12 @@ mod tests {
         let mut runner = talking(&sample, "what was said before");
         let terms = terms(&sample, &Ledger::new(), &Plan::new());
 
-        clearing(&terms, &mut runner);
+        clearing(&sample, &terms, &mut runner);
         assert_eq!(listed(&sample, 1), ["what was said before"]);
 
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = std::io::empty();
+        let opening = standing(&sample);
         let mut held = crate::cli::converse::Held::new(
             Plan::new(),
             crucible_tui::Sending::default(),
@@ -313,6 +409,7 @@ mod tests {
                 input: &mut input,
                 keys: false,
             },
+            &opening,
         );
         super::super::resume::run("1", &mut renderer, &mut runner, &mut held, &terms)
             .expect("the terminal to be written");
@@ -344,7 +441,11 @@ mod tests {
             session,
         );
 
-        let written = clearing(&terms(&sample, &Ledger::new(), &Plan::new()), &mut runner);
+        let written = clearing(
+            &sample,
+            &terms(&sample, &Ledger::new(), &Plan::new()),
+            &mut runner,
+        );
 
         assert!(written.contains("nothing had been said"), "{written}");
         assert_eq!(runner.session().id(), Some(&held), "{written}");
@@ -366,47 +467,14 @@ mod tests {
             ..terms(&sample, &Ledger::new(), &Plan::new())
         };
 
-        let written = clearing(&terms, &mut runner);
+        let written = clearing(&sample, &terms, &mut runner);
 
         assert!(written.contains("! "), "{written}");
-        assert!(!written.contains("started a new session"), "{written}");
+        assert!(
+            !written.contains("Tips"),
+            "a failed clear leaves the screen exactly as it was: {written}"
+        );
         assert_eq!(runner.session().id(), Some(&held), "{written}");
-    }
-
-    #[test]
-    fn what_it_says_is_that_a_session_started_and_where_the_last_one_went() {
-        assert_eq!(
-            art(&started(12, 70, Glyphs::Unicode)),
-            [
-                "started a new session",
-                "12 messages left behind · /resume picks that session up again",
-                "what is on screen stays where it is",
-            ]
-        );
-
-        // One of them is one message. A count is read as a count, and
-        // `1 messages` reads as a program that did not expect the number it
-        // printed.
-        assert_eq!(
-            art(&started(1, 70, Glyphs::Unicode))
-                .get(1)
-                .map(String::as_str),
-            Some("1 message left behind · /resume picks that session up again")
-        );
-    }
-
-    #[test]
-    fn what_stands_between_the_two_halves_comes_out_of_the_glyph_set() {
-        // The row is one sentence and a second beside it, and what says they
-        // are two is the mark between them. A terminal that cannot draw that
-        // mark gets the one the setting names in its place rather than a
-        // question mark in the middle of the sentence it was separating.
-        assert_eq!(
-            art(&started(12, 70, Glyphs::Ascii))
-                .get(1)
-                .map(String::as_str),
-            Some("12 messages left behind - /resume picks that session up again")
-        );
     }
 
     #[test]
@@ -421,19 +489,8 @@ mod tests {
         terms.revealed.reveal("web_search");
         assert!(terms.revealed.holds("web_search"));
 
-        clearing(&terms, &mut runner);
+        clearing(&sample, &terms, &mut runner);
 
         assert!(!terms.revealed.holds("web_search"));
-    }
-
-    #[test]
-    fn nothing_it_says_is_wider_than_the_window_it_was_said_in() {
-        // A row over the width would wrap, and a wrapped row leaves the cursor
-        // a row below where the next frame expects it.
-        for columns in 1..=70 {
-            for row in started(12, columns, Glyphs::Unicode) {
-                assert!(row.columns() <= columns, "at {columns}: {row:?}");
-            }
-        }
     }
 }

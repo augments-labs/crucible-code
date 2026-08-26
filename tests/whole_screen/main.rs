@@ -357,11 +357,12 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
 
 #[test]
 fn a_theme_panel_opens_while_a_turn_is_still_running() {
-    // The answer is long enough that the turn is still running when the
-    // command is sent. `/theme` moves nothing but the screen, so its picker
-    // opens over the box with the turn going on behind it.
+    // The turn is held open behind a finished answer — not made long enough to
+    // still be arriving, which would put the pace of the stream in the
+    // snapshot. `/theme` moves nothing but the screen, so its picker opens
+    // over the box with the turn going on behind it.
     let answer = taller_than_the_window();
-    let vendor = Vendor::calling(
+    let vendor = Vendor::calling_then_holding(
         "bash",
         r#"{"command":"sleep 30","background":true}"#,
         &answer,

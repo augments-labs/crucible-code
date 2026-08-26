@@ -171,6 +171,35 @@ fn a_list_that_is_not_a_list_of_changes_says_what_it_should_be() {
 }
 
 #[test]
+fn a_list_longer_than_the_ceiling_is_refused_before_any_scanning() {
+    // The defect this catches: `edits` was the one list in the crate with no
+    // ceiling, and each entry costs a scan of the whole file — so one bounded
+    // call could buy unbounded work.
+    let sample = Sample::new("edit-too-many");
+    sample.write("one.rs", "a\n");
+    // Alternating so that every entry succeeds on its own: the refusal this
+    // asserts has to come from the count, not from a change mid-list finding
+    // nothing left to change.
+    let edits = (0..=super::MOST_EDITS)
+        .map(|n| {
+            if n % 2 == 0 {
+                r#"{"find":"a","replace":"b"}"#
+            } else {
+                r#"{"find":"b","replace":"a"}"#
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let problem = refuse(
+        &sample,
+        &format!(r#"{{"path":"one.rs","edits":[{edits}]}}"#),
+    );
+
+    assert!(problem.to_string().contains("at most"), "{problem}");
+}
+
+#[test]
 fn a_change_in_the_list_missing_a_field_says_which_one_it_was() {
     let sample = Sample::new("edit-list-nofind");
 

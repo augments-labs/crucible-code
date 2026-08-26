@@ -28,7 +28,7 @@
 use std::fmt::Write as _;
 
 use crucible_core::{
-    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, StopReason, ToolId,
+    Cancel, Compacted, Compacting, Delta, Message, Post, Request, Room, Spend, StopReason, ToolId,
     ToolOutput, Transcript, TurnError,
 };
 
@@ -104,6 +104,15 @@ const FILES: &str = "Files so far:";
 /// finishes it is the notes finishing, and the row goes with them.
 const HALFWAY: u64 = 2_048;
 
+/// The most recap text retained from one stream, in bytes.
+///
+/// The recap request is the one response of a turn that does not pass through
+/// the loop's own bounds, so it holds this ceiling itself — the same figure a
+/// regular response's visible text is held to. A recap this large is not notes,
+/// and past it the stream is provider-controlled growth with nothing to show
+/// for it.
+const MAX_RECAP_TEXT: usize = 8 * 1024 * 1024;
+
 /// What the standalone recap request produced.
 enum Recap {
     Complete(String),
@@ -120,6 +129,10 @@ impl Runner {
     /// the first; what it must not do is loop, and a compaction that freed
     /// nothing is what the caller checks for.
     ///
+    /// What the recap request itself produces joins `spent`, because the recap
+    /// is a response of the turn like any other: a caller with no turn running
+    /// hands in a reading of its own and reads what the request cost off it.
+    ///
     /// # Errors
     ///
     /// [`TurnError`] where the request for the recap failed. The transcript is
@@ -130,6 +143,7 @@ impl Runner {
         why: Compacting,
         events: &dyn Post,
         cancel: &Cancel,
+        spent: &mut Spend,
     ) -> Result<Room, TurnError> {
         // Choose the recap boundary before pruning. Clearing output can make
         // old turns look cheap enough to keep, but where a recap was possible
@@ -194,7 +208,7 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crucible_core::Event::Compacting { why, part: 0 });
 
-        let recap = match self.recap(why, &touched, events, cancel)? {
+        let recap = match self.recap(why, &touched, events, cancel, spent)? {
             Recap::Complete(recap) => recap,
             Recap::Incomplete => return Err(TurnError::RecapIncomplete),
             Recap::Stopped => return Ok(Room::Stopped),
@@ -375,12 +389,17 @@ impl Runner {
         (files.read, files.modified)
     }
 
+    // The spend joins the cancel and the events on the way down, and bundling
+    // them would drag all three through every signature the cancel already
+    // crosses. The lint counts to five; the recap needs six.
+    #[allow(clippy::too_many_arguments)]
     fn recap(
         &mut self,
         why: Compacting,
         touched: &(Vec<String>, Vec<String>),
         events: &dyn Post,
         cancel: &Cancel,
+        spent: &mut Spend,
     ) -> Result<Recap, TurnError> {
         let asking = RECAP.to_owned();
         let asking_bytes = asking.len() as u64;
@@ -432,15 +451,24 @@ impl Runner {
         // produced: one of them reports that only in its last chunk, so a bar
         // following it would sit at nothing for the whole request and then be
         // over — which is what a reader watching it called broken.
-        let said = asked.map(|mut stream| {
+        let said = asked.and_then(|mut stream| {
             let mut said = String::new();
             let mut part = 0;
             let mut stopped = None;
+
+            // What the turn had spent before this request opened. A provider's
+            // readings are this response's total so far, so each lands on this
+            // fixed figure rather than on the reading before it — the same
+            // arithmetic every other response of the turn is counted by.
+            let before = *spent;
 
             while let Some(delta) = stream.next() {
                 match delta {
                     Ok(Delta::Text(text)) => {
                         said.push_str(&text);
+                        if said.len() > MAX_RECAP_TEXT {
+                            return Ok(Recap::Incomplete);
+                        }
 
                         // Posted only when the number it would draw has moved,
                         // which for a row redrawn on a beat is the difference
@@ -452,15 +480,31 @@ impl Runner {
                             events.post(crucible_core::Event::Compacting { why, part });
                         }
                     }
+                    // The recap is a response of the turn like any other, and
+                    // what it produces counts: a reading that skipped it would
+                    // hold the ceiling and the row both under what the turn
+                    // actually ran to.
+                    Ok(Delta::Spent(reading)) => {
+                        *spent = before.and(reading);
+                        events.post(crucible_core::Event::Spent { spend: *spent });
+                    }
+                    // No tools are advertised, so no call can arrive; and what
+                    // this request carried measures a transcript that is about
+                    // to be replaced, so there is nothing standing for the
+                    // reading to correct.
+                    Ok(Delta::ToolStarted { .. } | Delta::ToolArgs(_) | Delta::Carried(_)) => {}
                     Ok(Delta::Stopped(reason)) => {
                         stopped = Some(reason);
                         break;
                     }
-                    Err(_) => break,
-                    Ok(_) => {}
+                    // The provider's own failure, handed on as itself: a
+                    // recap whose connection broke did not produce a recap
+                    // that fell short, and calling it one would hide the only
+                    // fact the caller can act on.
+                    Err(problem) => return Err(problem),
                 }
             }
-            match stopped {
+            Ok(match stopped {
                 Some(StopReason::Yielded) if structured(&said) => {
                     append_files(&mut said, touched);
                     Recap::Complete(said)
@@ -476,7 +520,7 @@ impl Runner {
                     | StopReason::WantsTools,
                 )
                 | None => Recap::Incomplete,
-            }
+            })
         });
 
         self.transcript.pop();

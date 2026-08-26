@@ -39,11 +39,12 @@ them, which [Reaching the web](web.md) sets out.
 ## Everything but `bash` stays in the working directory
 
 The directory you start crucible in is the workspace root. `read`, `grep`,
-`glob`, `edit` and `write` resolve every path against it and refuse one that
-leads outside — including by symbolic link, and including a link planted
-between the moment the path was checked and the moment the file was opened. A
-refused path comes back as a failure the model can correct by sending a
-different one. [Reaching outside the working
+`glob`, `edit` and `write` resolve every path against it — including through a
+symbolic link, and including a link planted between the moment the path was
+checked and the moment the file was opened. The tools that change a file
+refuse a path that leads outside; the tools that only look put it to you and
+run on your yes. A refused path comes back as a failure the model can correct
+by sending a different one. [Reaching outside the working
 directory](../permissions/directories.md) is how that boundary is widened, per
 session and deliberately.
 
@@ -64,7 +65,7 @@ that one cannot be a rule.
 ## Every answer is bounded, and says when it was cut
 
 What a tool returns goes into the next request to the model whole, so an
-unbounded answer is an unbounded bill and a context window spent on a log file
+unbounded answer is an unbounded bill and a window spent on a log file
 somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
 
 `todo_write` is the one that never arrives there. Its answer is the plan it just

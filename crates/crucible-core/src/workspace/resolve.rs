@@ -80,6 +80,49 @@ impl Workspace {
         self.contain(requested, resolved)
     }
 
+    /// Resolves an existing path that lies outside every directory the
+    /// workspace reaches — for a read the user is asked about.
+    ///
+    /// The proof is settled against the file's own parent directory — or the
+    /// directory itself, where the path names one — with the same refusal of a
+    /// symbolic link planted below it that a contained path gets. The tool's
+    /// `run` resolves afresh through here and holds the answer against the
+    /// target its verdict named, so a link retargeted between the question and
+    /// the open is refused rather than followed. A path that turns out to be
+    /// contained after all is handed back proved against the root that
+    /// contains it, exactly as [`Workspace::existing`] would have.
+    ///
+    /// # Errors
+    ///
+    /// [`PathError::Missing`] if it does not exist, [`PathError::NoParent`] if
+    /// it resolves to a file with no directory over it.
+    pub fn outside(&self, requested: &str) -> Result<WorkspacePath, PathError> {
+        let resolved =
+            self.join(requested)
+                .canonicalize()
+                .map_err(|source| PathError::Missing {
+                    requested: requested.into(),
+                    source,
+                })?;
+
+        if let Some(root) = self.roots.containing(&resolved) {
+            return Ok(WorkspacePath::proven(root, resolved));
+        }
+
+        let from: std::sync::Arc<Path> = if resolved.is_dir() {
+            resolved.as_path().into()
+        } else {
+            resolved
+                .parent()
+                .ok_or_else(|| PathError::NoParent {
+                    requested: requested.into(),
+                })?
+                .into()
+        };
+
+        Ok(WorkspacePath::proven(from, resolved))
+    }
+
     /// Resolves a path that may not exist yet — what `write` needs.
     ///
     /// The parent directory must exist and must itself be inside the

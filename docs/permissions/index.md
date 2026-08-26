@@ -1,8 +1,8 @@
 # Permissions
 
 Nothing changes a file or starts a process without a decision: yours at a
-question, or one you wrote down in advance. Reading never asks — it is allowed
-or refused, silently.
+question, or one you wrote down in advance. Reading inside the workspace never asks — a
+read that leads outside it puts the path to you first.
 
 - [What you are asked, and what each answer means](permissions.md)
 - [Rules: allow, ask and deny](rules.md)

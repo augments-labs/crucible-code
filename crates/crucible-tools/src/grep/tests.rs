@@ -495,7 +495,7 @@ fn a_pattern_that_is_not_a_regular_expression_says_so() {
 }
 
 #[test]
-fn a_path_outside_the_workspace_is_refused() {
+fn a_file_outside_the_workspace_is_searched_once_the_user_says_yes() {
     let sample = tree("grep-escape");
     let outside = sample.outside("secret.txt", "needle");
 
@@ -504,8 +504,19 @@ fn a_path_outside_the_workspace_is_refused() {
         &format!(r#"{{"pattern":"needle","path":"{outside}"}}"#),
     );
 
-    assert!(output.is_failed());
-    assert!(!output.text().contains("secret.txt:"));
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("secret.txt:1:needle"));
+}
+
+#[test]
+fn a_path_naming_one_file_searches_that_file() {
+    let sample = Sample::new("grep-one-file");
+    sample.write("alone.txt", "needle\n");
+
+    let output = grep(&sample, r#"{"pattern":"needle","path":"alone.txt"}"#);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("alone.txt:1:needle"));
 }
 
 #[test]
@@ -854,4 +865,19 @@ fn global_hit_retention_never_grows_past_the_requested_limit() {
             .collect::<Vec<_>>(),
         ["00000.txt", "00001.txt", "00002.txt"]
     );
+}
+
+#[test]
+fn a_directory_outside_the_workspace_is_searched_once_the_user_says_yes() {
+    let sample = Sample::new("grep-outside");
+    sample.outside("notes.txt", "the needle sits elsewhere\n");
+    let directory = sample.beside("outside");
+
+    let output = grep(
+        &sample,
+        &format!(r#"{{"pattern":"needle","path":"{directory}"}}"#),
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("needle"));
 }

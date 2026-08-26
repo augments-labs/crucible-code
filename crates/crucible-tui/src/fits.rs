@@ -33,7 +33,6 @@ use crate::asking::Question;
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
-use crate::head::Head;
 use crate::ladder::Ladder;
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
@@ -218,24 +217,6 @@ fn a_ladder_fits_the_window_its_rungs_are_chosen_in() {
         footer: "←→ to move · enter to take it",
     };
     across("a ladder", |columns, glyphs| ladder.rows(columns, glyphs));
-}
-
-#[test]
-fn the_row_at_the_top_fits_the_window_it_stands_in() {
-    let head = Head { root: LONG };
-    across("the head row", |columns, glyphs| {
-        vec![head.row(columns, glyphs)]
-    });
-
-    // A directory with nothing to shorten it at. The row cuts the front off a
-    // path it cannot shorten by whole segments, and that cut is the one place
-    // here where a column is counted twice if it is counted wrong.
-    let unbroken = Head {
-        root: "an-unbroken-directory-name-nobody-should-have-typed",
-    };
-    across("the head row on one segment", |columns, glyphs| {
-        vec![unbroken.row(columns, glyphs)]
-    });
 }
 
 #[test]

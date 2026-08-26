@@ -117,9 +117,10 @@ files, which were never held in a session to begin with.
 
 The screen is different too. The session picked up replaces what was on it
 rather than following it: the transcript is emptied first, so what you scroll
-back through is one conversation and stops where it started. What was on screen
-before is not recoverable from inside crucible — the session it belonged to is
-still on disk, and picking it back up is how you read it again.
+back through is one conversation, with the welcome card at the top of it —
+exactly the screen starting crucible on that session would have drawn. What was
+on screen before is not recoverable from inside crucible — the session it
+belonged to is still on disk, and picking it back up is how you read it again.
 
 The one session `/resume` will not pick up is the one you are in. It says so,
 rather than reporting the claim it would find on that file as another crucible's.
@@ -185,9 +186,10 @@ it. crucible shows how much is left against the end of the row a turn runs on:
 
 The percentage measures the part of the window the transcript may still use.
 Room reserved for the answer and its tool results is outside it, so `0%` is the
-safe compaction boundary — not the model's literal last token. A fresh session
-still begins at `100%`, and automatic compaction begins at `0%` while that
-reserve remains available.
+safe compaction boundary — not the model's literal last token. The fixed cost
+every request carries — the system instructions and the tool schemas — is
+outside it too, so a session that has said nothing begins at `100%`, and
+automatic compaction begins at `0%` while that reserve remains available.
 
 Where crucible does not know how much the model accepts, the prompt says `window
 unknown` rather than inventing a percentage. While room is being made, the last

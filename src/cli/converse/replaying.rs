@@ -25,9 +25,10 @@
 //! on the way back would be the same row behaving as two, and that is what a
 //! reader picking a session up would find strange first.
 //!
-//! What this module adds to the screen is a rule and a heading, saying where the
-//! session picked up stops and this one starts. That is the one thing the
-//! messages cannot say for themselves.
+//! It adds nothing of its own. The screen was emptied before the walk starts,
+//! so what a reader is left holding is the session as they left it — a heading
+//! or a rule over it would mark a join that is not there, and they would scroll
+//! into the marker in the middle of their own conversation.
 //!
 //! One thing does not come back, and it is the record's doing rather than this
 //! module's: a diff reaches no log, for the reason `crucible-core` gives beside
@@ -42,9 +43,6 @@ use crate::cli::Fatal;
 use crate::cli::draw;
 use crate::cli::kept::Kept;
 use crate::cli::style::Style;
-
-/// The heading over the lot.
-const OPENED: &str = "picking up where this left off";
 
 /// What stands over the notes a compaction left.
 ///
@@ -74,9 +72,6 @@ pub(super) fn replayed<T: Terminal>(
         return Ok(());
     }
 
-    renderer.commit("")?;
-    renderer.present(&opened(renderer.columns(), style))?;
-
     let against = Replay {
         runner,
         workspace,
@@ -87,27 +82,11 @@ pub(super) fn replayed<T: Terminal>(
     }
 
     // Whatever the last message left live, ended: a session whose last turn was
-    // the model talking leaves a tail in the region the renderer owns, and the
-    // rule below belongs under it rather than over it.
+    // the model talking leaves a tail in the region the renderer owns, and what
+    // is said next belongs under it rather than in the middle of it.
     renderer.settle()?;
-    renderer.apart()?;
-    renderer.present(&[rule(renderer.columns(), style)])?;
-    renderer.commit("")?;
 
     Ok(())
-}
-
-/// The rule and the heading that open it.
-fn opened(columns: usize, style: Style) -> Vec<Row> {
-    vec![
-        rule(columns, style),
-        Row::new().then(Slot::Quiet, clip(OPENED, columns)),
-    ]
-}
-
-/// One rule across the window.
-fn rule(columns: usize, style: Style) -> Row {
-    Row::new().then(Slot::Quiet, style.glyphs().horizontal().repeat(columns))
 }
 
 /// What a whole replay is drawn against, and what does not change while it
@@ -393,7 +372,25 @@ mod tests {
         // a reader picking it up is looking for both.
         assert!(screen.contains("read the config"), "{screen}");
         assert!(screen.contains("It sets the theme"), "{screen}");
-        assert!(screen.contains(OPENED), "{screen}");
+    }
+
+    #[test]
+    fn nothing_marks_the_replay_as_a_replay() {
+        // A session picked up is the session, not a quotation of it. The screen
+        // was emptied before this went down, so a heading or a rule saying
+        // where the old session stops would be marking a join that is not
+        // there — and the reader would scroll into it in the middle of their
+        // own conversation.
+        let screen = screen(everything(), 80);
+
+        assert!(
+            !screen.contains("picking up where this left off"),
+            "{screen}"
+        );
+        assert!(
+            !screen.contains(&Style::plain().glyphs().horizontal().repeat(80)),
+            "a rule across the window: {screen}"
+        );
     }
 
     #[test]

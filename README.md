@@ -125,7 +125,8 @@ crucible --effort max                   # think as hard as this model does
 crucible --continue                     # carry on this directory's last session
 ```
 
-Reading never asks. Anything that changes a file or starts a process does:
+Reading inside the workspace never asks. Anything that changes a file, starts
+a process, or reads outside it does:
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮

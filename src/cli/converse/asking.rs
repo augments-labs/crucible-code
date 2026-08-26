@@ -138,13 +138,19 @@ impl Words {
         let name = pascal(&call.name);
 
         let (subject, payload, statement) = match sensitivity {
-            // Never reached through the permission engine, which allows or
-            // refuses a read and never asks about one. Worded anyway, so a tool
-            // reclassified later has a question rather than a blank panel.
+            // Reached only through an `ask` rule somebody wrote about
+            // exactly this path — no mode asks about a read inside the
+            // workspace.
             Sensitivity::ReadOnly { target } => (
                 format!("{name} file"),
                 flattened(target),
                 "This read needs your verdict.",
+            ),
+
+            Sensitivity::ReadsOutside { target } => (
+                format!("{name} file"),
+                flattened(target),
+                "This read needs your verdict. The file is outside the workspace.",
             ),
 
             Sensitivity::MutatesFile { target } => (

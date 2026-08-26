@@ -322,6 +322,30 @@ fn the_written_answer_is_what_comes_back_where_it_is_the_one_taken() {
 }
 
 #[test]
+fn the_written_answer_row_reads_back_what_was_written() {
+    // "Something else" is the offer, not the answer. Once a line has been
+    // written, a row still saying the offer reads as the line having been
+    // dropped — the one place the reader can check what they wrote is the row
+    // that will be taken.
+    let questions = alone();
+    let mut standing = Standing::new(&questions);
+
+    moving(Pressed::Down, &mut standing, &questions);
+    moving(Pressed::Down, &mut standing, &questions);
+    moving(key(Key::Enter), &mut standing, &questions);
+    for typed in "Zig".chars() {
+        moving(key(Key::Char(typed)), &mut standing, &questions);
+    }
+    moving(key(Key::Enter), &mut standing, &questions);
+
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, Style::plain());
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+
+    assert!(art.iter().any(|row| row.contains("Zig")), "{art:#?}");
+    assert!(!art.iter().any(|row| row.contains(ELSE)), "{art:#?}");
+}
+
+#[test]
 fn a_specimen_reaches_the_panel_that_draws_it() {
     // The defect this catches: every answer was handed to the panel with an
     // empty specimen, so a question whose whole point was showing what an

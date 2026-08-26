@@ -87,9 +87,6 @@ const COPIED: &str = "line copied";
 /// what a reader can act on is that the clipboard does not have it.
 const UNCOPIED: &str = "the line is too long for the terminal to copy";
 
-/// What the row says when Ctrl+V found no image it could attach.
-const UNPASTED_IMAGE: &str = "no readable clipboard image was attached";
-
 /// How long the second press has to arrive in.
 ///
 /// Long enough to be a pair of presses somebody meant and short enough that it
@@ -186,7 +183,7 @@ fn pasted(editor: &mut Editor, text: &str, says: &mut Says) -> bool {
     match editor.paste(text) {
         Typed::Changed => true,
         Typed::Refused => {
-            says.asking = Some(LIMITED);
+            says.asking = Some(Cow::Borrowed(LIMITED));
             true
         }
         _ => false,
@@ -258,6 +255,10 @@ pub(crate) struct Between<'a> {
     pub(crate) editor: &'a mut Editor,
     /// The plan above the box, and whether the reader has opened it.
     pub(crate) planning: &'a mut Planning,
+    /// The images pasted so far, which Ctrl+V adds to. The line gets
+    /// `[image N]` and this gets the path the marker stands for, so the
+    /// session owns the list the way it owns the line.
+    pub(crate) images: &'a mut Vec<Box<str>>,
     /// What is still running behind the box: the count on the row under it, and
     /// what this loop wakes on a clock for while there is anything left to end.
     pub(crate) left: &'a Background,
@@ -364,6 +365,7 @@ pub(crate) fn ask<T: Terminal>(
         runner,
         editor,
         planning,
+        images,
         left,
         keys,
     } = between;
@@ -461,26 +463,38 @@ pub(crate) fn ask<T: Terminal>(
 
             // The line, out to wherever the reader is going to paste it.
             Pressed::Copy => {
-                says.asking = copy(renderer, editor)?;
+                says.asking = copy(renderer, editor)?.map(Cow::Borrowed);
                 says.asking.is_some() || offered.is_some()
             }
 
             // Image bytes come from the desktop clipboard, into the same durable
             // session store an external path is imported through. The editor
-            // holds only the quoted name, so submission takes the ordinary
-            // attachment path and all of its capability checks.
-            Pressed::PasteImage => {
-                if let Ok(path) = super::attaching::clipboard(runner) {
-                    let moved = pasted(editor, &path, &mut says);
-                    if moved {
-                        open = Opened::filtered(editor.projection().text(), glyphs);
+            // holds only `[image N]` and the session holds the path the marker
+            // stands for, so submission takes the ordinary attachment path and
+            // all of its capability checks.
+            Pressed::PasteImage => match super::attaching::clipboard(runner) {
+                Ok(path) => {
+                    // The path joins the list only once its marker is in the
+                    // line, or a refused paste would leave a number nobody sees.
+                    let marker = format!("[image {}]", images.len() + 1);
+                    match editor.paste(&marker) {
+                        Typed::Changed => {
+                            images.push(path.into_boxed_str());
+                            open = Opened::filtered(editor.projection().text(), glyphs);
+                            true
+                        }
+                        Typed::Refused => {
+                            says.asking = Some(Cow::Borrowed(LIMITED));
+                            true
+                        }
+                        _ => offered.is_some(),
                     }
-                    moved || offered.is_some()
-                } else {
-                    says.asking = Some(UNPASTED_IMAGE);
+                }
+                Err(problem) => {
+                    says.asking = Some(Cow::Owned(problem));
                     true
                 }
-            }
+            },
 
             // And the key that says the same word about the other thing that
             // was cut down to fit. Answered here rather than handed back,
@@ -560,7 +574,7 @@ pub(crate) fn ask<T: Terminal>(
                     open = Opened::filtered(editor.projection().text(), glyphs);
                 }
                 if inserted.refused {
-                    says.asking = Some(LIMITED);
+                    says.asking = Some(Cow::Borrowed(LIMITED));
                 }
                 inserted.redraw || offered.is_some()
             }
@@ -586,7 +600,7 @@ pub(crate) fn ask<T: Terminal>(
                     true
                 }
                 Typed::Refused => {
-                    says.asking = Some(LIMITED);
+                    says.asking = Some(Cow::Borrowed(LIMITED));
                     true
                 }
                 Typed::Submitted => return said(renderer, editor, &open, style),
@@ -602,7 +616,7 @@ pub(crate) fn ask<T: Terminal>(
                     }
 
                     leaving = Some(Instant::now());
-                    says.asking = Some(LEAVING);
+                    says.asking = Some(Cow::Borrowed(LEAVING));
                     true
                 }
 
@@ -651,8 +665,10 @@ pub(super) struct Says {
     /// What the border and the sentence are both drawn in.
     pub(super) tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
-    /// the ordinary state, where the mode is the last row there is.
-    pub(super) asking: Option<&'static str>,
+    /// the ordinary state, where the mode is the last row there is. Owned only
+    /// where the sentence carries a fact of the moment — what a paste actually
+    /// failed on — and borrowed everywhere the words are fixed.
+    pub(super) asking: Option<Cow<'static, str>>,
     /// How many commands are still running. Read per frame rather than per turn,
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
@@ -677,7 +693,7 @@ impl Says {
     /// fold in, so the ordinary frame copies nothing.
     fn noticing(&self, notice: &'static str) -> Self {
         Self {
-            asking: Some(notice),
+            asking: Some(Cow::Borrowed(notice)),
             ..self.clone()
         }
     }
@@ -1630,7 +1646,7 @@ fn writing<'a>(
         model: says.model.as_str(),
         provider: says.provider,
         effort: says.effort,
-        asking: says.asking,
+        asking: says.asking.as_deref(),
         commands: CommandCount::new(says.running, running_pointed),
         room,
     }

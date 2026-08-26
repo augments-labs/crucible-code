@@ -28,9 +28,7 @@
 //! are the second, and on a framed prompt they stand at the far end — beside
 //! the box every key that changes them is typed into. On a bare prompt the
 //! remaining-window fact owns that far end and these session facts fit before
-//! it. The directory is on a row of its own at the top of the window, which is
-//! where it answers *where am I* without moving the model each time it changes.
-//! See [`crate::Head`].
+//! it. The directory is said once, on the welcome card, and nowhere else.
 //!
 //! Like [`crate::Welcome`] this returns [`Row`]s and draws nothing, so every
 //! width is asserted with no terminal attached. Unlike it, the rows are live:

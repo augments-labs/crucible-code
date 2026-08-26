@@ -14,9 +14,12 @@
 //! is for, out loud, and the key itself into a box.
 //!
 //! What that writes is then read straight back, and the session is handed the
-//! provider it buys. A key is given by somebody who wants to type at the screen
-//! in front of them, and the file it lands in is what makes the run after this
-//! one ask the same thing rather than what makes this one ask at all.
+//! provider it buys — unless another provider is already answering, in which
+//! case the session keeps the provider and the model it has and the line points
+//! at `/model`, where switching is chosen rather than implied. A key is given
+//! by somebody who wants to type at the screen in front of them, and the file
+//! it lands in is what makes the run after this one ask the same thing rather
+//! than what makes this one ask at all.
 //!
 //! A run with no key for anything is left alone to draw its prompt. The warning
 //! under the welcome names this command and `/model` both, which is the whole of
@@ -544,7 +547,8 @@ fn given<T: Terminal>(
     }
 }
 
-/// Hands this session the provider whose credential was just written down.
+/// Hands this session the provider whose credential was just written down —
+/// unless another is already answering, which keeps everything it has.
 ///
 /// The credential is on disk, so this run is now the run the next launch would
 /// be, and reading it back through the same resolution is what makes that true
@@ -552,10 +556,11 @@ fn given<T: Terminal>(
 /// file written a line ago; what it buys is that somebody who has just stored a
 /// credential can type at the session in front of them.
 ///
-/// Authentication never chooses a model or effort. Where nothing names a model,
-/// the line says so — `/model` is the other half of a first minute, and a
-/// session that stopped at "credential stored" would leave the reader to find
-/// that out from the next refusal.
+/// Authentication never chooses a model or effort, and never retires the pair
+/// in force. Where nothing names a model, the line says so; where a provider is
+/// already answering, the line points at `/model` instead — that is the other
+/// half of a first minute, and a session that stopped at "credential stored"
+/// would leave the reader to find that out from the next refusal.
 fn taken<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
@@ -571,6 +576,24 @@ fn taken<T: Terminal>(
         Err(problem) => return say(renderer, &format!("! {problem}")),
     };
 
+    // A credential says a provider can be reached and never which to ask, so
+    // where another provider is already answering, it keeps the session it
+    // has: the model in force belongs to that vendor, and pulling both out
+    // from under the reader to honour a stored key would turn "add a second
+    // credential" into "lose the conversation's setup". `/model` is the one
+    // place the provider and the model change, and they change together there.
+    if terms
+        .provider
+        .get()
+        .is_some_and(|serving| serving != named.name)
+    {
+        drop(set);
+        return say(
+            renderer,
+            &format!("logged in to {}; /model switches to it", named.name),
+        );
+    }
+
     let changed = terms.provider.get() != Some(named.name);
     runner.serve(set.provider);
     terms.provider.set(Some(named.name));
@@ -585,9 +608,10 @@ fn taken<T: Terminal>(
         say(renderer, &format!("! {problem}"))?;
     }
 
-    // A model belongs to the vendor serving it, so a switch of provider retires
-    // the one in force: sending the old vendor's name to the new one is the
-    // mismatch the refusal would otherwise arrive with.
+    // A model belongs to the vendor serving it, so a session that had no
+    // provider retires any name left over from before it signed out: sending
+    // it to the vendor just served is the mismatch the refusal would otherwise
+    // arrive with.
     if changed {
         runner.ask("", crate::cli::startup::UNKNOWN_CEILING, None, None);
     }
@@ -603,7 +627,123 @@ fn taken<T: Terminal>(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    use crucible_auth::Store;
+    use crucible_core::{Cancel, Revealed};
+    use crucible_runner::{Model, Tools};
+    use crucible_tools::{Ledger, Plan};
+    use crucible_tui::Recording;
+
+    use crate::cli::fake::Script;
+    use crate::cli::sample::Sample;
+    use crate::cli::style::Style;
+
     use super::*;
+
+    /// Terms whose session is already answered by `anthropic`, and whose
+    /// serving closure resolves any credential without reaching a network.
+    fn in_force(sample: &Sample) -> Terms {
+        Terms {
+            style: Cell::new(Style::plain()),
+            chosen: Cell::new(None),
+            reading: std::cell::RefCell::default(),
+            cancel: Cancel::new(),
+            steer: crucible_core::Steer::new(),
+            ledger: Ledger::new(),
+            revealed: Revealed::new(),
+            plan: Plan::new(),
+            putting: crate::cli::seen::Putting::new(),
+            leaving: crucible_tools::Background::new(),
+            provider: Cell::new(Some("anthropic")),
+            pending_model: Cell::new(None),
+            pending_mode: Cell::new(None),
+            settings: crucible_config::Settings::default(),
+            choosing: sample.root().join("unwritten-home.json"),
+            logins: Store::in_home(&sample.root()),
+            subscriptions: crate::cli::subscription::Subscriptions::production(),
+            serving: Box::new(|named, _| {
+                Ok(crate::cli::Resolved {
+                    provider: Box::new(crucible_provider::Unavailable::new(
+                        crate::cli::NOTHING_TO_ASK,
+                    )),
+                    source: crate::cli::CredentialSource::Environment(named.key.into()),
+                })
+            }),
+            sessions: sample.logs(),
+            workspace: sample.workspace(),
+            sending: crucible_tui::Sending::default(),
+        }
+    }
+
+    /// A runner already asking `model`, answering from an empty script.
+    fn asking(model: &str) -> Runner {
+        Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            Model {
+                name: model.into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                system: None,
+                effort: None,
+            },
+            crucible_runner::Session::nowhere(),
+        )
+    }
+
+    #[test]
+    fn a_credential_stored_while_a_provider_is_in_force_leaves_the_session_as_it_is() {
+        // A credential says a provider can be reached and never which to ask.
+        // The session in front of the reader is already answering, and a login
+        // that pulled its provider and model out from under it would turn
+        // "store a second key" into "lose the conversation's setup".
+        let sample = Sample::new("login-in-force");
+        let terms = in_force(&sample);
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = *PROVIDERS
+            .iter()
+            .find(|served| served.name == "openai")
+            .expect("a provider this build has an arm for");
+        taken(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");
+
+        assert_eq!(runner.model(), "claude-test-1");
+        assert_eq!(terms.provider.get(), Some("anthropic"));
+
+        let written = renderer.terminal().written().to_string();
+        assert!(
+            written.contains("/model"),
+            "the way to switch is named: {written}"
+        );
+        assert!(
+            !sample.root().join("unwritten-home.json").exists(),
+            "which provider to open on is still the reader's standing choice"
+        );
+    }
+
+    #[test]
+    fn a_credential_stored_for_the_provider_in_force_keeps_its_model() {
+        // Re-entering a key for the provider already answering is a renewal,
+        // not a switch: the new credential signs the next request, and the
+        // model in force goes on being the one asked.
+        let sample = Sample::new("login-renewed");
+        let terms = in_force(&sample);
+        let mut runner = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        let named = *PROVIDERS
+            .iter()
+            .find(|served| served.name == "anthropic")
+            .expect("a provider this build has an arm for");
+        taken(named, &mut renderer, &mut runner, &terms).expect("the terminal to be written");
+
+        assert_eq!(runner.model(), "claude-test-1");
+        let written = renderer.terminal().written().to_string();
+        assert!(written.contains("asking claude-test-1"), "{written}");
+    }
 
     #[test]
     fn browser_login_shows_the_short_page_and_masks_manual_input() {

@@ -99,11 +99,13 @@ fn a_hash_partway_along_a_line_is_a_hash() {
 }
 
 #[test]
-fn inline_code_is_quiet_and_loses_its_backticks() {
+fn inline_code_wears_its_own_slot_and_loses_its_backticks() {
+    // A command, a path, a name — what backticks hold is what the reader is
+    // being handed, and the grey a hint wears says it can be skipped.
     let said = whole("call `read` for it");
 
     assert_eq!(drawn(&said), "call read for it");
-    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Quiet, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Code, Slot::Plain]);
 }
 
 #[test]
@@ -943,7 +945,7 @@ fn a_marker_inside_a_code_span_is_left_where_it_was() {
 fn a_code_span_is_still_toned_down_for_its_length() {
     let said = whole("call `*ptr` first");
 
-    assert_eq!(slots(&said), [Slot::Plain, Slot::Quiet, Slot::Plain]);
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Code, Slot::Plain]);
 }
 
 #[test]
@@ -953,7 +955,7 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
     assert_eq!(drawn(&said), "the *ptr it points at, then");
     assert_eq!(
         slots(&said),
-        [Slot::Emphasis, Slot::Quiet, Slot::Emphasis, Slot::Plain]
+        [Slot::Emphasis, Slot::Code, Slot::Emphasis, Slot::Plain]
     );
 }
 
@@ -1059,7 +1061,7 @@ fn an_address_inside_a_code_span_is_code_like_the_rest_of_it() {
     let said = ended("run `curl https://example.com/a_b`");
 
     assert_eq!(drawn(&said), "run curl https://example.com/a_b");
-    assert_eq!(slots(&said), [Slot::Plain, Slot::Quiet]);
+    assert_eq!(slots(&said), [Slot::Plain, Slot::Code]);
 }
 
 #[test]

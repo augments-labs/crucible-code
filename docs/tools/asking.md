@@ -16,9 +16,9 @@ permission and no rule to write about it.
 | `question` | The question itself. Required, and at most 500 bytes. |
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
-| `answer` | What one answer is called. Required, and at most 200 bytes. |
+| `answer` | What one answer is called. Required, and at most 500 bytes. |
 | `says` | One line saying what choosing it means, where the name does not say it. |
-| `shows` | What the answer would look like, row by row. At most 10 rows of at most 200 bytes each. |
+| `shows` | What the answer would look like, row by row. At most 10 rows of at most 500 bytes each. |
 
 ## What you see
 
@@ -75,18 +75,19 @@ reason the arrows go both ways.
 ## Where an answer is a shape
 
 Some questions are about what something will look like rather than what it is
-called. Those answers carry a specimen, drawn under the one you are on:
+called. Those answers carry a specimen, drawn beside the answers where the
+window holds both whole — every answer unfolded, the widest specimen uncut:
 
 ```
-│    1. Compact                                                │
-│  › 2. With the workspace and the spend                       │
-│                                                              │
-│    ┌────────────────────────────────────────────────────┐    │
-│    │ › what shall we do about the flaky test?           │    │
-│    │                                                    │    │
-│    │ crucible · opus-5 · main* · ~/src/crucible · 12.4k  │    │
-│    └────────────────────────────────────────────────────┘    │
+│    1. Compact                     ┌────────────────────────────────────┐  │
+│  › 2. With the workspace          │ › what shall we do about the test? │  │
+│    3. Nothing at all              │                                    │  │
+│                                   │ crucible · opus-5 · main* · 12.4k  │  │
+│                                   └────────────────────────────────────┘  │
 ```
+
+A window too narrow for that draws the box under the answers instead, at the
+full width, where it keeps most of the picture.
 
 The box is the size of the largest specimen in that question and an answer with
 nothing to show says so inside it, so the panel does not change height as you

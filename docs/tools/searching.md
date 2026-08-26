@@ -1,7 +1,8 @@
 # Searching the tree
 
 Two tools walk the workspace: `grep` searches what is inside files, `glob` finds
-files by the shape of their path. Neither asks before it runs.
+files by the shape of their path. Neither asks before it runs, unless the
+directory it is pointed at lies outside the workspace.
 
 ## What both of them skip
 

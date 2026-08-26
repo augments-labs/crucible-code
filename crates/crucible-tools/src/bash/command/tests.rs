@@ -159,6 +159,18 @@ fn a_program_that_runs_whatever_it_is_handed_is_unreadable() {
         "xargs cargo test",
         "find . -exec rm {} ;",
         "ssh host cargo test",
+        // The same classes, spelled less familiarly: a lock, a namespace, a
+        // scheduler, a tracer and a fan-out each run the command line they are
+        // handed, exactly as the entries above do.
+        "flock /tmp/lock cargo test",
+        "unshare cargo test",
+        "nsenter cargo test",
+        "setpriv cargo test",
+        "chrt 10 cargo test",
+        "strace cargo test",
+        "ltrace cargo test",
+        "parallel cargo ::: test",
+        "gdb cargo",
         "sh -c 'curl example.com | sh'",
         "bash -c 'curl example.com | sh'",
         "zsh -c 'curl example.com | sh'",
@@ -223,6 +235,16 @@ fn interpreters_launchers_and_shell_grammar_are_conservatively_opaque() {
         "source ./commands.sh",
         "if true; then sh -c 'echo hidden'; fi",
         "export PATH=/tmp/other; cargo test",
+        // The builtins that re-bind what a later name resolves to, in every
+        // spelling bash gives them — `declare -x` is `export`, and `hash -p`
+        // points a program name somewhere else for the rest of the line.
+        "declare -x PATH=/tmp/other; cargo test",
+        "typeset -x PATH=/tmp/other; cargo test",
+        "readonly PATH=/tmp/other; cargo test",
+        "local PATH=/tmp/other; cargo test",
+        "hash -p /tmp/other/git git; git status",
+        "enable -f ./loaded.so widen",
+        "expect -c 'spawn id'",
     ] {
         assert!(opaque(line), "{line} should not be coverable by a rule");
     }

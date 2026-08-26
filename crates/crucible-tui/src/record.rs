@@ -483,7 +483,16 @@ impl Record {
 
         let mut left = into;
         let mut skip = usize::from(from.into);
-        for (at, tall) in self.tall.iter().enumerate().skip(from.line - self.gone) {
+        // Saturating because the line the reader was on can have spilled since
+        // they stopped there, leaving `from` above `gone` — the state the
+        // scroll tests pin as intended. Every sibling walking this state does
+        // the same.
+        for (at, tall) in self
+            .tall
+            .iter()
+            .enumerate()
+            .skip(from.line.saturating_sub(self.gone))
+        {
             let shown = usize::from(*tall).saturating_sub(skip);
             skip = 0;
             if left < shown {
@@ -1230,6 +1239,24 @@ mod tests {
         // closest thing to where they were looking, and it is not a panic.
         assert!(record.top.line < record.gone);
         assert_eq!(said(&record, 1), [format!("more {}", record.gone - 10)]);
+    }
+
+    #[test]
+    fn a_pointer_resting_on_a_band_whose_line_has_spilled_still_answers() {
+        // The defect this catches: `at` subtracted `gone` from the top line
+        // unchecked, while every sibling walking the same state saturates. The
+        // state where the top line has spilled is the one the test above pins
+        // as intended, and a pointer resting on the band reaches `at` every
+        // frame — a panic in debug, an empty answer in release.
+        let mut record = filled(40, 10);
+        record.scroll(-100, 3);
+
+        for line in 0..MOST + 100 {
+            record.write(Slot::Plain, &format!("more {line}\n"));
+        }
+        assert!(record.top.line < record.gone);
+
+        assert_eq!(record.at(0, 3), Some(record.gone));
     }
 
     /// A row of `text`, laid out rather than flowed.

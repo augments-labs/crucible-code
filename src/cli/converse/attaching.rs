@@ -28,29 +28,80 @@ pub(super) struct Attaching {
     pub(super) refusals: Vec<String>,
 }
 
+/// One prompt, beside the pasted images its `[image N]` markers can name.
+///
+/// One value because the two are read together everywhere a prompt is read:
+/// a marker is a word standing for the Nth path here, and a prompt handed
+/// over without the list is one whose markers name nothing.
+#[derive(Clone, Copy)]
+pub(super) struct Sent<'a> {
+    /// What was typed.
+    pub(super) prompt: &'a str,
+    /// The paths pasted so far, `[image 1]` first.
+    pub(super) images: &'a [Box<str>],
+}
+
 /// Reads the prompt for files, and decides about each one.
 #[cfg(test)]
 pub(super) fn attaching(
     workspace: &Workspace,
     provider: &dyn Provider,
     model: &str,
-    prompt: &str,
+    sent: Sent<'_>,
+    imported: Option<&Path>,
 ) -> Attaching {
-    let mut attachments = Vec::new();
-    let mut refusals = Vec::new();
-
-    for word in names(prompt) {
-        match decide(workspace, provider, model, &word, None) {
-            Named::Attached(one) => attachments.push(one),
-            Named::Refused(said) => refusals.push(said),
-            Named::Nothing => {}
-        }
-    }
+    let (attachments, refusals) = gathered(workspace, provider, model, sent, imported);
 
     Attaching {
         attachments: attachments.into_boxed_slice(),
         refusals,
     }
+}
+
+/// Everything one prompt is sending: the files its words name, and the images
+/// its `[image N]` markers point back at.
+///
+/// One function under both readers of a prompt, because the two must agree on
+/// what a prompt carries or the tested answer is not the shipped one. An image
+/// attached twice — marked twice, or marked and named — goes once: the model
+/// would be handed the same bytes beside themselves.
+fn gathered(
+    workspace: &Workspace,
+    provider: &dyn Provider,
+    model: &str,
+    sent: Sent<'_>,
+    imported: Option<&Path>,
+) -> (Vec<Attachment>, Vec<String>) {
+    let Sent { prompt, images } = sent;
+    let mut attachments: Vec<Attachment> = Vec::new();
+    let mut refusals = Vec::new();
+    let mut one = |named: Named, attachments: &mut Vec<Attachment>| match named {
+        Named::Attached(one) => {
+            if !attachments.iter().any(|have| have.hash == one.hash) {
+                attachments.push(one);
+            }
+        }
+        Named::Refused(said) => refusals.push(said),
+        Named::Nothing => {}
+    };
+
+    for word in names(prompt) {
+        one(
+            decide(workspace, provider, model, &word, imported),
+            &mut attachments,
+        );
+    }
+    for mark in marked(prompt) {
+        let Some(path) = mark.checked_sub(1).and_then(|at| images.get(at)) else {
+            continue;
+        };
+        one(
+            decide(workspace, provider, model, path, imported),
+            &mut attachments,
+        );
+    }
+
+    (attachments, refusals)
 }
 
 /// What the prompt is sending, with whatever it could not send said first.
@@ -64,7 +115,7 @@ pub(super) fn beside<T: Terminal>(
     renderer: &mut Renderer<T>,
     runner: &Runner,
     workspace: &Workspace,
-    prompt: &str,
+    sent: Sent<'_>,
     style: Style,
 ) -> Result<Box<[Attachment]>, TerminalError> {
     let imported = runner.session().id().map(|id| {
@@ -74,22 +125,13 @@ pub(super) fn beside<T: Terminal>(
             .with_file_name("attachments")
             .join(id.as_str())
     });
-    let mut attachments = Vec::new();
-    let mut refusals = Vec::new();
-
-    for word in names(prompt) {
-        match decide(
-            workspace,
-            runner.provider(),
-            runner.model(),
-            &word,
-            imported.as_deref(),
-        ) {
-            Named::Attached(one) => attachments.push(one),
-            Named::Refused(said) => refusals.push(said),
-            Named::Nothing => {}
-        }
-    }
+    let (attachments, refusals) = gathered(
+        workspace,
+        runner.provider(),
+        runner.model(),
+        sent,
+        imported.as_deref(),
+    );
     let attachments = attachments.into_boxed_slice();
 
     // Before the refusals, because this is the line's own block closing over
@@ -111,14 +153,31 @@ pub(super) fn beside<T: Terminal>(
     Ok(attachments)
 }
 
-/// Imports the image on the operating-system clipboard and names it for the prompt.
+/// Imports the image on the operating-system clipboard, and answers with the
+/// path a `[image N]` marker will stand for.
+///
+/// Copying a *file* puts its name on the clipboard rather than its pixels, so
+/// a clipboard with no image on it is read again as text before the paste is
+/// refused — and where the text names an image file, that file is the paste.
+/// It goes back as its own path rather than an imported copy, so submission
+/// decides about it the way it decides about a path typed by hand.
 pub(super) fn clipboard(runner: &Runner) -> Result<String, String> {
     let Some(id) = runner.session().id() else {
         return Err("this session has nowhere durable to keep a clipboard image".to_owned());
     };
-    let image = arboard::Clipboard::new()
-        .and_then(|mut clipboard| clipboard.get_image())
-        .map_err(|_| "the clipboard does not hold a readable image".to_owned())?;
+    let mut board = arboard::Clipboard::new()
+        .map_err(|problem| format!("the clipboard could not be opened: {problem}"))?;
+    let image = match board.get_image() {
+        Ok(image) => image,
+        Err(problem) => {
+            if let Some(path) = board.get_text().ok().and_then(|text| pictured(&text)) {
+                return Ok(written(&path));
+            }
+            return Err(format!(
+                "the clipboard does not hold a readable image: {problem}"
+            ));
+        }
+    };
     let Some(expected) = image
         .width
         .checked_mul(image.height)
@@ -155,15 +214,8 @@ pub(super) fn clipboard(runner: &Runner) -> Result<String, String> {
         .join(id.as_str());
     let path = import(&directory, "png", hash, &bytes)
         .map_err(|problem| format!("the clipboard image could not be imported: {problem}"))?;
-    let path = written(&path);
-    if path.contains(['\'', '"']) {
-        return Err(
-            "the clipboard attachment path contains a quote and cannot be put in the prompt"
-                .to_owned(),
-        );
-    }
 
-    Ok(format!("'{path}'"))
+    Ok(written(&path))
 }
 
 /// What one word in a prompt turned out to be.
@@ -368,6 +420,79 @@ fn names(prompt: &str) -> Vec<String> {
     }
 
     names
+}
+
+/// The `N` of every `[image N]` marker in a prompt, in the order they appear.
+///
+/// Exactly that shape: an open bracket, the word, one space, digits, a close
+/// bracket. Anything looser and prose about images starts sending files.
+fn marked(prompt: &str) -> Vec<usize> {
+    const OPENS: &str = "[image ";
+    let mut numbers = Vec::new();
+    let mut rest = prompt;
+
+    while let Some(at) = rest.find(OPENS) {
+        rest = &rest[at + OPENS.len()..];
+        if let Some(end) = rest.find(']')
+            && !rest[..end].is_empty()
+            && rest[..end].bytes().all(|byte| byte.is_ascii_digit())
+            && let Ok(number) = rest[..end].parse()
+        {
+            numbers.push(number);
+        }
+    }
+
+    numbers
+}
+
+/// The image file a clipboard's text names, where it names one.
+///
+/// Copying a file in a file manager puts a percent-encoded `file://` URI on
+/// the clipboard, one per line; copying a path out of a shell puts it bare.
+/// Either way what decides is the file itself: it exists, and it is of a kind
+/// some model reads — a copied `main.rs` is not a failed image paste.
+fn pictured(text: &str) -> Option<PathBuf> {
+    let line = text.lines().next()?.trim();
+    let path = if let Some(uri) = line.strip_prefix("file://") {
+        // `file://host/path` names another machine's file; only an empty
+        // authority — `file:///path` — is this one's.
+        let mut spelled = decoded(uri.strip_prefix('/').map(|_| uri)?);
+        // On Windows the slash that marked the empty authority stands before
+        // the drive letter — `file:///C:/…` spells `C:/…`.
+        if cfg!(windows) && spelled.as_bytes().get(2) == Some(&b':') {
+            spelled.remove(0);
+        }
+        PathBuf::from(spelled)
+    } else if Path::new(line).is_absolute() {
+        PathBuf::from(line)
+    } else {
+        return None;
+    };
+
+    (kind(&written(&path)).is_some() && path.is_file()).then_some(path)
+}
+
+/// A percent-encoded URI path, back to the characters it spells.
+fn decoded(text: &str) -> String {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.bytes();
+
+    while let Some(byte) = rest.next() {
+        let escaped = || {
+            let high = char::from(rest.clone().next()?).to_digit(16)?;
+            let low = char::from(rest.clone().nth(1)?).to_digit(16)?;
+            u8::try_from(high * 16 + low).ok()
+        };
+        match (byte, escaped()) {
+            (b'%', Some(spelled)) => {
+                bytes.push(spelled);
+                rest.nth(1);
+            }
+            _ => bytes.push(byte),
+        }
+    }
+
+    String::from_utf8(bytes).unwrap_or_else(|_| text.to_owned())
 }
 
 /// How large the named file is, or `None` where it is not a regular file.

@@ -1,10 +1,13 @@
 # Directories
 
-The file tools reach the directory crucible was started in, and nothing else.
-A path outside it — measured after symbolic links are resolved — is refused by
-the tool itself, before any question could be asked. `bash` is the standing
-exception: a shell reaches whatever you can, which is why what bounds it is
-[the question and the rules](rules.md) rather than a boundary on paths.
+The file tools reach the directory crucible was started in, and nothing else
+without you. A read that leads outside it — measured after symbolic links are
+resolved — is put to you the way a command is, and runs only on your yes. A
+write outside it is refused by the tool itself, before any question could be
+asked, because the question a write outside would need has no honest wording:
+nothing out there was handed over. `bash` is the standing exception: a shell
+reaches whatever you can, which is why what bounds it is [the question and the
+rules](rules.md) rather than a boundary on paths.
 
 `permissions.extraDirectories` widens that reach:
 
@@ -89,9 +92,10 @@ paths can promise.
 
 ## Reach is not permission
 
-An extra directory changes what is refused, not what is asked. A write there
-is still a write: under `ask` it prompts like any other, and a `deny` rule
-reaches it like any other path. Only an absolute pattern can name one —
+An extra directory moves the boundary, not the verdicts. A read there stops
+being asked about, because the directory was handed over at startup; a write
+there is still a write: under `ask` it prompts like any other, and a `deny`
+rule reaches it like any other path. Only an absolute pattern can name one —
 `deny edit(/home/you/src/shared-lib/**)` — because a file there has no
 spelling below the working directory, and `src/**` would honestly mean nothing
 there.

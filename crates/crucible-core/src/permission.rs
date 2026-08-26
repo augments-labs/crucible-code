@@ -172,7 +172,7 @@ impl Permission {
         ask: &mut dyn Ask,
     ) -> Settled {
         match self.disposition(call, sensitivity) {
-            Disposition::Allow => self.approve(call, Verdict::Allow),
+            Disposition::Allow => self.approve(call, sensitivity, Verdict::Allow),
             Disposition::Deny => Settled::Forbidden,
             Disposition::Ask => self.put(call, sensitivity, ask),
         }
@@ -198,43 +198,16 @@ impl Permission {
             return Disposition::Deny;
         }
 
-        let stated = self
-            .rules
+        self.rules
             .stated(call, sensitivity)
-            .unwrap_or_else(|| self.mode.default_arm(sensitivity));
-
-        // A read is never put to the user, so an `ask` about one has to become
-        // something. It becomes a refusal: whoever wrote `ask read(secrets/**)`
-        // asked not to have it go through unwatched, and refusing is the only
-        // answer left that respects that. No mode produces this arm — every one
-        // of them allows a read — so it is only ever somebody's own rule.
-        //
-        // Spelled out rather than closed with a wildcard. This is the last step
-        // before a disposition becomes a verdict, so a sensitivity added later
-        // has to be decided about here rather than inheriting whatever the
-        // rules and the mode happened to say about it.
-        match (sensitivity, stated) {
-            (Sensitivity::ReadOnly { .. }, Disposition::Ask) => Disposition::Deny,
-            // Everything else means what it says. Reaching the web is among
-            // them: unlike a read it *is* put to the user, so an `ask` rule
-            // about one needs no translating. Spelled out rather than closed
-            // with a wildcard, so a sensitivity added later still has to be
-            // decided about here.
-            (
-                Sensitivity::ReadOnly { .. }
-                | Sensitivity::MutatesFile { .. }
-                | Sensitivity::SpawnsProcess { .. }
-                | Sensitivity::ReachesNetwork { .. },
-                settled,
-            ) => settled,
-        }
+            .unwrap_or_else(|| self.mode.default_arm(sensitivity))
     }
 
     /// Asks, unless this scope was already allowed for the session.
     fn put(&mut self, call: &ToolCall, sensitivity: &Sensitivity, ask: &mut dyn Ask) -> Settled {
         let scope = Self::scope(call, sensitivity);
         if self.remembered.contains(&scope) {
-            return self.approve(call, Verdict::Allow);
+            return self.approve(call, sensitivity, Verdict::Allow);
         }
 
         let (verdict, remember) = ask.ask(call, sensitivity);
@@ -252,7 +225,7 @@ impl Permission {
         // Nothing is remembered about a no. The turn ends on one, so there is
         // no next call in it to remember for, and the next turn is a fresh
         // instruction that deserves its own question.
-        self.approve(call, verdict)
+        self.approve(call, sensitivity, verdict)
     }
 
     /// Mints the proof, or reports that the user said no.
@@ -261,11 +234,15 @@ impl Permission {
     /// than the call it was decided about — a search walks a whole directory —
     /// has no way to ask this engine again from inside its own walk, and the
     /// alternative to carrying them is a second copy of the rules somewhere
-    /// nothing keeps in step.
-    fn approve(&self, call: &ToolCall, verdict: Verdict) -> Settled {
+    /// nothing keeps in step. The sensitivity travels for the same reason: it
+    /// is what the verdict was reached about, and a tool that resolved its
+    /// path afresh in `run` would otherwise have nothing to hold the new
+    /// answer against.
+    fn approve(&self, call: &ToolCall, sensitivity: &Sensitivity, verdict: Verdict) -> Settled {
         match Grant::issue(verdict) {
             Some(grant) => Settled::Approved(Approved::new(
                 call.clone(),
+                sensitivity.clone(),
                 grant,
                 self.rules.denials(&call.name),
             )),
@@ -286,12 +263,9 @@ impl Permission {
     /// persisted answer during the current session.
     fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Box<str> {
         match sensitivity {
-            // A read never reaches here — an `ask` about one became a refusal
-            // further up — and it is spelled anyway, because a scope that read
-            // back as the bare tool name would be the widest one there is.
-            Sensitivity::ReadOnly { target } | Sensitivity::MutatesFile { target } => {
-                format!("{}:{target}", call.name).into()
-            }
+            Sensitivity::ReadOnly { target }
+            | Sensitivity::ReadsOutside { target }
+            | Sensitivity::MutatesFile { target } => format!("{}:{target}", call.name).into(),
             Sensitivity::SpawnsProcess { command } => format!("{}:{command}", call.name).into(),
             Sensitivity::ReachesNetwork { host } => format!("{}:{host}", call.name).into(),
         }

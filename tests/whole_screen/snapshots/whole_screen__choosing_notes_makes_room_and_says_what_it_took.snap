@@ -1,10 +1,12 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 743
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
-|…/a-directory-to-be-working-in/and-something-below-that-again/workspace         |
+|                                                                                |
+|› the first thing                                                               |
+|                                                                                |
+|Notes on everything that came before.                                           |
 |                                                                                |
 |› the second thing                                                              |
 |                                                                                |
@@ -13,9 +15,6 @@ expression: window.picture()
 |› the third thing                                                               |
 |                                                                                |
 |Notes on everything that came before.                                           |
-|                                                                                |
-|────────────────────────────────────────────────────────────────────────────────|
-|                                                                                |
 |                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 | compacted · you chose notes over carrying this session whole                   |

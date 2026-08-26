@@ -8,7 +8,93 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+**A read outside the workspace is a question rather than a wall.** `read`,
+`grep` and `glob` used to refuse any path that led outside the directory
+crucible was started in; such a path is now put to you the way a command is,
+and runs only on your yes. Writes outside stay refused, and an `ask` rule
+naming a read inside the workspace now genuinely asks instead of refusing.
+
+**A credential stored mid-session no longer unseats the provider answering
+it.** `/login` for another vendor stores the key and says `/model` switches to
+it; the provider and model in force go on answering. Only a session with no
+provider is handed the one just logged in to.
+
+**An answer of the ask panel may run to 500 bytes.** The 200-byte ceiling on
+what an answer is called and on its one-line meaning kept cutting the calls a
+model wrote, and the panel folds a long answer the way it folds the question.
+Every text argument of `ask_user` now shares the one 500-byte ceiling.
+
+**A specimen stands beside the answers.** Where the window holds both whole —
+every answer unfolded, the widest specimen uncut — the box is drawn on the
+right of the answers rather than under them, and a narrower window keeps the
+old full-width rows below.
+
+**The line being typed in the ask panel stays inside it.** A long answer used
+to walk the cursor off the panel's edge; the line now slides under the cursor
+so what is shown is the columns just behind it. And once taken, the row reads
+back what was written rather than still offering *Something else*.
+
+**The window reading starts at 100%.** The fixed cost every request carries —
+the system instructions and the tool schemas — is now outside the percentage,
+which measures the room the transcript may use. A session that has said
+nothing reads `100% window left`, and `0%` is still exactly where automatic
+compaction begins.
+
+**`/clear` empties the screen with the context.** The transcript above the box
+was said by the session being left, and a fresh session drawn under it read as
+a conversation the agent had no memory of; what stands after a clear is the
+welcome card a fresh start draws. What was said is still nothing like deleted:
+the session is on `/resume`'s list, and picking it up brings it back whole.
+
+**Inline code wears the theme's accent.** A command, a path or a name the
+answer wrote in backticks used to share the grey a hint wears, and grey says it
+can be skipped. It now stands out of the prose in every theme's own colour.
+
+**A session picked up is the session, unmarked.** The rules, the heading and
+the announcement a replay used to draw are gone: the screen is emptied before
+the transcript goes back down, so there is no join for them to mark, and a
+reader scrolling their own conversation no longer walks through a banner in the
+middle of it. What stands at the top instead is the welcome card, so a
+`/resume` draws exactly the screen a launch on that session would have.
+
+**A pasted image is a marker, and a refused paste says why.** Ctrl+V now puts
+`[image 1]` in the box rather than a long quoted path, the marker names the
+same picture in any later prompt of the session, and a clipboard holding a
+copied image file — a path or a `file://` address — pastes the picture it
+points at. Where nothing readable is on the clipboard, the reason is written
+under the box and the next keystroke clears it.
+
+**The pinned directory row is gone.** The welcome card already names the root
+the session stands on, so the row repeating it over the transcript spent a line
+of every window saying what the reader had been told. The window is now four
+bands, and the transcript has the row back.
+
 ### Fixed
+
+**`grep` pointed at one file reads it.** A `path` naming a file rather than a
+directory answered `nothing matched` whatever the file held, because the walk
+could not open the one file it was rooted at.
+
+**An answer cut off by the window stands in the transcript.** What streamed
+before the cut used to be dropped when the loop went on to make room; it is now
+written down with the reason it stopped, whether room is made or the stop is
+handed back.
+
+**Spend counts the recap.** The response that makes room is a response, and
+what it cost used to be missing from the turn's figure; it is now added like
+any other response of the turn.
+
+**A recap whose connection broke says so.** The provider's failure used to
+come back as the recap falling short, pointing at the model when the network
+was the problem; it is now reported as what it was. A recap is also held to
+the same 8 MiB ceiling any response's visible text is.
+
+**A filesystem that cannot hold a lock still opens the session.** Taking the
+claim's lock is best-effort now, because refusing sat on the path every start
+and every resume walks; what the missing guard costs is two simultaneous
+starts racing one bounded index replacement rather than anything in a log.
 
 **A choice remembered into a config with no `output` block lands under its own
 key.** Remembering the syntax theme used to write the block with the key

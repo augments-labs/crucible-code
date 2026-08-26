@@ -43,7 +43,8 @@ One provider response is bounded before appending: 8 MiB of visible text,
 metadata ceilings. Stop is terminal; accepting anything after it would let a
 malformed stream keep growing a response the model already ended.
 
-Across a turn, at most 32 provider responses, 128 tool calls, and 16 MiB of
-provider-controlled response data may be retained. Tool-result text has its own
-4 MiB turn-wide boundary, with room reserved to answer every call already in
-the transcript. Each bound is checked before incoming data is retained.
+Across a turn, at most 16 MiB of provider-controlled response data may be
+retained; a turn runs as long as there is work in it, so what bounds it is
+bytes retained, never a count of responses. Tool-result text has its own 4 MiB
+turn-wide boundary, with room reserved to answer every call already in the
+transcript. Each bound is checked before incoming data is retained.

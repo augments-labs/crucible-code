@@ -146,11 +146,7 @@ fn what_a_turn_stands_under_sits_between_the_transcript_and_the_box() {
 #[test]
 fn replacing_the_foot_flushes_turn_prompt_status_and_map_once() {
     let mut drawn = Drawn::new(60, 10);
-    drawn
-        .heads(Head {
-            root: "/work/crucible",
-        })
-        .unwrap();
+    drawn.foots().unwrap();
     let old = vec![Row::plain("old prompt"), Row::plain("old status")];
     drawn
         .replace(
@@ -207,11 +203,7 @@ fn prompt_row_construction_rejects_mismatched_targets_and_carets() {
 #[test]
 fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
     let mut drawn = Drawn::new(60, 10);
-    drawn
-        .heads(Head {
-            root: "/work/crucible",
-        })
-        .unwrap();
+    drawn.foots().unwrap();
     drawn.wears(colourful());
     let prompt = vec![
         Row::plain("prompt"),
@@ -292,11 +284,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
 fn crossing_from_the_command_target_to_the_transcript_map_waits_for_one_foot_frame() {
     let mut drawn = Drawn::new(60, 10);
     drawn.wears(colourful());
-    drawn
-        .heads(Head {
-            root: "/work/crucible",
-        })
-        .unwrap();
+    drawn.foots().unwrap();
     let prompt = vec![
         Row::plain("prompt"),
         Row::new().then(Slot::Accent, "2 commands"),
@@ -1273,14 +1261,10 @@ fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
 
 // The transcript map.
 
-/// A renderer with a fixed head and enough numbered transcript to seek.
+/// A renderer with a fixed foot and enough numbered transcript to seek.
 fn mapped() -> Drawn {
     let mut drawn = Drawn::new(60, 10);
-    drawn
-        .heads(Head {
-            root: "/work/crucible",
-        })
-        .unwrap();
+    drawn.foots().unwrap();
     for line in 0..80 {
         if line % 20 == 0 {
             drawn.landmark();
@@ -1300,11 +1284,7 @@ fn pointing_at_the_transcript_map_uses_the_accent_as_a_background() {
     let mut drawn = mapped();
     let at = map_row(&drawn);
     drawn.wears(colourful());
-    drawn
-        .heads(Head {
-            root: "/work/crucible",
-        })
-        .unwrap();
+    drawn.foots().unwrap();
     let door = transcript_map::door(drawn.columns()).expect("the transcript-map door");
     let resting = transcript_map::resting(drawn.columns(), Glyphs::Unicode, false);
     assert_eq!(resting.kinds().last(), Some(Slot::Accent));
@@ -1406,7 +1386,7 @@ fn dragging_the_map_crosses_the_transcript_without_moving_the_box() {
         })
         .unwrap();
 
-    assert_eq!(drawn.screen().row(1), "line 0");
+    assert_eq!(drawn.screen().row(0), "line 0");
     let box_after: Vec<String> = prompt
         .map(|row| drawn.screen().row(row).to_owned())
         .collect();
@@ -1445,7 +1425,7 @@ fn a_landmark_click_lands_on_the_prompt_boundary() {
         })
         .unwrap();
 
-    assert_eq!(drawn.screen().row(1), "line 60");
+    assert_eq!(drawn.screen().row(0), "line 60");
 }
 
 #[test]
@@ -1521,5 +1501,4 @@ fn a_map_put_to_rest_restores_the_identity_row() {
     assert!(drawn.repose().unwrap());
     let foot = drawn.screen().row(map_row(&drawn)).to_owned();
     assert!(foot.ends_with(" transcript map →"), "{foot:?}");
-    assert_eq!(drawn.screen().row(0), "/work/crucible");
 }

@@ -9,11 +9,12 @@ than what it stays at — <kbd>Shift-Tab</kbd> steps it while you type, and
 A mode decides exactly one thing: what happens to a call no
 [rule](rules.md) mentions. It is never a way around the engine — every call
 takes the same route to running whatever the mode, a `deny` or `ask` rule
-holds in every one, and a read runs in every one.
+holds in every one, and a read inside the workspace runs in every one.
 
 | A call that would… | `ask` | `allowEdits` | `fullAccess` |
 | --- | --- | --- | --- |
 | read | run | run | run |
+| read outside the workspace | ask | ask | run |
 | change a file | ask | run | run |
 | run a program | ask | ask | run |
 | reach the web | ask | ask | run |

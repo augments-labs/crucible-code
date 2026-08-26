@@ -14,11 +14,30 @@ use crucible_tools::{Ledger, Plan};
 use crucible_tui::{Recording, Renderer};
 
 use crate::cli::converse::{Answers, Held};
+use crate::cli::draw::opening::{Opening, Standing};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
 use super::*;
+
+/// The card a session opens with, as a launch would have built it.
+fn standing(sample: &Sample) -> Standing {
+    Standing::new(
+        &Opening {
+            credential: None,
+            model: Some("script"),
+            provider: None,
+            unasked: "",
+            trouble: None,
+            workspace: &sample.workspace(),
+            sessions: &[],
+            update: None,
+            style: Style::plain(),
+        },
+        SystemTime::now(),
+    )
+}
 
 /// A session recorded in `sample` and closed again, holding one exchange.
 fn recorded(sample: &Sample, asked: &str) -> Session {
@@ -130,11 +149,12 @@ fn at(sample: &Sample, wanted: &str, of: usize) -> String {
 /// No keys, because these drive a recording rather than a terminal somebody is
 /// at, and the question a large session asks has nobody to answer it — which is
 /// also why the reader it reads answers from is empty.
-fn lent(input: &mut dyn std::io::BufRead) -> Held<'_> {
+fn lent<'a>(input: &'a mut dyn std::io::BufRead, opening: &'a Standing) -> Held<'a> {
     Held::new(
         Plan::new(),
         crucible_tui::Sending::default(),
         Answers { input, keys: false },
+        opening,
     )
 }
 
@@ -143,12 +163,13 @@ fn lent(input: &mut dyn std::io::BufRead) -> Held<'_> {
 fn resuming(said: &str, sample: &Sample, runner: &mut Runner) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = std::io::empty();
+    let opening = standing(sample);
 
     run(
         said,
         &mut renderer,
         runner,
-        &mut lent(&mut input),
+        &mut lent(&mut input, &opening),
         &terms(sample),
     )
     .expect("the terminal to be written");
@@ -235,7 +256,10 @@ fn picking_one_up_makes_it_the_session_being_recorded_to() {
         "the prompt and the answer came back: {written}"
     );
     assert!(written.contains("what was asked before"), "{written}");
-    assert!(written.contains("2 messages"), "{written}");
+    assert!(
+        written.contains("Tips"),
+        "the card stands above the replay, where a launch would have drawn it: {written}"
+    );
 }
 
 #[test]
@@ -291,30 +315,6 @@ fn what_was_being_recorded_to_is_closed_and_stays_readable() {
 }
 
 #[test]
-fn what_stands_between_the_count_and_the_age_comes_out_of_the_glyph_set() {
-    // The row is two facts about the session picked up, and what says they are
-    // two is the mark between them. A terminal that cannot draw that mark gets
-    // the one the setting names rather than a question mark standing where the
-    // sentence divides.
-    let sample = Sample::new("resume-mark");
-    drop(recorded(&sample, "the one picked up"));
-
-    let listed = recent(&sample.logs(), &sample.workspace(), SHOWN);
-    let picked = listed.first().expect("the session just recorded");
-    let now = SystemTime::now();
-
-    let said = |glyphs| {
-        picked_up(picked, 2, now, 70, glyphs)
-            .get(1)
-            .map(Row::text)
-            .unwrap_or_default()
-    };
-
-    assert!(said(Glyphs::Unicode).starts_with("2 messages · started"));
-    assert!(said(Glyphs::Ascii).starts_with("2 messages - started"));
-}
-
-#[test]
 fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
     // Two conversations in one band would be joined at a point nothing marks,
     // and a reader scrolling back would walk out of the session they picked up
@@ -329,11 +329,12 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
         .expect("a recording cannot fail");
 
     let mut input = std::io::empty();
+    let opening = standing(&sample);
     run(
         "1",
         &mut renderer,
         &mut runner,
-        &mut lent(&mut input),
+        &mut lent(&mut input, &opening),
         &terms(&sample),
     )
     .expect("the terminal to be written");
@@ -348,6 +349,107 @@ fn the_transcript_a_session_replaces_is_not_left_standing_above_it() {
 }
 
 #[test]
+fn an_image_pasted_in_the_session_being_left_is_not_attached_after_it() {
+    // The paste put `[image 1]` in a prompt of the session being left, and the
+    // numbering starts over with the session. An image still held here would be
+    // attached to the first prompt after the resume that says the marker.
+    let sample = Sample::new("resume-forgets-the-images");
+    drop(recorded(&sample, "what was asked before"));
+
+    let mut runner = over(Session::nowhere());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = std::io::empty();
+    let opening = standing(&sample);
+    let mut held = lent(&mut input, &opening);
+    held.images.push("a-picture.png".into());
+
+    run("1", &mut renderer, &mut runner, &mut held, &terms(&sample))
+        .expect("the terminal to be written");
+
+    assert!(held.images.is_empty());
+}
+
+#[test]
+fn the_plan_that_comes_back_is_the_one_the_session_picked_up_wrote() {
+    // "Resume" means the exact state of the session picked up: the plan its
+    // last `todo_write` left is standing over the box again, and the plan of
+    // the session being left — work this agent now has no memory of — is not.
+    let sample = Sample::new("resume-replays-the-plan");
+    let planned = recorded(&sample, "plan the work");
+    planned.append(&Message::Agent {
+        text: "".into(),
+        calls: vec![crucible_core::ToolCall {
+            id: ToolId::new("call-1"),
+            name: "todo_write".into(),
+            args: crucible_core::ToolArgs::new(
+                r#"{"tasks":[{"task":"Write the contributor guide","state":"doing"}]}"#,
+            ),
+        }],
+        stop: Some(StopReason::WantsTools),
+    });
+    // Answered, the way a log a session actually left holds it: a trailing
+    // call nothing answered is a turn that broke off, and the replay drops it.
+    planned.append(&Message::ToolResults(vec![crucible_core::ToolResult {
+        id: ToolId::new("call-1"),
+        output: crucible_core::ToolOutput::ok("1 task planned"),
+    }]));
+    drop(planned);
+
+    let mut runner = over(Session::nowhere());
+    let terms = terms(&sample);
+    terms.plan.replay(&crucible_core::ToolArgs::new(
+        r#"{"tasks":[{"task":"Work of the session being left","state":"doing"}]}"#,
+    ));
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = std::io::empty();
+    let opening = standing(&sample);
+    run(
+        "1",
+        &mut renderer,
+        &mut runner,
+        &mut lent(&mut input, &opening),
+        &terms,
+    )
+    .expect("the terminal to be written");
+
+    let tasks = terms.plan.tasks();
+    assert_eq!(tasks.len(), 1, "{tasks:?}");
+    assert_eq!(
+        tasks.first().map(crucible_tools::Task::said),
+        Some("Write the contributor guide")
+    );
+}
+
+#[test]
+fn the_tools_looked_up_by_the_session_being_left_are_forgotten() {
+    // They belong to the conversation that looked them up — the same reason
+    // `/clear` forgets them: left standing they would be advertised to a
+    // session that never asked.
+    let sample = Sample::new("resume-forgets-the-lookups");
+    drop(recorded(&sample, "what was asked before"));
+
+    let mut runner = over(Session::nowhere());
+    let terms = terms(&sample);
+    terms.revealed.reveal("web_search");
+    assert!(terms.revealed.holds("web_search"));
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = std::io::empty();
+    let opening = standing(&sample);
+    run(
+        "1",
+        &mut renderer,
+        &mut runner,
+        &mut lent(&mut input, &opening),
+        &terms,
+    )
+    .expect("the terminal to be written");
+
+    assert!(!terms.revealed.holds("web_search"));
+}
+
+#[test]
 fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
     // A key opening what is behind a row nobody can see is the one thing worse
     // than not offering at all.
@@ -359,7 +461,8 @@ fn what_was_held_behind_rows_that_have_gone_is_dropped_with_them() {
 
     let call = ToolId::new("a call of the session being left");
     let mut input = std::io::empty();
-    let mut held = lent(&mut input);
+    let opening = standing(&sample);
+    let mut held = lent(&mut input, &opening);
     held.kept.calling(call.clone(), "read a file".into());
     held.kept.finished(&call, "line\nline\nline".into(), 0);
     assert!(!held.kept.is_empty());

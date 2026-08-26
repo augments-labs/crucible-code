@@ -23,10 +23,26 @@ pub enum Sensitivity {
     /// something this session is holding is the other, and carries a target
     /// that resolves to nothing because there is no path in it to name.
     ///
-    /// Never prompts — one of these is allowed or denied and never put to the
-    /// user, since a question nobody can act on is a question nobody reads.
+    /// No mode prompts about one — a question nobody can act on is a question
+    /// nobody reads — so the only way one reaches the user is an `ask` rule
+    /// somebody wrote about exactly this path.
     ReadOnly {
         /// What is being read, where the call is about a path at all.
+        target: Target,
+    },
+
+    /// Reads a file outside every directory the workspace reaches.
+    ///
+    /// Not a [`Self::ReadOnly`], although it changes nothing: what separates
+    /// them is whose files are being read. A read inside the workspace is
+    /// inside what the user already entrusted to crucible; one outside it
+    /// reaches a file nobody handed over, so it is put to the user — *this
+    /// leaves the workspace* is a question with an answer, the way a host
+    /// never named is.
+    ReadsOutside {
+        /// What is being read: resolved, absolute, and under no root the
+        /// workspace reaches — so it has no second spelling, and only an
+        /// absolute rule can name it.
         target: Target,
     },
 
@@ -263,9 +279,23 @@ impl Target {
         }))
     }
 
-    /// The call named no path this could resolve — one outside every directory
-    /// the workspace reaches, one that is not there, or arguments that did not
-    /// parse.
+    /// The path of a read that leaves the workspace, which the workspace
+    /// resolved without containing.
+    ///
+    /// Taking a [`WorkspacePath`] for the reason [`Self::resolved`] does: the
+    /// value a rule is matched against is the one the workspace proved, never
+    /// the text the model sent. Only the absolute spelling is built, because
+    /// a path outside every root has no spelling below one.
+    #[must_use]
+    pub fn outside(path: &WorkspacePath) -> Self {
+        Self(Some(Named {
+            absolute: Some(written(path.as_path()).into()),
+            below_root: None,
+        }))
+    }
+
+    /// The call named no path this could resolve — one that is not there, or
+    /// arguments that did not parse.
     ///
     /// No rule matches it, so the mode's default arm decides and the call is
     /// asked about rather than waved through. The tool refuses it moments
@@ -388,6 +418,7 @@ impl fmt::Display for Sensitivity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ReadOnly { target } => write!(f, "read {target}"),
+            Self::ReadsOutside { target } => write!(f, "read {target}, outside the workspace"),
             Self::MutatesFile { target } => write!(f, "change {target}"),
             Self::SpawnsProcess { command } => write!(f, "run {command}"),
             Self::ReachesNetwork { host } => write!(f, "reach {host}"),

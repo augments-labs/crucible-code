@@ -146,17 +146,18 @@ fn a_read_matching_a_deny_rule_is_refused_without_prompting() {
 }
 
 #[test]
-fn an_ask_rule_about_a_read_refuses_rather_than_prompting() {
-    // Nothing else is left. A read does not prompt, so the only answer that
-    // respects somebody having written `ask read(secrets/**)` is no.
+fn an_ask_rule_about_a_read_is_put_to_the_user() {
+    // `ask read(secrets/**)` means what it says: the read prompts, and a yes
+    // lets exactly this call run.
     let mut permission = with(Mode::Ask, &[(Disposition::Ask, "read(secrets/**)")]);
     let mut answer = Answer::once(Verdict::Allow);
 
-    assert!(matches!(
-        permission.decide(&call("read"), &reading("secrets/key"), &mut answer),
-        Settled::Forbidden
-    ));
-    assert_eq!(answer.asked, 0);
+    assert!(
+        permission
+            .decide(&call("read"), &reading("secrets/key"), &mut answer)
+            .ran()
+    );
+    assert_eq!(answer.asked, 1);
 }
 
 #[test]

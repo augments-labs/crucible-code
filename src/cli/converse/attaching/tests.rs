@@ -17,7 +17,7 @@ use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
 use super::super::replaying::replayed;
-use super::{Attaching, Named, attaching, beside, decide, names};
+use super::{Attaching, Named, Sent, attaching, beside, decide, marked, names, pictured};
 
 /// The eight bytes every PNG starts with.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -132,7 +132,11 @@ fn a_picture_named_at_the_prompt_is_attached() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "what is in holiday.png",
+        Sent {
+            prompt: "what is in holiday.png",
+            images: &[],
+        },
+        None,
     );
 
     assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
@@ -164,7 +168,11 @@ fn a_prompt_naming_no_file_attaches_nothing_and_says_nothing() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "rename the field and run the tests",
+        Sent {
+            prompt: "rename the field and run the tests",
+            images: &[],
+        },
+        None,
     );
 
     assert!(attachments.is_empty(), "no file was named");
@@ -183,7 +191,11 @@ fn a_source_file_named_at_the_prompt_is_still_only_text() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "have a look at main.rs",
+        Sent {
+            prompt: "have a look at main.rs",
+            images: &[],
+        },
+        None,
     );
 
     assert!(
@@ -210,7 +222,11 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "read invoice.pdf",
+        Sent {
+            prompt: "read invoice.pdf",
+            images: &[],
+        },
+        None,
     );
 
     assert!(attachments.is_empty());
@@ -237,7 +253,16 @@ fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
     let Attaching {
         attachments,
         refusals,
-    } = attaching(&workspace, &spelling("moonshot"), "k3", "read invoice.pdf");
+    } = attaching(
+        &workspace,
+        &spelling("moonshot"),
+        "k3",
+        Sent {
+            prompt: "read invoice.pdf",
+            images: &[],
+        },
+        None,
+    );
 
     assert!(attachments.is_empty(), "nothing goes with the prompt");
     assert_eq!(
@@ -267,7 +292,16 @@ fn the_model_half_of_the_intersection_names_the_model() {
     let Attaching {
         attachments,
         refusals,
-    } = attaching(&workspace, &spelling, "k3", "read invoice.pdf");
+    } = attaching(
+        &workspace,
+        &spelling,
+        "k3",
+        Sent {
+            prompt: "read invoice.pdf",
+            images: &[],
+        },
+        None,
+    );
 
     assert!(attachments.is_empty());
     assert_eq!(
@@ -291,7 +325,11 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-9",
-        "what is in holiday.png",
+        Sent {
+            prompt: "what is in holiday.png",
+            images: &[],
+        },
+        None,
     );
 
     assert!(attachments.is_empty());
@@ -319,7 +357,11 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "what is in huge.png",
+        Sent {
+            prompt: "what is in huge.png",
+            images: &[],
+        },
+        None,
     );
 
     assert!(attachments.is_empty());
@@ -345,7 +387,11 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
         &workspace,
         &spelling("anthropic"),
         "claude-opus-5",
-        "what is in holiday.png",
+        Sent {
+            prompt: "what is in holiday.png",
+            images: &[],
+        },
+        None,
     );
 
     assert!(attachments.is_empty());
@@ -405,8 +451,16 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     let workspace = holding(&sample, "holiday.png", PNG);
     let prompt = "what is in holiday.png";
 
-    let Attaching { attachments, .. } =
-        attaching(&workspace, &spelling("anthropic"), "claude-opus-5", prompt);
+    let Attaching { attachments, .. } = attaching(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        Sent {
+            prompt,
+            images: &[],
+        },
+        None,
+    );
 
     let (mut runner, events) = answering();
     runner
@@ -438,8 +492,16 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     let workspace = holding(&sample, "holiday.png", PNG);
     let prompt = "rename the field and run the tests";
 
-    let Attaching { attachments, .. } =
-        attaching(&workspace, &spelling("anthropic"), "claude-opus-5", prompt);
+    let Attaching { attachments, .. } = attaching(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        Sent {
+            prompt,
+            images: &[],
+        },
+        None,
+    );
 
     let (mut runner, events) = answering();
     runner
@@ -490,8 +552,17 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
     let mut live = Renderer::new(Recording::new(120, 24));
     live.wears(style.palette());
     draw::queued(&mut live, prompt, style).expect("a recording cannot fail");
-    let attachments =
-        beside(&mut live, &runner, &workspace, prompt, style).expect("a recording cannot fail");
+    let attachments = beside(
+        &mut live,
+        &runner,
+        &workspace,
+        Sent {
+            prompt,
+            images: &[],
+        },
+        style,
+    )
+    .expect("a recording cannot fail");
 
     // Replayed: the same message, back out of a transcript.
     let mut transcript = Transcript::new();
@@ -527,5 +598,161 @@ fn a_file_sent_with_a_prompt_is_named_under_it_whichever_way_it_reached_the_scre
     assert!(
         !live.contains(&root) && !replayed.contains(&root),
         "a row names the file, not where the workspace sits: {root:?}",
+    );
+}
+
+#[test]
+fn a_marker_names_the_image_pasted_before_it() {
+    let sample = Sample::new("attaching-a-marker");
+    let workspace = sample.workspace();
+    let outside = sample
+        .root()
+        .parent()
+        .expect("the sample base")
+        .join("pasted-marker.png");
+    fs::write(&outside, PNG).expect("a pasted picture");
+    let imported = sample.logs().join("attachments/session-one");
+    let pasted = [written(&outside).into_boxed_str()];
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        Sent {
+            prompt: "what is in [image 1]",
+            images: &pasted,
+        },
+        Some(&imported),
+    );
+
+    assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
+    assert_eq!(attachments.len(), 1, "the marked image is the one attached");
+    let one = attachments.first().expect("the attachment just counted");
+    assert!(one.path.starts_with(&written(&imported)));
+    assert_eq!(
+        fs::read(one.path.as_ref()).expect("the imported bytes"),
+        PNG
+    );
+}
+
+#[test]
+fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
+    let sample = Sample::new("attaching-a-bare-marker");
+    let workspace = sample.workspace();
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        Sent {
+            prompt: "the plan in [image 3] step one",
+            images: &[],
+        },
+        None,
+    );
+
+    assert!(attachments.is_empty(), "no paste stands behind the marker");
+    assert!(refusals.is_empty(), "and a typed marker is not an error");
+}
+
+#[test]
+fn a_marker_said_twice_attaches_the_image_once() {
+    let sample = Sample::new("attaching-a-marker-twice");
+    let workspace = sample.workspace();
+    let outside = sample
+        .root()
+        .parent()
+        .expect("the sample base")
+        .join("pasted-twice.png");
+    fs::write(&outside, PNG).expect("a pasted picture");
+    let imported = sample.logs().join("attachments/session-one");
+    let pasted = [written(&outside).into_boxed_str()];
+
+    let Attaching {
+        attachments,
+        refusals,
+    } = attaching(
+        &workspace,
+        &spelling("anthropic"),
+        "claude-opus-5",
+        Sent {
+            prompt: "compare [image 1] with [image 1]",
+            images: &pasted,
+        },
+        Some(&imported),
+    );
+
+    assert!(refusals.is_empty(), "nothing was refused: {refusals:?}");
+    assert_eq!(attachments.len(), 1, "the same bytes go once");
+}
+
+#[test]
+fn every_marker_in_a_prompt_is_read_in_order() {
+    assert_eq!(
+        marked("start [image 1] middle [image 12] end [image 2]"),
+        [1, 12, 2]
+    );
+    assert_eq!(
+        marked("[image] [image ] [image x] [image 1x] image 2]"),
+        [] as [usize; 0],
+        "a marker is the exact shape or it is words",
+    );
+}
+
+#[test]
+fn a_file_uri_on_the_clipboard_names_the_picture_it_points_at() {
+    let sample = Sample::new("attaching-a-file-uri");
+    let outside = sample
+        .root()
+        .parent()
+        .expect("the sample base")
+        .join("Screen Shot.png");
+    fs::write(&outside, PNG).expect("a picture to point at");
+    // A file manager spells the path with forward slashes behind an empty
+    // authority, which on Windows puts the URI's own slash before the drive
+    // letter: `file:///C:/…`.
+    let slashed = written(&outside).replace('\\', "/").replace(' ', "%20");
+    let uri = format!("file:///{}", slashed.trim_start_matches('/'));
+
+    assert_eq!(pictured(&uri), Some(outside.clone()));
+    assert_eq!(
+        pictured(&format!("{uri}\n")),
+        Some(outside.clone()),
+        "a file manager ends the list with a newline",
+    );
+    assert_eq!(
+        pictured(&written(&outside)),
+        Some(outside),
+        "a bare absolute path is one somebody copied out of a shell",
+    );
+}
+
+#[test]
+fn clipboard_words_name_no_picture() {
+    let sample = Sample::new("attaching-clipboard-words");
+    let source = sample.root().join("main.rs");
+    fs::write(&source, b"fn main() {}").expect("a source file");
+
+    assert_eq!(pictured("hello world"), None);
+    assert_eq!(
+        pictured("holiday.png"),
+        None,
+        "a relative path names nobody"
+    );
+    assert_eq!(
+        pictured("/nowhere/at/all/holiday.png"),
+        None,
+        "a picture that is not there is not one",
+    );
+    assert_eq!(
+        pictured(&written(&source)),
+        None,
+        "a file no model reads as an image is not one either",
     );
 }
