@@ -173,7 +173,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "defaultContextWindow",
-        about: "How many tokens to assume any model of this provider accepts, where it is not named above",
+        about: "How many tokens to use before making room for any model of this provider not named above",
         shape: Shape::Count,
         examples: &[],
         usual: None,
@@ -181,7 +181,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "contextWindow",
-        about: "How many tokens a model accepts at once, keyed by the model name, where crucible cannot ask the provider or has it wrong",
+        about: "How many tokens to use before making room, keyed by model name; an explicit value may opt into a larger native window",
         shape: Shape::Named {
             declared: &[],
             others: &WINDOW,

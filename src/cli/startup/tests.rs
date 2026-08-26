@@ -512,6 +512,56 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
 }
 
 #[test]
+fn operational_windows_use_conservative_provider_defaults() {
+    let settings = Settings::default();
+
+    assert_eq!(
+        window("anthropic", "claude-sonnet-5", &settings),
+        Some(200_000)
+    );
+    assert_eq!(
+        window("anthropic", "claude-haiku-4-5", &settings),
+        Some(200_000)
+    );
+    assert_eq!(window("openai", "gpt-5.6-sol", &settings), Some(272_000));
+    assert_eq!(window("openai", "gpt-5.5", &settings), Some(272_000));
+    assert_eq!(window("moonshot", "k3", &settings), Some(262_144));
+    assert_eq!(
+        window("moonshot", "kimi-for-coding-highspeed", &settings),
+        Some(262_144)
+    );
+}
+
+#[test]
+fn unknown_models_do_not_bypass_the_providers_default_operational_window() {
+    let settings = Settings::default();
+
+    assert_eq!(
+        window("anthropic", "claude-future", &settings),
+        Some(200_000)
+    );
+    assert_eq!(window("openai", "gpt-future", &settings), Some(272_000));
+    assert_eq!(window("moonshot", "kimi-future", &settings), Some(262_144));
+    assert_eq!(window("unheard-of", "model", &settings), None);
+}
+
+#[test]
+fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
+    let sample = Sample::new("context-window-opt-in");
+    let settings = sample.settings(
+        r#"{"providers":{"anthropic":{"contextWindow":{"claude-sonnet-5":1000000}},"openai":{"defaultContextWindow":872000},"moonshot":{"contextWindow":{"k3":1048576}}}}"#,
+    );
+
+    assert_eq!(
+        window("anthropic", "claude-sonnet-5", &settings),
+        Some(1_000_000)
+    );
+    assert_eq!(window("openai", "gpt-5.6-sol", &settings), Some(872_000));
+    assert_eq!(window("openai", "gpt-future", &settings), Some(872_000));
+    assert_eq!(window("moonshot", "k3", &settings), Some(1_048_576));
+}
+
+#[test]
 fn how_long_an_answer_may_be_is_the_model_own_limit_held_under_the_ceiling() {
     let sample = Sample::new("answer-ceiling");
     let workspace = sample.workspace();

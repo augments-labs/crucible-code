@@ -21,7 +21,7 @@ expression: window.picture()
 |anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before restarting |
 |                                                                                |
 |                                                                                |
-|                                                                  window unknown|
+|                                                                100% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|

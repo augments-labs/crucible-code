@@ -39,7 +39,7 @@ impl Settings {
 }
 
 impl Settings {
-    /// How much this model accepts, where a layer said so.
+    /// How much context this session uses, where a layer said so.
     ///
     /// Keyed by the model name exactly as it is asked for, so a session that
     /// changes model does not carry the last one's figure with it. `None` is
@@ -48,11 +48,9 @@ impl Settings {
     pub fn context_window(&self, provider: &str, model: &str) -> Option<u32> {
         let provider = self.value.get("providers")?.get(provider)?;
 
-        // Named first, then whatever this provider says to assume. crucible
-        // ships no figure of its own for either: a window it invented would be
-        // wrong by a factor nobody could see until a session had already thrown
-        // most of itself away, and the reactive rail is what covers the case
-        // where nobody has said.
+        // Named first, then the provider-wide explicit value. Built-in
+        // operational defaults belong to the wiring that knows which provider
+        // is being asked; this function answers only what configuration said.
         let said = provider
             .get("contextWindow")
             .and_then(|windows| windows.get(model))
