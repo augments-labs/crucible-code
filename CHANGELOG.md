@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+**A choice remembered into a config with no `output` block lands under its own
+key.** Remembering the syntax theme used to write the block with the key
+spelled `theme`, quietly restyling the wrong thing; the key written is now the
+one being remembered.
+
 **The account login's callback answers only its own attempt.** The loopback
 page that hands the browser to the vendor now sits behind a token minted for
 that attempt and carried only through your own terminal, so another local

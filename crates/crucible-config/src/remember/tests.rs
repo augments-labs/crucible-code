@@ -411,6 +411,26 @@ fn taking_the_theme_that_is_already_written_changes_nothing_at_all() {
 }
 
 #[test]
+fn a_syntax_theme_makes_the_output_block_under_its_own_key() {
+    // The defect this catches: the branch that creates the `output` block
+    // spelled the key `theme` whatever key it was asked to write, so a fenced
+    // code theme remembered into a file with no `output` block landed under
+    // the drawing theme's key — and `output.theme` being a closed choice, the
+    // next start refused a file crucible had written itself.
+    let was = "{\n  \"provider\": \"anthropic\"\n}\n";
+    let now =
+        super::reading(was, "config.json", "Solarized (dark)").expect("a block to be written");
+
+    let read: serde_json::Value = serde_json::from_str(&now).expect("valid json");
+    assert_eq!(
+        read.get("output").and_then(|at| at.get("syntaxTheme")),
+        Some(&"Solarized (dark)".into()),
+        "{now}"
+    );
+    assert_eq!(read.get("output").and_then(|at| at.get("theme")), None);
+}
+
+#[test]
 fn an_output_block_is_created_beside_whatever_else_the_file_holds() {
     let was = "{\n  \"provider\": \"anthropic\"\n}\n";
     let now = drawn(was, "ansi").expect("a block to be written");
