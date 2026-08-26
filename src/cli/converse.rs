@@ -64,6 +64,7 @@ mod asking;
 mod attaching;
 mod command;
 mod expanding;
+mod finding;
 mod leaving;
 mod mode;
 mod picking;
@@ -1693,6 +1694,7 @@ fn heard(arrived: Pressed) -> Heard {
         | Pressed::Queue
         | Pressed::Copy
         | Pressed::PasteImage
+        | Pressed::Rename
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

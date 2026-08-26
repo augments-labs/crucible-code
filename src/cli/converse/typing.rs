@@ -555,6 +555,7 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Explain
             | Pressed::Queue
             | Pressed::Tab
+            | Pressed::Rename
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
@@ -1428,6 +1429,7 @@ fn meant(arrived: Pressed) -> Meant {
         // standing, and nothing is standing while this arm is the one reading.
         Pressed::Explain
         | Pressed::Tab
+        | Pressed::Rename
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
