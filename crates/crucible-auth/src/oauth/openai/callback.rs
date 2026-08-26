@@ -1,10 +1,11 @@
 //! The short-lived loopback boundary for browser authorization.
 //!
-//! Only two origin-form requests exist here: `/launch` redirects the browser
-//! to the complete authorization URI, and `/auth/callback` accepts the code
-//! whose state exactly matches this attempt. Headers, targets and query fields
-//! are bounded before parsing. Invalid or forged requests receive a fixed
-//! response and leave the real attempt waiting.
+//! Only two origin-form requests exist here: the token-guarded launch path
+//! redirects the browser to the complete authorization URI, and
+//! `/auth/callback` accepts the code whose state exactly matches this attempt.
+//! Headers, targets and query fields are bounded before parsing. Invalid or
+//! forged requests receive a fixed response and leave the real attempt
+//! waiting.
 
 use std::io::{ErrorKind, Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::Cancel;
 
-use super::{CANCEL_POLL, OAuthError};
+use super::{CANCEL_POLL, OAuthError, random_urlsafe};
 
 const PORTS: [u16; 2] = [1455, 1457];
 const MAX_HEADERS: usize = 16 * 1024;
@@ -25,6 +26,13 @@ pub(super) struct Server {
     listener: TcpListener,
     port: u16,
     lifetime: Duration,
+    /// The launch path, carrying a token only this attempt was given.
+    ///
+    /// Loopback is every local account's, not just this one's, and the launch
+    /// answer is the authorization URI — state included, which is what lets a
+    /// forged callback through. The token travels only where the user does:
+    /// the terminal the address is printed to, and the browser it opens.
+    launch: String,
 }
 
 impl Server {
@@ -48,6 +56,7 @@ impl Server {
                 listener,
                 port,
                 lifetime,
+                launch: format!("/launch/{}", random_urlsafe::<16>()?),
             });
         }
         Err(OAuthError::Callback)
@@ -58,7 +67,7 @@ impl Server {
     }
 
     pub(super) fn launch_uri(&self) -> String {
-        format!("http://localhost:{}/launch", self.port)
+        format!("http://localhost:{}{}", self.port, self.launch)
     }
 
     pub(super) fn wait(
@@ -89,7 +98,7 @@ impl Server {
                     if !peer.ip().is_loopback() {
                         continue;
                     }
-                    match request(&mut stream, self.port, cancel) {
+                    match request(&mut stream, self.port, &self.launch, cancel) {
                         Ok(Request::Launch) => {
                             respond_redirect(&mut stream, authorization);
                         }
@@ -180,7 +189,12 @@ enum Request {
     },
 }
 
-fn request(stream: &mut TcpStream, port: u16, cancel: &Cancel) -> Result<Request, ()> {
+fn request(
+    stream: &mut TcpStream,
+    port: u16,
+    launch: &str,
+    cancel: &Cancel,
+) -> Result<Request, ()> {
     stream.set_read_timeout(Some(CANCEL_POLL)).map_err(|_| ())?;
     let started = Instant::now();
     let mut bytes = Vec::with_capacity(1024);
@@ -235,7 +249,7 @@ fn request(stream: &mut TcpStream, port: u16, cancel: &Cancel) -> Result<Request
 
     let (path, query) = target.split_once('?').map_or((target, ""), |parts| parts);
     match path {
-        "/launch" if query.is_empty() => Ok(Request::Launch),
+        _ if path == launch && query.is_empty() => Ok(Request::Launch),
         "/auth/callback" => {
             let fields = fields(query)?;
             Ok(Request::Callback {
@@ -359,16 +373,49 @@ mod tests {
             )
         });
 
-        let launched = get(port, "/launch");
+        let path = launch
+            .strip_prefix(&format!("http://localhost:{port}"))
+            .expect("the launch address names this server");
+        let launched = get(port, path);
         assert!(launched.starts_with("HTTP/1.1 302"));
         assert!(launched.contains("Location: https://example.invalid/authorize"));
-        assert_eq!(launch, format!("http://localhost:{port}/launch"));
 
         let forged = get(port, "/auth/callback?code=stolen&state=wrong");
         assert!(forged.starts_with("HTTP/1.1 400"));
         let accepted = get(port, "/auth/callback?code=kept%2Fcode&state=right");
         assert!(accepted.starts_with("HTTP/1.1 200"));
         assert_eq!(worker.join().unwrap().unwrap().as_ref(), "kept/code");
+    }
+
+    #[test]
+    fn a_launch_without_its_token_reveals_nothing() {
+        // The launch address is handed to the user's own terminal and browser
+        // and nowhere else. Loopback is every local account's, not just this
+        // one's, so a bare `/launch` polled by somebody else must not answer
+        // with the authorization URI — the state inside it is what lets a
+        // forged callback through.
+        let server = Server::bind_on(&[0], Duration::from_secs(2)).unwrap();
+        let port = server.port;
+        let cancel = Cancel::new();
+        let (_input, submitted) = mpsc::sync_channel(1);
+        let stopping = cancel.clone();
+        let worker = std::thread::spawn(move || {
+            server.wait(
+                "https://example.invalid/authorize",
+                "right",
+                &stopping,
+                &submitted,
+            )
+        });
+
+        let bare = get(port, "/launch");
+        assert!(bare.starts_with("HTTP/1.1 400"), "{bare}");
+        assert!(!bare.contains("example.invalid"), "{bare}");
+        let guessed = get(port, "/launch/wrong-token");
+        assert!(guessed.starts_with("HTTP/1.1 400"), "{guessed}");
+
+        cancel.request();
+        assert!(matches!(worker.join().unwrap(), Err(OAuthError::Cancelled)));
     }
 
     #[test]

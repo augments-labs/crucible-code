@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+**The account login's callback answers only its own attempt.** The loopback
+page that hands the browser to the vendor now sits behind a token minted for
+that attempt and carried only through your own terminal, so another local
+account that can reach the port learns nothing and cannot complete the login
+with a code of its own.
+
 **A response body that stalls cannot hold the turn.** Reading a response now
 honours <kbd>Esc</kbd> and gives the whole read two minutes, so a connection
 that goes quiet — or trickles without ever closing — ends as a transport
