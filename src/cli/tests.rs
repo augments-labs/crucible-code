@@ -762,3 +762,58 @@ fn the_models_table_gives_video_to_moonshot_alone_and_audio_to_nobody() {
     }
     assert_eq!(accepting(Modality::Audio), Vec::<&str>::new());
 }
+
+#[test]
+fn resume_and_continue_cannot_be_asked_for_together() {
+    // Each names a different session to pick up. Refused at the parser, so
+    // whichever the user meant, nothing is opened on the other's behalf.
+    let refused = Cli::try_parse_from(["crucible", "--resume", "some-id", "--continue"])
+        .expect_err("two ways back at once");
+
+    let said = refused.to_string();
+    assert!(said.contains("cannot be used with"), "{said}");
+}
+
+#[test]
+fn resume_round_trip() {
+    use crucible_runner::Session;
+    use crucible_tui::Recording;
+
+    let sample = Sample::new("resume-round-trip");
+    let workspace = sample.workspace();
+    let session =
+        Session::start(&sample.logs(), &workspace, None).expect("a new session to record");
+    let id = session.id().expect("a recorded session has a name").clone();
+    let path = session.path().to_owned();
+    session.append(&crucible_core::Message::said("keep this turn"));
+    drop(session);
+
+    // The parting names the exact command that comes back to this session.
+    let mut renderer = Renderer::new(Recording::new(120, 24));
+    draw::parting(
+        &mut renderer,
+        &converse::Parting::Kept(path),
+        Style::plain(),
+    )
+    .expect("a parting to draw");
+    let written = renderer.terminal().written().to_string();
+    assert!(
+        written.contains(&format!("crucible --resume {}", id.as_str())),
+        "{written}"
+    );
+
+    // And that command reopens the session it names, with its transcript.
+    let (reopened, transcript) =
+        startup::reopening(&sample.logs(), &workspace, &id).expect("the session named");
+    assert_eq!(transcript.len(), 1);
+    drop(reopened);
+
+    // An id nothing here answers to is told so in one sentence.
+    let stranger = crucible_core::SessionId::new();
+    let refused = startup::reopening(&sample.logs(), &workspace, &stranger)
+        .expect_err("a session nobody recorded");
+    assert_eq!(
+        refused.to_string(),
+        format!("no session {} in this workspace", stranger.as_str())
+    );
+}

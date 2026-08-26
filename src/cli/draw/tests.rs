@@ -1384,6 +1384,20 @@ fn a_log_that_stopped_recording_says_so_where_it_says_where_the_file_is() {
 }
 
 #[test]
+fn the_parting_says_the_command_that_resumes_this_exact_session() {
+    // `--continue` reaches only the newest session, so once anything else has
+    // run in this directory the sentence above stops being a way back to this
+    // one. The id in the file's name is, and like the path it is written whole:
+    // a command clipped to the window is one that resumes nothing.
+    for went in [Parting::Kept(FILE.into()), Parting::Lost(FILE.into())] {
+        let written = parted(&went);
+
+        assert!(written.contains("Resume this session with:"), "{written}");
+        assert!(written.contains("crucible --resume one"), "{written}");
+    }
+}
+
+#[test]
 fn a_session_that_hid_nothing_writes_nothing_on_its_way_out() {
     // The row a shell is about to draw its prompt on belongs to the shell. A
     // session that took no screen has nothing to hand back and nothing to

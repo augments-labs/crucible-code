@@ -491,13 +491,23 @@ pub(crate) fn parting<T: Terminal>(
     // The path is written whole. Everything else here is a sentence and would
     // survive losing its tail; this is an address, and one clipped to the
     // window is a reader sent nowhere.
-    renderer.parting(&[
+    let mut rows = vec![
         Row::new(),
         Row::new()
             .then(Slot::Quiet, format!("{} {said} ", glyphs.dot()))
             .then(Slot::Plain, path.display().to_string()),
         Row::new().then(Slot::Quiet, "  crucible --continue picks this session up"),
-    ])
+    ];
+
+    // `--continue` reaches only the newest session for this directory, so the
+    // id is the one address that still works after anything else has run here.
+    // It is the file's own name, and like the path it is written whole.
+    if let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) {
+        rows.push(Row::new().then(Slot::Quiet, "Resume this session with:"));
+        rows.push(Row::new().then(Slot::Plain, format!("  crucible --resume {id}")));
+    }
+
+    renderer.parting(&rows)
 }
 
 /// Draws a permission question and leaves the cursor where the answer goes.

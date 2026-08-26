@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **`--resume <id>` picks up the exact session the id names.** The parting
+  message prints the command beside the transcript path, so the way back to a
+  session survives newer sessions started in the same directory. An id this
+  workspace has no record of is refused by name, and `--resume` and
+  `--continue` cannot be asked for together. Session files are now named by
+  UUID v7 — still newest-first by name — and sessions recorded by earlier
+  releases keep their names and stay continuable.
+
 ## [0.24.1] - 2026-08-26
 
 ### Fixed

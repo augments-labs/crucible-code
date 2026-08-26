@@ -26,7 +26,9 @@ ends, so what you scroll up to afterwards is the shell you started from. The
 transcript is not in the terminal's scrollback and never was.
 
 What crucible writes on its way out is a line naming the file the transcript is
-in, and a line saying `crucible --continue` picks the session up. Where the log
+in, a line saying `crucible --continue` picks the session up, and a
+`crucible --resume` command naming this exact session — the one that still works
+after another session has been started in the same directory. Where the log
 stopped being written part-way through, that first line says so beside the
 file — a transcript missing its tail is never handed over as a whole one.
 
@@ -151,7 +153,7 @@ A session is claimed for as long as it is open, so the one crucible is writing
 now is not one another crucible can continue:
 
 ```
-crucible: /home/you/.crucible/sessions/1786713045000-3f9c2a.jsonl is open in another crucible
+crucible: /home/you/.crucible/sessions/01890a5d-ac96-774b-bcce-b302099a8057.jsonl is open in another crucible
 ```
 
 `--continue` says that and stops, having read nothing and changed nothing.
@@ -159,7 +161,7 @@ Continuing a session cuts its log back to what was replayed, so without this the
 second crucible would delete the turns the first had already written and still
 believes are there, and both would append to one file from then on.
 
-Starting a session is refused only if it cannot find itself a free name — eight tries, each a millisecond and twenty-four bits of randomness. Two crucibles in one directory are two
+Starting a session is refused only if it cannot find itself a free name — eight tries, each a millisecond and seventy-four bits of randomness. Two crucibles in one directory are two
 sessions, each recording a log of its own — it is only continuing that has to
 pick one, and only continuing that can be told no.
 
@@ -383,7 +385,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":3,"session":"…","workspace":"/home/you/code/my-project"}
+{"format":8,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to
