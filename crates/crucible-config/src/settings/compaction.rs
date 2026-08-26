@@ -39,7 +39,7 @@ impl Settings {
 }
 
 impl Settings {
-    /// How much context this session uses, where a layer said so.
+    /// The session's context-window size, where a layer said so.
     ///
     /// Keyed by the model name exactly as it is asked for, so a session that
     /// changes model does not carry the last one's figure with it. `None` is

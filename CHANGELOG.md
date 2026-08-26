@@ -13,9 +13,9 @@ change in any release with no deprecation period.
 ### Changed
 
 **Long context is now an explicit choice.** Without configuration, Crucible
-makes room at 200k tokens for Anthropic, 272k for OpenAI and 256k for Moonshot,
-even where a model accepts more. `contextWindow` and `defaultContextWindow`
-still opt a session into a larger native window.
+uses a 200k context window for Anthropic, 272k for OpenAI and 256k for Moonshot,
+even where a model accepts more. The existing reserve is applied separately;
+`contextWindow` and `defaultContextWindow` still opt into a larger native window.
 
 ## [0.23.3] - 2026-08-26
 

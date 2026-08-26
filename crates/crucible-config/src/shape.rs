@@ -173,7 +173,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "defaultContextWindow",
-        about: "How many tokens to use before making room for any model of this provider not named above",
+        about: "The context-window size in tokens for any model of this provider not named above",
         shape: Shape::Count,
         examples: &[],
         usual: None,
@@ -181,7 +181,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "contextWindow",
-        about: "How many tokens to use before making room, keyed by model name; an explicit value may opt into a larger native window",
+        about: "The context-window size in tokens, keyed by model name; an explicit value may opt into a larger native window",
         shape: Shape::Named {
             declared: &[],
             others: &WINDOW,

@@ -277,7 +277,7 @@
               "minimum": 0,
               "type": "integer"
             },
-            "description": "How many tokens to use before making room, keyed by model name; an explicit value may opt into a larger native window",
+            "description": "The context-window size in tokens, keyed by model name; an explicit value may opt into a larger native window",
             "properties": {
               "$comment": {
                 "type": "string"
@@ -302,7 +302,7 @@
             "type": "object"
           },
           "defaultContextWindow": {
-            "description": "How many tokens to use before making room for any model of this provider not named above",
+            "description": "The context-window size in tokens for any model of this provider not named above",
             "minimum": 0,
             "type": "integer"
           },

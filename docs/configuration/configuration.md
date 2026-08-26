@@ -76,7 +76,7 @@ Keyed by provider name — `anthropic`, `moonshot`, `openai`.
 | `effort` | How hard to think before answering, when `--effort` does not say. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
-| `contextWindow` | Tokens Crucible uses before making room, keyed by model name. |
+| `contextWindow` | The session's context-window size in tokens, keyed by model name. |
 | `defaultContextWindow` | The same, for any model of this provider not named above. |
 
 `effort` is one of `low`, `medium`, `high`, `xhigh` or `max`, and it is set per
@@ -116,17 +116,18 @@ describe the model you had just left:
 { "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
 ```
 
-Without either setting, Crucible follows conservative operational windows:
-200,000 tokens for Anthropic, 272,000 for OpenAI, and 262,144 for Moonshot. A
-known model with a smaller native limit keeps the smaller figure, and an unknown
-model of a known provider gets that provider's default rather than silently
-bypassing it. Native 1M support therefore does not make 1M the session default.
+Without either setting, the session's context window is 200,000 tokens for
+Anthropic, 272,000 for OpenAI, and 262,144 for Moonshot. A known model with a
+smaller native limit keeps the smaller figure, and an unknown model of a known
+provider gets that provider's default. Native 1M support therefore does not make
+1M the session default.
 
-Use `contextWindow` to opt a named model into a larger operational window, or
+Use `contextWindow` to opt a named model into a larger window, or
 `defaultContextWindow` for every otherwise-unnamed model of one provider. Neither
-is sent anywhere: they decide when Crucible makes room and what its meter reads,
-and nothing else. Setting one too large may let a request reach the provider's
-real limit and be refused; setting one too small compacts earlier than necessary.
+is sent anywhere. The configured/default value is the window; the existing
+compaction reserve is applied separately, so automatic compaction starts when
+`carried + reserve >= window`. Setting a window too large may let a request reach
+the provider's real limit and be refused; setting one too small compacts earlier.
 
 ### `compaction`
 

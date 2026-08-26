@@ -814,7 +814,7 @@ fn compacting(settings: &Settings) -> Compaction {
     }
 }
 
-/// How much of this model's window a session uses before making room.
+/// The context-window size this session manages against.
 ///
 /// A configured figure is explicit and wins, including one that opts into a
 /// model's million-token window. Without one, known native limits are held under
