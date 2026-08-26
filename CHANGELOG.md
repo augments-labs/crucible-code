@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+**A response body that stalls cannot hold the turn.** Reading a response now
+honours <kbd>Esc</kbd> and gives the whole read two minutes, so a connection
+that goes quiet — or trickles without ever closing — ends as a transport
+failure instead of a turn that never comes back.
+
 **A failed write cannot tear the session log in the middle.** A line cut short
 by a full disk used to be followed by more lines, leaving a fragment replay
 refuses partway through the log; the writer now finishes a line only its

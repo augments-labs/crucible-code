@@ -18,7 +18,8 @@
 //! arrives because somebody is watching it; a search is one small answer that is
 //! useless in halves, so it is read whole and bounded.
 
-use std::io::Read;
+use std::io::{self, Read};
+use std::time::{Duration, Instant};
 
 use crucible_core::{
     Cancel, Credential, Fetch, Host, Outgoing, Page, Search, SearchResult, SourceError,
@@ -58,16 +59,81 @@ const FETCH_CEILING: u32 = 32_768;
 /// What the fetch tool is told to keep of a page, in tokens.
 const FETCH_CONTENT: u32 = 24_000;
 
-/// Reads a whole answer, bounded.
-fn read(named: &'static str, body: Box<dyn Read + Send>) -> Result<String, SourceError> {
-    let mut text = String::new();
-    body.take(MOST as u64)
-        .read_to_string(&mut text)
-        .map_err(|problem| SourceError::Transport {
-            named,
-            problem: problem.to_string().into(),
-        })?;
-    Ok(text)
+/// The longest reading one answer may take altogether.
+///
+/// Bodies arrive through a reader that reports a wait that expired as an
+/// interruption — the kind the `Read` contract says to retry — so a service
+/// that answers its headers and then stalls without closing is a reader that
+/// neither ends nor errors, and reading it to the end retries for ever. The
+/// whole read is bounded rather than the gaps in it, because a peer trickling
+/// one byte per gap satisfies every gap and still holds the thread for as long
+/// as it likes. Two minutes because the largest honest answer here is a
+/// fetched page, and one that has not finished arriving in that long is not
+/// going to.
+const MAX_WAIT: Duration = Duration::from_mins(2);
+
+/// Reads a whole answer, bounded in bytes and in time.
+fn read(
+    named: &'static str,
+    body: Box<dyn Read + Send>,
+    cancel: &Cancel,
+) -> Result<String, SourceError> {
+    filled(named, body, MAX_WAIT, cancel)
+}
+
+/// The same, with a wait a test can hand over as none.
+///
+/// The wait rather than the deadline it makes, so nothing here adds to an
+/// `Instant` — that addition panics where it overflows, and a bound against
+/// hanging is a poor place to put a new way to fail.
+fn filled(
+    named: &'static str,
+    body: Box<dyn Read + Send>,
+    wait: Duration,
+    cancel: &Cancel,
+) -> Result<String, SourceError> {
+    let since = Instant::now();
+    let mut body = body.take(MOST as u64);
+    let mut said = Vec::new();
+    let mut into = [0_u8; 8 * 1024];
+
+    let transport = |problem: &io::Error| SourceError::Transport {
+        named,
+        problem: problem.to_string().into(),
+    };
+
+    loop {
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(named));
+        }
+        if since.elapsed() >= wait {
+            return Err(transport(&timed_out()));
+        }
+
+        let read = body.read(&mut into);
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(named));
+        }
+        if since.elapsed() >= wait {
+            return Err(transport(&timed_out()));
+        }
+
+        match read {
+            Ok(0) => break,
+            Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
+            Err(problem) => return Err(transport(&problem)),
+        }
+    }
+
+    String::from_utf8(said).map_err(|problem| SourceError::Transport {
+        named,
+        problem: problem.to_string().into(),
+    })
+}
+
+fn timed_out() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "it stopped part-way through")
 }
 
 /// The value at `pointer`, as text.
@@ -228,7 +294,7 @@ fn posted(
             problem: redactions.redact(&problem.to_string()).into(),
         })?;
 
-    let answered = read(named, response.body)?;
+    let answered = read(named, response.body, cancel)?;
 
     if response.status != 200 {
         return Err(SourceError::Refused {
@@ -269,7 +335,7 @@ fn posted_text(
             problem: redactions.redact(&problem.to_string()).into(),
         })?;
 
-    let answered = read(named, response.body)?;
+    let answered = read(named, response.body, cancel)?;
 
     if response.status != 200 {
         return Err(SourceError::Refused {
