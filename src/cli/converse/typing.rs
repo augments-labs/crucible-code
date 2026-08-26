@@ -30,16 +30,14 @@
 //! handed and steps nothing.
 
 use std::borrow::Cow;
-use std::io;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Cancel, Effort, Mode};
 use crucible_runner::Runner;
 use crucible_tools::{Background, Ended};
 use crucible_tui::{
-    Aimed, Caret, CommandCount, Draft, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt,
-    PromptRows, Remaining, Renderer, Row, Slot, Terminal, TerminalError, Typed, characters,
-    pressed,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Renderer, Row, Slot,
+    Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -53,8 +51,13 @@ use super::leaving::Leaving;
 use super::mode::tone;
 use super::planning::Planning;
 use super::queueing;
+use super::recalling::Recalling;
 use super::turning::Turning;
 use super::{Prompts, Retained, Terms};
+
+mod drawing;
+
+use drawing::{Bordering, Landed, Pointed, around, boxing, draw, landed, replacement};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -174,6 +177,25 @@ fn vertical(editor: &mut Editor, key: Key) -> bool {
     editor.moves(key) && editor.press(key) == Typed::Changed
 }
 
+/// The three claims on an arrow key, answered in order.
+///
+/// The line first, where it wrapped and has a row to reach; then whatever list
+/// is standing over the box; then the prompts this directory has already been
+/// asked. Last of the three because it is the one that replaces the line rather
+/// than moving within it: a list still choosing and a line still being read
+/// through both have the stronger claim on the key.
+///
+/// One function for both loops. The key means the same thing while a turn runs
+/// as it does between turns, and two copies of an order are two chances for it
+/// to stop being one order.
+fn arrowed(back: bool, editor: &mut Editor, open: &mut Opened, recalling: &mut Recalling) -> bool {
+    if back {
+        vertical(editor, Key::Up) || open.up() || (!open.is_open() && recalling.back(editor))
+    } else {
+        vertical(editor, Key::Down) || open.down() || (!open.is_open() && recalling.on(editor))
+    }
+}
+
 /// Pastes a bracketed block into the line, and says what the row owes for it.
 ///
 /// One place for the two loops that read a prompt, because a paste means the
@@ -255,6 +277,10 @@ pub(crate) struct Between<'a> {
     pub(crate) editor: &'a mut Editor,
     /// The plan above the box, and whether the reader has opened it.
     pub(crate) planning: &'a mut Planning,
+    /// The prompts this directory holds, and where an arrow has walked back to
+    /// in them. For the session rather than for this call: a walk is ended by
+    /// the key that edits the line, not by the turn that answered it.
+    pub(crate) recalling: &'a mut Recalling,
     /// The images pasted so far, which Ctrl+V adds to. The line gets
     /// `[image N]` and this gets the path the marker stands for, so the
     /// session owns the list the way it owns the line.
@@ -365,6 +391,7 @@ pub(crate) fn ask<T: Terminal>(
         runner,
         editor,
         planning,
+        recalling,
         images,
         left,
         keys,
@@ -408,7 +435,12 @@ pub(crate) fn ask<T: Terminal>(
     }
 
     let mut open = Opened::filtered(editor.projection().text(), glyphs);
-    draw(renderer, editor, style, around(planning, &open, &says))?;
+    draw(
+        renderer,
+        editor,
+        style,
+        around(planning, &open, &says, recalling.place()),
+    )?;
 
     let mut following = None;
     loop {
@@ -430,7 +462,12 @@ pub(crate) fn ask<T: Terminal>(
                     return Ok(woke);
                 }
 
-                draw(renderer, editor, style, around(planning, &open, &says))?;
+                draw(
+                    renderer,
+                    editor,
+                    style,
+                    around(planning, &open, &says, recalling.place()),
+                )?;
                 continue;
             };
 
@@ -539,12 +576,10 @@ pub(crate) fn ask<T: Terminal>(
                 }
             }
 
-            // The arrows walk whatever is open above the box — unless the line
-            // being typed is many rows, in which case they move within it. The
-            // editor answers whether there is a row to reach, and a one-line
-            // line has none, so the list keeps the key it has always had.
-            Pressed::Up => vertical(editor, Key::Up) || open.up() || offered.is_some(),
-            Pressed::Down => vertical(editor, Key::Down) || open.down() || offered.is_some(),
+            // The line, the list, then the history — see [`arrowed`], which is
+            // where that order is decided for both loops.
+            Pressed::Up => arrowed(true, editor, &mut open, recalling) || offered.is_some(),
+            Pressed::Down => arrowed(false, editor, &mut open, recalling) || offered.is_some(),
 
             // And the wheel walks the transcript, which is the thing the arrows
             // never reach. It draws its own frame, so what is left to say here
@@ -603,7 +638,7 @@ pub(crate) fn ask<T: Terminal>(
                     says.asking = Some(Cow::Borrowed(LIMITED));
                     true
                 }
-                Typed::Submitted => return said(renderer, editor, &open, style),
+                Typed::Submitted => return said(renderer, editor, &open, recalling, style),
 
                 // Ctrl-C against a line with nothing on it. The first press
                 // says what a second one would do; the second does it, so long
@@ -627,8 +662,19 @@ pub(crate) fn ask<T: Terminal>(
             },
         };
 
+        // Asked once here rather than named at each arm that edits the line,
+        // for the reason [`Recalling::standing`] gives. After the key and
+        // before the frame, so a border that has stopped saying where the line
+        // came from stops saying it on the same frame the edit lands in.
+        recalling.standing(editor);
+
         if moved {
-            draw(renderer, editor, style, around(planning, &open, &says))?;
+            draw(
+                renderer,
+                editor,
+                style,
+                around(planning, &open, &says, recalling.place()),
+            )?;
         }
     }
 }
@@ -732,7 +778,11 @@ fn working<T: Terminal>(
     style: Style,
 ) -> Footed {
     let columns = renderer.columns();
-    let boxed = boxing(renderer, editor, says, footing.turning.left(), style);
+    let bordering = Bordering {
+        left: footing.turning.left(),
+        history: footing.history,
+    };
+    let boxed = boxing(renderer, editor, says, bordering, style);
     let room = renderer.rows().saturating_sub(boxed.rows.len());
 
     // The list a `/`-started line has open stands directly above the box, over
@@ -781,6 +831,10 @@ pub(super) struct Footing<'a> {
     pub(super) planning: &'a Planning,
     /// The command list a `/`-started line has open, standing over both.
     pub(super) opened_list: &'a Opened,
+    /// Where in the retained prompts the line in the box came from. Walked
+    /// mid-turn as it is between turns: the box is the same box, and a line
+    /// being written under a running turn is written the same way.
+    pub(super) history: Recalled,
 }
 
 /// What the row under a running turn says.
@@ -828,6 +882,7 @@ pub(super) fn during<T: Terminal>(
         kept,
         opened,
         viewing,
+        recalling,
         opened_list,
         listing,
         says,
@@ -928,24 +983,17 @@ pub(super) fn during<T: Terminal>(
             // longer matches, which is what the redraw below reads.
             Meant::Resized => moved = true,
 
+            // The same three claims as between turns, read the same way. The
+            // one list a running turn can stand is the only one that can be
+            // open here, and a line that is not a command has none.
+            Meant::Arrow { back } => moved |= arrowed(back, editor, opened_list, recalling),
+
             // Stepped to on this side and held for the next turn: the mode the
             // running turn is decided under was settled before it ran, so the
             // step cannot reach the runner on the worker — it goes into the
             // pending slot, and the row under the box says which mode that is,
             // marked for the turn it lands on. The step is read off the slot's
             // last value, or off the running mode the row was frozen with.
-            // The one list a running turn can stand, walked. A line that is
-            // not a command has no list open, and up and down both leave the
-            // mark where it is, so an arrow with nothing to walk moves
-            // nothing.
-            Meant::Arrow { back } => {
-                moved |= if back {
-                    opened_list.up()
-                } else {
-                    opened_list.down()
-                };
-            }
-
             Meant::Cycle => {
                 let next = terms.pending_mode.get().unwrap_or(says.running_mode).next();
                 terms.pending_mode.set(Some(next));
@@ -1064,6 +1112,11 @@ pub(super) fn during<T: Terminal>(
                             .or_else(|| command::owned(editor.text()))
                     };
                     if let Some(owned) = owned {
+                        // The line as it was sent, which is the command where
+                        // a marked row is what Return answered and the typed
+                        // word where it is not — the same line the box between
+                        // turns puts away for the same key.
+                        recalling.keep(marked.unwrap_or(editor.text()));
                         editor.take();
                         // The list the line had open goes with the line: the
                         // box is cleared for the command, and a list left open
@@ -1074,6 +1127,7 @@ pub(super) fn during<T: Terminal>(
                         return Ok(Meanwhile::Command(owned));
                     }
                     let line = editor.text().to_owned();
+                    recalling.keep(&line);
                     steer.say(line);
                     notice = queue(editor, queued, turning, renderer.columns(), style);
                     moved = true;
@@ -1128,6 +1182,11 @@ pub(super) fn during<T: Terminal>(
         }
     }
 
+    // The walk, ended by whichever of the arms above changed the line. Once
+    // here rather than named at each of them, for the reason
+    // [`Recalling::standing`] gives.
+    recalling.standing(editor);
+
     // A completed compaction remains whole for its short dwell, then gives the
     // next frame back here. Checked before movement so the frame at the boundary
     // is the no-bar state rather than one last 100% frame.
@@ -1173,6 +1232,7 @@ pub(super) fn during<T: Terminal>(
             turning,
             planning,
             opened_list,
+            history: recalling.place(),
         };
         match notice {
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
@@ -1397,6 +1457,11 @@ pub(super) struct During<'a> {
     /// Whether the queue is standing open to be gone over, which is the other
     /// thing that takes the box's rows while the turn goes on writing above.
     pub(super) viewing: &'a mut queueing::Standing,
+    /// The prompts this directory holds and where an arrow has walked back to
+    /// in them. Held by the session for the reason the view above is: a walk
+    /// opened mid-turn is still open when the turn ends, and the box it was
+    /// opened at is the same box.
+    pub(super) recalling: &'a mut Recalling,
     /// The command list a `/`-started line has open above the box.
     ///
     /// Owned by the session rather than read fresh each look: a turn is many
@@ -1505,238 +1570,6 @@ pub(super) fn saying(runner: &Runner) -> Says {
     }
 }
 
-/// What is drawn around the box between turns.
-///
-/// Three borrows in one value because a call taking all three beside the
-/// renderer, the editor and the style is a call nobody can read — which is what
-/// the argument ceiling is there to stop.
-#[derive(Clone, Copy)]
-struct Around<'a> {
-    /// The plan the agent is working to, above everything else.
-    planning: &'a Planning,
-    /// The commands a leading slash is offering, between the plan and the box.
-    open: &'a Opened,
-    /// What the rows under the box say.
-    says: &'a Says,
-}
-
-/// The three of them at one call.
-///
-/// A function rather than a literal at each place that draws: the names are
-/// worth writing once, and the call that draws the box is worth keeping on one
-/// line.
-fn around<'a>(planning: &'a Planning, open: &'a Opened, says: &'a Says) -> Around<'a> {
-    Around {
-        planning,
-        open,
-        says,
-    }
-}
-
-/// Puts the box on screen with the cursor where the line was typed to, and
-/// whatever the line has opened directly over it.
-///
-/// The box goes into the band that is held to a share of the window, because
-/// that share is a rule about how much of the screen a long prompt may take
-/// from what it is answering. Everything above it — the list and the plan —
-/// goes into the band above, which has no share: a list is what the reader is
-/// looking at while it is open, so the transcript is what gives way to it
-/// rather than the box being pushed off the screen. Both bands reach the
-/// renderer together so the prompt, status and map control come from one frame.
-///
-/// The list takes its share of the window before the plan is asked for any. It
-/// is the shorter of the two and it was opened by the character last typed,
-/// which is a stronger claim on the rows than a panel that was already there.
-/// Neither is counted against the opening: a list opened over it is what the
-/// reader is looking at, and shrinking it to keep a card that has already been
-/// read is the wrong way round.
-fn draw<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    editor: &Editor,
-    style: Style,
-    around: Around<'_>,
-) -> Result<(), Fatal> {
-    let columns = renderer.columns();
-    let boxed = boxing(renderer, editor, around.says, around.says.left, style);
-
-    // What is left for a list once the box and the blank row that keeps it off
-    // the box have taken theirs.
-    let room = renderer.rows().saturating_sub(boxed.rows.len() + 1);
-
-    let mut listed = around.open.rows(columns, room, style.glyphs());
-
-    // The row that keeps the box off whatever was last committed. A list opens
-    // with its own, so this is only owed where there is no list -- and the box
-    // is owed one either way, because a border drawn against the last line of
-    // an answer reads as part of it.
-    if listed.is_empty() {
-        listed.push(Row::new());
-    }
-
-    let mut over = Vec::new();
-    over.append(&mut around.planning.rows(
-        columns,
-        room.saturating_sub(listed.len()),
-        style.glyphs(),
-    ));
-    over.append(&mut listed);
-
-    let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
-    let prompt = replacement(&boxed.rows, boxed.caret, pointed)?;
-    renderer.replace(prompt, &over, style.palette())?;
-    Ok(())
-}
-
-/// Validates the prompt rows before they become one renderer replacement.
-fn replacement<'a>(
-    rows: &'a [Row],
-    caret: Caret,
-    pointed: Option<(usize, &'a Row)>,
-) -> Result<PromptRows<'a>, Fatal> {
-    PromptRows::new(rows, caret, pointed).ok_or_else(|| {
-        Fatal::from(TerminalError::from(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "the prompt replacement disagrees with its rows",
-        )))
-    })
-}
-
-/// The box rows in their resting state and the sole pointable row contrasted.
-struct Boxed {
-    rows: Vec<Row>,
-    pointed: Option<(usize, Row)>,
-    caret: Caret,
-}
-
-/// Lays out the prompt rows once and composes only its pointable row a second time.
-fn boxing<T: Terminal>(
-    renderer: &Renderer<T>,
-    editor: &Editor,
-    says: &Says,
-    left: Option<u8>,
-    style: Style,
-) -> Boxed {
-    let room = Prompt::room(renderer.rows());
-    let columns = renderer.columns();
-    let glyphs = style.glyphs();
-    let prompt = writing(editor, says, left, false, room);
-    let (rows, pointed) = prompt.rows_with_pointed(columns, glyphs);
-    let caret = prompt.caret(columns);
-
-    Boxed {
-        rows,
-        pointed,
-        caret,
-    }
-}
-
-/// The box as it is being typed into.
-///
-/// One place the fields are named, because [`draw`] and the click that follows
-/// it have to lay the same component out: a click read against a box drawn any
-/// other way lands somewhere nobody pointed at.
-fn writing<'a>(
-    editor: &'a Editor,
-    says: &'a Says,
-    left: Option<u8>,
-    running_pointed: bool,
-    room: usize,
-) -> Prompt<'a> {
-    Prompt {
-        draft: Draft::projected(editor.projection()),
-        left: Remaining::new(left),
-        mode: says.mode.as_ref(),
-        tone: says.tone,
-        hint: &says.keys,
-        model: says.model.as_str(),
-        provider: says.provider,
-        effort: says.effort,
-        asking: says.asking.as_deref(),
-        commands: CommandCount::new(says.running, running_pointed),
-        room,
-    }
-}
-
-/// Where a click landed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Pointed {
-    /// The screen row the pointer was on.
-    row: usize,
-    /// How many columns from the left of it.
-    column: usize,
-}
-
-/// What a click landed on.
-///
-/// Three answers rather than two, because a click that landed on nothing is not
-/// the same as one that landed on the line: the first owes no frame, and the
-/// second has already moved the cursor to where the pointer was.
-enum Landed {
-    /// This row of the record, which is above the box entirely. What was cut is
-    /// held by the loop that owns the transcript, so the answer is there.
-    Record(usize),
-    /// The line being typed, which now has the cursor where the pointer was.
-    Line,
-    /// The row under the box naming what is still running, which is the one thing
-    /// on it that is an offer rather than a fact.
-    Counted,
-    /// The border, a blank row, the shell's own output from before crucible
-    /// started — or a terminal that would not say where its cursor is.
-    Nothing,
-}
-
-/// Reads where a click landed, moving the cursor where it landed on the line.
-///
-/// What is under a window row is the renderer's answer: it shares the window
-/// out and it holds the transcript, so a row of one band and a line of the
-/// session come out of the same reading. What is left here is where the box
-/// sits inside what is standing, which the frame that drew it said. Leaving the
-/// cursor where it is is the right answer to a click that did not land on the
-/// line.
-fn landed<T: Terminal>(
-    renderer: &Renderer<T>,
-    editor: &mut Editor,
-    says: &Says,
-    at: Pointed,
-) -> Landed {
-    let row = match renderer.aimed(at.row) {
-        Some(Aimed::Line(line)) => return Landed::Record(line),
-        Some(Aimed::Boxed(row)) => row,
-        // A list or a plan standing over the box. Answered where it is drawn,
-        // by the loop that opened it, and not here.
-        Some(Aimed::Stood(_)) | None => return Landed::Nothing,
-    };
-
-    let prompt = writing(
-        editor,
-        says,
-        says.left,
-        false,
-        Prompt::room(renderer.rows()),
-    );
-
-    // Asked of the box, because which row the count came out on is the box's own
-    // arithmetic at this width. The column is not asked about: the row is the
-    // affordance, and nothing else on it is one, so a click anywhere along it
-    // means the one thing it could mean.
-    if prompt.counting(renderer.columns(), row) {
-        return Landed::Counted;
-    }
-
-    // A line and a column within it, which is what the box's arithmetic knows:
-    // a newline makes a bare column into the whole text ambiguous, so the editor
-    // is placed by the pair rather than by one number.
-    let Some((line, into)) = prompt.clicked(renderer.columns(), row, at.column) else {
-        return Landed::Nothing;
-    };
-
-    if editor.place_at(line, into) == Typed::Changed {
-        Landed::Line
-    } else {
-        Landed::Nothing
-    }
-}
-
 /// The command list a line has open above the box, and the row of it that
 /// pressing return would run.
 ///
@@ -1793,6 +1626,16 @@ impl Opened {
         moved
     }
 
+    /// Whether a `/`-started line has anything open above the box.
+    ///
+    /// Asked by the arrows, which have one more thing to walk than the list:
+    /// a list that cannot move the mark any further has still answered the
+    /// key, and a history walk taken from under it would replace the line the
+    /// reader is choosing a command from.
+    pub(super) fn is_open(&self) -> bool {
+        !self.shown.is_empty()
+    }
+
     /// What return runs, or `None` where there is no list and the line is what
     /// was typed.
     pub(super) fn chosen(&self) -> Option<&'static str> {
@@ -1835,12 +1678,19 @@ fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &mut Editor,
     open: &Opened,
+    recalling: &mut Recalling,
     style: Style,
 ) -> Result<Asked, Fatal> {
     let chosen = open.chosen();
     let local = local(editor, chosen.is_some());
     let typed = editor.take();
     let said = chosen.map_or(typed, str::to_owned);
+
+    // The line as it was sent, which is the line an arrow should offer back:
+    // a command run off a marked row was sent as that command, whatever half
+    // of it was typed. It also ends whatever walk was open, which is what
+    // takes the place off the border of a box that has just been emptied.
+    recalling.keep(&said);
 
     // Back to the foot before a word of it is drawn: what was just sent is
     // about to be answered at the bottom, and somebody who had scrolled up to

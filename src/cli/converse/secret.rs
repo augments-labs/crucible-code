@@ -19,8 +19,8 @@
 //! credential is close to that boundary.
 
 use crucible_tui::{
-    CommandCount, Draft, Key, Pressed, Prompt, Remaining, Renderer, Slot, Terminal, characters,
-    pressed,
+    CommandCount, Draft, Key, Pressed, Prompt, Recalled, Remaining, Renderer, Slot, Terminal,
+    characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -139,6 +139,10 @@ fn standing<T: Terminal>(
         // so the cursor at the end comes from the source itself.
         draft: Draft::at(&said, said.len()),
         left: Remaining::default(),
+        // And nothing about the prompts this directory holds: the arrows walk
+        // them at the box a session is asked from, and a key being pasted into
+        // this one is not a prompt and never joins them.
+        history: Recalled::default(),
         mode: asking,
         // The border says what the box is for. Not a mode's colour: no mode is
         // in force in here, and borrowing one would say a permission had

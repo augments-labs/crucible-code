@@ -205,6 +205,23 @@ moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
+<kbd>↑</kbd> and <kbd>↓</kbd> on an empty line walk back through the prompts you
+have already sent from this directory, newest first, up to a hundred of them.
+The top border of the box says where you are — `history 1/100` on the first
+press back, counting up as you go, and always out of a hundred whether you have
+sent that many or three — and Enter sends whatever is in the box.
+Edit the line instead, by so much as a <kbd>Backspace</kbd>, and the walk ends
+where you edited it: the count goes, and the line is yours again.
+
+The prompts are kept between sessions, per directory. A line you sent in one
+checkout is never offered under the arrow key in another, and each directory
+keeps its own hundred: the hundred-and-first prompt you send here is what the
+first one is spent on, and it goes from the file rather than sitting in it
+unreachable. Where the line is
+long enough to have wrapped onto a second row, or a list is standing over the
+box, the arrows belong to that first and the history only answers once there is
+nothing left for them to walk.
+
 The wheel scrolls the transcript, and goes on scrolling it while a list or a
 panel stands over it — except where what is standing is itself a window over
 more text than fits, which the wheel walks instead. How far one notch goes is

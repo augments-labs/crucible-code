@@ -69,7 +69,7 @@ pub use menu::{Listed, Menu};
 pub use notice::Notice;
 pub use panel::{Offered, Panel};
 pub use plan::{Plan, State, Task};
-pub use prompt::{CommandCount, Draft, Prompt, Remaining};
+pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining};
 pub use render::{Aimed, Caret, PromptRows, Renderer};
 pub use row::Row;
 pub use running::{Command, Running};

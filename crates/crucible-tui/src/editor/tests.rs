@@ -886,3 +886,61 @@ fn delete_takes_what_is_ahead_and_leaves_the_cursor_where_it_was() {
     assert_eq!(wide.press(Key::Delete), Typed::Changed);
     assert_eq!(wide.text(), "本");
 }
+
+#[test]
+fn a_line_put_in_the_box_replaces_whatever_was_there_with_the_cursor_after_it() {
+    // What an arrow reaching back through the prompts does to the box. The
+    // cursor lands at the end because that is where somebody about to send it
+    // again wants it, and where somebody about to change its last word does.
+    let mut editor = typed("half a thought");
+
+    assert_eq!(editor.put("rename the tail's bound"), Typed::Changed);
+    assert_eq!(editor.text(), "rename the tail's bound");
+    assert_eq!(editor.column(), width::columns("rename the tail's bound"));
+}
+
+#[test]
+fn a_line_put_back_over_itself_moves_nothing() {
+    // Which is what stops the walk costing a frame at either end of it.
+    let mut editor = typed("the same line");
+
+    assert_eq!(editor.put("the same line"), Typed::Ignored);
+}
+
+#[test]
+fn a_line_put_in_the_box_is_read_as_typed_rather_than_as_pasted() {
+    // A prompt reached back through was written by hand however long it is, so
+    // it comes back readable. Collapsed to the label a long paste is drawn as,
+    // it would be a line nobody could see to edit.
+    let mut editor = Editor::new().multiline();
+    let long = "x".repeat(PASTED_AFTER + 1);
+
+    assert_eq!(editor.put(&long), Typed::Changed);
+    assert_eq!(editor.projection().text(), long);
+}
+
+#[test]
+fn a_line_put_in_the_box_keeps_its_breaks_and_loses_everything_else() {
+    // It came off a disk, so it is as untrusted as a paste and sanitized the
+    // same way: an escape in it would move a cursor the renderer had placed.
+    let mut editor = Editor::new().multiline();
+
+    assert_eq!(editor.put("over\ntwo\u{1b}[Aparts"), Typed::Changed);
+    assert_eq!(editor.text(), "over\ntwo[Aparts");
+
+    // And on the one-line editor a break is not a character either.
+    let mut one = Editor::new();
+    assert_eq!(one.put("over\ntwo"), Typed::Changed);
+    assert_eq!(one.text(), "overtwo");
+}
+
+#[test]
+fn a_line_too_long_for_the_box_is_not_put_in_it_at_all() {
+    let mut editor = typed("what was already there");
+
+    assert_eq!(
+        editor.put(&"x".repeat(Editor::MAX_BYTES + 1)),
+        Typed::Refused
+    );
+    assert_eq!(editor.text(), "what was already there");
+}

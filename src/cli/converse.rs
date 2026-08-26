@@ -56,6 +56,7 @@ use super::{Fatal, Served, Serving, standing};
 use command::Ran;
 use expanding::Standing;
 use planning::Planning;
+use recalling::Recalling;
 use turning::Turning;
 use typing::{Asked, Says};
 
@@ -69,6 +70,7 @@ mod picking;
 mod planning;
 mod putting;
 mod queueing;
+mod recalling;
 mod region;
 mod replaying;
 mod resuming;
@@ -366,6 +368,12 @@ pub(crate) fn converse<T: Terminal>(
         opening,
     );
 
+    // What this directory has been asked before, read once here rather than at
+    // the first arrow. It is one small file and this is before the first frame
+    // either way; reading it under the key would put a disk between a press and
+    // the line it puts in the box.
+    held.recalling = Recalling::new(terms.sessions.clone(), terms.workspace.clone());
+
     // The opening is the first thing in the transcript, which is where a
     // reader scrolls back to find it. Written down rather than stood over the
     // box: the band it lands in is the one that scrolls, so the card keeps its
@@ -498,6 +506,7 @@ pub(crate) fn converse<T: Terminal>(
             runner: &mut runner,
             editor: &mut held.editor,
             planning: &mut held.planning,
+            recalling: &mut held.recalling,
             images: &mut held.images,
             left,
             keys,
@@ -916,6 +925,7 @@ impl Turn<'_, '_> {
                     kept: &mut self.held.kept,
                     opened: &mut self.held.opened,
                     viewing: &mut self.held.viewing,
+                    recalling: &mut self.held.recalling,
                     opened_list: &mut self.held.opened_list,
                     listing: &mut self.held.listing,
                     says: self.says,
@@ -1108,6 +1118,7 @@ fn take<T: Terminal>(
                 turning: &turning,
                 planning: &mut held.planning,
                 opened_list: &held.opened_list,
+                history: held.recalling.place(),
             },
             &says,
             terms.style(),
@@ -1454,6 +1465,15 @@ struct Held<'a> {
     /// it runs on the worker thread — and what this holds is a copy of the plan
     /// and the setting of the key that opens it, both of which outlive it.
     planning: Planning,
+    /// The prompts this directory has already been asked, and where an arrow
+    /// has walked back to in them.
+    ///
+    /// For the session and past it: the list came off a file when the session
+    /// opened and goes back to it as each line is finished, so a walk reaches
+    /// through what was asked here yesterday. `/clear` does not empty it —
+    /// forgetting a conversation is not forgetting how somebody phrased the
+    /// question they are about to ask again.
+    recalling: Recalling,
     /// The images pasted at the prompt, in the order they were pasted. The
     /// paste puts `[image N]` in the line and the path of the Nth here, and a
     /// prompt saying the marker sends the image. For the session rather than
@@ -1491,6 +1511,10 @@ impl<'a> Held<'a> {
             viewing: queueing::Standing::default(),
             listing: leaving::Leaving::default(),
             planning: Planning::new(plan),
+            // Nothing to reach back through and nowhere to write. The session
+            // that has a directory to read one out of puts it here itself:
+            // every other holder of a `Held` is a test of something else.
+            recalling: Recalling::default(),
             images: Vec::new(),
             told: false,
             answers,

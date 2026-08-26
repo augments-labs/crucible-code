@@ -69,6 +69,9 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
     Prompt {
         draft: Draft::at(said, at),
         left: Remaining::default(),
+        // Nothing, so that every test written before the box could say where a
+        // line came from is still a test about the box that could not.
+        history: Recalled::default(),
         mode: MODE,
         tone: Slot::Accent,
         hint: HINT,
@@ -1327,5 +1330,95 @@ fn a_row_naming_a_file_never_reaches_past_the_last_column() {
                 row.text()
             );
         }
+    }
+}
+
+/// The same box, standing on a line taken back out of the retained prompts.
+fn recalling(said: &str, at: usize, of: usize) -> Prompt<'_> {
+    Prompt {
+        history: Recalled::new(at, of),
+        ..typed(said)
+    }
+}
+
+#[test]
+fn the_top_border_says_which_retained_prompt_the_line_came_from() {
+    // The arrows put a line in the box that nobody just typed, and the only
+    // thing on screen that could say where it came from is the box itself. It
+    // goes into the rule across the top: the row above the box is the window
+    // reading's and the row below is the mode's, so the border is the one
+    // place a fact about the line has that is not already spoken for.
+    let prompt = recalling("rename the tail's bound", 87, 100);
+
+    assert_eq!(
+        row(&prompt, 1, 80, Glyphs::Unicode),
+        format!("╭── history 87/100 {}╮", "─".repeat(78 - 18))
+    );
+}
+
+#[test]
+fn the_top_border_is_the_rule_it_always_was_while_nobody_is_walking_back() {
+    // Nothing to say is drawn as nothing rather than as an empty label: the
+    // ordinary box is the one on screen for the whole session, and a rule with
+    // a gap in it would be the shape it wears at rest.
+    let walking = recalling("rename the tail's bound", 4, 9);
+    let resting = typed("rename the tail's bound");
+
+    assert_ne!(
+        row(&walking, 1, 80, Glyphs::Unicode),
+        row(&resting, 1, 80, Glyphs::Unicode)
+    );
+    assert_eq!(
+        row(&resting, 1, 80, Glyphs::Unicode),
+        format!("╭{}╮", "─".repeat(78))
+    );
+}
+
+#[test]
+fn the_place_in_the_history_is_said_whole_or_not_at_all() {
+    // Half of `87/100` is a number, and a number that is not the place is
+    // worse than nothing — the same bargain the model on the status row makes.
+    // What may never give way is the rule itself: the border under the box is
+    // laid out against the same width, and a top edge a column short of it is
+    // the first thing an eye finds.
+    for columns in WIDTHS.filter(|columns| *columns >= FRAMED_AT) {
+        let prompt = recalling("rename the tail's bound", 87, 100);
+        let border = row(&prompt, 1, columns, Glyphs::Unicode);
+
+        assert_eq!(width::columns(&border), columns, "at {columns}");
+        assert!(
+            border.contains("history 87/100") || !border.contains("history"),
+            "half a place at {columns}: {border:?}"
+        );
+    }
+}
+
+#[test]
+fn a_box_too_narrow_for_a_frame_says_nothing_about_the_history() {
+    // There is no border to inset it into, and the rows that are left are the
+    // line and the mode. A label drawn on either of those would be taking a
+    // row from the two things the box exists for.
+    let prompt = recalling("rename the tail's bound", 87, 100);
+
+    for columns in 1..FRAMED_AT {
+        for said in drawn(&prompt, columns, Glyphs::Unicode) {
+            assert!(!said.contains("history"), "at {columns}: {said:?}");
+        }
+    }
+}
+
+#[test]
+fn a_place_outside_the_prompts_it_counts_is_no_place_at_all() {
+    // The count and the place come from the same walk, so these are a caller
+    // that has miscounted rather than a state a reader can reach. Drawn, the
+    // border would say the line came from a prompt that is not there.
+    for (at, of) in [(0, 100), (101, 100), (1, 0), (0, 0)] {
+        let prompt = recalling("rename the tail's bound", at, of);
+
+        assert_eq!(
+            row(&prompt, 1, 80, Glyphs::Unicode),
+            format!("╭{}╮", "─".repeat(78)),
+            "{at}/{of}"
+        );
     }
 }
