@@ -1430,7 +1430,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
         .seen
         .try_iter()
         .filter_map(|event| match event {
-            Event::ToolRequested { call, summary } => Some((call, summary)),
+            Event::ToolRequested { call, summary, .. } => Some((call, summary)),
             Event::TurnStarted { .. }
             | Event::Delta { .. }
             | Event::ToolFinished { .. }
@@ -1452,6 +1452,38 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
     let (call, summary) = requested.first().expect("the call to have been announced");
     assert_eq!(&*call.name, "read");
     assert_eq!(summary.as_str(), asked);
+}
+
+#[test]
+fn a_call_is_announced_with_its_execution_capabilities() {
+    let script = Script::new(vec![calling("a", "detachable", "{}"), saying("done")]);
+    let mut scripted = Scripted::new(
+        script,
+        tools([Fixed::new("detachable").detachable()]),
+        Verdict::Allow,
+    );
+
+    scripted.turn("go").unwrap();
+
+    let backgroundable = scripted.seen.try_iter().find_map(|event| match event {
+        Event::ToolRequested { backgroundable, .. } => Some(backgroundable),
+        Event::TurnStarted { .. }
+        | Event::Delta { .. }
+        | Event::ToolFinished { .. }
+        | Event::Wrote { .. }
+        | Event::Carried { .. }
+        | Event::Compacting { .. }
+        | Event::Compacted { .. }
+        | Event::Retrying
+        | Event::Aged { .. }
+        | Event::Unread { .. }
+        | Event::Steered { .. }
+        | Event::TurnFinished { .. }
+        | Event::Spent { .. }
+        | Event::Failed { .. } => None,
+    });
+
+    assert_eq!(backgroundable, Some(true));
 }
 
 #[test]

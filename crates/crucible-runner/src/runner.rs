@@ -348,6 +348,17 @@ impl Runner {
             .map_or_else(|| Summary::new(""), |tool| tool.summary(&call.args))
     }
 
+    /// Whether this call can be left running while the turn goes on.
+    ///
+    /// False for an unknown or unrevealed name, which is a call the pass refuses
+    /// rather than one the interface should offer to control.
+    #[must_use]
+    fn backgroundable(&self, call: &ToolCall) -> bool {
+        self.tools
+            .find(&call.name)
+            .is_some_and(|tool| tool.backgroundable(&call.args))
+    }
+
     /// What the next request would carry, in tokens.
     ///
     /// An estimate for the stretch nothing has reported on yet, and what the
@@ -889,6 +900,7 @@ impl Runner {
                 // later, and it has nothing to say about itself first.
                 events.post(Event::ToolRequested {
                     summary: self.about(call),
+                    backgroundable: self.backgroundable(call),
                     call: call.clone(),
                 });
             }

@@ -213,6 +213,7 @@ pub(crate) struct Fixed {
     sensitivity: Sensitivity,
     diff: Option<Diff>,
     writes: Vec<Box<str>>,
+    backgroundable: bool,
 }
 
 impl Fixed {
@@ -228,6 +229,7 @@ impl Fixed {
             },
             diff: None,
             writes: Vec::new(),
+            backgroundable: false,
         }
     }
 
@@ -262,6 +264,12 @@ impl Fixed {
         self
     }
 
+    /// Makes it a tool whose calls can be left running.
+    pub(crate) fn detachable(mut self) -> Self {
+        self.backgroundable = true;
+        self
+    }
+
     /// Makes it a tool that rewrote a file and has the change to show for it.
     pub(crate) fn showing(mut self, diff: Diff) -> Self {
         self.diff = Some(diff);
@@ -287,6 +295,10 @@ impl Tool for Fixed {
     /// other end, so this says something no other value could be mistaken for.
     fn summary(&self, args: &ToolArgs) -> Summary {
         Summary::new(args.as_str())
+    }
+
+    fn backgroundable(&self, _args: &ToolArgs) -> bool {
+        self.backgroundable
     }
 
     fn run(&self, _approved: Approved, watch: &dyn Watch) -> Result<ToolOutput, ToolError> {

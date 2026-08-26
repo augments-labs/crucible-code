@@ -104,6 +104,8 @@ pub enum Event {
         /// asked where the tools are in reach, since the arguments are opaque
         /// to whatever draws the row.
         summary: Summary,
+        /// Whether the running call can be left to finish in the background.
+        backgroundable: bool,
     },
 
     /// More of what a running tool has printed, in the order it arrived.
@@ -255,10 +257,15 @@ impl std::fmt::Debug for Event {
                 f.debug_struct("TurnStarted").field("turn", turn).finish()
             }
             Self::Delta { text } => f.debug_struct("Delta").field("text", text).finish(),
-            Self::ToolRequested { call, summary } => f
+            Self::ToolRequested {
+                call,
+                summary,
+                backgroundable,
+            } => f
                 .debug_struct("ToolRequested")
                 .field("call", call)
                 .field("summary", summary)
+                .field("backgroundable", backgroundable)
                 .finish(),
             Self::Wrote { call, text } => f
                 .debug_struct("Wrote")

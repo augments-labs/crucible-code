@@ -569,6 +569,20 @@ pub trait Tool: Send + Sync {
     /// something that never happened.
     fn summary(&self, args: &ToolArgs) -> Summary;
 
+    /// Whether this call can be left running while the turn goes on.
+    ///
+    /// False by default because returning from [`Tool::run`] ordinarily means the
+    /// operation is over. A tool that answers true owns the handoff which keeps
+    /// the operation alive and makes its eventual completion observable; a front
+    /// end may then honestly offer its background action while this call is out.
+    ///
+    /// Takes the arguments because this is a capability of the call rather than
+    /// necessarily of every invocation of the tool. It is asked before the call
+    /// runs and must agree with the execution path [`Tool::run`] will take.
+    fn backgroundable(&self, _args: &ToolArgs) -> bool {
+        false
+    }
+
     /// What a compaction should remember of this call, where there is anything.
     ///
     /// `None` is the ordinary answer: most calls leave nothing a rebuilt session
