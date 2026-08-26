@@ -846,7 +846,22 @@ impl Turn<'_, '_> {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return false,
+            Err(RecvTimeoutError::Disconnected) => {
+                // An explicit compaction can finish and close the channel with
+                // its completion events already queued. Keep driving ordinary
+                // live frames until the factual 100% dwell has elapsed; sleeping
+                // only one tick preserves keyboard and resize responsiveness.
+                let now = Instant::now();
+                if let Some(wait) = self.turning.completion_wait(now) {
+                    if wait.is_zero() {
+                        self.turning.finished_frame(now);
+                        return false;
+                    }
+                    thread::sleep(wait.min(TICK));
+                } else {
+                    return false;
+                }
+            }
         }
 
         // Reaped and counted before the box is drawn again, because the row under

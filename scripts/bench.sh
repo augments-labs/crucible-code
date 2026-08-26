@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The performance budgets, measured. `scripts/check.sh` proves the code is
-# correct; this proves it is still fast, and RELEASING.md blocks a tag on it.
+# The performance budgets, measured. Deterministic source checks have their own
+# gates; this script owns speed, and RELEASING.md blocks a tag on it.
 #
 #     scripts/bench.sh              every budget
 #     scripts/bench.sh startup      first frame, first input

@@ -238,7 +238,7 @@ impl Bash {
     }
 
     /// How long a command asked to be left running is watched before the call
-    /// answers, in place of [`FIRST`].
+    /// answers, in place of `FIRST`.
     ///
     /// The default is the one a reader waits through, and it is a judgement
     /// about them rather than about any machine: long enough for a command that

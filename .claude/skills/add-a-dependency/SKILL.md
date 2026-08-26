@@ -13,8 +13,7 @@ Everything below assumes you already decided you cannot avoid it.
 
 And when you cannot: **add it, and build the feature.** The ladder decides which
 rung the answer is on, never whether the work ships. Cutting a feature because
-it would need a dependency is under-delivery wearing discipline as a costume —
-see `.claude/rules/dependencies.md`.
+it would need a dependency is under-delivery wearing discipline as a costume.
 
 ## Before you add it
 
@@ -47,7 +46,7 @@ some-crate.workspace = true
 
 The `=` is not decoration. It keeps a release reproducible and makes a version
 bump a reviewed change rather than a side effect of somebody else's publish.
-`scripts/check.sh` fails on a caret. Dependabot moves the pin as a pull request
+The repository gate fails on a caret. Dependabot moves the pin as a pull request
 that CI has to pass.
 
 The workspace entry is where the pin and the reason live, which is why the
@@ -58,24 +57,14 @@ missing comment together.
 
 ## Where it may go
 
-Dependencies point down only, and cargo enforces it:
-
-```
-core       -> (nothing)
-privacy    -> (nothing)
-tui        -> (nothing)
-config     -> core
-provider   -> core
-tools      -> core
-auth       -> core, privacy
-session    -> core, privacy
-runner     -> core, session
-crucible-code -> all of them
-```
+Read the current internal graph from the manifests and add the narrowest edge
+that supports the feature. The repository gate requires a deliberate graph
+update, so a new provider, tool, sandbox or other plugin crate cannot acquire an
+unreviewed dependency on another implementation crate.
 
 Adding a crate to `crucible-core` puts it in every other crate's build. Push it
-as far up the graph as it will go — if only the Anthropic adapter needs it, it
-belongs to `crucible-provider`, not to `core`.
+as far up the graph as it will go — if only one provider adapter needs it, it
+belongs with that adapter, not in `core`.
 
 ## What the choice has to satisfy
 
@@ -102,13 +91,12 @@ belongs to `crucible-provider`, not to `core`.
 ```bash
 cargo build          # refresh Cargo.lock
 scripts/check.sh
-cargo deny check     # advisories, licences, sources
 ```
 
-`scripts/check.sh` covers the pin and the comment. `cargo deny check` covers
-what the source cannot show: whether anyone has published an advisory against
-the version you just pinned. CI runs it on any change to `Cargo.toml`,
-`Cargo.lock` or `deny.toml`, and weekly regardless — because pinning is exactly
-what stops that answer from changing on its own.
+Blocking CI supplies cargo-deny and checks licenses and sources. `audit.yml`
+checks advisories when dependencies change and weekly regardless — because
+pinning is exactly what stops that answer from changing on its own. Install the
+pinned cargo-deny version only when you want to reproduce those CI checks
+locally.
 
 Commit the lockfile with the change. `chore(deps): add <crate> for <reason>`.

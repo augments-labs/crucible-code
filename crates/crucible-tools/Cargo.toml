@@ -1,7 +1,7 @@
 [package]
 name = "crucible-tools"
 description = "Filesystem, search and process tools the agent can call."
-publish = false
+publish.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

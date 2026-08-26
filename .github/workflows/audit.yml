@@ -1,24 +1,16 @@
 name: audit
 
-# The other half of pinning. Nothing in this workspace moves on its own, which
-# is what makes a build reproducible and also what makes a published advisory
-# invisible — the vulnerable version stays put and nobody finds out.
-#
-# So this runs on a clock rather than on a commit. `scripts/check.sh` promises
-# that a green run locally is a green run in CI, and an advisory scan cannot
-# keep that promise: the answer changes when somebody else publishes, not when
-# you edit. Putting it there would turn a pull request red for something
-# discovered overnight in code the contributor never touched.
+# Advisory data changes without a source change, so this scan remains separate
+# from deterministic blocking CI. License and source policy is owned by
+# dependency-policy.yml; this workflow owns advisories only.
 on:
   schedule:
     # Monday morning, so a week's worth of advisories is waiting at the start of
     # one rather than over a weekend.
     - cron: "0 6 * * 1"
 
-  # And whenever the dependency set itself changes, which is the one time the
-  # answer does turn on the diff — a crate can arrive already carrying an
-  # advisory, and that is worth knowing in the pull request that adds it rather
-  # than up to a week later.
+  # A dependency change can introduce an advisory immediately, so scan that
+  # change as well as the weekly schedule.
   push:
     branches: [main]
     paths: [Cargo.toml, Cargo.lock, deny.toml, .github/workflows/audit.yml]
@@ -37,11 +29,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The executable is pinned just like an action; `cargo deny check` still
-      # refreshes the advisory database, whose answer is the part meant to move
-      # between runs.
       - run: cargo install cargo-deny --version '=0.20.2' --locked
-
-      # Reads Cargo.lock; builds nothing. Policy is in `deny.toml`.
-      - run: cargo deny check
+      - run: cargo deny --locked check advisories

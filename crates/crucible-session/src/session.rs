@@ -427,7 +427,7 @@ impl Session {
     /// What the log this session was picked up from last said it carried.
     ///
     /// `None` for a session that was started here, and for one whose log ends
-    /// with anything other than that line — see [`replay`].
+    /// with anything other than that line — see `replay`.
     #[must_use]
     pub const fn calibrated(&self) -> Option<Calibration> {
         self.calibration

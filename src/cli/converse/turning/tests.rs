@@ -194,7 +194,7 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
 }
 
 #[test]
-fn completed_compaction_draws_one_full_frame_before_the_bar_disappears() {
+fn completed_compaction_stays_full_long_enough_to_be_seen() {
     let mut turning = Turning::started(None);
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
@@ -220,7 +220,16 @@ fn completed_compaction_draws_one_full_frame_before_the_bar_disappears() {
     assert!(complete.contains("100%"), "{complete:?}");
     assert!(turning.moved(), "the completed bar did not produce a frame");
 
-    turning.finished_frame();
+    let completed = turning.completed.expect("completion was not timed");
+    turning.finished_frame(
+        (completed + COMPLETE_FOR)
+            .checked_sub(Duration::from_millis(1))
+            .expect("the completion deadline to exceed one millisecond"),
+    );
+    assert_eq!(turning.part, 100, "completion disappeared before its dwell");
+    assert!(!turning.moved(), "the held completion invented a new frame");
+
+    turning.finished_frame(completed + COMPLETE_FOR);
     assert!(
         turning.moved(),
         "clearing the completed bar did not guarantee a following frame"
@@ -343,7 +352,7 @@ fn another_compaction_before_the_completed_frame_keeps_the_new_progress() {
         part: 12,
     });
 
-    turning.finished_frame();
+    turning.finished_frame(Instant::now() + COMPLETE_FOR);
 
     assert_eq!(turning.making, Some(Compacting::Full));
     assert_eq!(turning.part, 12);
@@ -358,12 +367,12 @@ fn an_in_progress_value_cannot_claim_or_clear_completion() {
     });
 
     assert_eq!(turning.part, 99);
-    turning.finished_frame();
+    turning.finished_frame(Instant::now() + COMPLETE_FOR);
     assert!(turning.making.is_some());
 }
 
 #[test]
-fn the_compaction_bar_uses_more_cells_when_the_window_has_them_and_never_overflows() {
+fn the_compaction_bar_uses_two_thirds_of_the_available_cells_and_never_overflows() {
     let style = Style::plain();
     let glyphs = style.glyphs();
     let short = making(50, 44, style).expect("a short bar");
@@ -375,7 +384,20 @@ fn the_compaction_bar_uses_more_cells_when_the_window_has_them_and_never_overflo
             .saturating_add(row.text().matches(glyphs.hollow()).count())
     };
 
-    assert!(cells(&long) > BAR, "{}", long.text());
+    let available = |columns: usize| {
+        columns
+            .saturating_sub(Working::gutter(glyphs))
+            .saturating_sub(BAR_TAIL)
+            .min(BAR_MAX)
+    };
+    assert_eq!(
+        cells(&short),
+        available(44) * BAR_NUMERATOR / BAR_DENOMINATOR
+    );
+    assert_eq!(
+        cells(&long),
+        available(80) * BAR_NUMERATOR / BAR_DENOMINATOR
+    );
     assert!(
         cells(&long) > cells(&short),
         "{} / {}",

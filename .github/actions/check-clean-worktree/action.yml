@@ -1,0 +1,19 @@
+name: Verify clean worktree
+description: Ensure a successful CI job did not change or add repository files.
+
+runs:
+  using: composite
+  steps:
+    - name: Verify clean worktree
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        changed=$(git status --short --untracked-files=all --ignore-submodules=none)
+        if [[ -z "$changed" ]]; then
+          exit 0
+        fi
+
+        echo "::error::This CI job changed the checked-out worktree"
+        printf '%s\n' "$changed"
+        exit 1

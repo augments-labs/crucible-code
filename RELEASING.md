@@ -40,9 +40,9 @@ the workspace ships as one unit and there is no per-crate version to drift.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.
-5. **The install path works from scratch** — advisory for now, off rather than
-   gone, the way the line ceiling is: the release workflow still runs its smoke
-   job but no longer waits for it before publishing, and this local run is
+5. **The install path works from scratch** — advisory for now: the release
+   workflow still runs its smoke job but no longer waits for it before
+   publishing, and this local run is
    likewise worth doing when the packaging changed rather than on every tag.
    Every gate above builds from this tree with this machine's toolchain, so
    none of them can see what a shipped binary needs from the machine it lands
@@ -76,14 +76,10 @@ the workspace ships as one unit and there is no per-crate version to drift.
 ## Cutting it
 
 Nothing reaches `main` except through a pull request, and none merges until
-`scripts/check.sh`, `scripts/bench.sh` and `400 changed lines` are green on it.
-That is a repository ruleset with no bypass, so it holds for the person cutting
-the release too — the tired push at the end of a long day is the one it exists
-to catch. A required check is the only kind there is: one that merely runs is a
-red mark beside a merge button that still works, which is what the size check
-was until it was added to that list. It is still on it now that it reports
-rather than blocks, so that turning the ceiling back on is one line in the
-workflow and nothing here.
+`CI required` is green. That aggregate covers Rust, repository, dependency and
+performance workflows, so the ruleset needs one stable status as new language
+workflows become peers. The ruleset has no bypass and therefore applies to the
+release change too.
 
 ```bash
 # 1. Bump the single version, and update the changelog in the same commit.
@@ -117,10 +113,10 @@ started drawing one: read that diff rather than accepting it blind, because
 anything on it is a rendering change that arrived with the release and belongs
 in the changelog rather than in a snapshot nobody looked at.
 
-`cargo deny` is not a required check, and must not become one. It runs only when
-the dependency set changes, so on a release that touches no dependency it never
-reports — and a required check that never reports leaves the pull request
-pending for ever rather than failing it.
+The scheduled `audit` status is not required: it runs only when dependencies
+change or on its clock, so many pull requests never receive it. Deterministic
+license and source policy is part of `CI required` through the always-called
+dependency workflow.
 
 Pushing the tag is the trigger. The release workflow builds every artifact,
 checksums and attests them, and opens the GitHub Release with the changelog

@@ -223,6 +223,14 @@ impl Load {
 
     /// What the request that has just been answered carried.
     pub(super) fn carried(&mut self, carried: Carried) {
+        // A later exact count may be lower than the calibrated estimate it
+        // replaces. Keep the fullest uncompacted state the prompt has already
+        // shown before accepting that correction for accounting and compaction.
+        // The first report is the calibration itself: retaining the deliberately
+        // pessimistic pre-report estimate would pin a new session too low.
+        if self.carried > 0 || self.visible.is_some() {
+            self.hold_visible();
+        }
         self.carried = carried.tokens();
         self.input_reported = true;
         // The count just reported is the input to the response now arriving.
@@ -288,19 +296,23 @@ impl Load {
 
     /// Keeps this load's cautious recount as the prompt's visible floor.
     ///
-    /// Called once on resume. Repeated calls keep the first reading: a later
-    /// call must not be able to raise a floor by measuring ordinary live state.
+    /// Called on resume and before an exact provider count replaces an estimate.
+    /// Repeated calls retain the fullest state already shown: accounting may be
+    /// corrected downwards, but an uncompacted transcript must not appear to gain
+    /// room and then lose it again as more results arrive.
     pub(super) fn resumed(&mut self) {
         self.hold_visible();
     }
 
     fn hold_visible(&mut self) {
-        if self.visible.is_none() {
-            self.visible = Some(Visible {
-                used: self.tokens(),
-                fixed: self.bytes_to_tokens(self.overhead),
-            });
-        }
+        let current = Visible {
+            used: self.tokens(),
+            fixed: self.bytes_to_tokens(self.overhead),
+        };
+        self.visible = Some(self.visible.map_or(current, |visible| Visible {
+            used: visible.used.max(current.used),
+            fixed: visible.fixed.max(current.fixed),
+        }));
     }
 
     /// What this load would have a session remember, where it knows exactly.
@@ -321,7 +333,23 @@ impl Load {
 
     /// What that response produced.
     pub(super) fn spent(&mut self, spent: Spend) {
-        let spent = spent.tokens();
+        // Streaming bytes are estimated until this exact output count catches
+        // up. Preserve the prior reading only when the report would lower the
+        // load; a larger exact count correctly consumes more visible room.
+        let reported = spent.tokens();
+        let corrected = self
+            .spent
+            .saturating_sub(self.current_spent)
+            .saturating_add(reported);
+        let mut exact = *self;
+        exact.spent = corrected;
+        exact.current_spent = reported;
+        exact.output_reported = true;
+        exact.unreported = 0;
+        if exact.tokens() < self.tokens() {
+            self.hold_visible();
+        }
+        let spent = reported;
         self.spent = self
             .spent
             .saturating_sub(self.current_spent)

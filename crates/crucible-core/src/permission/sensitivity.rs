@@ -136,7 +136,7 @@ impl fmt::Display for Host {
 /// below the workspace root. A file in a directory the workspace merely
 /// reaches has no second spelling, so only an absolute pattern can name it.
 ///
-/// Which of them a particular target holds is a [`Wanted`], because one of
+/// Which of them a particular target holds is a `Wanted`, because one of
 /// these is built per file a walk reaches rather than per call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target(Option<Named>);

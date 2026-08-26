@@ -183,6 +183,23 @@ fn locally_estimated_tool_output_updates_an_older_exact_percentage() {
 }
 
 #[test]
+fn tool_results_cannot_appear_to_free_room_before_context_is_replaced() {
+    let mut load = Load::default();
+    load.carried(Carried::new(150_000));
+    load.recorded(&results(42_000));
+    assert_eq!(load.left(Some(200_000), 36_000), Some(0));
+
+    // The next request reports a slightly lower exact count than the local
+    // estimate. That correction still describes the same transcript plus these
+    // results; it did not free context, so the visible reading cannot rise to 1%
+    // before another result pushes it back to 0%.
+    load.responding(0);
+    load.carried(Carried::new(162_000));
+
+    assert_eq!(load.left(Some(200_000), 36_000), Some(0));
+}
+
+#[test]
 fn response_growth_is_estimated_until_output_usage_catches_up() {
     let mut load = Load::default();
     load.recorded(&results(200_000));

@@ -701,7 +701,7 @@ fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
     for (provider, model) in &offered {
         assert!(
             facts(provider, model).is_some(),
-            "{provider}/{model} is offered and has no row — run scripts/models.sh"
+            "{provider}/{model} is offered and has no row — run generate-models"
         );
     }
 

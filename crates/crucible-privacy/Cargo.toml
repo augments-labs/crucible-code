@@ -1,7 +1,7 @@
 [package]
 name = "crucible-privacy"
 description = "Private directories and files for crucible's sensitive local state."
-publish = false
+publish.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

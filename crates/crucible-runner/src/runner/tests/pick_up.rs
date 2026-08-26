@@ -199,7 +199,11 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     scripted.runner.model.window = Some(200_000);
 
     scripted.turn("go").expect("a measured turn");
-    assert_eq!(scripted.runner.left(), Some(72));
+    assert_eq!(
+        scripted.runner.left(),
+        Some(32),
+        "the exact output correction visibly freed uncompacted context"
+    );
 
     // Started, so it brings nothing back with it, and closing the recorded one
     // is what finishes writing its log.
@@ -217,7 +221,7 @@ fn a_session_picked_up_estimates_window_left_before_it_answers_again() {
     assert_eq!(
         scripted.runner.left(),
         Some(72),
-        "the session came back knowing what it had been told"
+        "the session came back using its last exact provider measurement"
     );
 }
 

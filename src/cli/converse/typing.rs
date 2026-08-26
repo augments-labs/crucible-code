@@ -1128,6 +1128,11 @@ pub(super) fn during<T: Terminal>(
         }
     }
 
+    // A completed compaction remains whole for its short dwell, then gives the
+    // next frame back here. Checked before movement so the frame at the boundary
+    // is the no-bar state rather than one last 100% frame.
+    turning.finished_frame(Instant::now());
+
     // Asked last and folded in rather than checked first, so that a key and a
     // beat that landed in the same look at the keyboard are one frame. It is
     // also what redraws a row nobody touched: the clock counts and the mark
@@ -1173,12 +1178,6 @@ pub(super) fn during<T: Terminal>(
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
             None => stand(renderer, editor, footing, says, style)?,
         }
-
-        // After the frame, never before it: Compacted and its successor may
-        // already be waiting in the bounded inbox, but this pass has now offered
-        // the factual 100% state to the renderer. The next ordinary beat removes
-        // only that live row; no worker sleep and no committed scrollback.
-        turning.finished_frame();
     }
 
     Ok(Meanwhile::Nothing)
@@ -1228,7 +1227,7 @@ pub(super) enum Meanwhile {
 
 /// What one key pressed while a turn is running means.
 ///
-/// Written apart from the loop above for the reason [`super::super::heard`] is:
+/// Written apart from the loop above for the reason `heard` is:
 /// that loop reads the process's own keyboard and cannot be driven from a test,
 /// and this much of the reading can be.
 ///

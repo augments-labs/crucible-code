@@ -1,15 +1,9 @@
-# What the pinning gate cannot see.
+# Dependency policy beyond manifest syntax.
 #
-# `scripts/check.sh` proves every dependency is `=`-pinned and says why it is
-# there. Both are properties of the source, so both are decided by reading the
-# file — which is why they belong to a gate that runs before a commit and always
-# gives the same answer for the same tree.
-#
-# Nothing here is. A crate is not vulnerable because of how it was written down;
-# it becomes vulnerable when somebody publishes an advisory against a version
-# that was already pinned, and it stops being vulnerable without the source
-# changing either. That answer moves on a clock, so the scan that reads this
-# runs on one — see `.github/workflows/audit.yml`.
+# The local repository gate checks exact pins and their justification. Blocking
+# CI reads this file for license and source policy. Advisory data can change
+# without a source change, so `.github/workflows/audit.yml` owns that scan on
+# dependency changes and a schedule.
 
 [advisories]
 # An advisory that genuinely does not reach us through crucible still gets an

@@ -3,12 +3,13 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.23.4"
+version = "0.23.5"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
 repository = "https://github.com/augments-labs/crucible-code"
 authors = ["Peguy Njoyim"]
+publish = false
 
 # Layering lives here. A crate can only reach what its own `[dependencies]`
 # names, and cargo rejects cycles outright — so the arrows below are compiled,
@@ -229,8 +230,8 @@ windows-sys = { version = "=0.61.2", features = [
 ] }
 
 # --- Encoded standards -------------------------------------------------------
-# These lint tables are the standard. A rule that cannot be expressed here, in
-# `clippy.toml`, or in `scripts/check.sh` is not enforceable and does not exist.
+# These lint tables are the Rust compiler standard. Cross-file repository
+# policy is enforced by `scripts/repo-checks.sh`.
 # Every crate opts in with `[lints] workspace = true`.
 
 [workspace.lints.rust]
@@ -275,7 +276,12 @@ float_cmp = "deny"
 mem_forget = "deny"
 rc_buffer = "deny"
 
-# Function length. The per-file cap lives in `scripts/check.sh`; the compiler
+# Every unsafe boundary explains the proof the compiler cannot make. Unsafe code
+# itself is denied above except in the reviewed platform modules; this lint owns
+# the mechanically checkable part of keeping those exceptions auditable.
+undocumented_unsafe_blocks = "deny"
+
+# Function length. The per-file cap lives in `scripts/repo-checks.sh`; the compiler
 # cannot see file boundaries.
 too_many_lines = "deny"
 
@@ -286,7 +292,7 @@ must_use_candidate = "allow"
 [package]
 name = "crucible-code"
 description = "The harness where agents are forged."
-publish = false
+publish.workspace = true
 readme = "README.md"
 keywords = ["agent", "cli", "tui", "llm", "coding-assistant"]
 categories = ["command-line-utilities", "development-tools"]

@@ -117,22 +117,36 @@ const BACKGROUND: &str = "(ctrl+b to background)";
 /// rather than a promise.
 const SAMPLE: usize = 5;
 
-/// The least width the bar under the word keeps when it is shown.
+/// The least unscaled room the bar needs before it is shown.
 ///
 /// Below this the whole row gives way rather than drawing a progress sliver. On
-/// a wider window the bar takes the room available up to [`BAR_MAX`], so the
-/// extra columns become useful resolution rather than empty space.
+/// a wider window the bar uses two thirds of the room available up to
+/// [`BAR_MAX`], so the extra columns become useful resolution without letting
+/// the progress row dominate the prompt.
 const BAR: usize = 28;
 
-/// The most progress cells a wide window gives the bar.
+/// The most available progress cells considered on a wide window, before the
+/// two-thirds scale is applied.
 ///
-/// Enough for one cell per percentage point. More would repeat values rather
-/// than add information, and this keeps every frame bounded by a small constant
-/// even on an unusually wide terminal.
+/// A larger source width would repeat percentage values rather than add
+/// information, and this keeps every frame bounded by a small constant even on
+/// an unusually wide terminal.
 const BAR_MAX: usize = 100;
+
+/// The fraction of its former available width the progress bar keeps.
+const BAR_NUMERATOR: usize = 2;
+const BAR_DENOMINATOR: usize = 3;
 
 /// Columns beside the progress cells: the gap and the longest percentage.
 const BAR_TAIL: usize = 6;
+
+/// How long a completed bar remains visible.
+///
+/// A single render frame can be replaced by the completion events already
+/// waiting behind it, which made a recap appear to stop around ninety percent.
+/// Half a second is long enough to perceive and short enough not to hold up the
+/// next activity; only the drawing side waits, never the worker.
+const COMPLETE_FOR: Duration = Duration::from_millis(500);
 
 /// How far in the sample stands, in columns.
 ///
@@ -197,10 +211,10 @@ pub(super) struct Turning {
     left: Option<u8>,
     /// Why room is being made, and `None` when no progress row remains.
     ///
-    /// Kept for one frame after [`Event::Compacted`] with `part` at 100, so the
-    /// completed work is visible before the live footing returns to thinking.
-    /// [`Self::finished_frame`] removes it after that frame has been offered to
-    /// the renderer; no transcript row is committed for this live state.
+    /// Kept briefly after [`Event::Compacted`] with `part` at 100, so completed
+    /// work remains perceptible before the live footing returns to the turn.
+    /// [`Self::finished_frame`] removes it after the dwell; no transcript row is
+    /// committed for this live state.
     making: Option<Compacting>,
     /// How much of the notes has been written, as a percentage.
     ///
@@ -209,8 +223,8 @@ pub(super) struct Turning {
     /// and this is how much of it has, which is the only thing here that is
     /// actually known.
     part: u8,
-    /// Whether the next successful live frame is the completed bar's one frame.
-    completing: bool,
+    /// When completion became visible, until its short dwell has elapsed.
+    completed: Option<Instant>,
     /// The calls whose tools are out, in the order they were requested.
     ///
     /// A response may ask for several before any of them runs. Each keeps its
@@ -474,7 +488,7 @@ impl Turning {
             left,
             making: None,
             part: 0,
-            completing: false,
+            completed: None,
             spent: None,
             calling: VecDeque::new(),
             queued: Queued::default(),
@@ -595,15 +609,15 @@ impl Turning {
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);
-                self.completing = false;
+                self.completed = None;
             }
-            // Keep completion in the footing until one 100% frame has been
-            // offered to the renderer. The runner posts that fact first; the
-            // assignment is defensive against an older or synthetic producer
-            // that sends only Compacted, and has no effect without `making`.
+            // Keep completion in the footing long enough to be perceived. The
+            // runner posts that fact first; this assignment is defensive against
+            // an older or synthetic producer that sends only `Compacted`, and has
+            // no effect without a progress row to complete.
             Event::Compacted { .. } => {
                 self.part = 100;
-                self.completing = self.making.is_some();
+                self.completed = self.making.map(|_| Instant::now());
             }
             _ => {}
         }
@@ -621,9 +635,6 @@ impl Turning {
             // Room having been made puts the turn back where a finished tool
             // does: waiting on the model, with the next request not yet asked.
             Event::ToolFinished { .. } if !self.calling.is_empty() => Doing::Running,
-            // Completion keeps its own word for the one full frame. The frame
-            // acknowledgement below moves it to thinking when the bar goes.
-            Event::Compacted { .. } if self.completing => Doing::Compacting,
             Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
             Event::Retrying => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,
@@ -654,7 +665,7 @@ impl Turning {
     /// them.
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
-            doing: self.doing,
+            doing: self.shown_doing(),
             left: self.left,
             spent: self.spent,
             beat: Working::beat(self.running()),
@@ -689,26 +700,43 @@ impl Turning {
         moved
     }
 
-    /// Clears live completion after its 100% frame has been drawn.
+    /// Clears live completion after its 100% dwell has elapsed.
     ///
     /// Called by the rendering owner, not by the event handler: receiving
-    /// [`Event::Compacted`] and removing its bar in one pass would leave no frame
-    /// in which completion exists. Idempotent so timeout frames and terminal
-    /// failures cannot resurrect or advance anything.
-    pub(super) fn finished_frame(&mut self) {
-        if !self.completing {
+    /// [`Event::Compacted`] and removing its bar in one pass would leave no
+    /// perceptible completion. Idempotent so timeout frames and terminal failures
+    /// cannot resurrect or advance anything.
+    pub(super) fn finished_frame(&mut self, now: Instant) {
+        let Some(completed) = self.completed else {
+            return;
+        };
+        if now.saturating_duration_since(completed) < COMPLETE_FOR {
             return;
         }
 
         self.making = None;
-        self.completing = false;
-        if self.doing == Doing::Compacting {
-            self.doing = Doing::Thinking;
-        }
+        self.completed = None;
         // `moved` stored the 100% picture immediately before this state was
         // cleared. Invalidate it so the next beat cannot compare the no-bar
         // state to an older equal beat and leave completion standing.
         self.drawn = None;
+    }
+
+    /// How much longer a completed bar must remain on screen.
+    pub(super) fn completion_wait(&self, now: Instant) -> Option<Duration> {
+        self.completed
+            .map(|completed| COMPLETE_FOR.saturating_sub(now.saturating_duration_since(completed)))
+    }
+
+    /// The activity word to draw while completion has its short dwell.
+    fn shown_doing(&self) -> Doing {
+        if self.doing == Doing::Interrupting {
+            Doing::Interrupting
+        } else if self.completed.is_some() {
+            Doing::Compacting
+        } else {
+            self.doing
+        }
     }
 
     /// The latest session reading, carried into the turn and updated by
@@ -755,7 +783,7 @@ impl Turning {
         let room = room - panel.len();
 
         let working = Working {
-            doing: self.doing.word(),
+            doing: self.shown_doing().word(),
             running: self.running(),
             spent: self.spent,
             stops: (self.doing != Doing::Interrupting).then_some(STOPS),
@@ -828,15 +856,19 @@ impl Turning {
 fn making(part: u8, columns: usize, style: Style) -> Option<Row> {
     let glyphs = style.glyphs();
     let gutter = Working::gutter(glyphs);
-    let bar = columns
+    let available = columns
         .saturating_sub(gutter)
         .saturating_sub(BAR_TAIL)
         .min(BAR_MAX);
 
-    if part == 0 || bar < BAR {
+    if part == 0 || available < BAR {
         return None;
     }
 
+    // Integer cells have no exact third where the available width is not a
+    // multiple of three, so the remainder is deliberately rounded down: the row
+    // is never wider than two thirds of the one it replaces.
+    let bar = available * BAR_NUMERATOR / BAR_DENOMINATOR;
     let full = usize::from(part.min(100)) * bar / 100;
     let row = Row::new()
         .then(Slot::Quiet, " ".repeat(gutter))

@@ -14,21 +14,23 @@
 //! with, no second key to store, and nothing that stops working because a key
 //! nobody set is missing.
 //!
-//! Unstreamed, unlike everything else in this crate. A turn is read as it
-//! arrives because somebody is watching it; a search is one small answer that is
-//! useless in halves, so it is read whole and bounded.
+//! A side answer is still consumed whole and bounded. OpenAI requires its
+//! Responses transport to be streamed, so that source frames the events but
+//! keeps only the terminal response; the result is no more visible in halves
+//! than either vendor's unstreamed answer.
 
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
 use std::time::{Duration, Instant};
 
 use crucible_core::{
-    Cancel, Credential, Fetch, Host, Outgoing, Page, Search, SearchResult, SourceError,
+    Cancel, Credential, Fetch, Host, Outgoing, Page, Redactions, Search, SearchResult, SourceError,
 };
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::json::Json;
-use crate::transport::Transport;
+use crate::sse::{Events, Framed};
+use crate::transport::{Response, Transport};
 
 #[cfg(test)]
 mod tests;
@@ -235,6 +237,10 @@ impl AnthropicWeb {
                 tools.object(|declared| {
                     declared.text("type", tool);
                     declared.text("name", if fetching { "web_fetch" } else { "web_search" });
+                    // A side request is exactly one source operation. Letting
+                    // the model repeat it can multiply metered calls without
+                    // adding another result the caller asked for.
+                    declared.number("max_uses", 1);
                     if fetching {
                         declared.number("max_content_tokens", FETCH_CONTENT);
                     }
@@ -431,6 +437,16 @@ fn results(answered: &Value) -> Result<Vec<SearchResult>, SourceError> {
         }
     }
 
+    if !blocks
+        .iter()
+        .any(|block| text_at(block, "/type").as_deref() == Some("web_search_tool_result"))
+    {
+        return Err(SourceError::Protocol {
+            named: ANTHROPIC,
+            problem: "the answer was written without searching the web".into(),
+        });
+    }
+
     let mut found: Vec<SearchResult> = Vec::new();
     for block in blocks {
         if text_at(block, "/type").as_deref() != Some("web_search_tool_result") {
@@ -591,6 +607,34 @@ impl OpenAiWeb {
             model: model.into(),
         }
     }
+
+    /// The headers both Responses services accept, including the secret.
+    fn headers(&self) -> Result<Outgoing, SourceError> {
+        let mut outgoing = Outgoing::new();
+        outgoing.set_header("content-type", "application/json");
+        outgoing.set_header("accept", "text/event-stream");
+        self.credential
+            .authorize(&mut outgoing)
+            .map_err(|problem| SourceError::Transport {
+                named: OPENAI,
+                problem: problem.to_string().into(),
+            })?;
+        Ok(outgoing)
+    }
+
+    /// Posts a streamed Responses request and keeps its terminal response.
+    fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
+        posted_openai(
+            Sending {
+                named: OPENAI,
+                transport: self.transport.as_ref(),
+                endpoint: self.endpoint.as_str(),
+            },
+            self.headers()?,
+            body,
+            cancel,
+        )
+    }
 }
 
 /// Writes one side request as the message list both Responses services accept.
@@ -608,6 +652,177 @@ fn openai_input(body: &mut crate::json::Object<'_>, text: &str) {
     });
 }
 
+/// Posts the one Responses shape accepted by both OpenAI services.
+///
+/// The public API can answer without streaming, but the `ChatGPT` account endpoint
+/// rejects that shape with `Stream must be set to true`. The terminal
+/// `response.completed` event carries the same whole response object the
+/// unstreamed API would have returned, so this frames the existing bounded body
+/// and hands that object to the existing result readers.
+fn posted_openai(
+    sending: Sending<'_>,
+    outgoing: Outgoing,
+    body: String,
+    cancel: &Cancel,
+) -> Result<Value, SourceError> {
+    let Sending {
+        named,
+        transport,
+        endpoint,
+    } = sending;
+    let redactions = outgoing.redactions();
+    let Response { status, body } =
+        transport
+            .post(endpoint, outgoing, body, cancel)
+            .map_err(|problem| SourceError::Transport {
+                named,
+                problem: redactions.redact(&problem.to_string()).into(),
+            })?;
+
+    if status != 200 {
+        let answered = read(named, body, cancel)?;
+        return Err(SourceError::Refused {
+            named,
+            status,
+            message: redactions.redact(&answered).into(),
+        });
+    }
+
+    openai_response(body, cancel, &redactions)
+}
+
+/// Reads a streamed side response through the same bounded SSE framing as turns.
+fn openai_response(
+    body: Box<dyn Read + Send>,
+    cancel: &Cancel,
+    redactions: &Redactions,
+) -> Result<Value, SourceError> {
+    let since = Instant::now();
+    let mut events = Events::new(BufReader::new(body.take(MOST as u64)));
+    let mut finished = Vec::new();
+
+    while let Some(next) = events.next() {
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(OPENAI));
+        }
+        if since.elapsed() >= MAX_WAIT {
+            return Err(SourceError::Transport {
+                named: OPENAI,
+                problem: timed_out().to_string().into(),
+            });
+        }
+
+        let event = match next {
+            Ok(Framed::Quiet) => continue,
+            Ok(Framed::Event(event)) => event,
+            Err(problem) => {
+                return Err(SourceError::Transport {
+                    named: OPENAI,
+                    problem: problem.to_string().into(),
+                });
+            }
+        };
+
+        let data = event.data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let payload: Value =
+            serde_json::from_str(data).map_err(|problem| SourceError::Protocol {
+                named: OPENAI,
+                problem: format!("an event was not JSON: {problem}").into(),
+            })?;
+
+        match text_at(&payload, "/type").as_deref() {
+            Some("response.output_item.done") => {
+                let item = payload
+                    .get("item")
+                    .cloned()
+                    .ok_or_else(|| SourceError::Protocol {
+                        named: OPENAI,
+                        problem: "response.output_item.done carried no item".into(),
+                    })?;
+                finished.push(item);
+            }
+            Some("response.completed") => {
+                let mut response =
+                    payload
+                        .get("response")
+                        .cloned()
+                        .ok_or_else(|| SourceError::Protocol {
+                            named: OPENAI,
+                            problem: "response.completed carried no response".into(),
+                        })?;
+
+                // The public endpoint repeats its output here. The ChatGPT plan
+                // backend sends an empty list after narrating each finished item,
+                // so retain those items only where the terminal object has none.
+                let has_output = response
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .is_some_and(|output| !output.is_empty());
+                if !has_output && !finished.is_empty() {
+                    let object = response
+                        .as_object_mut()
+                        .ok_or_else(|| SourceError::Protocol {
+                            named: OPENAI,
+                            problem: "response.completed did not carry an object".into(),
+                        })?;
+                    object.insert("output".to_owned(), Value::Array(finished));
+                }
+                return Ok(response);
+            }
+            Some("response.failed") => return Err(openai_failed(&payload, redactions)),
+            Some("response.incomplete") => {
+                let reason = text_at(&payload, "/response/incomplete_details/reason")
+                    .unwrap_or_else(|| "the response was incomplete".into());
+                return Err(SourceError::Protocol {
+                    named: OPENAI,
+                    problem: redactions.redact(&reason).into(),
+                });
+            }
+            Some("error") => return Err(openai_upstream(&payload, redactions)),
+            _ => {}
+        }
+    }
+
+    Err(SourceError::Protocol {
+        named: OPENAI,
+        problem: "the stream ended before response.completed".into(),
+    })
+}
+
+/// A response the provider gave up on after accepting the request.
+fn openai_failed(payload: &Value, redactions: &Redactions) -> SourceError {
+    let error = payload
+        .pointer("/response/error")
+        .filter(|error| !error.is_null());
+    if let Some(error) = error {
+        return openai_upstream(error, redactions);
+    }
+
+    let kind = text_at(payload, "/response/status").unwrap_or_else(|| "error".into());
+    let message = text_at(payload, "/response/incomplete_details/reason")
+        .unwrap_or_else(|| "the provider gave up on the response and named no reason".into());
+    SourceError::Protocol {
+        named: OPENAI,
+        problem: redactions.redact(&format!("{kind}: {message}")).into(),
+    }
+}
+
+/// A failure event, flat or nested under a failed response.
+fn openai_upstream(error: &Value, redactions: &Redactions) -> SourceError {
+    let kind = text_at(error, "/code")
+        .or_else(|| text_at(error, "/type"))
+        .unwrap_or_else(|| "error".into());
+    let message = text_at(error, "/message")
+        .unwrap_or_else(|| "the provider did not say what went wrong".into());
+    SourceError::Protocol {
+        named: OPENAI,
+        problem: redactions.redact(&format!("{kind}: {message}")).into(),
+    }
+}
+
 impl Search for OpenAiWeb {
     fn name(&self) -> &'static str {
         OPENAI
@@ -622,23 +837,17 @@ impl Search for OpenAiWeb {
             return Err(SourceError::Cancelled(OPENAI));
         }
 
-        let mut outgoing = Outgoing::new();
-        outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("accept", "application/json");
-        self.credential
-            .authorize(&mut outgoing)
-            .map_err(|problem| SourceError::Transport {
-                named: OPENAI,
-                problem: problem.to_string().into(),
-            })?;
-
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
+            body.boolean("stream", true);
             openai_input(body, query);
             // This endpoint retains a response for retrieval unless told
             // otherwise, and a query is the user's words.
             body.boolean("store", false);
+            // Search is the operation this method was called to perform, not a
+            // tool the side model may decline in favour of remembered prose.
+            body.text("tool_choice", "required");
             body.array("tools", |tools| {
                 tools.object(|declared| {
                     declared.text("type", "web_search");
@@ -646,16 +855,13 @@ impl Search for OpenAiWeb {
             });
         });
 
-        let answered = posted(
-            Sending {
+        let answered = self.ask(json.finish(), cancel)?;
+        if !web_called(&answered) {
+            return Err(SourceError::Protocol {
                 named: OPENAI,
-                transport: self.transport.as_ref(),
-                endpoint: self.endpoint.as_str(),
-            },
-            outgoing,
-            json.finish(),
-            cancel,
-        )?;
+                problem: "the answer was written without searching the web".into(),
+            });
+        }
 
         Ok(cited(&answered))
     }
@@ -757,6 +963,9 @@ fn span(said: &str, annotation: &Value) -> Box<str> {
 /// What Moonshot's source is called.
 const MOONSHOT: &str = "moonshot";
 
+/// The honest client identity Kimi Code's services receive.
+const MOONSHOT_AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
+
 /// Kimi Code's own search and fetch services.
 ///
 /// Not a side request to a model: these are two plain endpoints that take a
@@ -801,6 +1010,7 @@ impl MoonshotWeb {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", accepting);
+        outgoing.set_header("user-agent", MOONSHOT_AGENT);
         self.credential
             .authorize(&mut outgoing)
             .map_err(|problem| SourceError::Transport {
@@ -826,7 +1036,15 @@ impl Search for MoonshotWeb {
         }
 
         let mut json = Json::new();
-        json.object(|body| body.text("text_query", query));
+        json.object(|body| {
+            body.text("text_query", query);
+            // Match Kimi Code's own bounded defaults. Page bodies belong to the
+            // fetch tool; carrying five of them through search would spend the
+            // caller's result budget on duplicate content.
+            body.number("limit", 5);
+            body.boolean("enable_page_crawling", false);
+            body.number("timeout_seconds", 30);
+        });
 
         let answered = posted(
             Sending {
@@ -843,7 +1061,10 @@ impl Search for MoonshotWeb {
             .pointer("/search_results")
             .and_then(Value::as_array)
             .map(Vec::as_slice)
-            .unwrap_or_default();
+            .ok_or_else(|| SourceError::Protocol {
+                named: MOONSHOT,
+                problem: "the answer carried no search_results list".into(),
+            })?;
 
         Ok(found
             .iter()
@@ -927,24 +1148,18 @@ impl Fetch for OpenAiWeb {
             return Err(SourceError::Cancelled(OPENAI));
         }
 
-        let mut outgoing = Outgoing::new();
-        outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("accept", "application/json");
-        self.credential
-            .authorize(&mut outgoing)
-            .map_err(|problem| SourceError::Transport {
-                named: OPENAI,
-                problem: problem.to_string().into(),
-            })?;
-
         let mut json = Json::new();
         json.object(|body| {
             body.text("model", &self.model);
+            body.boolean("stream", true);
             openai_input(
                 body,
                 &format!("Open {url} and reproduce its contents as text."),
             );
             body.boolean("store", false);
+            // Opening is the operation this method was called to perform, not
+            // a tool the side model may decline in favour of remembered prose.
+            body.text("tool_choice", "required");
             body.array("tools", |tools| {
                 tools.object(|declared| {
                     declared.text("type", "web_search");
@@ -959,19 +1174,22 @@ impl Fetch for OpenAiWeb {
             });
         });
 
-        let answered = posted(
-            Sending {
-                named: OPENAI,
-                transport: self.transport.as_ref(),
-                endpoint: self.endpoint.as_str(),
-            },
-            outgoing,
-            json.finish(),
-            cancel,
-        )?;
+        let answered = self.ask(json.finish(), cancel)?;
 
         opened(&answered, url)
     }
+}
+
+/// Whether the completed response records a hosted web call.
+fn web_called(answered: &Value) -> bool {
+    answered
+        .pointer("/output")
+        .and_then(Value::as_array)
+        .is_some_and(|output| {
+            output
+                .iter()
+                .any(|item| text_at(item, "/type").as_deref() == Some("web_search_call"))
+        })
 }
 
 /// The page an answer accounts for.
@@ -979,7 +1197,8 @@ impl Fetch for OpenAiWeb {
 /// Refused rather than answered where the tool never ran: this vendor will
 /// happily write about an address from memory, and a page that was never
 /// fetched arriving as though it had been is the one failure the caller cannot
-/// see. A `web_search_call` in the output is the evidence that it went.
+/// see. A `web_search_call` whose action is `open_page` is the evidence that it
+/// went; a search for the URL is not the page.
 fn opened(answered: &Value, asked: &str) -> Result<Page, SourceError> {
     let output = answered
         .pointer("/output")
@@ -987,10 +1206,10 @@ fn opened(answered: &Value, asked: &str) -> Result<Page, SourceError> {
         .map(Vec::as_slice)
         .unwrap_or_default();
 
-    if !output
-        .iter()
-        .any(|item| text_at(item, "/type").as_deref() == Some("web_search_call"))
-    {
+    if !output.iter().any(|item| {
+        text_at(item, "/type").as_deref() == Some("web_search_call")
+            && text_at(item, "/action/type").as_deref() == Some("open_page")
+    }) {
         return Err(SourceError::Protocol {
             named: OPENAI,
             problem: "the answer was written without opening the page".into(),

@@ -54,7 +54,7 @@ struct Pasted {
 ///
 /// Its text, line, and column describe the compact display. A prompt placement
 /// maps back to boundaries in the editor's authoritative expanded source
-/// through [`Self::source_position`].
+/// through `Self::source_position`.
 #[derive(Debug, Clone, Copy)]
 pub struct Projection<'a> {
     source: &'a str,
@@ -539,7 +539,7 @@ impl Editor {
     /// line plus the inserted text. Control characters are left out for the
     /// reason `insert` leaves them out — drawn, they would move a cursor the
     /// renderer had already placed — with two exceptions: a break, on an editor
-    /// that is many lines, is kept, and a tab arrives as [`TAB`]. Dropping the
+    /// that is many lines, is kept, and a tab arrives as `TAB`. Dropping the
     /// first turned a paste of several lines into one long line with the breaks
     /// gone; dropping the second took the indentation off every snippet written
     /// with tabs.

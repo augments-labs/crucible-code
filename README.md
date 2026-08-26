@@ -7,90 +7,52 @@
 
 **The harness where agents are forged.**
 
-A terminal coding agent in Rust — fast to start, light on memory, and yours to run.
+A fast, lightweight terminal coding agent written in Rust.
 
 </div>
 
 ---
 
-## What it is
+Crucible reads and searches a workspace, edits files, runs commands, and keeps a
+streaming coding session on a terminal screen you can scroll, select, and click.
+It asks before sensitive work by default and records sessions so they can be
+continued later.
 
-A coding agent you drive from a terminal. It reads and edits files, runs
-commands, searches a tree, and streams a model's reasoning onto a screen of its
-own — one you scroll, select and click in, and that is handed back whole when
-you leave.
+## Highlights
 
-It is provider agnostic. A provider is a wire protocol; how you authenticate is
-a separate axis, so the two are independent choices rather than one coupled
-decision.
+- **Provider-independent sessions.** Anthropic, Moonshot and OpenAI are wire
+  adapters; API keys and supported account logins are separate credentials.
+- **Permissioned tools.** Reads inside the workspace are available by default;
+  file changes, commands and reads outside it are decided by rules and the
+  active permission mode.
+- **A responsive terminal UI.** Prompts remain editable while a turn runs, tool
+  output streams in place, and redirected output stays plain text.
+- **Bounded resource use.** Tool output, retained screen records, configuration
+  documents and replay indexes have explicit ceilings. Performance budgets are
+  executable release gates rather than README claims.
+- **Resumable work.** Sessions are append-only, private to the current user, and
+  scoped to the workspace where they began.
 
-## Why another one
+## Install
 
-Because the ones that exist are slower and heavier than a terminal tool should
-be. These are budgets, not aspirations — a change that breaks one is a defect,
-and the release procedure blocks on them:
-
-| Measure | Budget |
-| --- | --- |
-| Time to first frame | ≤ 20 ms p95 |
-| Time to first input | ≤ 60 ms p95 |
-| Peak RSS after a 20-turn session | ≤ 35 MB |
-| Worst paired median, `grep` tool / `rg` binary | ≤ 1.25× |
-| Render commits under token burst | ≥ 30/s |
-| Turn-band redraws while a command prints | ≥ 30/s |
-
-Each budget is owned by a probe in `scripts/bench.sh` that carries its own
-limit and fails when it is over, so this table is a summary and the script is
-the standard.
-
-The grep probe pairs each tool run with `rg` over representative workloads. Its
-worst paired median owns the budget; p95 and dispersion are diagnostic evidence.
-
-Rendering costs nothing as a transcript grows: a frame folds and paints only
-the rows the window covers, and writes only the ones whose text is not already
-there. The transcript itself is held in memory for the life of the session and
-lent to each provider request rather than cloned. Provider request bodies are written directly into their outbound
-allocation; the transcript is what the peak-RSS figure bounds.
-
-## Installing
-
-Every release attaches a binary for Linux, macOS and Windows on x86-64 and
-ARM64, usually with FreeBSD on x86-64 beside them, and one `SHA256SUMS`
-covering all of it, on the
-[releases page](https://github.com/augments-labs/crucible-code/releases).
-Getting started says why FreeBSD is the one that may be missing.
-
-Take the archive for your platform and that file, check one against the other,
-and put the binary on your `PATH`:
+Linux, macOS and FreeBSD can use the release installer:
 
 ```bash
-sha256sum --ignore-missing -c SHA256SUMS
-tar xzf crucible-<version>-linux-x86_64.tar.gz
-install crucible-<version>-linux-x86_64/crucible ~/.local/bin/
+curl --proto '=https' --tlsv1.2 -fsSLO \
+  https://github.com/augments-labs/crucible-code/releases/latest/download/install.sh
+bash install.sh
 ```
 
-## Building
+Windows executables and manual archives for all supported targets are on the
+[releases page](https://github.com/augments-labs/crucible-code/releases). Every
+release includes `SHA256SUMS`.
 
-Rust is pinned in `rust-toolchain.toml`, so rustup fetches the right toolchain
-on first build.
+For platform details, manual verification, uninstalling and source builds, see
+[Getting started](docs/getting-started/index.md).
 
-```bash
-git clone https://github.com/augments-labs/crucible-code
-cd crucible-code
-cargo build --release
-./target/release/crucible --version
-```
+## First session
 
-Anything past this point —
-[getting started](docs/getting-started/index.md),
-[tools](docs/tools/index.md), [providers](docs/providers/index.md),
-[configuration](docs/configuration/index.md),
-[permissions](docs/permissions/index.md), [sessions](docs/sessions/index.md) — lives in
-`docs/` rather than here, so there is one copy of it to keep true.
-
-## Running it
-
-Set a key, start it in the directory you want it to work in, and type.
+Start Crucible in the directory it should work on:
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -98,71 +60,41 @@ cd ~/code/my-project
 crucible
 ```
 
-`/login` inside the session is the other way in — a ChatGPT or Kimi Code
-account, or a key kept in crucible's protected store rather than exported.
+You can instead start without an environment key and use `/login`. Authentication
+does not silently choose a model; `/model` selects the provider, model and
+supported reasoning effort explicitly.
 
-`--model` takes a model name, optionally qualified by the provider serving it.
-Unqualified, the provider is whichever holds a usable credential — a key in one
-of `ANTHROPIC_API_KEY`, `MOONSHOT_API_KEY` and `OPENAI_API_KEY`, or one stored
-by `/login`, whether an API key or an account login. Hold more than one and
-nothing chooses between them, so qualify the name or set `provider` for one of
-them. There is no model built in: name one,
-configure one, or run `/model` in the session and take one off the shelf, which
-searches by model or provider, takes the effort in the same visit, and writes
-both down.
+Useful commands:
 
-`--effort` says how hard to think — `low`, `medium`, `high`, `xhigh` or `max` —
-on every turn of the session, and `providers.<name>.effort` says it once. Left
-off, crucible asks for no rung and the vendor's own default for that model is
-what applies. Not every model serves all five, and some serve none at all;
-`/effort` offers the ones the model in force does, as does the shelf `/model`
-stands.
-
-```bash
-crucible --model openai/gpt-5.6-terra   # reads OPENAI_API_KEY
-crucible --model moonshot/k3            # reads MOONSHOT_API_KEY
-crucible --effort max                   # think as hard as this model does
-crucible --continue                     # carry on this directory's last session
+```text
+/model       choose a provider, model and effort
+/login       add an account or API-key credential
+/mode        inspect or change the permission mode
+/resume      continue an earlier session in this workspace
+/help        show every command
 ```
 
-Reading inside the workspace never asks. Anything that changes a file, starts
-a process, or reads outside it does:
+## Documentation
 
-```
-╭──────────────────────────────────────────────────────────────────────────────╮
-│  Bash command                                                                │
-│                                                                              │
-│    cargo test                                                                │
-│                                                                              │
-│  This command needs your verdict.                                            │
-│                                                                              │
-│  Do you want to proceed?                                                     │
-│  › 1. Yes, once                                                              │
-│    2. Yes, and don't ask again this session                                  │
-│    3. No, and end the turn                                                   │
-╰──────────────────────────────────────────────────────────────────────────────╯
-  esc to cancel
-```
+- [Getting started](docs/getting-started/index.md)
+- [Tools](docs/tools/index.md)
+- [Providers and models](docs/providers/index.md)
+- [Configuration](docs/configuration/index.md)
+- [Permissions](docs/permissions/index.md)
+- [Sessions](docs/sessions/index.md)
+- [Building from source](docs/building/index.md)
 
-`↑` and `↓` move the mark, `enter` takes it, and `1`, `2` and `3` answer
-directly. The second answer remembers calls like this one until this process
-exits. Durable rules are
-written deliberately in the user configuration outside a checkout.
-
-Full documentation is in [`docs/`](docs/index.md).
+The full documentation index is [`docs/index.md`](docs/index.md).
 
 ## Contributing
 
-Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow and
-[`CLAUDE.md`](CLAUDE.md) for the rules the code is held to. One command covers
-every gate, and it is what CI runs:
+Development workflow and local checks are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Coding-agent guidance begins in
+[`CLAUDE.md`](CLAUDE.md), also exposed as `AGENTS.md`.
 
-```bash
-scripts/check.sh
-```
-
-Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md). Security
-issues go through [`SECURITY.md`](SECURITY.md), never a public issue.
+Security issues must be reported through [`SECURITY.md`](SECURITY.md), not a
+public issue. Participation is covered by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
